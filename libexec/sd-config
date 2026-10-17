@@ -33,8 +33,10 @@
 #             reviewRounds 3,
 #             botTimeout 3600 (seconds to wait on the review bot), interval
 #             300, vacuumAfter 604800, rateLimitFloor 250 (GraphQL points
-#             under which sd watch stops a pass), replyPrefix "🤖 "; the
-#             other settings empty
+#             under which sd watch stops a pass), replyPrefix "🤖 ";
+#             protectedPaths none (unset: .sheepdog/protected-paths in the
+#             base commit, else the CI config dirs, sd act --help); the other
+#             settings empty
 #
 # Notes:
 #   - null in a file removes the key; a default still applies

@@ -46,6 +46,8 @@
 #     chrismo fixes them or accepts HEAD
 #   budget: ❌ the branch's steps have spent past settings.branchBudget, so
 #     no agent step runs on it until chrismo raises it or takes over
+#   ci-config: ❌ an agent step's commit changed CI config, held unpushed
+#     until chrismo reviews it and runs sd act push (#124)
 # Not notified:
 #   closed: chrismo closed it
 #   errors stale: ⚠️ sd state can't be sure, so what was notified carries over
@@ -105,7 +107,7 @@ VACUUM_LOG=
 read -r -d '' CLASSIFY <<'EOF' || true
 values {next: kind(next) == "array" ? next : []}
 | values {next, k: coalesce([unnest next | values key], []),
-          red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "restack-undone", "bot-silent", "budget"] | values {key, msg: say}], []),
+          red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "restack-undone", "bot-silent", "budget", "ci-config"] | values {key, msg: say}], []),
           waiting: len(coalesce([unnest next | where who != "wait"], [])) == 0}
 | values {carry: len(next) == 0 or "errors" in k or "stale" in k,
           keep: k == ["merge-wait"] or k == ["attached"] ? ["ready"] : [], ...(case

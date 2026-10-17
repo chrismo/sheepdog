@@ -97,6 +97,45 @@ unnest coalesce(flags, [])
 EOF
 flag_lines() { prc_line "$FLAG_LINES" "$1"; }
 
+# CI config: an agent step's commit that touches one of these isn't pushed
+# until chrismo has looked (#124). A path covers itself and what's under it.
+PROTECTED_PATHS_DEFAULT=(.github/workflows/ .github/actions/ .rwx/ .captain/ .circleci/ .gitlab-ci.yml .buildkite/)
+
+# protected_paths <branch> <base>: the protected paths, one per line:
+# settings.protectedPaths when set (an empty list protects nothing); else
+# .sheepdog/protected-paths in the <base> commit, which the branch's agent
+# can't rewrite (one per line, # comments); else PROTECTED_PATHS_DEFAULT. An
+# empty <base> skips the file, as step_guidance does. Unless the setting is
+# set, .sheepdog/protected-paths is itself protected: an agent emptying it
+# would unprotect every branch after it merges.
+protected_paths() {
+  local out rc=0
+  out=$(prc_get settings.protectedPaths "$1" false) || rc=$?
+  if (( rc == 0 )); then
+    [[ -z $out ]] || printf '%s\n' "$out"
+    return 0
+  elif (( rc != 3 )); then
+    return 1
+  elif [[ -n $2 && $(git cat-file -t "$2:.sheepdog/protected-paths" 2>/dev/null) == blob ]]; then
+    git cat-file blob "$2:.sheepdog/protected-paths" | sed -E 's/#.*//; s/^[[:space:]]+//; s/[[:space:]]+$//; /^$/d'
+  else
+    printf '%s\n' "${PROTECTED_PATHS_DEFAULT[@]}"
+  fi
+  echo .sheepdog/protected-paths
+}
+
+# protected_hits <paths> <files>: the <files> (one per line) a protected path covers.
+protected_hits() {
+  local f p
+  while IFS= read -r f; do
+    [[ -n $f ]] || continue
+    while IFS= read -r p; do
+      [[ -n $p ]] || continue
+      if [[ $f == "${p%/}" || $f == "${p%/}"/* ]]; then echo "$f"; break; fi
+    done <<<"$1"
+  done <<<"$2"
+}
+
 # Claude may read and edit; the pipeline commits, pushes and talks to GitHub.
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
 HARNESS_CLAUDE_DENY="Bash(git commit *),Bash(git push *),Bash(gh *)"

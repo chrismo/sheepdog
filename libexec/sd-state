@@ -13,7 +13,9 @@
 #   sync      ahead of / behind the parent? would `rebase --onto` conflict?
 #   push      local vs remote branch; whether the remote SHA is ours (reflog),
 #             and for a remote ahead of a reset: whether those commits were
-#             made here and whether the worktree has uncommitted changes
+#             made here and whether the worktree has uncommitted changes;
+#             held: an agent step's unpushed change to CI config (sd act's
+#             hold), {sha, paths}, else null
 #   ci        checks on the PR head commit. A check that didn't start or
 #             wants approval (STARTUP_FAILURE, ACTION_REQUIRED) is blocked,
 #             chrismo's, not red. For a draft, also the base branch's
@@ -495,6 +497,14 @@ if [[ $remote_ours == true && $ahead -eq 0 && $push_behind -gt 0 ]]; then
     if [[ -n $st ]]; then dirty=true; else dirty=false; fi
   fi
 fi
+# An agent step's commit that changed CI config (sd act's branch.<b>.sd-held:
+# the commit, then the paths): held until chrismo runs sd act push, or until
+# the commit is on the remote some other way (#124).
+held=null
+held_v=$(cfg sd-held)
+if [[ -n $held_v ]] && ! { [[ -n $remote_sha ]] && is_ancestor "${held_v%%$'\n'*}" "$remote_sha"; }; then
+  held=$(printf '{"sha": %s, "paths": %s}' "$(jstr "${held_v%%$'\n'*}")" "$(sed 1d <<<"$held_v" | prc_strings)")
+fi
 
 # ── freshness ────────────────────────────────────────────────────────────────
 
@@ -856,7 +866,7 @@ values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
     sync: {target: s.target, default: s.default_branch, ahead: s.sync_ahead, behind: s.behind, up_to_date: s.up_to_date,
            old_base: s.old_base, by_tree: s.by_tree, conflict: s.conflict, undone: s.undone},
     push: {remote_sha: s.remote_sha, ahead: s.ahead, behind: s.push_behind, diverged: s.diverged, remote_ours: s.remote_ours, theirs: s.theirs,
-           remote_made: s.remote_made, dirty: s.dirty},
+           remote_made: s.remote_made, dirty: s.dirty, held: s.held},
     fresh: s.gh_ok and s.parent_ok ? len(s.stale) == 0 : null, stale: s.stale,
     ci: {sha: coalesce(c.oid, null), for_head: nul(c) ? null : c.oid == s.head,
          verdict: len(ctx) == 0 and len(mi) == 0 ? "none"
@@ -903,13 +913,13 @@ errors_json='[]'
 refs_json=$(git for-each-ref --format='%(refname) %(objectname)' "refs/sheepdog/$branch/" | prc_strings)
 args=$(printf '{"branch": %s, "head": %s, "pr": %s, "parent": %s, "parent_source": %s, "parent_pr": %s, "parent_merged": %s, "parent_local": %s, "parent_remote": %s, "parent_unpushed": %s,
   "target": %s, "default_branch": %s, "sync_ahead": %s, "behind": %s, "up_to_date": %s, "old_base": %s, "by_tree": %s, "conflict": %s, "undone": %s,
-  "remote_sha": %s, "ahead": %s, "push_behind": %s, "diverged": %s, "remote_ours": %s, "theirs": %s, "remote_made": %s, "dirty": %s, "stale": %s,
+  "remote_sha": %s, "ahead": %s, "push_behind": %s, "diverged": %s, "remote_ours": %s, "theirs": %s, "remote_made": %s, "dirty": %s, "held": %s, "stale": %s,
   "r_local": %s, "r_bot": %s, "r_accepted": %s, "r_findings": %s, "r_findings_at_head": %s, "review_rounds": %s, "flags": %s, "flags_error": %s, "gh_ok": %s, "parent_ok": %s, "viewer": %s, "bots": %s, "bot_command": %s, "bot_triggered": %s, "bot_timeout": %s, "now": %s,
   "required": %s, "ignore": %s, "ignore_body": %s, "handled": %s, "refs": %s, "enrolled": %s, "harness": %s, "session": %s, "lock": %s,
   "rl_cost": %s, "rl_remaining": %s, "rl_reset": %s, "rl_limited": %s, "spend": %s, "branch_budget": %s, "errors": %s}\n' \
   "$(jstr "$branch")" "$(jstr "$head")" "$pr" "$(jstr "$parent")" "$(jstr "$parent_source")" "$parent_pr" "$parent_merged" "$parent_local" "$parent_remote" "$parent_unpushed" \
   "$(jstr "$target")" "$(jstr "$default_branch")" "$sync_ahead" "$behind" "$up_to_date" "$(jnull "$old_base")" "$by_tree" "$conflict" "$undone" \
-  "$(jnull "$remote_sha")" "$ahead" "$push_behind" "$diverged" "$remote_ours" "$theirs" "$remote_made" "$dirty" "$stale_json" \
+  "$(jnull "$remote_sha")" "$ahead" "$push_behind" "$diverged" "$remote_ours" "$theirs" "$remote_made" "$dirty" "$held" "$stale_json" \
   "${review[local]}" "${review[bot]}" "${review[accepted]}" "$r_findings" "$r_findings_at_head" "$review_rounds" "$flags" "$(jstr "$flags_error")" "$gh_ok" "$parent_ok" "$(jstr "$viewer")" "$bots" "$(jstr "$bot_command")" "$(jnull "$bot_triggered")" "$bot_timeout" "$(jstr "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
   "$required" "$ignore" "$ignore_body" "$(jlist "branch.$branch.sd-handled")" "$refs_json" \
   "$(jstr "$(cfg sheepdog)")" "$(jstr "$(cfg sd-harness)")" "$(jstr "$(cfg sd-session)")" "$(jstr "$(cfg sd-lock)")" \

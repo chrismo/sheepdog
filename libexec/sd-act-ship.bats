@@ -181,6 +181,30 @@ transcript() {
   [ "$(git config branch.feat.sheepdog)" = true ]
 }
 
+@test "ship: held CI config is refused, even with --force, before describe or push; after sd act push it ships (#124)" {
+  git config branch.feat.sd-held "$(git rev-parse HEAD)"$'\n'".github/workflows/test.yml"
+  run "$SD_ACT" ship --force
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not shipping feat: the agent changed CI config (.github/workflows/test.yml): review, then sd act push"* ]]
+  [ -z "$(remote feat)" ]
+  [ ! -e "$FX/claude.args" ]
+  [ -z "$(calls)" ]
+  run "$SD_ACT" push
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"released the CI config hold on feat"* ]]
+  run "$SD_ACT" ship
+  [ "$status" -eq 0 ]
+}
+
+@test "ship: a hold whose commit is already on the remote (pushed some other way) is cleared, not a refusal (#124)" {
+  git push -q origin feat 2>/dev/null
+  git config branch.feat.sd-held "$(git rev-parse HEAD)"$'\n'".github/workflows/test.yml"
+  run "$SD_ACT" ship
+  [ "$status" -eq 0 ]
+  run git config --get branch.feat.sd-held
+  [ "$status" -eq 1 ]
+}
+
 @test "ship: a stacked branch opens its PR on the parent" {
   git switch -q main && git switch -qc A && git commit -q --allow-empty -m A && git push -q origin A 2>/dev/null
   git switch -q feat && git rebase -q A && git config branch.feat.sd-parent A

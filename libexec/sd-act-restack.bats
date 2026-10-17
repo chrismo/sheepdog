@@ -614,6 +614,43 @@ rebase_in_progress() { [[ -e $(git rev-parse --git-path rebase-merge) || -e $(gi
   [ -z "$(git status --porcelain)" ]
 }
 
+@test "--resolve: an agent that changes CI config while resolving holds the restacked branch for chrismo (#124)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  printf 'mkdir -p .github/workflows && echo x > .github/workflows/new.yml\n' >> "$FX/agent"
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"held: the agent changed CI config (.github/workflows/new.yml): review, then sd act push"* ]]
+  [ "$(git config --get branch.feat.sd-held)" = "$(git rev-parse feat)"$'\n'".github/workflows/new.yml" ]
+}
+
+@test "--resolve: a CI config edit the agent staged itself is held all the same (#124)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  printf 'mkdir -p .github/workflows && echo x > .github/workflows/new.yml && git add .github/workflows/new.yml\n' >> "$FX/agent"
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  [ "$(git config --get branch.feat.sd-held)" = "$(git rev-parse feat)"$'\n'".github/workflows/new.yml" ]
+}
+
+@test "--resolve: a CI config file with a non-ASCII name is held under its own name (#124)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  printf 'mkdir -p .github/workflows && echo x > .github/workflows/tëst.yml\n' >> "$FX/agent"
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  [ "$(git config --get branch.feat.sd-held)" = "$(git rev-parse feat)"$'\n'".github/workflows/tëst.yml" ]
+}
+
+@test "--resolve: a resolution that stays out of CI config holds nothing (#124)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  run git config --get branch.feat.sd-held
+  [ "$status" -eq 1 ]
+}
+
 @test "--resolve: settings.resolvePrompt replaces the guidance; the rebase boundaries stay" {
   git config branch.feat.sd-task "capitalise g"
   upstream main 's/^g$/X/'

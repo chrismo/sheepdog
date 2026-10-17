@@ -31,7 +31,7 @@ PRC_GLOBAL_ONLY=(remote interval notify vacuumAfter rateLimitFloor)
 PRC_SETTINGS='stepTimeout?:uint64,stepBudget?:float64,branchBudget?:float64,forkLimit?:uint64,reviewRounds?:uint64,replyPrefix?:string,verify?:string,autofix?:string,localReview?:string,botCommand?:string,botTimeout?:uint64,
               reviewPrompt?:string,implementPrompt?:string,reviewFixPrompt?:string,describePrompt?:string,
               addressPrompt?:string,resolvePrompt?:string,ciFixPrompt?:string,
-              botLogin?:[string],botIgnore?:[string],botIgnoreBody?:[string],implementAllow?:[string],
+              botLogin?:[string],botIgnore?:[string],botIgnoreBody?:[string],implementAllow?:[string],protectedPaths?:[string],
               flags?:{suppressions?:[string],skips?:[string],testFiles?:[string]}'
 PRC_TYPES='type hclaude = {model?:string,effort?:enum(low,medium,high,xhigh,max),args?:string,useApiKey?:bool}
 type hpi = {provider?:string,model?:string,effort?:enum(off,minimal,low,medium,high,xhigh,max),args?:string}

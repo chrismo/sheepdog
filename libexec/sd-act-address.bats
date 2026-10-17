@@ -277,6 +277,37 @@ remote_feat() { git -C "$TMP/origin.git" rev-parse feat; }
   gh_call resolveReviewThread | grep -q '"thread=T1"'
 }
 
+@test "a fix that changes CI config is committed, not pushed, nothing posted; held for chrismo (#124)" {
+  printf '#!/usr/bin/env bash\nprintf "one\\ntwo\\nTHREE\\n" > file.txt\nmkdir -p .rwx && echo "tasks: []" > .rwx/tests.yml\n' > "$FX/agent"
+  before=$(remote_feat)
+  run "$SD_ACT" address
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the agent changed CI config (.rwx/tests.yml): review, then sd act push"* ]]
+  [[ "$output" == *"replies weren't posted"*"sd act address answers them again"* ]]
+  [ "$(git log -1 --format=%s)" = "Uppercase three" ]
+  [ "$(remote_feat)" = "$before" ]
+  [ "$(gh_ops)" = nodes ]
+  [ "$(git config --get branch.feat.sd-held)" = "$(git rev-parse HEAD)"$'\n'".rwx/tests.yml" ]
+}
+
+@test "a CI config change the agent committed itself is held all the same (#124)" {
+  printf '#!/usr/bin/env bash\nprintf "one\\ntwo\\nTHREE\\n" > file.txt\nmkdir -p .rwx && echo "tasks: []" > .rwx/tests.yml\ngit add -A && git commit -qm "agent made it"\n' > "$FX/agent"
+  before=$(remote_feat)
+  run "$SD_ACT" address
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the agent changed CI config (.rwx/tests.yml)"* ]]
+  [ "$(remote_feat)" = "$before" ]
+  [ "$(git config --get branch.feat.sd-held)" = "$(git rev-parse HEAD)"$'\n'".rwx/tests.yml" ]
+}
+
+@test "a CI config change the agent committed itself before giving up is held (#124)" {
+  printf '#!/usr/bin/env bash\nmkdir -p .rwx && echo "tasks: []" > .rwx/tests.yml\ngit add -A && git commit -qm "agent made it"\n' > "$FX/agent"
+  agent_result '{outcome: "gave-up", commit_message: null, summary: "lost", items: []}'
+  run "$SD_ACT" address
+  [ "$status" -ne 0 ]
+  [ "$(git config --get branch.feat.sd-held)" = "$(git rev-parse HEAD)"$'\n'".rwx/tests.yml" ]
+}
+
 @test "a rewritten branch of our own is pushed with a lease, like sd act push" {
   git commit -q --amend -m "feat, reworded"
   run "$SD_ACT" address

@@ -1152,6 +1152,20 @@ old_super() {
   [[ "$output" == *"settings.flags.skip: unknown key"* ]]
 }
 
+@test "settings.protectedPaths: a typed list setting with no default, so unset reads as no value (#124)" {
+  run "$SD_CONFIG" get settings.protectedPaths
+  [ "$status" -eq 3 ]
+  write_branch feat '{"settings":{"protectedPaths":[]}}'
+  run "$SD_CONFIG" get settings.protectedPaths
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  write_global '{"settings":{"protectedPaths":["ci/"]}}'
+  write_branch feat '{"settings":{"protectedPaths":"ci/"}}'
+  run "$SD_CONFIG" get settings.protectedPaths
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"settings.protectedPaths"* ]]
+}
+
 @test "validate: a wrong type is an error with the bad value" {
   write_global '{"settings":{"stepTimeout":"30m"}}'
   run "$SD_CONFIG" get settings.remote

@@ -43,6 +43,7 @@ values {...s, remote}
              and (on(push.remote_made == false) or (on(push.remote_made) and on(push.dirty)))),
       to_push:=(push.remote_sha is null or n(push.ahead) > 0
                 or (on(push.remote_ours) and n(push.behind) > 0 and n(push.ahead) == 0 and on(push.remote_made) and not on(push.dirty))),
+      ci_held:=not nul(push.held),
       chase:=(on(sync.target != sync.default) or on(parent.merged)),
       undone:=(n(sync.undone) > 0),
       merge_state:=coalesce(pr.merge_state, "UNKNOWN"),
@@ -121,12 +122,16 @@ values {...s, remote}
       ? step("take", "you", f"{remote}/{branch} has {plural(push.behind, "commit")} this branch took but didn'"'"'t make, reset away here: take {n(push.behind) == 1 ? "it" : "them"} back (git merge --ff-only {remote}/{branch}), or drop {n(push.behind) == 1 ? "it" : "them"} by hand", null) : null,
     open and dropping and on(push.dirty)
       ? step("reset-dirty", "you", f"{remote}/{branch} has {plural(push.behind, "commit")} reset away here, and the worktree has uncommitted changes: commit them (then sd act push replaces the remote {n(push.behind) == 1 ? "commit" : "commits"}), or remove them (git reset --hard; git clean for untracked files)", null) : null,
-    open and not foreign and not undone and not parent_unpushed and to_push
+    open and ci_held
+      ? (foreign or undone or parent_unpushed
+         ? step("ci-config", "you", f"the agent changed CI config ({join(push.held.paths, ", ")}): review it; push once the steps above are done", null)
+         : step("ci-config", "you", f"the agent changed CI config ({join(push.held.paths, ", ")}): review, then sd act push", "sd act push")) : null,
+    open and not ci_held and not foreign and not undone and not parent_unpushed and to_push
       ? step("push", "run", push.remote_sha is null ? f"push: not on {remote} yet"
              : on(push.diverged) ? f"force-push {plural(coalesce(sync.ahead, push.ahead), "commit")} (rewritten); a plain git push is rejected, and pulling would undo the rewrite"
              : n(push.ahead) == 0 ? f"force-push: drop {plural(push.behind, "commit")} the remote has, reset away here"
              : f"push {plural(push.ahead, "commit")}", "sd act push") : null,
-    pr is null and len(errors) == 0 and not parent_unpushed
+    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held
       ? spends(budget, step("open-pr", "run", "ship: push, open a draft PR", "sd act ship")) : null,
     has_pr and draft_ready and not need_review and not bot_due and not bot_waiting
       ? step("draft", "run", f"{on(ci.verdict == "none") ? "reviewed, no CI checks" : "CI green and reviewed"}: mark the PR ready for review",

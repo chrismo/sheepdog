@@ -2310,6 +2310,23 @@ usage_row() { # usage_row <branch> <cost_usd> [repo]
   [ "$(field .push.dirty)" = null ]
 }
 
+@test "push: held CI config is reported until its commit is on the remote, and NEXT hands it to chrismo (#124)" {
+  git switch -qc feat && commit a.txt a && git push -q -u origin feat 2>/dev/null
+  pr_fixture feat ".headRefOid = \"$(git rev-parse origin/feat)\""
+  state
+  [ "$(field .push.held)" = null ]
+  commit b.txt b
+  git config branch.feat.sd-held "$(git rev-parse HEAD)"$'\n'".github/workflows/test.yml"$'\n'".rwx/tests.yml"
+  state
+  [ "$(field -c .push.held)" = "{\"sha\":\"$(git rev-parse HEAD)\",\"paths\":[\".github/workflows/test.yml\",\".rwx/tests.yml\"]}" ]
+  [ "$(field '.next[0].key')" = ci-config ]
+  run "$SD_STATE"
+  [[ "${lines[1]}" == "NEXT  you    the agent changed CI config (.github/workflows/test.yml, .rwx/tests.yml): review, then sd act push  → sd act push"* ]]
+  git push -q origin feat 2>/dev/null
+  state
+  [ "$(field .push.held)" = null ]
+}
+
 @test "push: a pushed commit reset away on a branch checked out nowhere: made here, dirty unknown" {
   git switch -qc feat && commit a.txt a && commit b.txt b && git push -q -u origin feat 2>/dev/null
   git switch -q main

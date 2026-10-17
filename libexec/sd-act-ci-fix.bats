@@ -357,6 +357,69 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   [ "$(remote_feat)" = "$before" ]
 }
 
+# ── CI config: held for chrismo (#124) ───────────────────────────────────────
+
+agent_touches_ci() {
+  printf '#!/usr/bin/env bash\nprintf "one\\ntwo\\nTHREE\\n" > file.txt\nmkdir -p .github/workflows && echo "on: push" > .github/workflows/test.yml\n' > "$FX/agent"
+  chmod +x "$FX/agent"
+}
+held() { git config --get branch.feat.sd-held; }
+
+@test "a fix that changes CI config is committed, not pushed, and held; chrismo's sd act push releases it (#124)" {
+  agent_touches_ci
+  before=$(remote_feat)
+  run "$SD_ACT" ci-fix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the agent changed CI config (.github/workflows/test.yml): review, then sd act push"* ]]
+  [ "$(git log -1 --format=%s)" = "Uppercase three" ]
+  [ "$(remote_feat)" = "$before" ]
+  [ "$(held)" = "$(git rev-parse HEAD)"$'\n'".github/workflows/test.yml" ]
+  run "$SD_ACT" push
+  [ "$status" -eq 0 ]
+  [ "$(remote_feat)" = "$(git rev-parse HEAD)" ]
+  run held
+  [ "$status" -eq 1 ]
+}
+
+@test "a CI config change the agent committed itself is held, whatever it answers (#124)" {
+  printf '#!/usr/bin/env bash\nmkdir -p .github/workflows && echo x > .github/workflows/x.yml && git add -A && git commit -qm "agent made it"\n' > "$FX/agent"
+  chmod +x "$FX/agent"
+  for r in '{outcome: "fixed", commit_message: null, summary: "s"}' '{outcome: "flaky", commit_message: null, summary: "s"}' \
+           '{outcome: "needs-input", commit_message: null, summary: "s"}'; do
+    git reset -q --hard origin/feat && git config --unset branch.feat.sd-held || true
+    git config --unset branch.feat.sd-ci-fix || true
+    agent_result "$r"
+    run "$SD_ACT" ci-fix
+    [ "$(held)" = "$(git rev-parse HEAD)"$'\n'".github/workflows/x.yml" ] || { echo "for: $r"; return 1; }
+  done
+}
+
+@test "a CI config change the agent committed itself is held even when the step then fails (#124)" {
+  printf '#!/usr/bin/env bash\nmkdir -p .github/workflows && echo x > .github/workflows/x.yml && git add -A && git commit -qm "agent made it"\n' > "$FX/agent"
+  chmod +x "$FX/agent"
+  echo 'not json' > "$FX/result.json"
+  run "$SD_ACT" ci-fix
+  [ "$status" -ne 0 ]
+  [ "$(held)" = "$(git rev-parse HEAD)"$'\n'".github/workflows/x.yml" ]
+}
+
+@test "--no-publish with a CI config change: held all the same (#124)" {
+  agent_touches_ci
+  run "$SD_ACT" ci-fix --no-publish
+  [[ "$output" == *"the agent changed CI config (.github/workflows/test.yml)"* ]]
+  [ -n "$(held)" ]
+}
+
+@test "settings.protectedPaths [] holds nothing: the fix is pushed (#124)" {
+  agent_touches_ci
+  "$SD_CONFIG" set --global --json settings.protectedPaths '[]'
+  run "$SD_ACT" ci-fix
+  [ "$status" -eq 0 ]
+  [ "$(remote_feat)" = "$(git rev-parse HEAD)" ]
+  run held
+  [ "$status" -eq 1 ]
+}
+
 @test "the fix is committed under the agent's message, else the first failing check" {
   agent_result '{outcome: "fixed", commit_message: "", summary: "done"}'
   run "$SD_ACT" ci-fix

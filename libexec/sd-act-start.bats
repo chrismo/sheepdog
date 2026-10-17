@@ -404,6 +404,62 @@ EOF
   [ "$(git log -1 --format=%s)" = "add a third line" ]
 }
 
+@test "implement: a commit that changes CI config is held for chrismo; the agent's own commits count (#124)" {
+  started
+  printf '#!/usr/bin/env bash\necho c >> file.txt\nmkdir -p .github/workflows && echo x > .github/workflows/ci.yml && git add -A && git commit -qm "agent made it"\necho d >> file.txt\n' > "$FX/agent"
+  run "$SD_ACT" implement
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"held: the agent changed CI config (.github/workflows/ci.yml): review, then sd act push"* ]]
+  # Keyed on the commit that changed it, the agent's; the pipeline's commit of the rest follows.
+  [ "$(git config --get branch.feat-x.sd-held)" = "$(git rev-parse HEAD~1)"$'\n'".github/workflows/ci.yml" ]
+}
+
+@test "implement: a CI config file with a non-ASCII name is held under its own name (#124)" {
+  started
+  printf '#!/usr/bin/env bash\nmkdir -p .github/workflows && echo x > .github/workflows/tëst.yml\n' > "$FX/agent"
+  run "$SD_ACT" implement
+  [ "$status" -eq 0 ]
+  [ "$(git config --get branch.feat-x.sd-held)" = "$(git rev-parse HEAD)"$'\n'".github/workflows/tëst.yml" ]
+}
+
+@test "implement: a CI config change the agent committed itself before needing input is held (#124)" {
+  started
+  printf '#!/usr/bin/env bash\nmkdir -p .github/workflows && echo x > .github/workflows/ci.yml && git add -A && git commit -qm "agent made it"\n' > "$FX/agent"
+  echo '{"outcome": "needs-input", "commit_message": null, "summary": "which runner?"}' > "$FX/result.json"
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [ "$(git config --get branch.feat-x.sd-held)" = "$(git rev-parse HEAD)"$'\n'".github/workflows/ci.yml" ]
+}
+
+@test "implement: a CI config change the agent committed itself is held even when the step then fails (#124)" {
+  started
+  printf '#!/usr/bin/env bash\nmkdir -p .github/workflows && echo x > .github/workflows/ci.yml && git add -A && git commit -qm "agent made it"\n' > "$FX/agent"
+  echo 'not json' > "$FX/result.json"
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [ "$(git config --get branch.feat-x.sd-held)" = "$(git rev-parse HEAD)"$'\n'".github/workflows/ci.yml" ]
+}
+
+@test "implement: an agent that pushed its CI config change itself fails loudly; no hold that would vanish (#124)" {
+  started
+  printf '#!/usr/bin/env bash\nmkdir -p .github/workflows && echo x > .github/workflows/ci.yml && git add -A && git commit -qm "agent made it" && git push -q origin feat-x 2>/dev/null\n' > "$FX/agent"
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the agent pushed CI config itself (.github/workflows/ci.yml)"* ]]
+  run git config --get branch.feat-x.sd-held
+  [ "$status" -eq 1 ]
+}
+
+@test "implement: a review-fix round that changes CI config is held too, joined with the hold before it (#124)" {
+  started
+  git config branch.feat-x.sd-held "$(git rev-parse HEAD)"$'\n'".rwx/tests.yml"
+  findings_at HEAD 1
+  printf '#!/usr/bin/env bash\nmkdir -p .circleci && echo x > .circleci/config.yml\n' > "$FX/agent"
+  run "$SD_ACT" implement
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"held: the agent changed CI config (.circleci/config.yml, .rwx/tests.yml)"* ]]
+}
+
 @test "implement: done with nothing changed is a failure" {
   started
   rm "$FX/agent"

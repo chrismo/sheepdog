@@ -424,6 +424,15 @@ EOF
   [[ "$output" == *"feat"*"❌"* ]] || false
 }
 
+@test "notify: CI config an agent changed is ❌ and notifies; chrismo reviews and pushes (#124)" {
+  ps_fixture feat '.push.ahead = 1 | .push.held = {"sha": "abc", "paths": [".github/workflows/test.yml"]}'
+  pass
+  run notified
+  [ "${lines[0]}" = "repo feat|the agent changed CI config (.github/workflows/test.yml): review, then sd act push" ]
+  run "$SD_WATCH" status
+  [[ "$output" == *"feat"*"❌"* ]] || false
+}
+
 @test "notify: human items, conflict, foreign push, merged" {
   ps_fixture feat '.threads.owed_human = 2'
   pass
