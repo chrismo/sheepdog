@@ -10,6 +10,13 @@
 # human items): restack, agent fixes, one push, then review and wait; the push
 # leads because every push restarts CI (#79 Design record).
 
+# The default branch (or a branch that is its own base) gets one step, to
+# start a branch (#159). A branch with nothing ahead of its base and no PR
+# has nothing to push or ship: its task is implemented, or with no task it's
+# chrismo's (#143). So are uncommitted changes there, which implement refuses;
+# and with errors, pr may be wrong, so nothing spends on implementing. A
+# remote with commits reset away here isn't empty: the #86 steps handle it.
+#
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
 # Only bot items are ever marked i, so owed_bot - info is the blocking bot count.
@@ -68,6 +75,12 @@ values {...s, remote}
       bot_due:=(coalesce(bot.command, null) is not null and covers(review.local)
                 and not covers(review.bot) and not covers(review.accepted)),
       bot_waiting:=(covers(review.bot) and on(review.bot.replied == false) and not covers(review.accepted)),
+      own_base:=(on(branch == sync.default) or on(sync.target == branch)),
+      empty:=(pr is null and on(sync.ahead == 0) and n(push.behind) == 0),
+      tasked:=(coalesce(task, "") != ""),
+      last_review:=coalesce([unnest [review.local, review.bot, review.accepted]
+                             | where on(status == "uncovered") | values uncovered | sort this][0], null),
+      reviewed:=(trails(review.local) or trails(review.bot) or trails(review.accepted)),
       budget:=(nul(spend) or n(spend.budget) <= 0 ? null
                : nul(spend.usd)
                ? step("budget", "you", "can'"'"'t tell what this branch has spent (sd state'"'"'s errors say why), so nothing spends: fix the usage record, or take over",
@@ -75,7 +88,7 @@ values {...s, remote}
                : spend.usd > spend.budget
                ? step("budget", "you", f"spent {usd(spend.usd)} on this branch, past settings.branchBudget ({usd(spend.budget)}): raise it, or take over",
                       "sd act attach") : null)
-| unnest [
+| unnest own_base ? [step("default", "you", f"on {branch}: start a branch", "sd act start")] : [
     on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, remove its worktree and delete it", "sd act forget --remove") : null,
     on(pr.state == "CLOSED") ? step("closed", "you", "PR closed without merging", null) : null,
     open and len(errors) > 0
@@ -126,12 +139,17 @@ values {...s, remote}
       ? (foreign or undone or parent_unpushed
          ? step("ci-config", "you", f"the agent changed CI config ({join(push.held.paths, ", ")}): review it; push once the steps above are done", null)
          : step("ci-config", "you", f"the agent changed CI config ({join(push.held.paths, ", ")}): review, then sd act push", "sd act push")) : null,
-    open and not ci_held and not foreign and not undone and not parent_unpushed and to_push
+    empty and on(push.dirty)
+      ? step("nothing-dirty", "you", f"nothing to ship, and the worktree has uncommitted changes: commit them{tasked ? ", or remove them and sd act implement" : ""}", null)
+      : empty and tasked
+      ? (len(errors) == 0 ? agent(budget, "implement", f"implement the task: nothing ahead of {sync.target} yet", "sd act implement") : null)
+      : empty ? step("nothing", "you", "nothing to ship: commit, or record a task", null) : null,
+    open and not ci_held and not foreign and not undone and not parent_unpushed and not empty and to_push
       ? step("push", "run", push.remote_sha is null ? f"push: not on {remote} yet"
              : on(push.diverged) ? f"force-push {plural(coalesce(sync.ahead, push.ahead), "commit")} (rewritten); a plain git push is rejected, and pulling would undo the rewrite"
              : n(push.ahead) == 0 ? f"force-push: drop {plural(push.behind, "commit")} the remote has, reset away here"
              : f"push {plural(push.ahead, "commit")}", "sd act push") : null,
-    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held
+    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held and not empty
       ? spends(budget, step("open-pr", "run", "ship: push, open a draft PR", "sd act ship")) : null,
     has_pr and draft_ready and not need_review and not bot_due and not bot_waiting
       ? step("draft", "run", f"{on(ci.verdict == "none") ? "reviewed, no CI checks" : "CI green and reviewed"}: mark the PR ready for review",
@@ -144,7 +162,10 @@ values {...s, remote}
              f"{on(review.findings.declined) ? f"the agent declined {plural(review.findings.n, "review finding")}"
                 : f"{plural(review.findings.n, "review finding")} after {review.findings.round} rounds"}: fix {review.findings.n == 1 ? "it" : "them"}, or accept HEAD as reviewed (sd state --long lists them)",
              "sd act review --accept")
-      : open and need_review ? agent(budget, "review", "review the changes since the last review", "sd act review") : null,
+      : open and need_review
+      ? agent(budget, "review", last_review is not null ? f"review again: {plural(last_review, "commit")} since the last review"
+                                : reviewed ? "review again: the branch was rewritten since the last review"
+                                : "review the branch'"'"'s change", "sd act review") : null,
     has_pr and not to_push and not held and not foreign and bot_due
       ? step("bot-trigger", "run", f"trigger the review bot ({bot.command})", "sd act trigger") : null,
     has_pr and on(ci.verdict == "inconclusive") ? step("ci-rerun", "run", "rerun cancelled CI", "gh pr checks") : null,

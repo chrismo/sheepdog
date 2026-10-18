@@ -119,6 +119,17 @@ remote() { git ls-remote origin "refs/heads/$1" | cut -f1; }
   grep -q '^+c$' "$FX/claude.prompt"
 }
 
+@test "ship on the default branch: refused before describe, push or PR (#159)" {
+  git switch -q main
+  printf 'a\nb\nd\n' > file.txt && git commit -qam "add d"
+  run "$SD_ACT" ship
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not shipping main: it's the default branch"* ]]
+  [ ! -e "$FX/claude.args" ]
+  [ -z "$(calls)" ]
+  [ "$(remote main)" != "$(git rev-parse main)" ]
+}
+
 @test "describe: stored for HEAD, and ship reuses it without calling the agent" {
   "$SD_ACT" describe >/dev/null
   rm -f "$FX/claude.args"

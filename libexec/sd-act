@@ -108,8 +108,9 @@
 #             authored and committed here (take it back with merge
 #             --ff-only), or when the worktree has uncommitted or untracked
 #             changes (a soft or mixed reset: commit or remove them first).
-#             Releases a CI config hold: chrismo pushing is the approval
-#   verify    run settings.verify in the branch's worktree, zero tokens. Pass:
+#             Releases a CI config hold: chrismo pushing is the approval.
+#             Refuses the default branch (#159)
+#   verify   run settings.verify in the branch's worktree, zero tokens. Pass:
 #             one line. Fail: nonzero, the output trimmed to its last 40 lines
 #             for the fix step. A command that changes the tree fails too.
 #             Gates local review and everything after it
@@ -162,7 +163,8 @@
 #             was made from, stored as enroll does, else the default branch)
 #             and enroll; with a PR already open, fix up its title, body and
 #             base instead. Warns when the local review doesn't cover HEAD;
-#             the draft stays a draft until it does. Refuses when git can't
+#             the draft stays a draft until it does. Refuses the default
+#             branch (#159), when git can't
 #             pick the branch it was made from, and while the parent isn't on
 #             the remote, has merged (restack first), was closed, or can't be
 #             looked up; a merged parent with the branch already on the
@@ -1570,6 +1572,8 @@ ship() {
   git -C "$wt" fetch --quiet --prune "$remote" || die "fetch from $remote failed"
   hold_gate "$b" "shipping $b"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
+  [[ $b != "$(prc_val "$state" sync.default)" ]] \
+    || die "not shipping $b: it's the default branch; start a branch (sd act start <branch> \"<task>\")"
   pr_state=$(prc_val "$state" 'coalesce(pr.state, "none")')
   case $pr_state in
     none|OPEN) ;;
@@ -1853,6 +1857,8 @@ push() {
     die "not pushing $branch: taken over (branch.$branch.sd-lock is set; --force to push anyway)"
   fi
   remote=$(prc_get settings.remote "$branch" false) || die "sd config failed"
+  [[ $branch != "$(remote_default "$remote")" ]] \
+    || die "not pushing $branch: it's the default branch; start a branch (sd act start <branch> \"<task>\")"
   push_branch "$branch" "$remote" || exit 1
   # chrismo pushing is the approval of what an agent changed in CI config.
   if git config --get "branch.$branch.sd-held" >/dev/null; then

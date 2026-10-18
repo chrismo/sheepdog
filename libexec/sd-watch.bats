@@ -279,6 +279,15 @@ notified() { cat "$PS_FIXTURES/notified" 2>/dev/null || true; }
   [ "$(glyph repo)" = "🔧" ]
 }
 
+@test "glyph: nothing to ship is ❌; nothing to ship with uncommitted changes is 🔧, since implement looks the same (#143)" {
+  ps_fixture feat '.next = [{key: "nothing", who: "you", say: "nothing to ship: commit, or record a task", cmd: null}]'
+  pass
+  [ "$(glyph repo)" = "❌" ]
+  ps_fixture feat '.next = [{key: "nothing-dirty", who: "you", say: "nothing to ship, and the worktree has uncommitted changes: commit them", cmd: null}]'
+  pass
+  [ "$(glyph repo)" = "🔧" ]
+}
+
 @test "glyph: info-only bot items, waiting on chrismo's read, are 🔧" {
   ps_fixture feat '.threads.owed_bot = 1 | .threads.info = 1'
   pass

@@ -159,6 +159,32 @@ field() { jq -r "$@" <<<"$output"; }
   [ "$(field .parent.source)" = default ]
 }
 
+@test "task: the recorded sd-task, else null; NEXT implements a branch with nothing ahead (#143)" {
+  git switch -qc feat
+  state
+  [ "$(field .task)" = null ]
+  [ "$(field -c '[.next[].key]')" = '["nothing"]' ]
+  git config branch.feat.sd-task "add a"
+  state
+  [ "$(field .task)" = "add a" ]
+  [ "$(field -c '[.next[].key]')" = '["implement"]' ]
+  [ "$(field .push.dirty)" = false ]
+}
+
+@test "dirty: reported for a branch with nothing ahead, where implement would refuse the worktree (#143)" {
+  git switch -qc feat
+  git config branch.feat.sd-task "add a"
+  echo wip > wip.txt
+  state
+  [ "$(field .push.dirty)" = true ]
+  [ "$(field -c '[.next[].key]')" = '["nothing-dirty"]' ]
+}
+
+@test "on the default branch: NEXT is one step, start a branch (#159)" {
+  state
+  [ "$(field -c '[.next[] | [.key, .who, .cmd]]')" = '[["default","you","sd act start"]]' ]
+}
+
 @test "a branch argument is inspected without switching to it" {
   git switch -qc feat
   commit a.txt a
@@ -606,6 +632,15 @@ parent
   git switch -qc feat
   state
   [ "$(field .sync.default)" = main ]
+}
+
+@test "sync: with GitHub unreachable, the default is the remote's HEAD, as sd act push reads it (#159)" {
+  git push -q origin main:develop 2>/dev/null
+  git -C "$TMP/origin.git" symbolic-ref HEAD refs/heads/develop
+  git remote set-head origin -d 2>/dev/null || true
+  git switch -qc feat
+  GH_FAKE_FAIL="gh: network down" state
+  [ "$(field .sync.default)" = develop ]
 }
 
 @test "sync: up to date with the parent" {

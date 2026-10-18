@@ -48,15 +48,20 @@
 #     no agent step runs on it until chrismo raises it or takes over
 #   ci-config: ❌ an agent step's commit changed CI config, held unpushed
 #     until chrismo reviews it and runs sd act push (#124)
+#   nothing default: ❌ nothing ahead of the base and no task to implement, or
+#     the default branch itself: chrismo commits, records a task, or starts a
+#     branch (#143, #159)
 # Not notified:
 #   closed: chrismo closed it
 #   errors stale: ⚠️ sd state can't be sure, so what was notified carries over
 #   read: info-only bot items; nothing waits on them
 #   reset-dirty take: chrismo is mid-change on the branch; the 🔧 glyph shows it
+#   nothing-dirty: the same, or sd act start's implement mid-edit, which
+#     looks no different
 #   blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it
 #   attached: chrismo is in the branch's session; like merge-wait, keeps ready
 #   bot: routine agent work, picked up when the branch is next worked on
-#   review review-fix: the same
+#   review review-fix implement: the same
 #   behind push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
 #     (behind with no old base is chrismo's, but its errors step shows ⚠️ first)
 #   ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub
@@ -107,7 +112,7 @@ VACUUM_LOG=
 read -r -d '' CLASSIFY <<'EOF' || true
 values {next: kind(next) == "array" ? next : []}
 | values {next, k: coalesce([unnest next | values key], []),
-          red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "restack-undone", "bot-silent", "budget", "ci-config"] | values {key, msg: say}], []),
+          red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "restack-undone", "bot-silent", "budget", "ci-config", "nothing", "default"] | values {key, msg: say}], []),
           waiting: len(coalesce([unnest next | where who != "wait"], [])) == 0}
 | values {carry: len(next) == 0 or "errors" in k or "stale" in k,
           keep: k == ["merge-wait"] or k == ["attached"] ? ["ready"] : [], ...(case
