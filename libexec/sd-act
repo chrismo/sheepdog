@@ -69,7 +69,7 @@
 #   address   hand owed bot feedback to an agent, then commit, verify, push,
 #             reply and resolve; items the agent marks "ask" are left for
 #             chrismo. Replies are posted with /commands and @mentions
-#             defanged. Spends tokens
+#             defanged. The agent may run what implement's may. Spends tokens
 #   ack       mark owed bot review bodies and comments read, with no reply:
 #             every i item, or only the --id ones (ids from sd state --json)
 #   restack   rebase --onto the parent (the default branch once the parent
@@ -521,11 +521,23 @@ address() {
   gbase=$(guidance_base "$b") || die "can't find $b's base, to read its prompt guidance from"
   guidance=$(cd "$wt" && step_guidance addressPrompt "$b" "$gbase" "$SD_LIB/prompts/address.md") \
     || die "can't read the address guidance"
+  local s prompt allow=$HARNESS_CLAUDE_ALLOW
+  local -a rules
+  s=$(agent_rules "$wt" "$b") || die "sd config failed"
+  rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
+  prompt="$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\nFindings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)"
+  [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
+  if [[ $h == claude ]] && (( ${#rules[@]} )); then
+    allow+=$(printf ',%s' "${rules[@]}")
+    prompt+=$'\n\nBeyond reading files and read-only git, you may run only these (Claude Code permission rules); anything else is refused:\n'"$(printf '%s\n' "${rules[@]}")"
+  else
+    prompt+=$'\n\nYou can\'t run commands here beyond read-only git.'
+  fi
   echo "sd act: $h ($mode session $sid) is addressing $(prc_val "$findings" 'len(this)') item(s) on $b…" >&2
   local before
   before=$(git rev-parse "refs/heads/$b")
-  result=$(cd "$wt" && HARNESS_STEP=address HARNESS_BRANCH=$b harness_run "$h" "$sid" "$mode" "$timeout" \
-             "$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\nFindings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)" "$SCHEMA" "$cfg") \
+  result=$(cd "$wt" && HARNESS_CLAUDE_ALLOW=$allow && HARNESS_STEP=address HARNESS_BRANCH=$b \
+             harness_run "$h" "$sid" "$mode" "$timeout" "$prompt" "$SCHEMA" "$cfg") \
     || { hold_since "$b" "$gbase" "$before"; die "the $h step failed or returned no usable result (session $sid)"; }
   git config "branch.$b.sd-session" "$sid"
   git config "branch.$b.sd-harness" "$h"

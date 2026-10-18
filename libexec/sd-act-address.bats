@@ -379,6 +379,30 @@ remote_feat() { git -C "$TMP/origin.git" rev-parse feat; }
   grep -q 'Bash(git commit' "$FX/claude.args"
 }
 
+allowed() { grep -A1 -x -- --allowedTools "$FX/claude.args" | tail -1; }
+
+@test "claude: a plain verify command and settings.implementAllow become rules, as for implement (#154)" {
+  echo '{"settings": {"verify": "test -f file.txt", "implementAllow": ["Bash(bats *)", "WebFetch"]}}' > "$SHEEPDOG_CONFIG"
+  run "$SD_ACT" address
+  [ "$status" -eq 0 ]
+  [[ ",$(allowed)," == *",Bash(test -f file.txt),Bash(bats *),WebFetch,"* ]]
+  grep -qF 'may run only these' "$FX/claude.args"
+}
+
+@test "with nothing allowed, the prompt says the agent can't run commands" {
+  run "$SD_ACT" address
+  [ "$status" -eq 0 ]
+  grep -q "can't run commands" "$FX/claude.args"
+}
+
+@test "pi gets no Claude rules for verify or settings.implementAllow" {
+  echo '{"settings": {"verify": "test -f file.txt", "implementAllow": ["Bash(bats *)"]}}' > "$SHEEPDOG_CONFIG"
+  run "$SD_ACT" address --harness pi
+  [ "$status" -eq 0 ]
+  [[ $(<"$FX/pi.args") != *"Bash("* ]]
+  grep -q "can't run commands" "$FX/pi.args"
+}
+
 @test "extra harness args from harnesses.<harness>.args" {
   "$SD_CONFIG" set --global harnesses.claude.args "--model sonnet"
   run "$SD_ACT" address
