@@ -5,6 +5,7 @@
 # Usage: sd state [--json | --long] [<branch>]
 #
 # Reports, for <branch> (default: the current one):
+#   task      the recorded task (branch.<b>.sd-task), else null
 #   pr        the branch's PR (an open one wins over closed/merged)
 #   parent    sd-parent config, else the PR base, else the default branch;
 #             whether it exists here and on the remote (a parent only here
@@ -851,7 +852,7 @@ values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
     ], [])]}
 | values {s: a, c, ctx, br, mi, owed, ob: coalesce([unnest owed | where kind == "bot"], [])}
 | values {
-    branch: s.branch, head: s.head,
+    branch: s.branch, head: s.head, task: nn(s.task),
     pr: nul(s.pr) ? null : {number: s.pr.number, url: s.pr.url, state: s.pr.state, draft: s.pr.isDraft,
                             base: s.pr.baseRefName, head_sha: s.pr.headRefOid, mergeable: s.pr.mergeable,
                             merge_state: s.pr.mergeStateStatus, review_decision: s.pr.reviewDecision,
@@ -911,13 +912,13 @@ EOF
 errors_json='[]'
 (( ${#errors[@]} == 0 )) || errors_json=$(printf '%s\n' "${errors[@]}" | prc_strings)
 refs_json=$(git for-each-ref --format='%(refname) %(objectname)' "refs/sheepdog/$branch/" | prc_strings)
-args=$(printf '{"branch": %s, "head": %s, "pr": %s, "parent": %s, "parent_source": %s, "parent_pr": %s, "parent_merged": %s, "parent_local": %s, "parent_remote": %s, "parent_unpushed": %s,
+args=$(printf '{"branch": %s, "head": %s, "task": %s, "pr": %s, "parent": %s, "parent_source": %s, "parent_pr": %s, "parent_merged": %s, "parent_local": %s, "parent_remote": %s, "parent_unpushed": %s,
   "target": %s, "default_branch": %s, "sync_ahead": %s, "behind": %s, "up_to_date": %s, "old_base": %s, "by_tree": %s, "conflict": %s, "undone": %s,
   "remote_sha": %s, "ahead": %s, "push_behind": %s, "diverged": %s, "remote_ours": %s, "theirs": %s, "remote_made": %s, "dirty": %s, "held": %s, "stale": %s,
   "r_local": %s, "r_bot": %s, "r_accepted": %s, "r_findings": %s, "r_findings_at_head": %s, "review_rounds": %s, "flags": %s, "flags_error": %s, "gh_ok": %s, "parent_ok": %s, "viewer": %s, "bots": %s, "bot_command": %s, "bot_triggered": %s, "bot_timeout": %s, "now": %s,
   "required": %s, "ignore": %s, "ignore_body": %s, "handled": %s, "refs": %s, "enrolled": %s, "harness": %s, "session": %s, "lock": %s,
   "rl_cost": %s, "rl_remaining": %s, "rl_reset": %s, "rl_limited": %s, "spend": %s, "branch_budget": %s, "errors": %s}\n' \
-  "$(jstr "$branch")" "$(jstr "$head")" "$pr" "$(jstr "$parent")" "$(jstr "$parent_source")" "$parent_pr" "$parent_merged" "$parent_local" "$parent_remote" "$parent_unpushed" \
+  "$(jstr "$branch")" "$(jstr "$head")" "$(jstr "$(cfg sd-task)")" "$pr" "$(jstr "$parent")" "$(jstr "$parent_source")" "$parent_pr" "$parent_merged" "$parent_local" "$parent_remote" "$parent_unpushed" \
   "$(jstr "$target")" "$(jstr "$default_branch")" "$sync_ahead" "$behind" "$up_to_date" "$(jnull "$old_base")" "$by_tree" "$conflict" "$undone" \
   "$(jnull "$remote_sha")" "$ahead" "$push_behind" "$diverged" "$remote_ours" "$theirs" "$remote_made" "$dirty" "$held" "$stale_json" \
   "${review[local]}" "${review[bot]}" "${review[accepted]}" "$r_findings" "$r_findings_at_head" "$review_rounds" "$flags" "$(jstr "$flags_error")" "$gh_ok" "$parent_ok" "$(jstr "$viewer")" "$bots" "$(jstr "$bot_command")" "$(jnull "$bot_triggered")" "$bot_timeout" "$(jstr "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \

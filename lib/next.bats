@@ -436,6 +436,65 @@ STACKED=('.parent.name = "base"' '.sync.target = "base"' '.sync.up_to_date = fal
   [ "$(step open-pr who '.pr = null' '.push.remote_sha = null')" = run ]
 }
 
+# ── nothing ahead of the base (#143), the default branch (#159) ──────────────
+
+FRESH=('.pr = null' '.sync.ahead = 0' '.push = {"remote_sha": null, "ahead": 0, "behind": 0, "diverged": false, "remote_ours": null}')
+
+@test "nothing ahead of the base, with a task: implement, not push or ship (#143)" {
+  [ "$(keys "${FRESH[@]}" '.task = "add c"')" = implement ]
+  [ "$(step implement who "${FRESH[@]}" '.task = "add c"')" = agent ]
+  [ "$(step implement say "${FRESH[@]}" '.task = "add c"')" = "implement the task: nothing ahead of main yet" ]
+  [ "$(step implement cmd "${FRESH[@]}" '.task = "add c"')" = "sd act implement" ]
+  # already pushed, identical to its base (soak 3): still implement, not ship
+  [ "$(keys '.pr = null' '.sync.ahead = 0' '.task = "add c"')" = implement ]
+  # past settings.branchBudget, it's chrismo's like every agent step
+  [ "$(keys "${FRESH[@]}" '.task = "add c"' '.spend = {"usd": 30, "budget": 25}')" = budget ]
+}
+
+@test "nothing ahead of the base, no task: chrismo commits or records one (#143)" {
+  [ "$(keys "${FRESH[@]}")" = nothing ]
+  [ "$(keys "${FRESH[@]}" '.task = null')" = nothing ]
+  [ "$(step nothing who "${FRESH[@]}")" = you ]
+  [ "$(step nothing say "${FRESH[@]}")" = "nothing to ship: commit, or record a task" ]
+  [ "$(step nothing cmd "${FRESH[@]}")" = null ]
+}
+
+@test "commits ahead, or ahead unknown: push and ship, task or not (#143)" {
+  [ "$(keys '.pr = null' '.push.remote_sha = null' '.push.ahead = 1' '.task = "add c"')" = "push open-pr" ]
+  [ "$(keys "${FRESH[@]}" '.sync.ahead = null' '.task = "add c"')" = "push open-pr" ]
+}
+
+@test "on the default branch: one step, chrismo starts a branch (#159)" {
+  local main=('.branch = "main"' "${FRESH[@]}")
+  [ "$(keys "${main[@]}")" = default ]
+  [ "$(step default who "${main[@]}")" = you ]
+  [ "$(step default say "${main[@]}")" = "on main: start a branch" ]
+  [ "$(step default cmd "${main[@]}")" = "sd act start" ]
+  # commits on it, a task, or errors change nothing
+  [ "$(keys "${main[@]}" '.sync.ahead = 2' '.push.ahead = 2' '.task = "add c"')" = default ]
+  [ "$(keys "${main[@]}" '.errors = ["boom"]')" = default ]
+  # a branch that is its own base, too
+  [ "$(keys "${FRESH[@]}" '.sync.target = "feat"')" = default ]
+  [ "$(step default say "${FRESH[@]}" '.sync.target = "feat"')" = "on feat: start a branch" ]
+}
+
+@test "review wording: a first review covers the branch's change (#145)" {
+  [ "$(step review say '.review.local = {sha: null, status: "none"}')" = "review the branch's change" ]
+}
+
+@test "review wording: a later review counts the commits since the last one (#145)" {
+  [ "$(step review say '.review.local = {sha: "x", status: "uncovered", uncovered: 2}')" \
+    = "review again: 2 commits since the last review" ]
+  [ "$(step review say '.review.local = {sha: "x", status: "uncovered", uncovered: 1}')" \
+    = "review again: 1 commit since the last review" ]
+  # the latest of several reviews is the last one
+  [ "$(step review say '.review.local = {sha: "x", status: "uncovered", uncovered: 3}' \
+                       '.review.bot = {sha: "y", status: "uncovered", uncovered: 1}')" \
+    = "review again: 1 commit since the last review" ]
+  [ "$(step review say '.review.local = {sha: "x", status: "rewritten-changed"}')" \
+    = "review again: the branch was rewritten since the last review" ]
+}
+
 @test "review behind HEAD: local review by the agent" {
   [ "$(step review who '.review.local = {sha: "x", status: "uncovered", uncovered: 2}')" = agent ]
   [ "$(step review cmd '.review.local = {sha: "x", status: "uncovered", uncovered: 2}')" = "sd act review" ]

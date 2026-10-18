@@ -53,6 +53,15 @@ inherit_main() { git branch -q --set-upstream-to=origin/main "${1:-feat}"; }
   [ "$output" = "nothing to push on feat" ]
 }
 
+@test "the default branch: refused, nothing pushed (#159)" {
+  git switch -q main
+  commit local
+  run "$SD_ACT" push
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not pushing main: it's the default branch"* ]]
+  [ "$(remote main)" != "$(git rev-parse main)" ]
+}
+
 @test "new commits: a plain push" {
   commit two
   run "$SD_ACT" push

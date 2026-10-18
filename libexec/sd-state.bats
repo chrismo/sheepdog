@@ -159,6 +159,22 @@ field() { jq -r "$@" <<<"$output"; }
   [ "$(field .parent.source)" = default ]
 }
 
+@test "task: the recorded sd-task, else null; NEXT implements a branch with nothing ahead (#143)" {
+  git switch -qc feat
+  state
+  [ "$(field .task)" = null ]
+  [ "$(field -c '[.next[].key]')" = '["nothing"]' ]
+  git config branch.feat.sd-task "add a"
+  state
+  [ "$(field .task)" = "add a" ]
+  [ "$(field -c '[.next[].key]')" = '["implement"]' ]
+}
+
+@test "on the default branch: NEXT is one step, start a branch (#159)" {
+  state
+  [ "$(field -c '[.next[] | [.key, .who, .cmd]]')" = '[["default","you","sd act start"]]' ]
+}
+
 @test "a branch argument is inspected without switching to it" {
   git switch -qc feat
   commit a.txt a
