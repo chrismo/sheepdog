@@ -78,7 +78,9 @@ builtin_list() {
   add sd-act:NUMBERED_Q "$(heredoc "$act" NUMBERED_Q)" "$FIX/numbered.json"
   add sd-act:ANSWERS_Q "$(heredoc "$act" ANSWERS_Q)" "$FIX/answers.json"
   add sd-act:ANSWERS_REPORT "$(heredoc "$act" ANSWERS_REPORT)" "$FIX/answered.json" line
-  add sheepdog:USAGE_Q "$(heredoc "$ROOT/lib/sheepdog.sh" USAGE_Q)" "$FIX/usage.json"
+  # USAGE_Q calls STEP_COST_FN's step_cost, as harness_usage runs it.
+  cat "$(heredoc "$ROOT/lib/sheepdog.sh" STEP_COST_FN)" "$(heredoc "$ROOT/lib/sheepdog.sh" USAGE_Q)" > "$WORK/sheepdog.USAGE_Q.full.spq"
+  add sheepdog:USAGE_Q "$WORK/sheepdog.USAGE_Q.full.spq" "$FIX/usage.json"
   printf '%s\n' "$PRN_QUERY" > "$WORK/next.PRN_QUERY.spq"
   add next:PRN_QUERY "$WORK/next.PRN_QUERY.spq" "$FIX/next.json"
 }
