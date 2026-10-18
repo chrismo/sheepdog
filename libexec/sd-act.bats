@@ -250,6 +250,16 @@ merged_wt() {
   ! git rev-parse -q --verify refs/heads/feat || false
 }
 
+@test "forget --remove: names the ignored files that go with the worktree" {
+  merged_wt
+  mkdir -p "$TMP/repo/.git/info" && printf '.env\nbuild/\n' >> "$TMP/repo/.git/info/exclude"
+  echo secret > .env && mkdir build && echo o > build/out
+  run "$SD_ACT" forget --remove
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"removed $TMP/wt with its ignored files: .env build/"* ]]
+  [ ! -d "$TMP/wt" ]
+}
+
 @test "forget --remove: a branch already deleted is just forgotten" {
   git update-ref refs/sheepdog/gone/local HEAD
   run "$SD_ACT" forget --remove gone

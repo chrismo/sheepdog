@@ -69,7 +69,8 @@
 #             merged step (#153). Refuses, changing nothing, unless the PR
 #             merged with the branch's tip in it, and when the worktree has
 #             uncommitted or untracked changes, is the main one (never
-#             removed) or is attached
+#             removed) or is attached. Ignored files (.env, build output) go
+#             with the worktree; it names them
 #   unregister  take this repo (or <path>, e.g. one that's gone) off the
 #             watcher's list; refuses while any branch is still enrolled
 #   address   hand owed bot feedback to an agent, then commit, verify, push,
@@ -2265,14 +2266,16 @@ remove_gate() {
 # --remove, first its worktree and the branch itself, so a removal git refuses
 # (a locked worktree) changes nothing. A branch already deleted is just forgotten.
 forget() {
-  local b=$1 main wt tip
+  local b=$1 main wt tip ignored
   if $remove && git rev-parse -q --verify "refs/heads/$b" >/dev/null; then
     remove_gate "$b"
     main=$(main_worktree) wt=$(worktree_for "$b") tip=$(git rev-parse "refs/heads/$b")
     cd "$main"  # the worktree we're in may be the one removed
     if [[ -n $wt ]]; then
+      # worktree remove takes ignored files too (.env, build output): say which
+      ignored=$(git -C "$wt" status --porcelain --ignored | sed -n 's/^!! //p' | paste -sd' ' -)
       git worktree remove "$wt"
-      echo "removed $wt (cd $main)"
+      echo "removed $wt${ignored:+ with its ignored files: $ignored} (cd $main)"
     fi
     git branch -qD "$b"
     echo "deleted $b (was ${tip:0:7})"
