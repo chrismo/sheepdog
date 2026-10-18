@@ -2022,7 +2022,9 @@ resolve_conflicts() {
   RESOLVE_TOUCHED=""
   task=$(git config --get "branch.$b.sd-task" || true)
   replayed=$(git log --reverse --no-merges --topo-order --format='%h %s' "$old_base..$old_head")
+  # implement's settings and session, logged in usage.sup as its own step.
   step_session "$b" implement
+  HARNESS_STEP=resolve
   if ! guidance=$(cd "$wt" && step_guidance resolvePrompt "$b" "$old_base" "$SD_LIB/prompts/resolve.md"); then
     restack_rollback "$wt" "$b" "$old_head"
     die "can't read the resolve guidance; rolled back to ${old_head:0:7}"

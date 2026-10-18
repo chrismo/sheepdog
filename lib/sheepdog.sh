@@ -215,27 +215,40 @@ harness_tally() {
   echo "${r:-"{}"}"
 }
 
+# STEP_COST_FN: step_cost(total, prev), a claude step's cost from its
+# session's total_cost_usd, which on a resume is the running total (#150):
+# what it gained since prev, the total usage.sup last knew (session_total),
+# rounded off float noise. A total below prev isn't a running total, so the
+# step is charged all of it.
+read -r -d '' STEP_COST_FN <<'EOF' || true
+fn step_cost(total, prev): prev > 0 and total >= prev ? round((total - prev) * 1000000000.) / 1000000000. : total
+EOF
+
 # The usage record, over {t, repo, branch, step, harness, session, mode,
-# status, ms, cap: the step's --max-budget-usd ("0": none known), o: claude's
-# result object, a and b: harness_tally after and before}. t is passed in, not
-# now(), so the output is the same every run. A claude step with no result
-# (killed by stepTimeout, or crashed) that still ran turns is charged its cap,
-# the most it could spend, and marked estimated; with no cap its cost is
-# unknown (null), and still marked.
+# status, ms, cap: the step's --max-budget-usd ("0": none known), prev:
+# session_total before the step, o: claude's result object, a and b:
+# harness_tally after and before}. t is passed in, not now(), so the output is
+# the same every run. A claude step with no result (killed by stepTimeout, or
+# crashed) that still ran turns is charged its cap, the most it could spend,
+# and marked estimated; with no cap its cost is unknown (null), and still
+# marked. Its session total is unknown, so the next step's cost counts from
+# the last one known, and may count the killed step's real spend again.
 read -r -d '' USAGE_Q <<'EOF' || true
 fn nn(s): s == "" ? null : s
 values {time: t::time, repo: nn(repo), branch: nn(branch), step: nn(step), harness, session, mode, status,
   context: coalesce(a.context, null), cap: cap::float64,
   unseen: harness == "claude" and nul(o) and n(a.entries) > n(b.entries),
   u: harness == "claude"
-     ? (nul(o) ? null : {cost: coalesce(o.total_cost_usd, 0), input: n(o.usage.input_tokens),
-                         cache_create: n(o.usage.cache_creation_input_tokens), cache_read: n(o.usage.cache_read_input_tokens),
-                         output: n(o.usage.output_tokens), duration_ms: n(o.duration_ms), turns: n(o.num_turns)})
+     ? (nul(o) ? null : {cost: step_cost(coalesce(o.total_cost_usd, 0), prev::float64), total: coalesce(o.total_cost_usd, null),
+                         input: n(o.usage.input_tokens), cache_create: n(o.usage.cache_creation_input_tokens),
+                         cache_read: n(o.usage.cache_read_input_tokens), output: n(o.usage.output_tokens),
+                         duration_ms: n(o.duration_ms), turns: n(o.num_turns)})
      : (nul(a.turns) ? null : {cost: a.cost - n(b.cost), input: a.input - n(b.input),
                                cache_create: a.cache_create - n(b.cache_create), cache_read: a.cache_read - n(b.cache_read),
                                output: a.output - n(b.output), duration_ms: ms, turns: a.turns - n(b.turns)})}
 | values {time, repo, branch, step, harness, session, mode, status: status::int64,
           cost_usd: not nul(u) ? u.cost::float64 : unseen and cap > 0 ? cap : null,
+          total_cost_usd: nul(u.total) ? null : u.total::float64,
           estimated: unseen,
           input: nul(u) ? null : u.input::int64, cache_create: nul(u) ? null : u.cache_create::int64,
           cache_read: nul(u) ? null : u.cache_read::int64, output: nul(u) ? null : u.output::int64,
@@ -243,15 +256,32 @@ values {time: t::time, repo: nn(repo), branch: nn(branch), step: nn(step), harne
           context: nul(context) ? null : context::int64}
 EOF
 
-# harness_usage <harness> <session-id> <mode> <status> <output> <tally-before> <ms> <cap>:
+# session_total <harness> <session-id>: the session's running total in USD as
+# usage.sup last knew it, for step_cost: its last claude row's
+# total_cost_usd, or the cost_usd of a row from before #150, which was that
+# total. 0 with none, unreadable, or for pi, whose cost is per step already.
+session_total() {
+  local file out
+  file=$(usage_file)
+  [[ $1 == claude && -s $file ]] || { echo 0; return 0; }
+  out=$({ grep -F "session:$(prc_json_string "$2")," "$file" | grep -E '^\{time:.*\}$' || true; } \
+          | prc_super -i sup -f line -c "$PRC_FNS"$'\n''where harness == "claude"
+              | values coalesce(total_cost_usd, on(estimated) ? null : cost_usd)
+              | where this is not null | tail 1' - 2>/dev/null) || out=
+  [[ $out =~ ^[0-9.e+-]+$ ]] || out=0
+  echo "$out"
+}
+
+# harness_usage <harness> <session-id> <mode> <status> <output> <tally-before> <ms> <cap> <session-total-before>:
 # one record per step, a line of Super (SUP) appended to usage.sup in
 # $SHEEPDOG_STATE_DIR: time, repo, branch, step, harness, session, mode, status,
-# cost_usd, estimated (USAGE_Q), the tokens (input, cache_create, cache_read,
+# cost_usd, total_cost_usd (claude's session total, from which cost_usd is
+# derived), estimated (USAGE_Q), the tokens (input, cache_create, cache_read,
 # output), duration_ms, turns, and context (harness_tally). claude's numbers
-# are from its JSON output; pi's, which prints none, are what its transcript
-# gained during the step; null when there are none. The cost is the harness's
-# estimate, not how it was billed. A usage.tsv from before #121 is left as it
-# was.
+# are from its JSON output, its tokens per step; pi's, which prints none, are
+# what its transcript gained during the step; null when there are none. The
+# cost is the harness's estimate, not how it was billed. A usage.tsv from
+# before #121 is left as it was.
 harness_usage() {
   local file rec obj=null after strs
   file=$(usage_file)
@@ -261,14 +291,17 @@ harness_usage() {
            "$(date -u +%FT%TZ)" "$(prc_json_string "$(main_worktree 2>/dev/null)")" "$(prc_json_string "$(harness_branch)")" \
            "$(prc_json_string "${HARNESS_STEP:-}")" "$(prc_json_string "$1")" "$(prc_json_string "$2")" "$(prc_json_string "$3")") \
     || return 0
-  rec=$(printf '{%s, "status": %s, "ms": %s, "cap": "%s", "o": %s, "a": %s, "b": %s}\n' "$strs" "$4" "$7" "${8:-0}" "$obj" "$after" "$6" \
-          | prc_super -i json -s -c "$PRC_FNS"$'\n'"$USAGE_Q" - 2>/dev/null) && [[ -n $rec ]] || return 0
+  rec=$(printf '{%s, "status": %s, "ms": %s, "cap": "%s", "prev": "%s", "o": %s, "a": %s, "b": %s}\n' \
+          "$strs" "$4" "$7" "${8:-0}" "${9:-0}" "$obj" "$after" "$6" \
+          | prc_super -i json -s -c "$PRC_FNS"$'\n'"$STEP_COST_FN"$'\n'"$USAGE_Q" - 2>/dev/null) && [[ -n $rec ]] || return 0
   mkdir -p "${file%/*}" 2>/dev/null || return 0
   printf '%s\n' "$rec" >> "$file"
 }
 
 # branch_spend <branch>: what this repo's <branch> has cost so far, in USD, by
-# usage.sup, as a JSON number; 0 with no record. The file is every repo's and
+# usage.sup's per-step cost_usd, as a JSON number; 0 with no record. A claude
+# row from before #150 holds its session's running total, so a resumed
+# session's older rows still overcount. The file is every repo's and
 # branch's, so a line that isn't a whole record (an append cut off, a stray
 # edit) is skipped with a warning rather than failing every branch's sd state;
 # one shaped like a record that still doesn't parse fails it. A filter, not
@@ -304,7 +337,7 @@ branch_spend() {
 # the step fails, and then all at once: nothing streams while it runs.
 harness_run() {
   local h=$1 sid=$2 mode=$3 timeout=$4 prompt=$5 schema=$6 settings=${7:-'{}'} out err rc said budget cap=""
-  local model effort provider use_key args fields before t0 cap_usd=0 args_cap=false i
+  local model effort provider use_key args fields before spent t0 cap_usd=0 args_cap=false i
   local -a typed=() extra f env=()
   # args last, so a newline in it shifts nothing; the end marker survives $( )
   # stripping the trailing newlines of empty fields.
@@ -339,6 +372,7 @@ harness_run() {
       if [[ -n $effort ]]; then typed+=(--thinking "$effort"); fi ;;
   esac
   before=$(harness_tally "$h" "$sid")
+  spent=$(session_total "$h" "$sid")
   t0=${EPOCHREALTIME//[.,]/}
   case $h in
     claude)
@@ -362,7 +396,7 @@ harness_run() {
     *) echo "unknown harness: $h (claude or pi)" >&2; rm -f "$err"; return 1 ;;
   esac
   rc=$?
-  harness_usage "$h" "$sid" "$mode" "$rc" "$out" "$before" $(( (${EPOCHREALTIME//[.,]/} - t0) / 1000 )) "$cap_usd"
+  harness_usage "$h" "$sid" "$mode" "$rc" "$out" "$before" $(( (${EPOCHREALTIME//[.,]/} - t0) / 1000 )) "$cap_usd" "$spent"
   if (( rc != 0 )); then
     tail -n 40 "$err" >&2
     # The end of the harness's own account of the failure: the budget hit,
@@ -370,9 +404,10 @@ harness_run() {
     # error_max_turns), else stdout that isn't JSON; pi's reply.
     said=$out
     if [[ $h == claude ]]; then
-      said=$(prc_line 'where kind(this) == "record"
+      said=$(prc_line "$STEP_COST_FN"$'\n''where kind(this) == "record"
         | values on(subtype == "error_max_budget_usd")
-            ? f"hit the step budget'"$cap"': the step cost {coalesce(total_cost_usd, 0)} USD"
+            ? f"hit the step budget'"$cap"': the step cost {step_cost(coalesce(total_cost_usd, 0), '"$spent"'::float64)} USD"
+              || ('"$spent"'::float64 > 0 ? f" (session total {coalesce(total_cost_usd, 0)} USD)" : "")
             : coalesce(nullif(result, ""), coalesce(is_error, false) ? subtype : null, "")
         | where this != ""' "$out" 2>/dev/null) || said=$out
     fi

@@ -614,6 +614,15 @@ rebase_in_progress() { [[ -e $(git rev-parse --git-path rebase-merge) || -e $(gi
   [ -z "$(git status --porcelain)" ]
 }
 
+@test "--resolve: usage.sup logs the agent's step as resolve, not implement (#150)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  grep -q 'branch:"feat",step:"resolve",' "$SHEEPDOG_STATE_DIR/usage.sup"
+  ! grep -q 'step:"implement"' "$SHEEPDOG_STATE_DIR/usage.sup"
+}
+
 @test "--resolve: an agent that changes CI config while resolving holds the restacked branch for chrismo (#124)" {
   upstream main 's/^g$/X/'
   resolver GX

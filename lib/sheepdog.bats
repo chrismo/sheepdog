@@ -425,6 +425,65 @@ usage_count() { prc_super -i sup -f line -c 'count()' "$SHEEPDOG_STATE_DIR/usage
   [ "$(usage_last 'f"{branch}|{nul(step)}|{session}"')" = "feat|true|sid1" ]
 }
 
+# claude_out <total_cost_usd>: a claude result with that session total.
+claude_out() { echo '{"type": "result", "is_error": false, "structured_output": {"ok": true}, "total_cost_usd": '"$1"'}' > "$FX/out"; }
+
+@test "harness_run: a resumed claude step's cost is what its session's total gained, the total kept beside it (#150)" {
+  harness_stubs
+  # claude's total_cost_usd on a resume is the session's running total.
+  claude_out 0.25
+  run harness_run claude sid1 new 30 "do it" '{}'
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.25|0.25" ]
+  claude_out 0.75
+  run harness_run claude sid1 resume 30 "again" '{}'
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.5|0.75" ]
+  # Another session's total isn't this one's.
+  claude_out 0.125
+  run harness_run claude sid2 new 30 "other" '{}'
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.125|0.125" ]
+  # A step with no result knows no total; the next one counts from the last known.
+  echo 1 > "$FX/status"; echo 'not json' > "$FX/out"
+  run harness_run claude sid1 resume 30 "crash" '{}'
+  [ "$(usage_last 'f"{nul(cost_usd)}|{nul(total_cost_usd)}"')" = "true|true" ]
+  rm "$FX/status"
+  claude_out 1.5
+  run harness_run claude sid1 resume 30 "more" '{}'
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.75|1.5" ]
+  # The branch's spend is the steps', not the totals' (2.625).
+  run branch_spend feat
+  [ "$output" = 1.625 ]
+}
+
+@test "harness_run: a session's total that went down isn't a running total; the step is charged all of it (#150)" {
+  harness_stubs
+  claude_out 0.5
+  run harness_run claude sid1 new 30 "do it" '{}'
+  claude_out 0.2
+  run harness_run claude sid1 resume 30 "again" '{}'
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.2|0.2" ]
+}
+
+@test "harness_run: a usage.sup row from before #150 counts as its session's total" {
+  harness_stubs
+  mkdir -p "$SHEEPDOG_STATE_DIR"
+  echo "{time:2026-10-16T20:33:06Z,repo:\"$TMP/repo\",branch:\"feat\",step:\"implement\",harness:\"claude\",session:\"sid1\",mode:\"new\",status:0,cost_usd:0.34,estimated:false}" \
+    > "$SHEEPDOG_STATE_DIR/usage.sup"
+  claude_out 0.58
+  run harness_run claude sid1 resume 30 "again" '{}'
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.24|0.58" ]
+}
+
+@test "harness_run: a resumed step that hits the budget says what the step cost, and the session's total (#150)" {
+  harness_stubs
+  claude_out 4.5
+  run harness_run claude sid1 new 30 "do it" '{}'
+  echo '{"type": "result", "is_error": true, "subtype": "error_max_budget_usd", "result": null, "total_cost_usd": 5.25}' > "$FX/out"
+  run --separate-stderr harness_run claude sid1 resume 30 "again" '{}'
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"hit the step budget (settings.stepBudget 5 USD): the step cost 0.75 USD (session total 5.25 USD)"* ]]
+  [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.75|5.25" ]
+}
+
 @test "harness_run: HARNESS_BRANCH names the branch when the worktree is detached (restack --resolve)" {
   harness_stubs
   git switch -q --detach
