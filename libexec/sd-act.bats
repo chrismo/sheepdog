@@ -320,13 +320,37 @@ merged_wt() {
   [ -d "$TMP/wt" ]
 }
 
-@test "forget --remove: never removes the main worktree" {
+@test "forget --remove: in the main worktree, switches it to the default branch and deletes the branch, never removing it" {
   merged_wt
   cd "$TMP/repo" && git worktree remove "$TMP/wt" && git switch -q feat
   run "$SD_ACT" forget --remove
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"main worktree"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"switched $TMP/repo to main"* ]]
   [ -d "$TMP/repo/.git" ]
+  [ "$(git branch --show-current)" = main ]
+  ! git rev-parse -q --verify refs/heads/feat || false
+  [ -z "$(git for-each-ref refs/sheepdog/feat/)" ]
+}
+
+@test "forget --remove: in the main worktree, refuses with uncommitted changes" {
+  merged_wt
+  cd "$TMP/repo" && git worktree remove "$TMP/wt" && git switch -q feat
+  echo wip > wip.txt
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"uncommitted changes"* ]]
+  [ "$(git branch --show-current)" = feat ]
+  [ -e wip.txt ]
+}
+
+@test "forget --remove: a merged head this clone doesn't have says fetch, not extra commits" {
+  merged_wt
+  merged_pr MERGED 0123456789abcdef0123456789abcdef01234567
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git fetch"* ]]
+  [[ "$output" != *"commits the PR doesn't"* ]] || false
+  [ -d "$TMP/wt" ]
   git rev-parse -q --verify refs/heads/feat
 }
 

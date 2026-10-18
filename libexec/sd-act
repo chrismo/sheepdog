@@ -68,9 +68,10 @@
 #             remove its worktree and delete the branch, which ends sd state's
 #             merged step (#153). Refuses, changing nothing, unless the PR
 #             merged with the branch's tip in it, and when the worktree has
-#             uncommitted or untracked changes, is the main one (never
-#             removed) or is attached. Ignored files (.env, build output) go
-#             with the worktree; it names them
+#             uncommitted or untracked changes or is attached. The main
+#             worktree is never removed: it is switched to the default branch.
+#             Ignored files (.env, build output) go with a removed worktree;
+#             it names them
 #   unregister  take this repo (or <path>, e.g. one that's gone) off the
 #             watcher's list; refuses while any branch is still enrolled
 #   address   hand owed bot feedback to an agent, then commit, verify, push,
@@ -2239,23 +2240,28 @@ enroll_branch() {
 }
 
 # remove_gate <branch>: die unless forget --remove may take the branch and its
-# worktree: the PR merged with the tip in it, and a worktree that isn't the
-# main one, isn't attached and has nothing uncommitted.
+# worktree: the PR merged with the tip in it, and a worktree that isn't
+# attached and has nothing uncommitted. Sets remove_default, the branch a main
+# worktree is switched to.
 remove_gate() {
   local b=$1 state pr_state number head_sha tip wt st
   state=$(sd-state --json "$b" 2>/dev/null) || die "can't read $b's state: sd state --json $b says why"
   pr_state=$(prc_val "$state" 'coalesce(pr.state, "")')
   number=$(prc_val "$state" 'coalesce(pr.number, 0)')
   head_sha=$(prc_val "$state" 'coalesce(pr.head_sha, "")')
+  remove_default=$(prc_val "$state" 'coalesce(sync.default, "")')
   [[ -n $pr_state ]] || die "no PR found for $b: can't tell that it merged ($(prc_val "$state" 'sj(coalesce(errors, []), "; ")'))"
   [[ $pr_state == MERGED ]] || die "PR #$number isn't merged (it's ${pr_state,,}): not removing $b"
   tip=$(git rev-parse "refs/heads/$b")
-  [[ $tip == "$head_sha" ]] || git merge-base --is-ancestor "$tip" "$head_sha" 2>/dev/null \
-    || die "$b is at ${tip:0:7}, not in PR #$number (merged at ${head_sha:0:7}): it has commits the PR doesn't; not removing it"
+  if [[ $tip != "$head_sha" ]]; then
+    git cat-file -e "$head_sha^{commit}" 2>/dev/null \
+      || die "PR #$number merged at ${head_sha:0:7}, which this clone doesn't have: git fetch, then sd act forget --remove"
+    git merge-base --is-ancestor "$tip" "$head_sha" \
+      || die "$b is at ${tip:0:7}, not in PR #$number (merged at ${head_sha:0:7}): it has commits the PR doesn't; not removing it"
+  fi
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || return 0
-  [[ $wt != "$(main_worktree)" ]] \
-    || die "$b is checked out in the main worktree, which is never removed: switch it to another branch, then sd act forget --remove $b"
+  [[ $wt != "$(main_worktree)" || -n $remove_default ]] || die "can't tell the default branch to switch the main worktree to"
   [[ -z $(git config "branch.$b.sd-lock" || true) ]] || die "$b is attached (branch.$b.sd-lock is set): not removing its worktree"
   # -uall: status.showUntrackedFiles=no hides them, and worktree remove then drops them
   st=$(git -C "$wt" status --porcelain --untracked-files=all) || die "can't read $wt's status"
@@ -2271,7 +2277,10 @@ forget() {
     remove_gate "$b"
     main=$(main_worktree) wt=$(worktree_for "$b") tip=$(git rev-parse "refs/heads/$b")
     cd "$main"  # the worktree we're in may be the one removed
-    if [[ -n $wt ]]; then
+    if [[ $wt == "$main" ]]; then  # never removed: switched off the branch
+      git switch -q "$remove_default"
+      echo "switched $main to $remove_default"
+    elif [[ -n $wt ]]; then
       # worktree remove takes ignored files too (.env, build output): say which
       ignored=$(git -C "$wt" status --porcelain --ignored | sed -n 's/^!! //p' | paste -sd' ' -)
       git worktree remove "$wt"
