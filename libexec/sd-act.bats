@@ -237,7 +237,7 @@ merged_wt() {
   cd "$TMP/repo"
   [ ! -d "$TMP/wt" ]
   [ -z "$(git worktree list --porcelain | grep "$TMP/wt" || true)" ]
-  ! git rev-parse -q --verify refs/heads/feat
+  ! git rev-parse -q --verify refs/heads/feat || false
   [ -z "$(git for-each-ref refs/sheepdog/feat/)" ]
   [ -z "$(git config branch.feat.sheepdog || true)" ]
 }
@@ -247,7 +247,36 @@ merged_wt() {
   cd "$TMP/repo" && git worktree remove "$TMP/wt"
   run "$SD_ACT" forget --remove feat
   [ "$status" -eq 0 ]
-  ! git rev-parse -q --verify refs/heads/feat
+  ! git rev-parse -q --verify refs/heads/feat || false
+}
+
+@test "forget --remove: a branch already deleted is just forgotten" {
+  git update-ref refs/sheepdog/gone/local HEAD
+  run "$SD_ACT" forget --remove gone
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"forgot gone"* ]]
+  [ -z "$(git for-each-ref refs/sheepdog/gone/)" ]
+}
+
+@test "forget --remove: a worktree git won't remove changes nothing" {
+  merged_wt
+  git -C "$TMP/repo" worktree lock "$TMP/wt"
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [ -d "$TMP/wt" ]
+  git rev-parse -q --verify refs/heads/feat
+  [ -n "$(git for-each-ref refs/sheepdog/feat/)" ]
+  [ "$(git config branch.feat.sheepdog)" = true ]
+}
+
+@test "forget --remove: untracked files count even when status hides them" {
+  merged_wt
+  git config status.showUntrackedFiles no
+  echo wip > wip.txt
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"uncommitted changes"* ]]
+  [ -d "$TMP/wt" ]
 }
 
 @test "forget --remove: refuses with uncommitted changes, and changes nothing" {
