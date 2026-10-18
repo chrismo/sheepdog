@@ -288,11 +288,7 @@ if lookup_pr "$branch"; then
   { read -r viewer; read -r default_branch; } \
     < <(prc_line 'values coalesce(data.viewer.login, ""), coalesce(data.repository.defaultBranchRef.name, "")' "$RESP")
 fi
-if [[ -z $default_branch ]]; then
-  default_branch=$(git symbolic-ref -q --short "refs/remotes/$remote/HEAD" 2>/dev/null || true)
-  default_branch=${default_branch#"$remote"/}
-  [[ -n $default_branch ]] || default_branch=main
-fi
+[[ -n $default_branch ]] || default_branch=$(remote_default "$remote")
 
 parent=$(cfg sd-parent) parent_source=config
 if [[ -z $parent ]]; then

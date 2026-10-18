@@ -29,6 +29,21 @@ pin_write() {
     && git update-ref -m "pin $2 base" "refs/sheepdog/$1/$2-base" "$4"
 }
 
+# remote_default <remote>: the default branch without asking GitHub: what the
+# remote says its HEAD is, else refs/remotes/<remote>/HEAD, else main. sd act
+# push reads it, and so does sd state when GitHub can't answer, so the two
+# agree on what the default branch is (#159).
+remote_default() {
+  local ref
+  ref=$(with_timeout 10 git ls-remote --symref "$1" HEAD 2>/dev/null \
+          | sed -n 's|^ref: refs/heads/\(.*\)	HEAD$|\1|p') || true
+  if [[ -z $ref ]]; then
+    ref=$(git symbolic-ref -q --short "refs/remotes/$1/HEAD" 2>/dev/null || true)
+    ref=${ref#"$1"/}
+  fi
+  echo "${ref:-main}"
+}
+
 # commits_not_ours <reflog> <sha>: how many commits of <sha> no reflog entry reaches.
 commits_not_ours() {
   sed -n 's/^./^&/p' <<<"$1" | git rev-list --count --stdin "$2"
