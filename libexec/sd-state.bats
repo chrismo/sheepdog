@@ -168,6 +168,16 @@ field() { jq -r "$@" <<<"$output"; }
   state
   [ "$(field .task)" = "add a" ]
   [ "$(field -c '[.next[].key]')" = '["implement"]' ]
+  [ "$(field .push.dirty)" = false ]
+}
+
+@test "dirty: reported for a branch with nothing ahead, where implement would refuse the worktree (#143)" {
+  git switch -qc feat
+  git config branch.feat.sd-task "add a"
+  echo wip > wip.txt
+  state
+  [ "$(field .push.dirty)" = true ]
+  [ "$(field -c '[.next[].key]')" = '["nothing"]' ]
 }
 
 @test "on the default branch: NEXT is one step, start a branch (#159)" {

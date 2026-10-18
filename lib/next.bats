@@ -459,6 +459,18 @@ FRESH=('.pr = null' '.sync.ahead = 0' '.push = {"remote_sha": null, "ahead": 0, 
   [ "$(step nothing cmd "${FRESH[@]}")" = null ]
 }
 
+@test "nothing ahead, uncommitted changes: chrismo commits them; implement would refuse the worktree (#143)" {
+  [ "$(keys "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" = nothing ]
+  [ "$(step nothing say "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" \
+    = "nothing to ship, and the worktree has uncommitted changes: commit them, or remove them and sd act implement" ]
+  [ "$(step nothing say "${FRESH[@]}" '.push.dirty = true')" \
+    = "nothing to ship, and the worktree has uncommitted changes: commit them" ]
+}
+
+@test "nothing ahead, with errors: no implement, which spends; the errors step leads (#143)" {
+  [ "$(keys "${FRESH[@]}" '.task = "add c"' '.errors = ["gh: boom"]')" = errors ]
+}
+
 @test "commits ahead, or ahead unknown: push and ship, task or not (#143)" {
   [ "$(keys '.pr = null' '.push.remote_sha = null' '.push.ahead = 1' '.task = "add c"')" = "push open-pr" ]
   [ "$(keys "${FRESH[@]}" '.sync.ahead = null' '.task = "add c"')" = "push open-pr" ]
