@@ -83,11 +83,12 @@
 #             read. A conflict is
 #             refused, or with --resolve handed to the agent (J1): it edits
 #             the conflicting files in the branch's session, the pipeline
-#             adds and continues, up to 3 stops; an agent that finds the
-#             replayed commit already on the target rolls it back as a wrong
-#             base. A resolved rebase skips the
+#             adds and continues, up to 3 stops, printing the agent's summary
+#             of each; an agent that finds the replayed commit already on the
+#             target rolls it back as a wrong base. A resolved rebase skips the
 #             unchanged-change check (a resolution changes the diff), so its
-#             result is unreviewed: verify runs, then sd act review is next
+#             result is unreviewed: verify runs, and sd state's NEXT says
+#             when to review it
 #   retarget  after the parent merged: point the PR at the default branch
 #             (gh pr edit --base; GitHub usually did it already when the
 #             parent's branch was deleted) and rewrite sd-parent to it
@@ -226,7 +227,8 @@
 # .sd-held (the CI config hold: the commit, then the paths, one per line);
 # sheepdog.repo (global) lists the enrolled repos.
 #
-# <branch> defaults to the current one.
+# <branch> defaults to the current one. A verb prints what it did, not what to
+# run next: sd state's NEXT is the one place the order lives.
 
 set -euo pipefail
 
@@ -1261,7 +1263,6 @@ implement_run() {
   if ! $changed; then
     echo "$b: the agent declined the review findings: $summary"
     prc_line "$ANSWERS_REPORT" "$answered"
-    echo "next: chrismo fixes them, or accepts HEAD: sd act review --accept"
     return 0
   fi
   echo "$b: $summary"
@@ -1269,7 +1270,6 @@ implement_run() {
   git -C "$wt" log --format='  %h %s' "$before..refs/heads/$b"
   hold_since "$b" "$gbase" "$agent_head"
   verify_autofix "$wt" "$b" || die "verify failed ($VERIFY_CMD); the commit is kept in $wt"
-  echo "next: sd act review"
 }
 
 implement() {
@@ -1957,10 +1957,10 @@ restack() {
   echo "restacked $b onto $remote/$target$via ($(plural "$(git rev-list --count "$new_base..$new_head")" commit)); not pushed: $how"
   [[ -z $via ]] || echo "$b's commits are now one, committed by you; the old ones are at ${old_head:0:7}"
   line=$(prc_line "$KEEP_PARENT" "$state") \
-    || die "restacked $b, but couldn't tell whether its PR still targets the parent; sd-parent left as is$($resolved && echo ". The agent resolved conflicts, so verify and review: sd act verify, sd act review")"
+    || die "restacked $b, but couldn't tell whether its PR still targets the parent; sd-parent left as is$($resolved && echo ". The agent resolved conflicts, so $b's change is unverified and unreviewed")"
   if [[ -n $line ]]; then echo "$line"; else parent_to_default "$b" "$state"; fi
   if $resolved; then
-    echo "conflicts resolved by the agent, so $b's change is unreviewed: sd act review next"
+    echo "conflicts resolved by the agent, so $b's change is unreviewed"
     verify_run "$wt" "$b" || die "verify failed ($VERIFY_CMD) on the resolved branch; it is kept at ${new_head:0:7}, unpushed. Fix, then sd act verify"
   fi
 }
@@ -2084,6 +2084,7 @@ resolve_conflicts() {
       echo "sd act: the agent gave up: $(prc_val "$result" 'coalesce(summary, "")'); rolled back to ${old_head:0:7}" >&2
       return 1
     fi
+    echo "$b (stop $stops): $(prc_val "$result" 'coalesce(summary, "")')"
     if ! after=$(worktree_tree "$wt"); then
       restack_rollback "$wt" "$b" "$old_head"
       echo "sd act: can't read what the agent changed in $wt; rolled back to ${old_head:0:7}" >&2

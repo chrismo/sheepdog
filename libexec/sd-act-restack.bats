@@ -608,8 +608,7 @@ rebase_in_progress() { [[ -e $(git rev-parse --git-path rebase-merge) || -e $(gi
   grep -qx GX file.txt
   ! grep -q '<<<<<<<' file.txt
   [ "$(base_pin)" = "$(git rev-parse origin/main)" ]
-  [[ "$output" == *"resolved"* ]]
-  [[ "$output" == *"sd act review"* ]]
+  [[ "$output" == *"resolved by the agent, so feat's change is unreviewed"* ]]
   ! rebase_in_progress
   [ -z "$(git status --porcelain)" ]
 }
@@ -621,6 +620,25 @@ rebase_in_progress() { [[ -e $(git rev-parse --git-path rebase-merge) || -e $(gi
   [ "$status" -eq 0 ]
   grep -q 'branch:"feat",step:"resolve",' "$SHEEPDOG_STATE_DIR/usage.sup"
   ! grep -q 'step:"implement"' "$SHEEPDOG_STATE_DIR/usage.sup"
+}
+
+# sd state's NEXT is the one place the order lives (#144).
+@test "--resolve: names no next command; sd state's NEXT does that (#144)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"sd act review"* ]]
+  [[ "$output" != *"next"* ]]
+}
+
+@test "--resolve: prints the agent's summary of each stop (#156)" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  echo '{"outcome": "done", "summary": "kept both; main'"'"'s new case lacks the refactor"}' > "$FX/result.json"
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"feat (stop 1): kept both; main's new case lacks the refactor"* ]]
 }
 
 @test "--resolve: an agent that changes CI config while resolving holds the restacked branch for chrismo (#124)" {
