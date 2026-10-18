@@ -193,6 +193,110 @@ SH
   [ -n "$(git for-each-ref refs/sheepdog/other/)" ]
 }
 
+@test "forget: deletes the branch's stored description too (#153)" {
+  mkdir -p .git/sheepdog
+  echo '{}' > .git/sheepdog/feat.describe.json
+  echo '{}' > .git/sheepdog/other.describe.json
+  run "$SD_ACT" forget
+  [ "$status" -eq 0 ]
+  [ ! -e .git/sheepdog/feat.describe.json ]
+  [ -e .git/sheepdog/other.describe.json ]
+}
+
+# merged_pr <state> <head>: gh answers that feat's PR is <state> at <head>.
+merged_pr() {
+  local pr='{"number":3,"url":"u","state":"'"$1"'","isDraft":false,"baseRefName":"main","headRefName":"feat","headRefOid":"'"$2"'",
+  "mergeable":"UNKNOWN","mergeStateStatus":"UNKNOWN","reviewDecision":null,"mergedAt":null}'
+  cat > "$TMP/fakebin/gh" <<SH
+#!/usr/bin/env bash
+cat <<'JSON'
+{"data":{"viewer":{"login":"me"},"repository":{"defaultBranchRef":{"name":"main"},"pullRequests":{"nodes":[$pr]},"pullRequest":$pr}}}
+JSON
+SH
+}
+
+# merged_wt: feat in its own worktree at $TMP/wt, one commit past main, its PR
+# merged at that tip and the remote branch deleted (a squash merge).
+merged_wt() {
+  git switch -q main && no_prs
+  git worktree add -q "$TMP/wt" feat
+  git -C "$TMP/wt" commit -q --allow-empty -m f1
+  merged_pr MERGED "$(git rev-parse feat)"
+  "$SD_ACT" enroll feat >/dev/null
+  git update-ref refs/sheepdog/feat/local feat
+  cd "$TMP/wt"
+}
+
+@test "forget --remove: a merged branch's worktree is removed and the branch deleted (#153)" {
+  merged_wt
+  run "$SD_ACT" forget --remove
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"forgot feat"* ]]
+  [[ "$output" == *"removed $TMP/wt"* ]]
+  [[ "$output" == *"deleted feat"* ]]
+  cd "$TMP/repo"
+  [ ! -d "$TMP/wt" ]
+  [ -z "$(git worktree list --porcelain | grep "$TMP/wt" || true)" ]
+  ! git rev-parse -q --verify refs/heads/feat
+  [ -z "$(git for-each-ref refs/sheepdog/feat/)" ]
+  [ -z "$(git config branch.feat.sheepdog || true)" ]
+}
+
+@test "forget --remove: a merged branch checked out nowhere is deleted" {
+  merged_wt
+  cd "$TMP/repo" && git worktree remove "$TMP/wt"
+  run "$SD_ACT" forget --remove feat
+  [ "$status" -eq 0 ]
+  ! git rev-parse -q --verify refs/heads/feat
+}
+
+@test "forget --remove: refuses with uncommitted changes, and changes nothing" {
+  merged_wt
+  echo wip > wip.txt
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"uncommitted changes"* ]]
+  [ -d "$TMP/wt" ]
+  git rev-parse -q --verify refs/heads/feat
+  [ -n "$(git for-each-ref refs/sheepdog/feat/)" ]
+  [ "$(git config branch.feat.sheepdog)" = true ]
+}
+
+@test "forget --remove: refuses when the branch has commits the merged PR doesn't" {
+  merged_wt
+  git commit -q --allow-empty -m after-merge
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not in PR #3"* ]]
+  [ -d "$TMP/wt" ]
+  git rev-parse -q --verify refs/heads/feat
+}
+
+@test "forget --remove: refuses when the PR isn't merged" {
+  merged_wt
+  merged_pr OPEN "$(git rev-parse feat)"
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"isn't merged"* ]]
+  [ -d "$TMP/wt" ]
+}
+
+@test "forget --remove: never removes the main worktree" {
+  merged_wt
+  cd "$TMP/repo" && git worktree remove "$TMP/wt" && git switch -q feat
+  run "$SD_ACT" forget --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"main worktree"* ]]
+  [ -d "$TMP/repo/.git" ]
+  git rev-parse -q --verify refs/heads/feat
+}
+
+@test "--remove is for sd act forget only" {
+  run "$SD_ACT" unenroll --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--remove is for sd act forget only"* ]]
+}
+
 @test "forget: a branch with nothing stored, even one already deleted, is fine" {
   run "$SD_ACT" forget
   [ "$status" -eq 0 ]

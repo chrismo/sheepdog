@@ -136,8 +136,8 @@ step() { # step <key> <field> <jq-assignment...>
 
 @test "merged: only the cleanup step, whatever else is true" {
   [ "$(keys '.pr.state = "MERGED"' '.push.ahead = 3' '.ci.verdict = "red"' '.errors = ["x"]')" = merged ]
-  [ "$(step merged cmd '.pr.state = "MERGED"')" = "sd act forget" ]
-  [ "$(step merged say '.pr.state = "MERGED"')" = "merged: drop the branch's pins and enrollment, then remove this worktree" ]
+  [ "$(step merged cmd '.pr.state = "MERGED"')" = "sd act forget --remove" ]
+  [ "$(step merged say '.pr.state = "MERGED"')" = "merged: drop the branch's pins and enrollment, remove its worktree and delete it" ]
 }
 
 @test "closed: only the closed step" {

@@ -7,7 +7,7 @@
 #   sd act implement [--harness <h>] [<branch>]
 #   sd act enroll   [<branch>]
 #   sd act unenroll [<branch>]
-#   sd act forget   [<branch>]
+#   sd act forget   [--remove] [<branch>]
 #   sd act unregister [--force] [<path>]
 #   sd act address  [--force] [--no-publish] [--harness <h>] [<branch>]
 #   sd act ack      [--id <id>]... [<branch>]
@@ -63,7 +63,13 @@
 #             or a parent that moved on) and store nothing
 #   unenroll  clear the mark
 #   forget    the branch is done (merged, abandoned): unenroll it and delete
-#             its refs/sheepdog/<branch>/* pins, which outlive a branch -D
+#             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
+#             and its stored description. --remove, once its PR merged: then
+#             remove its worktree and delete the branch, which ends sd state's
+#             merged step (#153). Refuses, changing nothing, unless the PR
+#             merged with the branch's tip in it, and when the worktree has
+#             uncommitted or untracked changes, is the main one (never
+#             removed) or is attached
 #   unregister  take this repo (or <path>, e.g. one that's gone) off the
 #             watcher's list; refuses while any branch is still enrolled
 #   address   hand owed bot feedback to an agent, then commit, verify, push,
@@ -242,12 +248,13 @@ usage() { help >&2; exit 1; }
 verb=$1; shift
 if [[ $verb == -h || $verb == --help ]]; then help; exit 0; fi
 
-force=false accept=false no_publish=false resolve=false no_implement=false harness_opt="" parent_opt="" branch=""
+force=false accept=false remove=false no_publish=false resolve=false no_implement=false harness_opt="" parent_opt="" branch=""
 ids=() positionals=()
 while (( $# )); do
   case $1 in
     --force) force=true ;;
     --accept) accept=true ;;
+    --remove) remove=true ;;
     --no-publish) no_publish=true ;;
     --resolve) resolve=true ;;
     --no-implement) no_implement=true ;;
@@ -269,6 +276,7 @@ if [[ $verb == start ]]; then
   branch=${positionals[0]} task_arg=${positionals[1]:-}
 fi
 if $accept && [[ $verb != review ]]; then die "--accept is for sd act review only"; fi
+if $remove && [[ $verb != forget ]]; then die "--remove is for sd act forget only"; fi
 positional=$branch
 branch=${branch:-$(git branch --show-current)}
 [[ -n $branch ]] || die "detached HEAD; name a branch"
@@ -2229,17 +2237,55 @@ enroll_branch() {
   record_lineage "$1" || true
 }
 
+# remove_gate <branch>: die unless forget --remove may take the branch and its
+# worktree: the PR merged with the tip in it, and a worktree that isn't the
+# main one, isn't attached and has nothing uncommitted.
+remove_gate() {
+  local b=$1 state pr_state number head_sha tip wt st
+  state=$(sd-state --json "$b" 2>/dev/null) || die "can't read $b's state: sd state --json $b says why"
+  pr_state=$(prc_val "$state" 'coalesce(pr.state, "")')
+  number=$(prc_val "$state" 'coalesce(pr.number, 0)')
+  head_sha=$(prc_val "$state" 'coalesce(pr.head_sha, "")')
+  [[ -n $pr_state ]] || die "no PR found for $b: can't tell that it merged ($(prc_val "$state" 'sj(coalesce(errors, []), "; ")'))"
+  [[ $pr_state == MERGED ]] || die "PR #$number isn't merged (it's ${pr_state,,}): not removing $b"
+  tip=$(git rev-parse "refs/heads/$b")
+  [[ $tip == "$head_sha" ]] || git merge-base --is-ancestor "$tip" "$head_sha" 2>/dev/null \
+    || die "$b is at ${tip:0:7}, not in PR #$number (merged at ${head_sha:0:7}): it has commits the PR doesn't; not removing it"
+  wt=$(worktree_for "$b")
+  [[ -n $wt ]] || return 0
+  [[ $wt != "$(main_worktree)" ]] \
+    || die "$b is checked out in the main worktree, which is never removed: switch it to another branch, then sd act forget --remove $b"
+  [[ -z $(git config "branch.$b.sd-lock" || true) ]] || die "$b is attached (branch.$b.sd-lock is set): not removing its worktree"
+  st=$(git -C "$wt" status --porcelain) || die "can't read $wt's status"
+  [[ -z $st ]] || die "$wt has uncommitted changes: commit or remove them, then sd act forget --remove"
+}
+
+# forget <branch>: unenroll it and drop what sheepdog stores for it; with
+# --remove, then its worktree and the branch itself.
+forget() {
+  local b=$1 main wt tip
+  if $remove; then remove_gate "$b"; fi
+  git config --unset "branch.$b.sheepdog" || (( $? == 5 ))
+  git for-each-ref --format='delete %(refname)' "refs/sheepdog/$b/" | git update-ref --stdin
+  rm -f "$(describe_file "$b")"
+  echo "forgot $b"
+  $remove || return 0
+  main=$(main_worktree) wt=$(worktree_for "$b") tip=$(git rev-parse "refs/heads/$b")
+  if [[ -n $wt ]]; then
+    git -C "$main" worktree remove "$wt"
+    echo "removed $wt (cd $main)"
+  fi
+  git -C "$main" branch -qD "$b"
+  echo "deleted $b (was ${tip:0:7})"
+}
+
 lock_sweep "$branch"
 case $verb in
   enroll) enroll_branch "$branch" ;;
   unenroll)
     git config --unset "branch.$branch.sheepdog" || (( $? == 5 ))  # 5: wasn't set
     ;;
-  forget)
-    git config --unset "branch.$branch.sheepdog" || (( $? == 5 ))
-    git for-each-ref --format='delete %(refname)' "refs/sheepdog/$branch/" | git update-ref --stdin
-    echo "forgot $branch"
-    ;;
+  forget) forget "$branch" ;;
   unregister)
     path=${positional:-$(main_worktree)}
     if ! $force && [[ -d $path ]]; then

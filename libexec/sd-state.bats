@@ -2379,3 +2379,13 @@ usage_row() { # usage_row <branch> <cost_usd> [repo]
   [[ "${lines[0]}" == "no PR · "* ]] || false
   [[ "$output" == *"1 unpushed"* ]]
 }
+
+@test "summary: a merged PR whose remote branch is gone counts nothing unpushed (#153)" {
+  git switch -qc feat && commit a.txt a
+  pr_fixture feat '.state = "MERGED"'
+  run "$SD_STATE"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "https://example/pr/7 merged"* ]] || false
+  [[ "${lines[0]}" != *"unpushed"* ]] || false
+  [[ "${lines[0]}" != *"not pushed"* ]]
+}

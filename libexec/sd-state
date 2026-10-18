@@ -941,7 +941,9 @@ values [
   nul(pr) ? "no PR" : f"{pr.url} {on(pr.draft) ? "draft" : lower(pr.state)}",
   on(parent.merged) ? f"parent merged → {sync.target}" : null,
   on(sync.up_to_date == false) ? f"↓{sync.behind} {sync.target}{on(sync.conflict) ? " (conflict)" : ""}" : null,
-  nul(push.remote_sha) ? (n(push.ahead) > 0 ? f"{push.ahead} unpushed" : "not pushed")
+  -- merged: a squash merge's deleted remote branch would read as unpushed work (#153)
+  on(pr.state == "MERGED") ? null
+  : nul(push.remote_sha) ? (n(push.ahead) > 0 ? f"{push.ahead} unpushed" : "not pushed")
   : on(push.diverged) ? f"diverged from remote{on(push.remote_ours) ? "" : " (not ours)"}"
   : n(push.ahead) > 0 ? f"{push.ahead} unpushed" : null,
   not nul(push.remote_sha) and not on(push.diverged) and n(push.behind) > 0
