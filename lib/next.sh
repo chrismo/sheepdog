@@ -76,7 +76,7 @@ values {...s, remote}
                ? step("budget", "you", f"spent {usd(spend.usd)} on this branch, past settings.branchBudget ({usd(spend.budget)}): raise it, or take over",
                       "sd act attach") : null)
 | unnest [
-    on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, then remove this worktree", "sd act forget") : null,
+    on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, remove its worktree and delete it", "sd act forget --remove") : null,
     on(pr.state == "CLOSED") ? step("closed", "you", "PR closed without merging", null) : null,
     open and len(errors) > 0
       ? step("errors", "you", f"{plural(len(errors), "error")}: the steps below may be wrong", "sd state --json") : null,
