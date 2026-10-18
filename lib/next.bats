@@ -460,11 +460,22 @@ FRESH=('.pr = null' '.sync.ahead = 0' '.push = {"remote_sha": null, "ahead": 0, 
 }
 
 @test "nothing ahead, uncommitted changes: chrismo commits them; implement would refuse the worktree (#143)" {
-  [ "$(keys "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" = nothing ]
-  [ "$(step nothing say "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" \
+  # its own key: sd act start's implement looks the same while it edits, so sd watch doesn't notify it
+  [ "$(keys "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" = nothing-dirty ]
+  [ "$(step nothing-dirty who "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" = you ]
+  [ "$(step nothing-dirty say "${FRESH[@]}" '.task = "add c"' '.push.dirty = true')" \
     = "nothing to ship, and the worktree has uncommitted changes: commit them, or remove them and sd act implement" ]
-  [ "$(step nothing say "${FRESH[@]}" '.push.dirty = true')" \
+  [ "$(step nothing-dirty say "${FRESH[@]}" '.push.dirty = true')" \
     = "nothing to ship, and the worktree has uncommitted changes: commit them" ]
+}
+
+@test "nothing ahead, but the remote has commits reset away here: the #86 steps, not implement or nothing (#143)" {
+  local gone=("${FRESH[@]}" '.task = "add c"' '.push.remote_sha = "r1"' '.push.behind = 1' '.push.remote_ours = true')
+  [ "$(keys "${gone[@]}" '.push.remote_made = true')" = "push open-pr" ]
+  [ "$(step push say "${gone[@]}" '.push.remote_made = true')" = "force-push: drop 1 commit the remote has, reset away here" ]
+  [ "$(keys "${gone[@]}" '.push.remote_made = true' '.push.dirty = true')" = "reset-dirty open-pr" ]
+  [ "$(keys "${gone[@]}" '.push.remote_made = false')" = "take open-pr" ]
+  [ "$(keys "${gone[@]}" '.push.remote_ours = false' '.push.theirs = 1')" = "foreign open-pr" ]
 }
 
 @test "nothing ahead, with errors: no implement, which spends; the errors step leads (#143)" {

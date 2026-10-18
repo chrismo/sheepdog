@@ -177,7 +177,7 @@ field() { jq -r "$@" <<<"$output"; }
   echo wip > wip.txt
   state
   [ "$(field .push.dirty)" = true ]
-  [ "$(field -c '[.next[].key]')" = '["nothing"]' ]
+  [ "$(field -c '[.next[].key]')" = '["nothing-dirty"]' ]
 }
 
 @test "on the default branch: NEXT is one step, start a branch (#159)" {

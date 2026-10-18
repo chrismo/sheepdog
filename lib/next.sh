@@ -14,7 +14,8 @@
 # start a branch (#159). A branch with nothing ahead of its base and no PR
 # has nothing to push or ship: its task is implemented, or with no task it's
 # chrismo's (#143). So are uncommitted changes there, which implement refuses;
-# and with errors, pr may be wrong, so nothing spends on implementing.
+# and with errors, pr may be wrong, so nothing spends on implementing. A
+# remote with commits reset away here isn't empty: the #86 steps handle it.
 #
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
@@ -75,7 +76,7 @@ values {...s, remote}
                 and not covers(review.bot) and not covers(review.accepted)),
       bot_waiting:=(covers(review.bot) and on(review.bot.replied == false) and not covers(review.accepted)),
       own_base:=(on(branch == sync.default) or on(sync.target == branch)),
-      empty:=(pr is null and on(sync.ahead == 0)),
+      empty:=(pr is null and on(sync.ahead == 0) and n(push.behind) == 0),
       tasked:=(coalesce(task, "") != ""),
       last_review:=coalesce([unnest [review.local, review.bot, review.accepted]
                              | where on(status == "uncovered") | values uncovered | sort this][0], null),
@@ -139,7 +140,7 @@ values {...s, remote}
          ? step("ci-config", "you", f"the agent changed CI config ({join(push.held.paths, ", ")}): review it; push once the steps above are done", null)
          : step("ci-config", "you", f"the agent changed CI config ({join(push.held.paths, ", ")}): review, then sd act push", "sd act push")) : null,
     empty and on(push.dirty)
-      ? step("nothing", "you", f"nothing to ship, and the worktree has uncommitted changes: commit them{tasked ? ", or remove them and sd act implement" : ""}", null)
+      ? step("nothing-dirty", "you", f"nothing to ship, and the worktree has uncommitted changes: commit them{tasked ? ", or remove them and sd act implement" : ""}", null)
       : empty and tasked
       ? (len(errors) == 0 ? agent(budget, "implement", f"implement the task: nothing ahead of {sync.target} yet", "sd act implement") : null)
       : empty ? step("nothing", "you", "nothing to ship: commit, or record a task", null) : null,
