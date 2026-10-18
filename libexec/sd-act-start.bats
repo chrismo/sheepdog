@@ -307,7 +307,16 @@ started() { # a worktree for feat-x with a task, no agent run yet
   [ "$(tail -1 file.txt)" = c ]
   [ -z "$(git status --porcelain)" ]
   [[ "$output" == *"Added the third line."* ]]
-  [[ "$output" == *"sd act review"* ]]
+}
+
+# sd state's NEXT is the one place the order lives (#144): after implement it
+# may say restack or push before review.
+@test "implement: names no next command; sd state's NEXT does that (#144)" {
+  started
+  run "$SD_ACT" implement
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"next:"* ]]
+  [[ "$output" != *"sd act review"* ]]
 }
 
 @test "implement: the prompt carries the task and the verify command" {
@@ -519,7 +528,7 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   [ "$status" -eq 0 ]
   [ "$(git log -1 --format=%s)" = "Add c" ]
   [[ "$output" == *"declined"*"a is lowercase on purpose"* ]]
-  [[ "$output" == *"sd act review"* ]]
+  [[ "$output" != *"next:"* ]]
   [ "$(findings_rec '[.findings[] | [.action, .reply]]')" = '[["declined","a is lowercase on purpose"],["fixed","B now"]]' ]
   [ "$("$SD_STATE" --json | jq -c '[.review.findings.at_head, any(.next[]; .key == "review")]')" = '[false,true]' ]
 }
@@ -770,7 +779,8 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   run "$SD_ACT" implement
   [ "$status" -eq 0 ]
   [[ "$output" == *"declined"*"b is right as it is."* ]]
-  [ "$(findings_rec '[.round, .findings[0].action, .findings[0].reply]')" = '[2,"declined","b is right as it is."]' ]
+  [[ "$output" != *"next:"* ]]
+  [ "$(findings_rec '[.round,.findings[0].action, .findings[0].reply]')" = '[2,"declined","b is right as it is."]' ]
   [ "$("$SD_STATE" --json | jq -c '[.review.findings.declined, any(.next[]; .key == "review-decide")]')" = '[true,true]' ]
 }
 
