@@ -62,6 +62,23 @@ inherit_main() { git branch -q --set-upstream-to=origin/main "${1:-feat}"; }
   [ "$(remote main)" != "$(git rev-parse main)" ]
 }
 
+@test "the default branch is the remote's HEAD, not a guess from local refs (#159)" {
+  git branch -q develop main && git push -q origin develop 2>/dev/null
+  git -C "$TMP/origin.git" symbolic-ref HEAD refs/heads/develop
+  git remote set-head origin -d
+  git switch -q develop
+  commit dev
+  run "$SD_ACT" push
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not pushing develop: it's the default branch"* ]]
+  [ "$(remote develop)" != "$(git rev-parse develop)" ]
+  git switch -q main
+  commit local
+  run "$SD_ACT" push
+  [ "$status" -eq 0 ]
+  [ "$(remote main)" = "$(git rev-parse main)" ]
+}
+
 @test "new commits: a plain push" {
   commit two
   run "$SD_ACT" push

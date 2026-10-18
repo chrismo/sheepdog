@@ -994,6 +994,14 @@ start_default() {
   return 1
 }
 
+# remote_default <remote>: what the remote says its HEAD is (on GitHub, the
+# default branch, as sd state reads it), else start_default's guess.
+remote_default() {
+  local ref
+  ref=$(git ls-remote --symref "$1" HEAD 2>/dev/null | sed -n 's|^ref: refs/heads/\(.*\)	HEAD$|\1|p')
+  [[ -n $ref ]] && echo "$ref" || start_default "$1"
+}
+
 # start_point <remote> <branch>
 start_point() {
   if git show-ref -q --verify "refs/remotes/$1/$2"; then echo "refs/remotes/$1/$2"
@@ -1857,7 +1865,7 @@ push() {
     die "not pushing $branch: taken over (branch.$branch.sd-lock is set; --force to push anyway)"
   fi
   remote=$(prc_get settings.remote "$branch" false) || die "sd config failed"
-  [[ $branch != "$(start_default "$remote" || true)" ]] \
+  [[ $branch != "$(remote_default "$remote" || true)" ]] \
     || die "not pushing $branch: it's the default branch; start a branch (sd act start <branch> \"<task>\")"
   push_branch "$branch" "$remote" || exit 1
   # chrismo pushing is the approval of what an agent changed in CI config.
