@@ -302,11 +302,12 @@ notified() { cat "$PS_FIXTURES/notified" 2>/dev/null || true; }
   [ -z "$(notified)" ]
 }
 
-@test "glyph: info-only bot items, waiting on chrismo's read, are 🔧" {
+@test "glyph: info-only bot items, waiting on chrismo's read, are ❌ and notified once (#76)" {
   ps_fixture feat '.threads.owed_bot = 1 | .threads.info = 1'
   pass
-  [ "$(glyph repo)" = "🔧" ]
-  [ -z "$(notified)" ]
+  [ "$(glyph repo)" = "❌" ]
+  pass
+  [ "$(notified)" = "repo feat|read 1 bot item in sd state --long, then ack" ]
 }
 
 @test "glyph: sd state output with no next steps is ⚠️" {
