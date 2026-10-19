@@ -129,7 +129,9 @@ values {...s, remote}
              "gh pr checks") : null,
     open and bot_blocking > 0
       ? agent(budget, "bot", f"address {plural(threads.owed_bot, "bot item")}", "sd act address") : null,
+    -- only once nothing else moves without chrismo (#168)
     open and bot_blocking == 0 and n(threads.info) > 0
+      and not to_push and not need_review and not fixing and not bot_due and not bot_waiting
       ? step("read", "you", f"read {plural(threads.info, "bot item")} in sd state --long, then ack", "sd act ack") : null,
     open and taken
       ? step("take", "you", f"{remote}/{branch} has {plural(push.behind, "commit")} this branch took but didn'"'"'t make, reset away here: take {n(push.behind) == 1 ? "it" : "them"} back (git merge --ff-only {remote}/{branch}), or drop {n(push.behind) == 1 ? "it" : "them"} by hand", null) : null,
