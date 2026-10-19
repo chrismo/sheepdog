@@ -326,6 +326,10 @@ harness_stubs() {
 echo '{"type":"system","subtype":"init","session_id":"x"}' >&2
 echo "${ANTHROPIC_API_KEY-unset}" > "$FX/key"
 printf '%s\n' "$@" > "$FX/args"
+for m in "$(git rev-parse --path-format=absolute --git-common-dir)"/sheepdog/*.running; do
+  [ -e "$m" ] && { echo "${m##*/} $(cat "$m")" > "$FX/marker"; kill -0 "$(cut -d' ' -f1 "$m")" && echo alive >> "$FX/marker"; }
+done
+while [ -e "$FX/hold" ]; do sleep 0.1; done
 cat "$FX/out"
 exit "$(cat "$FX/status" 2>/dev/null || echo 0)"
 EOF
@@ -527,6 +531,63 @@ claude_out() { echo '{"type": "result", "is_error": false, "structured_output": 
   run harness_run pi sid2 new 30 "do it" '{}'
   [ "$status" -eq 0 ]
   [ "$(usage_last 'f"{harness}|{session}|{status}|{nul(cost_usd)}|{nul(input)}|{nul(context)}"')" = "pi|sid2|0|true|true|true" ]
+}
+
+markers() { ls "$TMP/repo/.git/sheepdog/" 2>/dev/null | grep '\.running$' || true; }
+
+@test "harness_run: while the step runs, the branch's marker names the step, a live pid and the start time; gone after (#170)" {
+  harness_stubs
+  HARNESS_STEP=implement run harness_run claude sid1 new 30 "do it" '{}'
+  [ "$status" -eq 0 ]
+  head -1 "$FX/marker" | grep -Eq '^feat\.running [0-9]+ implement 20[0-9-]+T[0-9:]+Z$'
+  [ "$(sed -n 2p "$FX/marker")" = alive ]
+  [ -z "$(markers)" ]
+}
+
+@test "harness_run: the marker is per branch, HARNESS_BRANCH's when set, / made __ (#170)" {
+  harness_stubs
+  HARNESS_BRANCH=team/x run harness_run pi sid1 new 30 "do it" '{}'
+  [ "$(cut -d' ' -f1,3 "$FX/marker" | head -1)" = "team__x.running agent" ]
+  [ -z "$(markers)" ]
+}
+
+@test "harness_run: a failed step removes its marker too (#170)" {
+  harness_stubs
+  echo 1 > "$FX/status"
+  run harness_run claude sid1 new 30 "do it" '{}'
+  [ "$status" -ne 0 ]
+  [ -s "$FX/marker" ]
+  [ -z "$(markers)" ]
+}
+
+@test "harness_run: an interrupted step removes its marker (#170)" {
+  harness_stubs
+  touch "$FX/hold"
+  harness_run claude sid1 new 30 "do it" '{}' >/dev/null 2>&1 3>&- &
+  local job=$! pid i
+  for i in $(seq 100); do [ -s "$FX/marker" ] && break; sleep 0.1; done
+  pid=$(head -1 "$FX/marker" | cut -d' ' -f2)
+  [ -n "$(markers)" ]
+  kill -TERM "$pid"
+  rm "$FX/hold"
+  wait "$job" || true
+  [ -z "$(markers)" ]
+}
+
+@test "running_state: a live marker as JSON; none, or a dead pid's, is null, and the dead one is removed (#170)" {
+  run running_state feat
+  [ "$output" = null ]
+  mkdir -p .git/sheepdog
+  echo "$$ implement 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  run running_state feat
+  [ "$(prc_line 'values f"{step} {pid} {since}"' "$output")" = "implement $$ 2026-10-18T14:03:00Z" ]
+  local dead
+  sh -c 'exit 0' & dead=$!
+  wait "$dead"
+  echo "$dead review 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  run running_state feat
+  [ "$output" = null ]
+  [ -z "$(markers)" ]
 }
 
 @test "harness_tally: claude's context is its session's last turn, read from the transcript" {

@@ -386,7 +386,48 @@ branch_spend() {
 # --resolve) has a detached HEAD, so callers set it.
 # The harness's stderr (claude can put protocol JSON there) shows only when
 # the step fails, and then all at once: nothing streams while it runs.
+# While it runs, the branch's running_file says so, for sd state (#170): the
+# step runs in a subshell whose trap removes the marker however it ends,
+# since a trap here would replace the caller's.
 harness_run() {
+  local b marker
+  b=$(harness_branch)
+  [[ -n $b ]] || { harness_step "$@"; return; }
+  marker=$(running_file "$b") && mkdir -p "${marker%/*}" || return 1
+  (
+    line="$BASHPID ${HARNESS_STEP:-agent} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    trap '[[ $(cat "$marker" 2>/dev/null) != "$line" ]] || rm -f "$marker"' EXIT
+    trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+    echo "$line" >"$marker" || exit 1
+    harness_step "$@"
+  )
+}
+
+# running_file <branch>: the marker harness_run keeps while an agent step runs
+# on <branch>, one line: "<pid> <step> <start time>".
+running_file() {
+  local dir
+  dir=$(git rev-parse --path-format=absolute --git-common-dir) || return 1
+  echo "$dir/sheepdog/${1//\//__}.running"
+}
+
+# running_state <branch>: the agent step running on <branch>, as JSON
+# {step, pid, since}, else null. A marker whose pid is gone (its step was
+# killed past the trap) is removed, not trusted (#79 design rule 4).
+running_state() {
+  local f pid step since
+  f=$(running_file "$1") || return 1
+  [[ -s $f ]] && read -r pid step since <"$f" || { echo null; return 0; }
+  if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+    printf '{"step": %s, "pid": %s, "since": %s}\n' "$(prc_json_string "$step")" "$pid" "$(prc_json_string "$since")"
+  else
+    rm -f "$f"
+    echo null
+  fi
+}
+
+# harness_step: harness_run's step itself, with the same arguments.
+harness_step() {
   local h=$1 sid=$2 mode=$3 timeout=$4 prompt=$5 schema=$6 settings=${7:-'{}'} out err rc said budget cap=""
   local model effort provider use_key args fields before spent t0 cap_usd=0 args_cap=false i
   local -a typed=() extra f env=()
@@ -398,8 +439,8 @@ harness_run() {
   [[ ${#f[@]} -ge 6 && ${f[-1]} == "<end>" ]] || return 1
   model=${f[0]} effort=${f[1]} provider=${f[2]} use_key=${f[3]} args=$(printf '%s\n' "${f[@]:4:${#f[@]}-5}")
   read -ra extra <<<"$args"
-  # An interrupted step leaves this file behind (no trap: harness_run runs in
-  # its caller's shell, whose traps it would replace).
+  # An interrupted step leaves this file behind (harness_run's trap is only
+  # for the running marker; harness_step also runs bare, in its caller's shell).
   err=$(mktemp) || return 1
   case $h in
     claude)

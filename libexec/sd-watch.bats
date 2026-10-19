@@ -288,6 +288,13 @@ notified() { cat "$PS_FIXTURES/notified" 2>/dev/null || true; }
   [ "$(glyph repo)" = "🔧" ]
 }
 
+@test "glyph: an agent step running is 🤖 and quiet (#170)" {
+  ps_fixture feat '.next = [{key: "running", who: "wait", say: "agent: implement running since 2026-10-18T14:03:00Z", cmd: null}]'
+  pass
+  [ "$(glyph repo)" = "🤖" ]
+  [ -z "$(notified)" ]
+}
+
 @test "glyph: info-only bot items, waiting on chrismo's read, are 🔧" {
   ps_fixture feat '.threads.owed_bot = 1 | .threads.info = 1'
   pass
@@ -816,6 +823,16 @@ SH
   ps_fixture feat
   pass
   [ "$(notified)" = "repo feat|ready to merge" ]
+}
+
+@test "notify: an agent step hiding every other step doesn't make them re-notify (#170)" {
+  ps_fixture feat '.ci.verdict = "red" | .ci.failing = ["lint"] | .threads.owed_human = 1'
+  pass
+  one_step running
+  pass
+  ps_fixture feat '.ci.verdict = "red" | .ci.failing = ["lint"] | .threads.owed_human = 1'
+  pass
+  [ "$(notified | wc -l | tr -d ' ')" = 2 ]
 }
 
 @test "notify: merge-wait doesn't reset a failed ready's one retry" {

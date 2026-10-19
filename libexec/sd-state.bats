@@ -2329,6 +2329,25 @@ review() {
   [ "$(field .session.locked)" = true ]
 }
 
+@test "session: an agent step running on the branch (harness_run's marker) is NEXT's only step; a dead one's marker is cleared (#170)" {
+  git switch -qc feat
+  git config branch.feat.sd-task "add a"
+  echo wip > wip.txt
+  mkdir -p .git/sheepdog
+  echo "$$ implement 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  state
+  [ "$(field -c .session.running)" = "{\"step\":\"implement\",\"pid\":$$,\"since\":\"2026-10-18T14:03:00Z\"}" ]
+  [ "$(field -c '[.next[] | [.key, .who, .say]]')" = '[["running","wait","agent: implement running since 2026-10-18T14:03:00Z"]]' ]
+  local dead
+  sh -c 'exit 0' & dead=$!
+  wait "$dead"
+  echo "$dead implement 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  state
+  [ "$(field .session.running)" = null ]
+  [ "$(field -c '[.next[].key]')" = '["nothing-dirty"]' ]
+  [ ! -e .git/sheepdog/feat.running ]
+}
+
 @test "session: unenrolled branch" {
   git switch -qc feat
   state
