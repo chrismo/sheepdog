@@ -707,6 +707,26 @@ rebase_in_progress() { [[ -e $(git rev-parse --git-path rebase-merge) || -e $(gi
   [[ $allow == *Edit* && $allow != *"git add"* && $allow != *"rebase"* ]]
 }
 
+@test "--resolve: a plain verify command and settings.implementAllow become rules, as for implement (#156)" {
+  echo '{"settings": {"verify": "grep -qx GX file.txt", "implementAllow": ["Bash(bats *)", "WebFetch"]}}' > "$SHEEPDOG_CONFIG"
+  upstream main 's/^g$/X/'
+  resolver GX
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  allow=$(grep -A1 -x -- --allowedTools "$FX/claude.args" | tail -1)
+  [[ ",$allow," == *",Bash(grep -qx GX file.txt),Bash(bats *),WebFetch,"* ]]
+  grep -qF "The repo's checks, which the pipeline runs after you: grep -qx GX file.txt" "$FX/claude.prompt"
+  grep -qF 'may run only these' "$FX/claude.prompt"
+}
+
+@test "--resolve: with nothing allowed, the prompt says the agent can't run commands" {
+  upstream main 's/^g$/X/'
+  resolver GX
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  grep -q "can't run commands" "$FX/claude.prompt"
+}
+
 @test "--resolve: the agent is told which commit it is replaying, out of which" {
   edit 's/^b$/B/' "feat two"
   upstream main 's/^g$/X/'

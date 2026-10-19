@@ -2046,7 +2046,8 @@ worktree_tree() {
 # before and after each stop compared whole, so staging or committing them
 # itself hides nothing.
 resolve_conflicts() {
-  local b=$1 wt=$2 old_base=$3 old_head=$4 onto=$5 stops=0 files hunks task result outcome replayed replaying replaying_stat guidance snap after
+  local b=$1 wt=$2 old_base=$3 old_head=$4 onto=$5 stops=0 files hunks task result outcome replayed replaying replaying_stat guidance snap after verify s runs="" allow=$HARNESS_CLAUDE_ALLOW
+  local -a rules
   RESOLVE_TOUCHED=""
   task=$(git config --get "branch.$b.sd-task" || true)
   replayed=$(git log --reverse --no-merges --topo-order --format='%h %s' "$old_base..$old_head")
@@ -2056,6 +2057,18 @@ resolve_conflicts() {
   if ! guidance=$(cd "$wt" && step_guidance resolvePrompt "$b" "$old_base" "$SD_LIB/prompts/resolve.md"); then
     restack_rollback "$wt" "$b" "$old_head"
     die "can't read the resolve guidance; rolled back to ${old_head:0:7}"
+  fi
+  if ! verify=$(cd "$wt" && prc_get settings.verify "$b" false) || ! s=$(agent_rules "$wt" "$b"); then
+    restack_rollback "$wt" "$b" "$old_head"
+    die "sd config failed; rolled back to ${old_head:0:7}"
+  fi
+  rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
+  [[ -z $verify ]] || runs+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
+  if [[ $STEP_H == claude ]] && (( ${#rules[@]} )); then
+    allow+=$(printf ',%s' "${rules[@]}")
+    runs+=$'\n\nBeyond reading files and read-only git, you may run only these (Claude Code permission rules); anything else is refused:\n'"$(printf '%s\n' "${rules[@]}")"
+  else
+    runs+=$'\n\nYou can\'t run commands here beyond read-only git.'
   fi
   while :; do
     if (( ++stops > RESOLVE_CAP )); then
@@ -2078,8 +2091,8 @@ resolve_conflicts() {
       return 1
     fi
     echo "sd act: $STEP_H ($STEP_MODE session $STEP_SID) is resolving conflicts in: ${files//$'\n'/, } (stop $stops)…" >&2
-    if ! result=$(cd "$wt" && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" \
-                    "$guidance"$'\n\n'"$RESOLVE_CONTRACT"$'\n\nBranch: '"$b"$', rebasing onto '"$onto"$'\nTask: '"${task:-(none recorded)}"$'\nReplaying: '"$replaying"$'\n'"$replaying_stat"$'\n\n'"Commits being replayed, oldest first:"$'\n'"$replayed"$'\n\nConflicting files:\n'"$files"$'\n\nConflict hunks:\n'"$hunks" \
+    if ! result=$(cd "$wt" && HARNESS_CLAUDE_ALLOW=$allow && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" \
+                    "$guidance"$'\n\n'"$RESOLVE_CONTRACT"$'\n\nBranch: '"$b"$', rebasing onto '"$onto"$'\nTask: '"${task:-(none recorded)}"$'\nReplaying: '"$replaying"$'\n'"$replaying_stat"$'\n\n'"Commits being replayed, oldest first:"$'\n'"$replayed"$'\n\nConflicting files:\n'"$files"$'\n\nConflict hunks:\n'"$hunks$runs" \
                     "$RESOLVE_SCHEMA" "$STEP_CFG"); then
       restack_rollback "$wt" "$b" "$old_head"
       echo "sd act: the $STEP_H step failed or returned no usable result (session $STEP_SID); rolled back to ${old_head:0:7}" >&2
