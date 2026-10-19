@@ -277,6 +277,7 @@ STACKED=('.parent.name = "base"' '.sync.target = "base"' '.sync.up_to_date = fal
   [ "$(keys "${info[@]}" '.bot = {command: "/review-bot"}' '.review.bot = {sha: null, status: "none"}')" = bot-trigger ]
   [ "$(keys "${info[@]}" '.bot = {command: "/review-bot", timeout: 3600}' \
             '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}')" = bot-wait ]
+  [ "$(keys "${info[@]}" '.ci.verdict = "inconclusive"')" = ci-rerun ]
   # still ahead of marking the draft ready
   [ "$(keys "${info[@]}" '.pr.draft = true' '.pr.merge_state = "DRAFT"')" = "read draft" ]
 }
