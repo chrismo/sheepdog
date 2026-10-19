@@ -53,15 +53,20 @@
 #   nothing default: ❌ nothing ahead of the base and no task to implement, or
 #     the default branch itself: chrismo commits, records a task, or starts a
 #     branch (#143, #159)
-#   dirty: ❌ uncommitted edits hold up an agent step that refuses them:
-#     chrismo's hand edit, or an agent step's that gave up, failed or timed
-#     out with no question (#178)
+#   dirty: ❌ uncommitted edits hold up an agent or restack step that refuses
+#     them, and nothing says whose they are: chrismo's hand edit, or an agent
+#     step's that gave up, failed or timed out with no question (#178). The
+#     two steps below are the same edits where the state says they're
+#     chrismo's, so those aren't notified
 # Not notified:
 #   closed: chrismo closed it
 #   errors stale: ⚠️ sd state can't be sure, so what was notified carries over
 #   read: info-only bot items; nothing waits on them
-#   reset-dirty take: chrismo is mid-change on the branch; the 🔧 glyph shows it
-#   nothing-dirty: the same (an agent step's edits show as running instead)
+#   reset-dirty take: chrismo is mid-change on the branch: no sheepdog step
+#     resets pushed commits away, so the reset and the edits with it are
+#     chrismo's; the 🔧 glyph shows it
+#   nothing-dirty: the same, on a branch chrismo hasn't committed to yet (an
+#     agent step's edits show as running instead)
 #   running: an agent step is running on the branch (#170); what was notified
 #     carries over, since it hides every other step
 #   blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it

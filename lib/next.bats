@@ -833,6 +833,24 @@ asked() { # asked <step> [<at_head>]: sd state's question field
   local reset=('.push.ahead = 0' '.push.behind = 1' '.push.remote_ours = true' '.push.remote_made = true' '.push.dirty = true')
   [ "$(keys "$UNREVIEWED" "${reset[@]}")" = reset-dirty ]
   [ "$(keys "${red[@]}" "${reset[@]}")" = reset-dirty ]
+  # restack refuses it too, behind or conflicting
+  [ "$(keys "${STACKED[@]}" '.push.dirty = true')" = dirty ]
+  [ "$(keys "${STACKED[@]}" '.sync.by_tree = true' '.push.dirty = true')" = dirty ]
+  [ "$(keys "${STACKED[@]}" '.sync.conflict = true' '.push.dirty = true')" = dirty ]
+  [ "$(keys '.pr.merge_state = "BEHIND"' '.sync.up_to_date = false' '.sync.behind = 3' '.push.dirty = true')" = dirty ]
+  # the by-tree conflict is chrismo's already, and behind with no base names no restack
+  [ "$(keys "${STACKED[@]}" '.sync.conflict = true' '.sync.by_tree = true' '.push.dirty = true')" = conflict ]
+}
+
+@test "dirty: while a question stands with its edits uncommitted, the other steps that refuse them wait too (#178)" {
+  [ "$(keys '.threads.owed_bot = 1' '.push.dirty = true' "$(asked ci-fix)")" = question ]
+  [ "$(keys '.threads.owed_bot = 1' '.push.dirty = false' "$(asked ci-fix)")" = "question bot" ]
+  [ "$(keys "$UNREVIEWED" '.push.dirty = true' "$(asked address)")" = question ]
+  [ "$(keys '.ci.verdict = "red"' '.ci.failing = ["test"]' '.push.dirty = true' "$(asked address)")" = question ]
+  local st=('.review.local = {sha: "x", status: "uncovered", uncovered: 2}'
+            '.review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}')
+  [ "$(keys "${st[@]}" '.push.dirty = true' "$(asked ci-fix)")" = question ]
+  [ "$(keys "${STACKED[@]}" '.push.dirty = true' "$(asked ci-fix)")" = question ]
 }
 
 @test "dirty: no step while the question stands (the edits are the agent's), the worktree is clean, or no agent step is due (#178)" {
