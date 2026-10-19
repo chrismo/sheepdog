@@ -25,8 +25,8 @@
 # (asking: implement, review-fix, address, ci-fix) goes until it's answered.
 # Once it no longer stands, uncommitted edits are chrismo's (#178): the
 # steps that refuse them (ci-red, bot, review-fix, review, open-pr) give way
-# to one dirty step, as the empty branch's nothing-dirty does for implement
-# and reset-dirty does once commits were reset away.
+# to one dirty step, as the empty branch's nothing-dirty does for implement;
+# once commits were reset away, reset-dirty is that step.
 #
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
@@ -144,7 +144,7 @@ values {...s, remote}
       : has_pr and not undone and not parent_closed and not on(sync.conflict) and gh_behind
       ? step("behind", "run", f"restack onto {sync.default} ({n(sync.behind)} behind): GitHub requires branches to be up to date",
              "sd act restack") : null,
-    dirty
+    dirty and not dropping
       ? step("dirty", "you", "the worktree has uncommitted changes, which the agent steps refuse: they'"'"'re yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
              "git status") : null,
     ci_red and asking != "ci-fix" and not dirty

@@ -829,6 +829,10 @@ asked() { # asked <step> [<at_head>]: sd state's question field
   # with commits reset away, reset-dirty says it already
   local gone=('.pr = null' '.push.behind = 1' '.push.remote_ours = true' '.push.remote_made = true' '.push.dirty = true')
   [ "$(keys "${gone[@]}")" = "reset-dirty open-pr" ]
+  # and on an open PR, in place of the agent steps that refuse the edits
+  local reset=('.push.ahead = 0' '.push.behind = 1' '.push.remote_ours = true' '.push.remote_made = true' '.push.dirty = true')
+  [ "$(keys "$UNREVIEWED" "${reset[@]}")" = reset-dirty ]
+  [ "$(keys "${red[@]}" "${reset[@]}")" = reset-dirty ]
 }
 
 @test "dirty: no step while the question stands (the edits are the agent's), the worktree is clean, or no agent step is due (#178)" {
