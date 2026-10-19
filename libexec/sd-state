@@ -62,7 +62,9 @@
 #             settings.branchBudget (USD, 25; 0 is none). Past it, NEXT hands
 #             the agent's steps to chrismo (#121)
 #   fresh     false when GitHub's PR / parent-PR head differs from the local
-#             remote-tracking ref, i.e. sync and push answers need a fetch
+#             remote-tracking ref, i.e. sync and push answers need a fetch;
+#             or, for a PR NEXT could call ready, when the remote's base
+#             branch (by ls-remote) does (#169)
 #   stored    what sheepdog keeps for the branch: handled ids, refs/sheepdog/<b>/*
 #   rate_limit  GitHub's GraphQL quota: cost (this run's calls, summed),
 #             remaining and reset_at (the last call's; null when none
@@ -81,7 +83,10 @@
 # Never fetches, and writes only the PR numbers it finds (branch.<b>.sd-pr,
 # the parent's too), when they change. That makes it a .git/config writer:
 # while it holds config.lock, another git config write fails. Remote refs
-# are as fresh as the last fetch. One gh GraphQL call per PR (the branch's,
+# are as fresh as the last fetch, except the PR's base when NEXT could say
+# ready (an open, undrafted PR GitHub calls mergeable): one git ls-remote of
+# it, 10 s at most, and no check on a failure (#169).
+# One gh GraphQL call per PR (the branch's,
 # and a non-default parent's), by its stored number; a discovery by branch
 # comes first for a PR not yet known, and is the only call for a branch with
 # none. A stored PR that merged stays the branch's PR, even once a newer one
@@ -519,6 +524,22 @@ stale_check() { # stale_check <pr-json> <name>
 }
 [[ $pr != null ]] && stale_check "$pr" "$branch"
 [[ $parent_pr != null ]] && stale_check "$parent_pr" "$parent"
+# Before NEXT can say ready, the PR's base on the remote: GitHub's CLEAN can
+# lag a base that just moved, and the merge then hits a conflict a fetch would
+# have shown (#169). One ls-remote, only for an open, undrafted PR GitHub calls
+# mergeable and nothing else is stale; a failure or timeout leaves it unchecked.
+if [[ $pr != null && ${#stale[@]} -eq 0 ]]; then
+  rb=$(prc_line 'where on(state == "OPEN") and not on(isDraft) and coalesce(reviewDecision, "") != "REVIEW_REQUIRED"
+                   and coalesce(mergeStateStatus, "") in ["CLEAN", "UNSTABLE", "HAS_HOOKS"]
+                 | values baseRefName' "$pr")
+  if [[ -n $rb ]]; then
+    rb_sha=$(GIT_TERMINAL_PROMPT=0 with_timeout 10 git ls-remote "$remote" "refs/heads/$rb" 2>/dev/null </dev/null \
+               | awk -v r="refs/heads/$rb" '$2 == r { print $1 }') || rb_sha=""
+    if [[ -n $rb_sha && $rb_sha != "$(ref "refs/remotes/$remote/$rb")" ]]; then
+      stale+=("$remote/$rb is not at $remote's ${rb_sha:0:7}")
+    fi
+  fi
+fi
 stale_json='[]'
 (( ${#stale[@]} )) && stale_json=$(printf '%s\n' "${stale[@]}" | prc_strings)
 
