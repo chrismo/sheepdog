@@ -24,8 +24,9 @@
 # chrismo's question step, with the human items; the step that asked
 # (asking: implement, review-fix, address, ci-fix) goes until it's answered.
 # Once it no longer stands, uncommitted edits are chrismo's (#178): the
-# agent steps that refuse them (ci-red, bot, review-fix) give way to one
-# dirty step, as the empty branch's nothing-dirty does for implement.
+# steps that refuse them (ci-red, bot, review-fix, review, open-pr) give way
+# to one dirty step, as the empty branch's nothing-dirty does for implement
+# and reset-dirty does once commits were reset away.
 #
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
@@ -103,7 +104,8 @@ values {...s, remote}
 | put ci_red:=(has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push),
       fix_due:=(fixing and not on(review.findings.declined) and n(review.findings.round) < n(review.findings.cap))
 | put dirty:=(open and on(push.dirty) and asking == ""
-              and (ci_red or bot_blocking > 0 or fix_due))
+              and (ci_red or bot_blocking > 0 or fix_due or (need_review and not fixing)
+                   or (pr is null and not empty and not dropping)))
 | unnest own_base ? [step("default", "you", f"on {branch}: start a branch", "sd act start")]
   : not nul(session.running) ? [step("running", "wait", f"agent: {session.running.step} running since {session.running.since}", null)] : [
     on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, remove its worktree and delete it", "sd act forget --remove") : null,
@@ -175,7 +177,7 @@ values {...s, remote}
              : on(push.diverged) ? f"force-push {plural(coalesce(sync.ahead, push.ahead), "commit")} (rewritten); a plain git push is rejected, and pulling would undo the rewrite"
              : n(push.ahead) == 0 ? f"force-push: drop {plural(push.behind, "commit")} the remote has, reset away here"
              : f"push {plural(push.ahead, "commit")}", "sd act push") : null,
-    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held and not empty
+    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held and not empty and not dirty
       ? spends(budget, step("open-pr", "run", "ship: push, open a draft PR", "sd act ship")) : null,
     has_pr and draft_ready and not need_review and not bot_due and not bot_waiting
       ? step("draft", "run", f"{on(ci.verdict == "none") ? "reviewed, no CI checks" : "CI green and reviewed"}: mark the PR ready for review",
@@ -189,7 +191,7 @@ values {...s, remote}
              f"{on(review.findings.declined) ? f"the agent declined {plural(review.findings.n, "review finding")}"
                 : f"{plural(review.findings.n, "review finding")} after {review.findings.round} rounds"}: fix {review.findings.n == 1 ? "it" : "them"}, or accept HEAD as reviewed (sd state --long lists them)",
              "sd act review --accept")
-      : open and need_review
+      : open and need_review and not dirty
       ? agent(budget, "review", last_review is not null ? f"review again: {plural(last_review, "commit")} since the last review"
                                 : reviewed ? "review again: the branch was rewritten since the last review"
                                 : "review the branch'"'"'s change", "sd act review") : null,

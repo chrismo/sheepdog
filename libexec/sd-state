@@ -498,9 +498,9 @@ fi
 # The remote ahead of a branch that once had its commits: made here and reset
 # away (a drop, once the worktree is clean), or taken from someone and reset
 # away (to take back). remote_made is only computed for that state (#86).
-# dirty: the worktree has uncommitted changes, which implement, address and
-# ci-fix refuse (#143, #178); null when the branch is checked out nowhere or
-# git status fails.
+# dirty: the worktree has uncommitted changes, which implement, address,
+# ci-fix, review and ship refuse (#143, #178); null when the branch is checked
+# out nowhere or git status fails.
 remote_made=null dirty=null
 reset_away=false
 [[ $remote_ours == true && $ahead -eq 0 && $push_behind -gt 0 ]] && reset_away=true

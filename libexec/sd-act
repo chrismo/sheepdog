@@ -92,8 +92,9 @@
 #             prompt, goes on from the edits it left, and finishes as that
 #             step does (commit, verify, push, replies), under the running
 #             marker. The question is dropped once the agent has run; a new
-#             needs-input records a new one. Refuses with no question, or one
-#             that no longer stands. Spends tokens
+#             needs-input records a new one. Refuses with no question, one
+#             that no longer stands, or an address question with no bot item
+#             left for the agent. Spends tokens
 #   restack   rebase --onto the parent (the default branch once the parent
 #             merged), check the branch's own change came through unchanged,
 #             else roll back; never pushes. When the old base isn't an
@@ -523,8 +524,13 @@ address() {
   line=$(gate_get "$gate" hard | head -1)
   [[ -z $line ]] || die "$line"
   owed=$(prc_json 'values coalesce([unnest threads.items | where kind == "bot"], [])' "$state")
+  # An answer that can't reach the agent fails, so NEXT's question step
+  # doesn't hand it to a loop again.
+  local unanswered=". The answer didn't reach the agent; sd act ack --question drops its question"
   if [[ $owed == '[]' ]]; then
-    echo "nothing to address on $b ($(prc_val "$state" 'coalesce(threads.owed_human, 0)') human item(s) are chrismo's)"
+    line="nothing to address on $b ($(prc_val "$state" 'coalesce(threads.owed_human, 0)') human item(s) are chrismo's)"
+    [[ -z $answer_text ]] || die "$line$unanswered"
+    echo "$line"
     return
   fi
   soft_gate "$gate" "addressing $b"
@@ -543,6 +549,7 @@ address() {
     | values {...this, action: "ask", reply: f"joined by {sj(untrusted, ", ")}: yours to answer"} | drop untrusted], [])' "$findings")
   findings=$(prc_json 'values coalesce([unnest this | where len(untrusted) == 0 | drop untrusted], [])' "$findings")
   if [[ $findings == '[]' ]]; then
+    [[ -z $answer_text ]] || die "no bot feedback the agent can take on $b$unanswered"
     report "$held" "no bot feedback the agent can take"
     return
   fi

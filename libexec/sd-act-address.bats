@@ -494,6 +494,34 @@ question() { git cat-file blob refs/sheepdog/feat/question | jq -r "$1"; }
   [ "$status" -ne 0 ]
 }
 
+@test "sd act answer with nothing left for the agent fails at zero tokens; the question stands (#178)" {
+  two_owed
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  rm -f "$FX/claude.args"
+  # answered on GitHub: nothing owed
+  state_fixture '.threads.owed_bot = 0 | .threads.items = []'
+  run "$SD_ACT" answer "call it bar"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nothing to address on feat"*"sd act ack --question"* ]]
+  [ ! -e "$FX/claude.args" ]
+  [ "$(question .step)" = address ]
+  # joined by someone else: nothing the agent can take
+  two_owed
+  jq '.data.nodes[0,1].comments.nodes += [{author: {__typename: "User", login: "stranger"}, body: "mine"}]' \
+    "$FX/nodes.json" > "$FX/n" && mv "$FX/n" "$FX/nodes.json"
+  rm -f "$FX/gh.log"
+  run "$SD_ACT" answer "call it bar"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no bot feedback the agent can take"*"sd act ack --question"* ]]
+  [ ! -e "$FX/claude.args" ]
+  [ "$(gh_ops)" = nodes ]   # nothing posted
+  [ "$(question .step)" = address ]
+}
+
 @test "done with nothing asked records no question (#167)" {
   run "$SD_ACT" address
   [ "$status" -eq 0 ]

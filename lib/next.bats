@@ -822,6 +822,13 @@ asked() { # asked <step> [<at_head>]: sd state's question field
   [ "$(keys "${st[@]}" '.push.dirty = true')" = dirty ]
   # one step, however many agent steps it stands in for
   [ "$(keys "${red[@]}" '.threads.owed_bot = 2' '.push.dirty = true')" = dirty ]
+  # review and ship refuse it too
+  [ "$(keys "$UNREVIEWED" '.push.dirty = true')" = dirty ]
+  [ "$(keys '.pr = null' '.push.dirty = true')" = dirty ]
+  [ "$(keys '.pr = null' '.push.remote_sha = null' '.push.ahead = 1' '.push.dirty = true')" = "dirty push" ]
+  # with commits reset away, reset-dirty says it already
+  local gone=('.pr = null' '.push.behind = 1' '.push.remote_ours = true' '.push.remote_made = true' '.push.dirty = true')
+  [ "$(keys "${gone[@]}")" = "reset-dirty open-pr" ]
 }
 
 @test "dirty: no step while the question stands (the edits are the agent's), the worktree is clean, or no agent step is due (#178)" {
