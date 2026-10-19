@@ -23,6 +23,9 @@
 # An agent step's question standing at HEAD (sd state's question, #167) is
 # chrismo's question step, with the human items; the step that asked
 # (asking: implement, review-fix, address, ci-fix) goes until it's answered.
+# Once it no longer stands, uncommitted edits are chrismo's (#178): the
+# agent steps that refuse them (ci-red, bot, review-fix) give way to one
+# dirty step, as the empty branch's nothing-dirty does for implement.
 #
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
@@ -97,6 +100,10 @@ values {...s, remote}
                : spend.usd > spend.budget
                ? step("budget", "you", f"spent {usd(spend.usd)} on this branch, past settings.branchBudget ({usd(spend.budget)}): raise it, or take over",
                       "sd act attach") : null)
+| put ci_red:=(has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push),
+      fix_due:=(fixing and not on(review.findings.declined) and n(review.findings.round) < n(review.findings.cap))
+| put dirty:=(open and on(push.dirty) and asking == ""
+              and (ci_red or bot_blocking > 0 or fix_due))
 | unnest own_base ? [step("default", "you", f"on {branch}: start a branch", "sd act start")]
   : not nul(session.running) ? [step("running", "wait", f"agent: {session.running.step} running since {session.running.since}", null)] : [
     on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, remove its worktree and delete it", "sd act forget --remove") : null,
@@ -114,7 +121,8 @@ values {...s, remote}
     open and n(threads.owed_human) > 0
       ? step("human", "you", f"reply to {plural(threads.owed_human, "human item")}", "sd state --long") : null,
     open and asking != ""
-      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer in its session, then sd act ack --question", "sd act attach") : null,
+      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer it with sd act answer, or in its session (sd act attach), then sd act ack --question",
+             "sd act answer \"<your answer>\"") : null,
     open and undone
       ? step("restack-undone", "you",
              f"the restack was undone ({sync.undone} of {sync.target}'"'"'s commits {sync.undone == 1 ? "is a copy" : "are copies"} on {branch}; a plain git push after a restack?): redo it, and don'"'"'t sd act push before that, which would publish the copies{no_base ? f"; no base to redo it from on {sync.target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {parent.name} at>), then sd act restack" : ""}",
@@ -134,12 +142,15 @@ values {...s, remote}
       : has_pr and not undone and not parent_closed and not on(sync.conflict) and gh_behind
       ? step("behind", "run", f"restack onto {sync.default} ({n(sync.behind)} behind): GitHub requires branches to be up to date",
              "sd act restack") : null,
-    has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push and asking != "ci-fix"
+    dirty
+      ? step("dirty", "you", "the worktree has uncommitted changes, which the agent steps refuse: they'"'"'re yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
+             "git status") : null,
+    ci_red and asking != "ci-fix" and not dirty
       ? agent(budget, "ci-red", f"fix CI: {join(ci.failing, ", ")}", "sd act ci-fix") : null,
     has_pr and on(ci.verdict == "blocked") and on(ci.for_head) and not to_push
       ? step("ci-blocked", "you", f"CI blocked: {sj(coalesce(ci.blocked, []), ", ")} didn'"'"'t start or want approval; an agent can'"'"'t fix that",
              "gh pr checks") : null,
-    open and bot_blocking > 0 and asking != "address"
+    open and bot_blocking > 0 and asking != "address" and not dirty
       ? agent(budget, "bot", f"address {plural(threads.owed_bot, "bot item")}", "sd act address") : null,
     -- only once nothing else moves without chrismo (#168)
     open and bot_blocking == 0 and n(threads.info) > 0
@@ -169,8 +180,8 @@ values {...s, remote}
     has_pr and draft_ready and not need_review and not bot_due and not bot_waiting
       ? step("draft", "run", f"{on(ci.verdict == "none") ? "reviewed, no CI checks" : "CI green and reviewed"}: mark the PR ready for review",
              "gh pr ready") : null,
-    open and fixing and asking == "review-fix" ? null
-      : open and fixing and not on(review.findings.declined) and review.findings.round < review.findings.cap
+    open and fixing and (asking == "review-fix" or (dirty and fix_due)) ? null
+      : open and fix_due
       ? agent(budget, "review-fix", f"fix {plural(review.findings.n, "review finding")} (round {review.findings.round}/{review.findings.cap})",
              "sd act implement")
       : open and fixing

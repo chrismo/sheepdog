@@ -288,6 +288,13 @@ notified() { cat "$PS_FIXTURES/notified" 2>/dev/null || true; }
   [ "$(glyph repo)" = "🔧" ]
 }
 
+@test "glyph: edits left once a question cleared are 🔧 and quiet: chrismo is mid-change (#178)" {
+  ps_fixture feat '.next = [{key: "dirty", who: "you", say: "the worktree has uncommitted changes", cmd: "git status"}]'
+  pass
+  [ "$(glyph repo)" = "🔧" ]
+  [ -z "$(notified)" ]
+}
+
 @test "glyph: an agent step running is 🤖 and quiet (#170)" {
   ps_fixture feat '.next = [{key: "running", who: "wait", say: "agent: implement running since 2026-10-18T14:03:00Z", cmd: null}]'
   pass

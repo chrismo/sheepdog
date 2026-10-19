@@ -2452,11 +2452,19 @@ usage_row() { # usage_row <branch> <cost_usd> [repo]
   [ "$(field '.next[0].key')" = take ]
 }
 
-@test "push: remote_made and dirty are null unless the remote is ahead of a reset" {
+@test "push: remote_made is null unless the remote is ahead of a reset" {
   git switch -qc feat && commit a.txt a && git push -q -u origin feat 2>/dev/null
   state
   [ "$(field .push.remote_made)" = null ]
-  [ "$(field .push.dirty)" = null ]
+}
+
+@test "push: dirty is reported for any checked-out branch, as address and ci-fix refuse it too (#178)" {
+  git switch -qc feat && commit a.txt a && git push -q -u origin feat 2>/dev/null
+  state
+  [ "$(field .push.dirty)" = false ]
+  echo x >> a.txt
+  state
+  [ "$(field .push.dirty)" = true ]
 }
 
 @test "push: held CI config is reported until its commit is on the remote, and NEXT hands it to chrismo (#124)" {

@@ -58,7 +58,8 @@
 #   errors stale: ⚠️ sd state can't be sure, so what was notified carries over
 #   read: info-only bot items; nothing waits on them
 #   reset-dirty take: chrismo is mid-change on the branch; the 🔧 glyph shows it
-#   nothing-dirty: the same (an agent step's edits show as running instead)
+#   nothing-dirty dirty: the same (an agent step's edits show as running, or
+#     as its question, instead) (#178)
 #   running: an agent step is running on the branch (#170); what was notified
 #     carries over, since it hides every other step
 #   blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it

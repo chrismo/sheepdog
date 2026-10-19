@@ -789,8 +789,8 @@ asked() { # asked <step> [<at_head>]: sd state's question field
   [ "$(keys "${red[@]}" "$(asked ci-fix)")" = question ]
   [ "$(step question who "${red[@]}" "$(asked ci-fix)")" = you ]
   [ "$(step question say "${red[@]}" "$(asked ci-fix)")" \
-    = "the agent asks (ci-fix): Which test is right?; answer in its session, then sd act ack --question" ]
-  [ "$(step question cmd "${red[@]}" "$(asked ci-fix)")" = "sd act attach" ]
+    = "the agent asks (ci-fix): Which test is right?; answer it with sd act answer, or in its session (sd act attach), then sd act ack --question" ]
+  [ "$(step question cmd "${red[@]}" "$(asked ci-fix)")" = 'sd act answer "<your answer>"' ]
   # about an older HEAD or worktree: it no longer stands
   [ "$(keys "${red[@]}" "$(asked ci-fix false)")" = ci-red ]
 }
@@ -805,4 +805,30 @@ asked() { # asked <step> [<at_head>]: sd state's question field
   [ "$(keys "${st[@]}" "$(asked review-fix)")" = question ]
   [ "$(keys "${st[@]}" "$(asked review-fix false)")" = review-fix ]
   [ "$(keys '.pr.merge_state = "BEHIND"' '.sync.up_to_date = false' '.sync.behind = 3' "$(asked ci-fix)")" = "question behind" ]
+}
+
+# ── edits left once a question clears (#178) ─────────────────────────────────
+
+@test "dirty: uncommitted edits with no question standing are chrismo's, in place of the agent steps that refuse them (#178)" {
+  local red=('.ci.verdict = "red"' '.ci.failing = ["test"]')
+  [ "$(keys "${red[@]}" '.push.dirty = true')" = dirty ]
+  [ "$(step dirty who "${red[@]}" '.push.dirty = true')" = you ]
+  [ "$(step dirty say "${red[@]}" '.push.dirty = true')" \
+    = "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)" ]
+  [ "$(step dirty cmd "${red[@]}" '.push.dirty = true')" = "git status" ]
+  [ "$(keys '.threads.owed_bot = 2' '.push.dirty = true')" = dirty ]
+  local st=('.review.local = {sha: "x", status: "uncovered", uncovered: 2}'
+            '.review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}')
+  [ "$(keys "${st[@]}" '.push.dirty = true')" = dirty ]
+  # one step, however many agent steps it stands in for
+  [ "$(keys "${red[@]}" '.threads.owed_bot = 2' '.push.dirty = true')" = dirty ]
+}
+
+@test "dirty: no step while the question stands (the edits are the agent's), the worktree is clean, or no agent step is due (#178)" {
+  local red=('.ci.verdict = "red"' '.ci.failing = ["test"]')
+  [ "$(keys "${red[@]}" '.push.dirty = true' "$(asked ci-fix)")" = question ]
+  [ "$(keys "${red[@]}" '.push.dirty = false')" = ci-red ]
+  [ "$(keys "${red[@]}" '.push.dirty = null')" = ci-red ]
+  [ "$(keys '.push.dirty = true')" = ready ]
+  [ "$(keys '.ci.verdict = "pending"' '.push.dirty = true')" = ci-wait ]
 }

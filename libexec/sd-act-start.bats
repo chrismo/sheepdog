@@ -800,7 +800,7 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   rm -f "$FX/agent"
   echo '{"outcome": "needs-input", "commit_message": null, "summary": "Which file?"}' > "$FX/result.json"
   run "$SD_ACT" implement
-  [[ "$output" == *"answer in its session (sd act attach feat-x), then sd act ack --question and sd act implement"* ]]
+  [[ "$output" == *'answer with sd act answer "<your answer>" feat-x, or in its session (sd act attach feat-x), then sd act ack --question and sd act implement'* ]]
   rm -f "$FX/claude.args"
   run "$SD_ACT" implement
   [ "$status" -ne 0 ]
@@ -809,6 +809,25 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   "$SD_ACT" ack --question feat-x
   run "$SD_ACT" implement
   [ -e "$FX/claude.args" ]
+}
+
+@test "implement: sd act answer resumes its session with the answer and commits its edits (#178)" {
+  started
+  echo '{"outcome": "needs-input", "commit_message": null, "summary": "Which file?"}' > "$FX/result.json"
+  run "$SD_ACT" implement
+  [[ "$output" == *'sd act answer "<your answer>" feat-x'* ]]
+  sid=$(git config branch.feat-x.sd-session)
+  rm -f "$FX/agent"
+  echo '{"outcome": "done", "commit_message": "Edit file.txt", "summary": "done"}' > "$FX/result.json"
+  run "$SD_ACT" answer "the one with two lines"
+  [ "$status" -eq 0 ]
+  grep -q "the one with two lines" "$FX/claude.prompt"
+  ! grep -q "add a third line" "$FX/claude.prompt" || false   # the session has the task already
+  [ "$(grep -A1 -x -- --resume "$FX/claude.args" | tail -1)" = "$sid" ]
+  [ "$(git log -1 --format=%s)" = "Edit file.txt" ]
+  [ "$(tail -1 file.txt)" = c ]
+  run git rev-parse -q --verify refs/sheepdog/feat-x/question
+  [ "$status" -ne 0 ]
 }
 
 @test "implement: a fix round's ask is review-fix's question; a rerun refuses unless --force (#167)" {

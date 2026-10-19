@@ -474,6 +474,26 @@ question() { git cat-file blob refs/sheepdog/feat/question | jq -r "$1"; }
   [ -e "$FX/claude.args" ]
 }
 
+@test "sd act answer resumes address's session with the answer, then drops the question (#178)" {
+  two_owed
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  [[ "$output" == *'sd act answer "<your answer>"'* ]]
+  sid=$(git config branch.feat.sd-session)
+  agent_result '{outcome: "done", commit_message: null, summary: "Named it bar.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}'
+  run "$SD_ACT" answer "call it bar"
+  [ "$status" -eq 0 ]
+  grep -q "call it bar" "$FX/claude.args"
+  [ "$(grep -A1 -x -- --resume "$FX/claude.args" | tail -1)" = "$sid" ]
+  run git rev-parse -q --verify refs/sheepdog/feat/question
+  [ "$status" -ne 0 ]
+}
+
 @test "done with nothing asked records no question (#167)" {
   run "$SD_ACT" address
   [ "$status" -eq 0 ]

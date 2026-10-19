@@ -83,6 +83,8 @@ builtin_list() {
   add sheepdog:USAGE_Q "$WORK/sheepdog.USAGE_Q.full.spq" "$FIX/usage.json"
   printf '%s\n' "$PRN_QUERY" > "$WORK/next.PRN_QUERY.spq"
   add next:PRN_QUERY "$WORK/next.PRN_QUERY.spq" "$FIX/next.json"
+  # a standing question's subquery, and the dirty step it holds off (#178)
+  add next:PRN_QUERY:question "$WORK/next.PRN_QUERY.spq" "$FIX/next-question.json"
 }
 
 if (( $# )); then
