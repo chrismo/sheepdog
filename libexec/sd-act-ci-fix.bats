@@ -338,6 +338,44 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   [ "$(remote_feat)" = "$before" ]
 }
 
+@test "needs-input: the question is recorded on HEAD; a rerun refuses at zero tokens until an ack (#167)" {
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "I changed nothing: which test is right?\n1. revert it"}'
+  run "$SD_ACT" ci-fix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"NEXT shows the question until feat's HEAD or worktree changes, or sd act ack"* ]]
+  rec=$(git cat-file blob refs/sheepdog/feat/question)
+  [ "$(jq -r .head <<<"$rec")" = "$(git rev-parse HEAD)" ]
+  [ "$(jq -r .step <<<"$rec")" = ci-fix ]
+  [ "$(jq -r .text <<<"$rec")" = $'I changed nothing: which test is right?\n1. revert it' ]
+  rm -f "$FX/claude.args"
+  run "$SD_ACT" ci-fix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*"sd act ack; or --force"* ]]
+  [ ! -e "$FX/claude.args" ]
+  run "$SD_ACT" ack
+  [[ "$output" == *"acked the agent's question on feat (ci-fix)"* ]]
+  run git rev-parse -q --verify refs/sheepdog/feat/question
+  [ "$status" -ne 0 ]
+  run "$SD_ACT" ci-fix
+  [ -e "$FX/claude.args" ]
+}
+
+@test "needs-input: the question stops standing once HEAD changes, or with --force (#167)" {
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "which?"}'
+  run "$SD_ACT" ci-fix
+  rm -f "$FX/claude.args"
+  run "$SD_ACT" ci-fix --force
+  [[ "$output" == *"the ci-fix agent's question on feat stands; running anyway"* ]]
+  [ -e "$FX/claude.args" ]
+  rm -f "$FX/claude.args"
+  git commit -q --allow-empty -m "chrismo's answer" && git push -q origin feat 2>/dev/null
+  state_fixture
+  run "$SD_ACT" ci-fix
+  [ -e "$FX/claude.args" ]
+}
+
 @test "--no-publish: committed, not pushed" {
   before=$(remote_feat)
   run "$SD_ACT" ci-fix --no-publish

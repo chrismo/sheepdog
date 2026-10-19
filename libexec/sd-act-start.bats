@@ -792,6 +792,23 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   [[ "$output" == *"Which file?"* ]]
   [ -n "$(git status --porcelain)" ]
   [ "$(git log -1 --format=%s)" = init ]
+  [ "$(git cat-file blob refs/sheepdog/feat-x/question | jq -r '.step + " " + .text')" = "implement Which file?" ]
+}
+
+@test "implement: with its question standing, a rerun refuses before the agent runs; an ack lets it (#167)" {
+  started
+  rm -f "$FX/agent"
+  echo '{"outcome": "needs-input", "commit_message": null, "summary": "Which file?"}' > "$FX/result.json"
+  run "$SD_ACT" implement
+  [[ "$output" == *"answer in its session (sd act attach feat-x), then sd act ack and sd act implement"* ]]
+  rm -f "$FX/claude.args"
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not running implement on feat-x"*"Which file?"* ]]
+  [ ! -e "$FX/claude.args" ]
+  "$SD_ACT" ack feat-x >/dev/null 2>&1 || true
+  run "$SD_ACT" implement
+  [ -e "$FX/claude.args" ]
 }
 
 @test "implement: gave-up is nonzero with the agent's reason, nothing committed" {

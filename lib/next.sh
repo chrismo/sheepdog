@@ -17,6 +17,10 @@
 # and with errors, pr may be wrong, so nothing spends on implementing. A
 # remote with commits reset away here isn't empty: the #86 steps handle it.
 #
+# An agent step's question standing at HEAD (sd state's question, #167) is
+# chrismo's question step, with the human items; the step that asked
+# (asking: implement, review-fix, address, ci-fix) goes until it's answered.
+#
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
 # Only bot items are ever marked i, so owed_bot - info is the blocking bot count.
@@ -78,6 +82,8 @@ values {...s, remote}
       own_base:=(on(branch == sync.default) or on(sync.target == branch)),
       empty:=(pr is null and on(sync.ahead == 0) and n(push.behind) == 0),
       tasked:=(coalesce(task, "") != ""),
+      asking:=(on(question.at_head) ? question.step : ""),
+      asked:=(on(question.at_head) ? coalesce([unnest split(question.text, "\n") | where grep("\\S", this)][0], "") : ""),
       last_review:=coalesce([unnest [review.local, review.bot, review.accepted]
                              | where on(status == "uncovered") | values uncovered | sort this][0], null),
       reviewed:=(trails(review.local) or trails(review.bot) or trails(review.accepted)),
@@ -103,6 +109,8 @@ values {...s, remote}
              f"git log HEAD..{remote}/{branch}") : null,
     open and n(threads.owed_human) > 0
       ? step("human", "you", f"reply to {plural(threads.owed_human, "human item")}", "sd state --long") : null,
+    open and asking != ""
+      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer in its session, then sd act ack", "sd act attach") : null,
     open and undone
       ? step("restack-undone", "you",
              f"the restack was undone ({sync.undone} of {sync.target}'"'"'s commits {sync.undone == 1 ? "is a copy" : "are copies"} on {branch}; a plain git push after a restack?): redo it, and don'"'"'t sd act push before that, which would publish the copies{no_base ? f"; no base to redo it from on {sync.target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {parent.name} at>), then sd act restack" : ""}",
@@ -122,12 +130,12 @@ values {...s, remote}
       : has_pr and not undone and not parent_closed and not on(sync.conflict) and gh_behind
       ? step("behind", "run", f"restack onto {sync.default} ({n(sync.behind)} behind): GitHub requires branches to be up to date",
              "sd act restack") : null,
-    has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push
+    has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push and asking != "ci-fix"
       ? agent(budget, "ci-red", f"fix CI: {join(ci.failing, ", ")}", "sd act ci-fix") : null,
     has_pr and on(ci.verdict == "blocked") and on(ci.for_head) and not to_push
       ? step("ci-blocked", "you", f"CI blocked: {sj(coalesce(ci.blocked, []), ", ")} didn'"'"'t start or want approval; an agent can'"'"'t fix that",
              "gh pr checks") : null,
-    open and bot_blocking > 0
+    open and bot_blocking > 0 and asking != "address"
       ? agent(budget, "bot", f"address {plural(threads.owed_bot, "bot item")}", "sd act address") : null,
     open and bot_blocking == 0 and n(threads.info) > 0
       ? step("read", "you", f"read {plural(threads.info, "bot item")} in sd state --long, then ack", "sd act ack") : null,
@@ -142,7 +150,7 @@ values {...s, remote}
     empty and on(push.dirty)
       ? step("nothing-dirty", "you", f"nothing to ship, and the worktree has uncommitted changes: commit them{tasked ? ", or remove them and sd act implement" : ""}", null)
       : empty and tasked
-      ? (len(errors) == 0 ? agent(budget, "implement", f"implement the task: nothing ahead of {sync.target} yet", "sd act implement") : null)
+      ? (len(errors) == 0 and asking != "implement" ? agent(budget, "implement", f"implement the task: nothing ahead of {sync.target} yet", "sd act implement") : null)
       : empty ? step("nothing", "you", "nothing to ship: commit, or record a task", null) : null,
     open and not ci_held and not foreign and not undone and not parent_unpushed and not empty and to_push
       ? step("push", "run", push.remote_sha is null ? f"push: not on {remote} yet"
@@ -154,7 +162,8 @@ values {...s, remote}
     has_pr and draft_ready and not need_review and not bot_due and not bot_waiting
       ? step("draft", "run", f"{on(ci.verdict == "none") ? "reviewed, no CI checks" : "CI green and reviewed"}: mark the PR ready for review",
              "gh pr ready") : null,
-    open and fixing and not on(review.findings.declined) and review.findings.round < review.findings.cap
+    open and fixing and asking == "review-fix" ? null
+      : open and fixing and not on(review.findings.declined) and review.findings.round < review.findings.cap
       ? agent(budget, "review-fix", f"fix {plural(review.findings.n, "review finding")} (round {review.findings.round}/{review.findings.cap})",
              "sd act implement")
       : open and fixing

@@ -55,6 +55,34 @@ worktree_for() {
     | awk -v ref="refs/heads/$1" '/^worktree / { wt = substr($0, 10) } $0 == "branch " ref { print wt; exit }'
 }
 
+# worktree_mark <worktree>: a hash of what's uncommitted there, staged or not,
+# untracked files' contents included; writes nothing (no objects, no index
+# refresh). The same mark: nothing in the worktree changed.
+worktree_mark() {
+  { git -C "$1" --no-optional-locks status --porcelain -z --untracked-files=all \
+    && git -C "$1" --no-optional-locks diff --binary --no-color --no-ext-diff --no-textconv HEAD \
+    && git -C "$1" -c core.quotePath=false ls-files -o --exclude-standard | git -C "$1" hash-object --stdin-paths; } \
+    | git -C "$1" hash-object --stdin
+}
+
+# An agent step's standing question (#167): refs/sheepdog/<b>/question, a
+# blob {head, step, mark, text}: what the step (implement, review-fix,
+# address, ci-fix) asked chrismo, at the HEAD and worktree_mark it left. It
+# stands while both are unchanged, until sd act ack drops it.
+# question_state <branch> <head>: the record as sd state shows it, {step, sha,
+# text, at_head}; nothing with no record, status 1 for one that isn't one.
+question_state() {
+  local b=$1 rec h m wt mark at=false
+  rec=$(git cat-file blob "refs/sheepdog/$b/question" 2>/dev/null) || return 0
+  rec=$(prc_json 'where kind(this) == "record" and is(head, <string>) and is(step, <string>)
+                    and is(mark, <string>) and is(text, <string>)' "$rec" 2>/dev/null) && [[ -n $rec ]] || return 1
+  read -r h m < <(prc_line 'values f"{head} {mark}"' "$rec")
+  if [[ $h == "$2" ]] && wt=$(worktree_for "$b") && [[ -n $wt ]] && mark=$(worktree_mark "$wt") && [[ $mark == "$m" ]]; then
+    at=true
+  fi
+  prc_json "values {step, sha: head, text, at_head: $at}" "$rec"
+}
+
 # made_here <range>: every commit in <range> was authored and committed by
 # this repo's user. A commit, amend, cherry-pick or rebase here sets the
 # committer (a fast-forward merge, pull or rebase onto the remote keeps the

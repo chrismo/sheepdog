@@ -747,3 +747,34 @@ lines_for() { # lines_for <one|all> <jq-assignment...>
   [ "${lines[0]}" = "NEXT  agent  address 1 bot item  → sd act address" ]
   [ "${lines[1]}" = "then  run    push 1 commit  → sd act push" ]
 }
+
+# ── an agent step's question (#167) ──────────────────────────────────────────
+
+asked() { # asked <step> [<at_head>]: sd state's question field
+  jq -nc --arg s "$1" --argjson a "${2:-true}" \
+    '".question = \({step: $s, sha: "h1", text: "Which test is right?\n1. revert it\n2. keep it", at_head: $a} | tojson)"' | jq -r .
+}
+
+@test "question: a you step quoting its first line, in place of the agent step that asked (#167)" {
+  local red=('.ci.verdict = "red"' '.ci.failing = ["test"]')
+  [ "$(keys "${red[@]}")" = ci-red ]
+  [ "$(keys "${red[@]}" "$(asked ci-fix)")" = question ]
+  [ "$(step question who "${red[@]}" "$(asked ci-fix)")" = you ]
+  [ "$(step question say "${red[@]}" "$(asked ci-fix)")" \
+    = "the agent asks (ci-fix): Which test is right?; answer in its session, then sd act ack" ]
+  [ "$(step question cmd "${red[@]}" "$(asked ci-fix)")" = "sd act attach" ]
+  # about an older HEAD or worktree: it no longer stands
+  [ "$(keys "${red[@]}" "$(asked ci-fix false)")" = ci-red ]
+}
+
+@test "question: replaces only the step that asked, ahead of the loop's own steps (#167)" {
+  [ "$(keys '.ci.verdict = "red"' '.ci.failing = ["test"]' '.threads.owed_bot = 2' "$(asked address)")" = "question ci-red" ]
+  [ "$(keys '.threads.owed_bot = 2' "$(asked ci-fix)")" = "question bot" ]
+  [ "$(keys "${FRESH[@]}" '.task = "add c"' "$(asked implement)")" = question ]
+  local st=('.review.local = {sha: "x", status: "uncovered", uncovered: 2}'
+            '.review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}')
+  # not review-decide or another review either: the round waits on the answer
+  [ "$(keys "${st[@]}" "$(asked review-fix)")" = question ]
+  [ "$(keys "${st[@]}" "$(asked review-fix false)")" = review-fix ]
+  [ "$(keys '.pr.merge_state = "BEHIND"' '.sync.up_to_date = false' '.sync.behind = 3' "$(asked ci-fix)")" = "question behind" ]
+}

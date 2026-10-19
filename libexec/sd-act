@@ -79,7 +79,9 @@
 #             chrismo. Replies are posted with /commands and @mentions
 #             defanged. The agent may run what implement's may. Spends tokens
 #   ack       mark owed bot review bodies and comments read, with no reply:
-#             every i item, or only the --id ones (ids from sd state --json)
+#             every i item, or only the --id ones (ids from sd state --json).
+#             Without --id, also drop the agent's standing question (below):
+#             chrismo has answered it, so NEXT offers the step that asked again
 #   restack   rebase --onto the parent (the default branch once the parent
 #             merged), check the branch's own change came through unchanged,
 #             else roll back; never pushes. When the old base isn't an
@@ -198,12 +200,21 @@
 # .gitlab-ci.yml .buildkite/; unless the setting is set,
 # .sheepdog/protected-paths itself too. Each covers itself and what's under it.
 #
+# Questions (#167): when implement, a review-fix round, address or ci-fix
+# needs chrismo (outcome needs-input, or an item marked ask), the question is
+# recorded on HEAD, with a hash of the worktree's uncommitted state
+# (refs/sheepdog/<b>/question). While both are unchanged it stands: sd state's
+# NEXT shows it as chrismo's question step in place of the step that asked,
+# and that step refuses to run again (--force runs it). A commit, an edit, or
+# sd act ack ends it.
+#
 # --force:
 #   address         run even if the branch is unpushed, diverged or taken over
 #   restack, push, ship   run even if taken over
 #   implement, review, describe   the same
 #   attach          take over a lock another attach still holds
 #   ci-fix          run again on a red the agent already called flaky
+#   implement, address, ci-fix   run though the agent's question stands
 #   trigger         even when the local review doesn't cover HEAD, or the bot
 #                   is already pinned at HEAD (trigger it again)
 #   unregister      even with branches still enrolled (the watcher drops them)
@@ -495,6 +506,7 @@ address() {
     return
   fi
   soft_gate "$gate" "addressing $b"
+  question_gate "$b" address
   gate_get "$gate" warn | sed 's/^/sd-act: warning: /' >&2
 
   local -a id_args=()
@@ -579,9 +591,20 @@ address() {
     git -C "$wt" add -A && git -C "$wt" commit -q -m "$msg" || die "commit failed; the edits are left in $wt"
   fi
   hold_since "$b" "$gbase" "$agent_head"
-  verify_autofix "$wt" "$b" || die "verify failed ($verify); the commit is kept in $wt, nothing pushed or posted"
+  local vrc=0 summary asks qmsg=""
+  verify_autofix "$wt" "$b" || vrc=$?
+  # The asks stay owed, so the bot step would hand them over again: the
+  # question replaces it, recorded on HEAD as verify left it (a push keeps it).
+  summary=$(prc_val "$result" 'coalesce(summary, "")')
+  asks=$(prc_line "$REPORT" "$plan" | sed -n '/^needs chrismo:$/,$p')
+  if [[ $outcome == needs-input || -n $asks ]]; then
+    question_ask "$b" "$wt" address "$summary${asks:+$'\n'$asks}"
+    qmsg="$(question_say "$b"): answer on GitHub or in its session (sd act attach $b), then sd act ack"
+  fi
+  (( vrc == 0 )) || die "verify failed ($verify); the commit is kept in $wt, nothing pushed or posted${qmsg:+. $qmsg}"
 
-  report "$plan" "$(prc_val "$result" 'coalesce(summary, "")')"
+  report "$plan" "$summary"
+  [[ -z $qmsg ]] || echo "$qmsg"
   if $no_publish; then
     echo "not published: nothing pushed or posted"
     return
@@ -864,6 +887,35 @@ past_fork_limit() {
 step_store() {
   git config "branch.$1.sd-session" "$STEP_SID"
   git config "branch.$1.sd-harness" "$STEP_H"
+}
+
+# ── an agent step's question (#167) ──────────────────────────────────────────
+
+# question_ask <branch> <worktree> <step> <text>: record a step's needs-input
+# on HEAD and the worktree as the step left them (lib/sheepdog.sh's
+# question_state); a failure only warns, as the question is printed anyway.
+question_ask() {
+  local b=$1 head mark text rec
+  text=$(tr -d '\000-\010\013\014\016-\037\177' <<<"$4")
+  head=$(git rev-parse "refs/heads/$b") && mark=$(worktree_mark "$2") \
+    && rec=$(printf '{"head": "%s", "step": "%s", "mark": "%s", "text": %s}' "$head" "$3" "$mark" "$(prc_json_string "$text")") \
+    && git update-ref -m "sd act $3: needs input" "refs/sheepdog/$b/question" "$(git hash-object -w --stdin <<<"$rec")" \
+    || echo "sd act: warning: couldn't record the question on $b, so NEXT won't show it" >&2
+}
+
+question_say() { echo "NEXT shows the question until $1's HEAD or worktree changes, or sd act ack"; }
+
+# question_gate <branch> <step>: refuse, at zero tokens, to rerun the step
+# whose question stands; --force runs it anyway.
+question_gate() {
+  local q
+  q=$(question_state "$1" "$(git rev-parse "refs/heads/$1")") && [[ -n $q ]] || return 0
+  [[ $(prc_val "$q" "at_head and step == \"$2\"") == true ]] || return 0
+  if $force; then
+    echo "sd act: warning: the $2 agent's question on $1 stands; running anyway" >&2
+    return 0
+  fi
+  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer in its session (sd act attach $1), then sd act ack; or --force"
 }
 
 # ── attach: A9, takeover ─────────────────────────────────────────────────────
@@ -1200,6 +1252,9 @@ implement_run() {
       || die "couldn't read the review findings on $b"
   fi
   [[ -n $task || -n $listed ]] || die "no task recorded for $b: git config branch.$b.sd-task \"<task>\""
+  local qstep=implement
+  [[ -z $listed ]] || qstep=review-fix
+  question_gate "$b" "$qstep"
   verify=$(cd "$wt" && prc_get settings.verify "$b" false) || die "sd config failed"
   extra=$(cd "$wt" && prc_get settings.implementAllow "$b" false) || die "sd config failed"
   # A rule's * is a wildcard, so only plain words become an exact rule.
@@ -1251,12 +1306,13 @@ implement_run() {
     [[ -z $asks ]] || outcome=needs-input summary+=$'\n'"$asks"
   fi
   if [[ $outcome == needs-input ]]; then
+    question_ask "$b" "$wt" "$qstep" "$summary"
     # implement refuses a dirty worktree, so with edits left the answer goes
     # into the session itself.
     if [[ -n $(git -C "$wt" status --porcelain) ]]; then
-      die "the agent needs input on $b: $summary"$'\n'"Its edits are left uncommitted in $wt: answer in its session (sd act attach $b) and commit what you keep, or discard them and run sd act implement again"
+      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"). Its edits are left uncommitted in $wt: answer in its session (sd act attach $b) and commit what you keep, or discard them and run sd act implement again"
     fi
-    die "the agent needs input on $b: $summary"$'\n'"Answer in session $STEP_SID, then sd act implement"
+    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b), then sd act ack and sd act implement"
   fi
   if [[ -n $(git -C "$wt" status --porcelain) ]]; then
     msg=$(prc_line 'values {m: coalesce(commit_message, null)}
@@ -1397,6 +1453,7 @@ ci_fix() {
   if ! $force && [[ ${last%% *} == "$sha" && ${last#* } == flaky ]]; then
     die "ci-fix already judged ${sha:0:7}'s red flaky and changed nothing; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks. --force hands it over again"
   fi
+  question_gate "$b" ci-fix
   step_session "$b" ci-fix
   base=$(prc_val "$state" 'coalesce(sync.old_base, "")')
   # With no base from sd state, the trusted one guidance_base finds (maybe none).
@@ -1463,7 +1520,9 @@ ci_fix() {
       elif [[ -n $AUTOFIX_COMMIT ]]; then echo "autofix's commit $AUTOFIX_COMMIT is kept, unpushed: sd act push"
       else echo "nothing committed; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks"; fi
       return ;;
-    needs-input) die "the agent needs input on $b: $summary"$'\n'"Edits (if any) are left uncommitted in $wt: answer in the session (sd act attach), then commit or discard them, then sd act ci-fix" ;;
+    needs-input)
+      question_ask "$b" "$wt" ci-fix "$summary"
+      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b). Edits (if any) are left uncommitted in $wt: commit or discard them, or with none, sd act ack; then sd act ci-fix" ;;
     gave-up) die "the agent gave up on $b: $summary. Edits (if any) are left uncommitted in $wt" ;;
     *) die "the agent returned outcome \"$outcome\"; edits (if any) are left uncommitted in $wt" ;;
   esac
@@ -2180,9 +2239,14 @@ unnest {ids, it: s.threads.items}
 EOF
 
 ack() {
-  local b=$branch state check out id why what ids_json="" sep=""
+  local b=$branch state check out id why what ids_json="" sep="" q asked=false
   local -a picked=() shown=() bad=()
   local -A found=()
+  if (( ! ${#ids[@]} )) && q=$(git cat-file blob "refs/sheepdog/$b/question" 2>/dev/null); then
+    git update-ref -d "refs/sheepdog/$b/question"
+    echo "acked the agent's question on $b ($(prc_val "$q" 'coalesce(step, "?")' 2>/dev/null || echo '?'))"
+    asked=true
+  fi
   state=$(sd-state --json "$b") || die "sd state failed"
   check=$(prc_line 'values nul(threads.owed_bot) ? f"can'"'"'t read the PR from GitHub: {sj(coalesce(errors, []), "; ")}" : "ok"' "$state") \
     || die "can't parse sd state's answer"
@@ -2197,7 +2261,7 @@ ack() {
   done <<<"$out"
   for id in "${ids[@]}"; do [[ -n ${found[$id]:-} ]] || bad+=("$id isn't owed on $b"); done
   if (( ${#bad[@]} )); then printf 'sd act: %s\n' "${bad[@]}" >&2; exit 1; fi
-  if (( ! ${#picked[@]} )); then echo "nothing to ack on $b"; return; fi
+  if (( ! ${#picked[@]} )); then $asked || echo "nothing to ack on $b"; return; fi
   for id in "${picked[@]}"; do git config --add "branch.$b.sd-handled" "$id"; done
   echo "acked ${#picked[@]} on $b:"
   printf '  %s\n' "${shown[@]}"
