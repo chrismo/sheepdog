@@ -605,12 +605,34 @@ markers() { ls "$TMP/repo/.git/sheepdog/" 2>/dev/null | grep '\.running$' || tru
   running_hold feat implement
   held=$(cat .git/sheepdog/feat.running)
   [ "$(cut -d' ' -f1,2 <<<"$held")" = "$BASHPID implement" ]
+  [ "$(printenv RUNNING_HELD)" = feat ]
   HARNESS_STEP=resolve run harness_run claude sid1 new 30 "do it" '{}'
   [ "$status" -eq 0 ]
   [ "$(head -1 "$FX/marker" | cut -d' ' -f2-)" = "$held" ]
   [ "$(cat .git/sheepdog/feat.running)" = "$held" ]
   running_release feat
   [ -z "$(markers)" ]
+}
+
+@test "running_hold and harness_run: another live step's marker is refused and left alone; a dead one's is replaced (#170)" {
+  harness_stubs
+  local holder theirs
+  mkdir -p .git/sheepdog
+  sleep 30 & holder=$!
+  theirs="$holder implement 2026-10-18T14:03:00Z $(proc_start $holder)"
+  echo "$theirs" > .git/sheepdog/feat.running
+  run running_hold feat address
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"implement is running on feat (pid $holder, since 2026-10-18T14:03:00Z)"* ]]
+  [ "$(cat .git/sheepdog/feat.running)" = "$theirs" ]
+  HARNESS_STEP=review run harness_run claude sid1 new 30 "do it" '{}'
+  [ "$status" -ne 0 ]
+  [ ! -e "$FX/args" ]
+  [ "$(cat .git/sheepdog/feat.running)" = "$theirs" ]
+  kill "$holder"; wait "$holder" || true
+  running_hold feat address
+  [ "$(cut -d' ' -f1,2 .git/sheepdog/feat.running)" = "$BASHPID address" ]
+  running_release feat
 }
 
 @test "with_timeout: a TERM or INT to it ends the command's process group, and it waits for that (#170)" {

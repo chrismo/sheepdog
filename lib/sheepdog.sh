@@ -395,11 +395,12 @@ branch_spend() {
 # While it runs, the branch's running_file says so, for sd state (#170): the
 # step runs in a subshell whose trap removes the marker however it ends,
 # since a trap here would replace the caller's. A marker running_hold keeps
-# for the whole step is left alone.
+# for the whole step is left alone; another live step's refuses this one.
 harness_run() {
   local b marker
   b=$(harness_branch)
   [[ -n $b && ${RUNNING_HELD:-} != "$b" ]] || { harness_step "$@"; return; }
+  running_free "$b" || return 1
   marker=$(running_file "$b") && mkdir -p "${marker%/*}" || return 1
   (
     pid=$BASHPID
@@ -426,12 +427,14 @@ proc_start() { LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | awk '{ $1 = $
 # running_hold <branch> <step>: <branch>'s marker, for this (sub)shell, for a
 # step whose commit and verify come after its harness_run; running_release
 # removes it. No trap: a step that dies takes its pid with it, and sd state
-# clears the marker.
+# clears the marker. RUNNING_HELD is exported, so the step's own children
+# (sd-review-local in implement's review rounds) run under its marker.
 running_hold() {
   local f pid=$BASHPID
+  running_free "$1" || return 1
   f=$(running_file "$1") && mkdir -p "${f%/*}" || return 1
   echo "$pid $2 $(date -u +%Y-%m-%dT%H:%M:%SZ) $(proc_start "$pid")" >"$f" || return 1
-  RUNNING_HELD=$1
+  export RUNNING_HELD=$1
 }
 
 running_release() {
@@ -441,10 +444,26 @@ running_release() {
   RUNNING_HELD=
 }
 
-# running_during <branch> <step> <cmd...>: <cmd> with running_hold's marker.
+# running_free <branch>: fails, saying so, while another live process's agent
+# step holds <branch>'s marker, so a second pass doesn't start a second agent
+# on the worktree, or take the first one's marker. Not a lock: two steps
+# starting at once can both pass.
+running_free() {
+  local state pid step since rest
+  state=$(running_state "$1") || return 1
+  [[ $state != null ]] || return 0
+  read -r pid step since rest <"$(running_file "$1")" || return 0
+  [[ $pid != "$BASHPID" ]] || return 0
+  echo "$step is running on $1 (pid $pid, since $since): not starting another agent step" >&2
+  return 1
+}
+
+# running_during <branch> <step> <cmd...>: <cmd> with running_hold's marker,
+# or under the one this process or its parent already holds for <branch>.
 # Under set -e a failing <cmd> exits before the release (see running_hold).
 running_during() {
   local rc
+  [[ ${RUNNING_HELD:-} != "$1" ]] || { "${@:3}"; return; }
   running_hold "$1" "$2" || return 1
   "${@:3}"; rc=$?
   running_release "$1"

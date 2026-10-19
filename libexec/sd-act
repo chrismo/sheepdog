@@ -2015,7 +2015,8 @@ restack() {
       die "the rebase onto $remote/$target stopped on a conflict partway through; rolled back to ${old_head:0:7}." \
           "Resolve it by hand: git rebase --onto ${new_base:0:12} ${old_base:0:12} $b, then git update-ref refs/sheepdog/$b/base ${new_base:0:12}; or let the agent: sd act restack --resolve"
     fi
-    resolve_conflicts "$b" "$wt" "$old_base" "$old_head" "$remote/$target" || exit 1
+    # Marked running across every stop and continue, not only each agent run (#170).
+    running_during "$b" resolve resolve_conflicts "$b" "$wt" "$old_base" "$old_head" "$remote/$target" || exit 1
     resolved=true
     # Before anything below can die: the resolution is on the branch now.
     hold_after "$b" "$old_base" "$RESOLVE_TOUCHED"

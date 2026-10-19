@@ -767,6 +767,20 @@ $own2 feat two" ]
   ! rebase_in_progress
 }
 
+@test "--resolve: one running marker lasts across every stop, then is gone (#170)" {
+  edit 's/^e$/E/' there
+  edit 's/^E$/e/' back
+  upstream main 's/^e$/X/'
+  resolver X
+  printf 'cat %s >> %s\n' "$TMP/repo/.git/sheepdog/feat.running" "$FX/during" >> "$FX/agent"
+  run "$SD_ACT" restack --resolve
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$FX/during" | tr -d ' ')" = 2 ]
+  [ "$(cut -d' ' -f1,2 "$FX/during" | sort -u | wc -l | tr -d ' ')" = 1 ]
+  [ "$(cut -d' ' -f2 "$FX/during" | head -1)" = resolve ]
+  [ ! -e "$TMP/repo/.git/sheepdog/feat.running" ]
+}
+
 @test "--resolve: the agent giving up rolls back" {
   upstream main 's/^g$/X/'
   echo '{"outcome": "gave-up", "summary": "no sensible merge"}' > "$FX/result.json"
