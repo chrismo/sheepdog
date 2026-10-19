@@ -647,15 +647,17 @@ FRESH=('.pr = null' '.sync.ahead = 0' '.push = {"remote_sha": null, "ahead": 0, 
 @test "bot silent, but HEAD accepted after the trigger: no wait on the bot; ready" {
   [ "$(keys '.bot = {command: "/review-bot", timeout: 3600}' \
             '.review.bot = {sha: "h1", status: "covered", triggered: "2026-10-15T12:00:00Z", replied: false, waited: 4000}' \
-            '.review.accepted = {sha: "h1", status: "covered", at: "2026-10-15T13:10:00Z"}')" = ready ]
+            '.review.accepted = {sha: "h1", status: "covered", after: "2026-10-15T12:00:00Z"}')" = ready ]
 }
 
 @test "accepted, then triggered, then the bot silent: chrismo decides; the accept isn't for the bot (#181)" {
   local st=('.bot = {command: "/review-bot", timeout: 3600}'
             '.review.bot = {sha: "h1", status: "covered", triggered: "2026-10-15T12:00:00Z", replied: false, waited: 4000}')
-  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", at: "2026-10-15T11:59:00Z"}')" = bot-silent ]
-  # an accept with no time (by hand, or from before #181) can't be ordered: it doesn't end the wait
-  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", at: null}')" = bot-silent ]
+  # the accept followed an earlier trigger, or none
+  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", after: "2026-10-15T11:00:00Z"}')" = bot-silent ]
+  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", after: null}')" = bot-silent ]
+  # trigger times are matched, never ordered: they come from different clocks
+  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", after: "2026-10-15T12:00:05Z"}')" = bot-silent ]
   [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered"}')" = bot-silent ]
 }
 

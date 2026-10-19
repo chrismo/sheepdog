@@ -38,8 +38,9 @@
 #             review.bot also has triggered (when sd act trigger posted, by
 #             GitHub's clock), replied (a bot has posted since; null with no
 #             trigger time or when gh fails) and waited (seconds since)
-#             review.accepted also has at (when sd act review --accept pinned
-#             it, by this machine's clock; null for a pin made by hand)
+#             review.accepted also has after (the bot's triggered when sd act
+#             review --accept pinned it; null with no trigger then, or for a
+#             pin made by hand)
 #   question  an agent step's needs-input (refs/sheepdog/<b>/question, see
 #             sd act ack): {step, sha, text, at_head}; at_head while HEAD and
 #             the worktree's uncommitted state are what the step left, and
@@ -129,7 +130,7 @@
 # (the PR's number, written here), branch.<name>.sd-handled
 # (multi-valued: node ids of bot reviews/comments already dealt with),
 # branch.<name>.sd-bot-triggered (when sd act trigger posted its comment),
-# branch.<name>.sd-accepted (when sd act review --accept pinned accepted).
+# branch.<name>.sd-accepted-after (the sd-bot-triggered sd act review --accept followed).
 
 set -euo pipefail
 
@@ -223,7 +224,7 @@ ignore_body=$(prc_get settings.botIgnoreBody "$branch" false json) || die "sd co
 bot_command=$(prc_get settings.botCommand "$branch" false) || die "sd config failed"
 bot_timeout=$(prc_get settings.botTimeout "$branch" false) || die "sd config failed"
 bot_triggered=$(cfg sd-bot-triggered)   # when trigger posted its comment, by GitHub's clock (#63)
-accepted_at=$(cfg sd-accepted)          # when review --accept pinned accepted, by this machine's clock (#181)
+accepted_after=$(cfg sd-accepted-after) # the bot_triggered review --accept followed (#181)
 review_rounds=$(prc_get settings.reviewRounds "$branch" false) || die "sd config failed"
 branch_budget=$(prc_get settings.branchBudget "$branch" false json) || die "sd config failed"
 spend=$(branch_spend "$branch" 2> >(sed 's/^/sd state: /' >&2)) || { spend=null; errors+=("usage: can't read $(usage_file)"); }
@@ -902,7 +903,7 @@ values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
          blocked: coalesce([unnest ctx | where k == "blocked" | values name], []),
          pending: coalesce([unnest ctx | where k == "pending" | values name], []),
          required: s.required, missing: mi},
-    review: {local: s.r_local, bot: bot_pin(s, br), accepted: nul(s.r_accepted) ? null : {...s.r_accepted, at: s.accepted_at},
+    review: {local: s.r_local, bot: bot_pin(s, br), accepted: nul(s.r_accepted) ? null : {...s.r_accepted, after: s.accepted_after},
              findings: nul(s.r_findings) ? null
                : {sha: s.r_findings.head, round: s.r_findings.round,
                   n: len(coalesce([unnest s.r_findings.findings | where coalesce(severity, "") != "nit"], [])),
@@ -941,13 +942,13 @@ refs_json=$(git for-each-ref --format='%(refname) %(objectname)' "refs/sheepdog/
 args=$(printf '{"branch": %s, "head": %s, "task": %s, "pr": %s, "parent": %s, "parent_source": %s, "parent_pr": %s, "parent_merged": %s, "parent_local": %s, "parent_remote": %s, "parent_unpushed": %s,
   "target": %s, "default_branch": %s, "sync_ahead": %s, "behind": %s, "up_to_date": %s, "old_base": %s, "by_tree": %s, "conflict": %s, "undone": %s,
   "remote_sha": %s, "ahead": %s, "push_behind": %s, "diverged": %s, "remote_ours": %s, "theirs": %s, "remote_made": %s, "dirty": %s, "held": %s, "stale": %s,
-  "r_local": %s, "r_bot": %s, "r_accepted": %s, "r_findings": %s, "r_findings_at_head": %s, "review_rounds": %s, "question": %s, "flags": %s, "flags_error": %s, "gh_ok": %s, "parent_ok": %s, "viewer": %s, "bots": %s, "bot_command": %s, "bot_triggered": %s, "accepted_at": %s, "bot_timeout": %s, "now": %s,
+  "r_local": %s, "r_bot": %s, "r_accepted": %s, "r_findings": %s, "r_findings_at_head": %s, "review_rounds": %s, "question": %s, "flags": %s, "flags_error": %s, "gh_ok": %s, "parent_ok": %s, "viewer": %s, "bots": %s, "bot_command": %s, "bot_triggered": %s, "accepted_after": %s, "bot_timeout": %s, "now": %s,
   "required": %s, "ignore": %s, "ignore_body": %s, "handled": %s, "refs": %s, "enrolled": %s, "harness": %s, "session": %s, "lock": %s, "running": %s,
   "rl_cost": %s, "rl_remaining": %s, "rl_reset": %s, "rl_limited": %s, "spend": %s, "branch_budget": %s, "errors": %s}\n' \
   "$(jstr "$branch")" "$(jstr "$head")" "$(jstr "$(cfg sd-task)")" "$pr" "$(jstr "$parent")" "$(jstr "$parent_source")" "$parent_pr" "$parent_merged" "$parent_local" "$parent_remote" "$parent_unpushed" \
   "$(jstr "$target")" "$(jstr "$default_branch")" "$sync_ahead" "$behind" "$up_to_date" "$(jnull "$old_base")" "$by_tree" "$conflict" "$undone" \
   "$(jnull "$remote_sha")" "$ahead" "$push_behind" "$diverged" "$remote_ours" "$theirs" "$remote_made" "$dirty" "$held" "$stale_json" \
-  "${review[local]}" "${review[bot]}" "${review[accepted]}" "$r_findings" "$r_findings_at_head" "$review_rounds" "$question" "$flags" "$(jstr "$flags_error")" "$gh_ok" "$parent_ok" "$(jstr "$viewer")" "$bots" "$(jstr "$bot_command")" "$(jnull "$bot_triggered")" "$(jnull "$accepted_at")" "$bot_timeout" "$(jstr "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
+  "${review[local]}" "${review[bot]}" "${review[accepted]}" "$r_findings" "$r_findings_at_head" "$review_rounds" "$question" "$flags" "$(jstr "$flags_error")" "$gh_ok" "$parent_ok" "$(jstr "$viewer")" "$bots" "$(jstr "$bot_command")" "$(jnull "$bot_triggered")" "$(jnull "$accepted_after")" "$bot_timeout" "$(jstr "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
   "$required" "$ignore" "$ignore_body" "$(jlist "branch.$branch.sd-handled")" "$refs_json" \
   "$(jstr "$(cfg sheepdog)")" "$(jstr "$(cfg sd-harness)")" "$(jstr "$(cfg sd-session)")" "$(jstr "$(cfg sd-lock)")" "$running" \
   "$rl_cost" "$rl_remaining" "$(jnull "$rl_reset")" "$rl_limited" "$spend" "$branch_budget" "$errors_json")

@@ -195,10 +195,22 @@ findings_rec() { git cat-file blob refs/sheepdog/feat/findings | jq -c "$1"; }
   [[ "$output" == *accepted* ]]
   [ "$(pin accepted)" = "$(git rev-parse HEAD)" ]
   [ "$(pin accepted-base)" = "$(git rev-parse origin/main)" ]
-  # when, so NEXT can tell an accept after the bot's trigger from one before (#181)
-  [[ "$(git config branch.feat.sd-accepted)" =~ ^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:]+Z$ ]] || false
+  # no trigger yet: none to record
+  run git config --get branch.feat.sd-accepted-after
+  [ "$status" -ne 0 ]
   [ ! -e "$FX/reviewer.env" ]
   run git rev-parse -q --verify refs/sheepdog/feat/findings
+  [ "$status" -ne 0 ]
+}
+
+@test "--accept: records the bot trigger it followed, so NEXT can order them without comparing clocks (#181)" {
+  git config branch.feat.sd-bot-triggered 2026-10-15T12:00:00Z
+  "$SD_ACT" review --accept >/dev/null
+  [ "$(git config branch.feat.sd-accepted-after)" = 2026-10-15T12:00:00Z ]
+  # a later accept with no trigger to follow drops the old one
+  git config --unset branch.feat.sd-bot-triggered
+  "$SD_ACT" review --accept >/dev/null
+  run git config --get branch.feat.sd-accepted-after
   [ "$status" -ne 0 ]
 }
 

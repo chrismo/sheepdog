@@ -157,10 +157,11 @@
 #             sd state recomputes them from base..HEAD on every call, so they
 #             outlive stderr and never go stale. Spends tokens.
 #             --accept: pin accepted at HEAD instead, reviewing nothing (HEAD
-#             is reviewed enough), record when (branch.<b>.sd-accepted), and
-#             drop the findings. It stands in for the local review, not the
-#             bot's: the bot is still triggered on HEAD, and only an accept
-#             made after that trigger ends a silent bot's wait (#181)
+#             is reviewed enough), record the bot trigger it followed
+#             (branch.<b>.sd-accepted-after), and drop the findings. It
+#             stands in for the local review, not the bot's: the bot is still
+#             triggered on HEAD, and only an accept made after that trigger
+#             ends a silent bot's wait (#181)
 #   describe  the agent writes the PR title and body (J6) from the task, the
 #             commits and the diff, read-only, in the branch's session; stored
 #             for HEAD and the PR's target. Spends tokens
@@ -252,7 +253,7 @@
 # .sd-harness, .sd-handled, .sd-lock ("<pid>@<host> <time>" while attached),
 # .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 # .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
-# .sd-accepted (when review --accept pinned accepted, by this machine's clock),
+# .sd-accepted-after (the .sd-bot-triggered that review --accept followed),
 # .sd-held (the CI config hold: the commit, then the paths, one per line);
 # sheepdog.repo (global) lists the enrolled repos.
 #
@@ -783,7 +784,7 @@ no_base_why() {
 # ── review ───────────────────────────────────────────────────────────────────
 
 review() {
-  local b=$branch wt state base head task timeout reviewer findings n blocking round rec prev flagged
+  local b=$branch wt state base head task timeout reviewer findings n blocking round rec prev flagged triggered
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || die "$b isn't checked out in any worktree"
   [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
@@ -794,7 +795,12 @@ review() {
   head=$(git rev-parse "refs/heads/$b")
   if $accept; then
     pin_write "$b" accepted "$head" "$base"
-    git config "branch.$b.sd-accepted" "$(date -u +%FT%TZ)"
+    triggered=$(git config --get "branch.$b.sd-bot-triggered" || true)
+    if [[ -n $triggered ]]; then
+      git config "branch.$b.sd-accepted-after" "$triggered"
+    else
+      git config --unset "branch.$b.sd-accepted-after" || true
+    fi
     git update-ref -d "refs/sheepdog/$b/findings"
     echo "accepted: $b at ${head:0:7} against ${base:0:7}; pinned accepted"
     return

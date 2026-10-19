@@ -80,12 +80,12 @@ values {...s, remote}
                     and not (covers(review.local) or covers(review.bot) or covers(review.accepted))),
       fixing:=(on(review.findings.at_head) and not (covers(review.local) or covers(review.bot) or covers(review.accepted))),
       -- an accept stands in for the local review, never for the bot (#181); it ends a silent bot wait
-      -- only when made after the trigger (ISO 8601 UTC times compare as strings)
+      -- only when made after that trigger: it recorded the trigger it followed (no clocks compared, #63)
       bot_due:=(coalesce(bot.command, null) is not null and (covers(review.local) or covers(review.accepted))
                 and not covers(review.bot)),
       bot_waiting:=(covers(review.bot) and on(review.bot.replied == false)
                     and not (covers(review.accepted) and n(review.bot.waited) > n(bot.timeout)
-                             and coalesce(review.accepted.at, "") > coalesce(review.bot.triggered, "~"))),
+                             and on(review.accepted.after == review.bot.triggered))),
       own_base:=(on(branch == sync.default) or on(sync.target == branch)),
       empty:=(pr is null and on(sync.ahead == 0) and n(push.behind) == 0),
       tasked:=(coalesce(task, "") != ""),
