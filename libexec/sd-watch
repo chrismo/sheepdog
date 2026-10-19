@@ -58,10 +58,11 @@
 #     step's that gave up, failed or timed out with no question (#178). The
 #     two steps below are the same edits where the state says they're
 #     chrismo's, so those aren't notified
+#   read: ❌ info-only bot items, shown once nothing else moves without
+#     chrismo: unnotified, an unattended loop stalls there unseen (#76)
 # Not notified:
 #   closed: chrismo closed it
 #   errors stale: ⚠️ sd state can't be sure, so what was notified carries over
-#   read: info-only bot items; nothing waits on them
 #   reset-dirty take: chrismo is mid-change on the branch: no sheepdog step
 #     resets pushed commits away, so the reset and the edits with it are
 #     chrismo's; the 🔧 glyph shows it
@@ -123,7 +124,7 @@ VACUUM_LOG=
 read -r -d '' CLASSIFY <<'EOF' || true
 values {next: kind(next) == "array" ? next : []}
 | values {next, k: coalesce([unnest next | values key], []),
-          red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "question", "restack-undone", "bot-silent", "budget", "ci-config", "nothing", "default", "dirty"] | values {key, msg: say}], []),
+          red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "question", "restack-undone", "bot-silent", "budget", "ci-config", "nothing", "default", "dirty", "read"] | values {key, msg: say}], []),
           waiting: len(coalesce([unnest next | where who != "wait"], [])) == 0}
 | values {carry: len(next) == 0 or "errors" in k or "stale" in k,
           hold: k == ["running"],
