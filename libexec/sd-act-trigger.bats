@@ -5,8 +5,9 @@ bats_require_minimum_version 1.5.0
 # Test suite for `sd act trigger` (A5): post settings.botCommand as a PR
 # comment and pin bot at HEAD with its base, recording when GitHub says it
 # was posted; skip when already pinned there unless --force.
-# The bot reviews what is on GitHub, so an unpushed HEAD is refused, and a
-# local review that doesn't cover HEAD is a soft refusal (--force).
+# The bot reviews what is on GitHub, so an unpushed HEAD is refused, and
+# neither the local review nor an accept covering HEAD is a soft refusal
+# (--force).
 #
 # Real git and the real sd state. gh is a stub: graphql answers from
 # $GH/<branch>.json (by number: the node of whichever file has it), the REST
@@ -191,6 +192,16 @@ pin() { git rev-parse -q --verify "refs/sheepdog/feat/$1" || true; }
   [ -z "$(calls)" ]
   run "$SD_ACT" trigger --force
   [ "$status" -eq 0 ]
+  [ "$(pin bot)" = "$(git rev-parse HEAD)" ]
+}
+
+@test "trigger: an accepted pin at HEAD stands in for the local review; no --force (#181)" {
+  git update-ref refs/sheepdog/feat/local HEAD~1
+  git update-ref refs/sheepdog/feat/accepted HEAD
+  git update-ref refs/sheepdog/feat/accepted-base main
+  run "$SD_ACT" trigger
+  [ "$status" -eq 0 ]
+  [[ "$(calls)" == *"comment "* ]] || false
   [ "$(pin bot)" = "$(git rev-parse HEAD)" ]
 }
 
