@@ -1321,6 +1321,17 @@ ready_pr() {
   [ ! -e "$TMP/upload-pack.log" ]
 }
 
+@test "base fresh: no ls-remote while GitHub says CLEAN but sheepdog has steps first" {
+  ready_pr
+  git update-ref -d refs/sheepdog/feat/local
+  state
+  [ "$(field '.next[0].key')" = review ]
+  commit b.txt b && git update-ref refs/sheepdog/feat/local HEAD
+  state
+  [ "$(field '.next[0].key')" = push ]
+  [ ! -e "$TMP/upload-pack.log" ]
+}
+
 # ── O5 CI ────────────────────────────────────────────────────────────────────
 
 @test "ci: no checks reported" {
