@@ -50,7 +50,7 @@
  "r_local": {"sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", "status": "covered"},
  "r_bot": {"sha": "1111111111111111111111111111111111111111", "status": "uncovered", "uncovered": 2},
  "r_accepted": {"sha": null, "status": "none"},
- "gh_ok": true, "parent_ok": true, "viewer": "me", "bots": ["sweep-bot[bot]"], "bot_command": "/review-bot", "bot_triggered": "2026-10-15T12:05:00Z", "bot_timeout": 3600, "now": "2026-10-15T12:10:00Z",
+ "gh_ok": true, "parent_ok": true, "viewer": "me", "bots": ["sweep-bot[bot]"], "bot_command": "/review-bot", "bot_triggered": "2026-10-15T12:05:00Z", "accepted_at": null, "bot_timeout": 3600, "now": "2026-10-15T12:10:00Z",
  "ignore": ["github-actions"], "ignore_body": ["is on the job\\.", "^Deployed"], "handled": ["R9"],
  "refs": ["refs/sheepdog/feat/local a1b2c3d4e5f60718293a4b5c6d7e8f9012345678", "refs/sheepdog/feat/local-base 0000000000000000000000000000000000000000"],
  "enrolled": "true", "harness": "claude", "session": "abc-123", "lock": "",

@@ -195,6 +195,8 @@ findings_rec() { git cat-file blob refs/sheepdog/feat/findings | jq -c "$1"; }
   [[ "$output" == *accepted* ]]
   [ "$(pin accepted)" = "$(git rev-parse HEAD)" ]
   [ "$(pin accepted-base)" = "$(git rev-parse origin/main)" ]
+  # when, so NEXT can tell an accept after the bot's trigger from one before (#181)
+  [[ "$(git config branch.feat.sd-accepted)" =~ ^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:]+Z$ ]] || false
   [ ! -e "$FX/reviewer.env" ]
   run git rev-parse -q --verify refs/sheepdog/feat/findings
   [ "$status" -ne 0 ]

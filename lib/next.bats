@@ -644,9 +644,19 @@ FRESH=('.pr = null' '.sync.ahead = 0' '.push = {"remote_sha": null, "ahead": 0, 
   [ "$(step bot-silent cmd "${st[@]}")" = "sd act trigger --force" ]
 }
 
-@test "bot silent, but HEAD accepted: no wait on the bot; ready" {
-  [ "$(keys '.bot = {command: "/review-bot", timeout: 3600}' '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 4000}' \
-            '.review.accepted = {sha: "h1", status: "covered"}')" = ready ]
+@test "bot silent, but HEAD accepted after the trigger: no wait on the bot; ready" {
+  [ "$(keys '.bot = {command: "/review-bot", timeout: 3600}' \
+            '.review.bot = {sha: "h1", status: "covered", triggered: "2026-10-15T12:00:00Z", replied: false, waited: 4000}' \
+            '.review.accepted = {sha: "h1", status: "covered", at: "2026-10-15T13:10:00Z"}')" = ready ]
+}
+
+@test "accepted, then triggered, then the bot silent: chrismo decides; the accept isn't for the bot (#181)" {
+  local st=('.bot = {command: "/review-bot", timeout: 3600}'
+            '.review.bot = {sha: "h1", status: "covered", triggered: "2026-10-15T12:00:00Z", replied: false, waited: 4000}')
+  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", at: "2026-10-15T11:59:00Z"}')" = bot-silent ]
+  # an accept with no time (by hand, or from before #181) can't be ordered: it doesn't end the wait
+  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered", at: null}')" = bot-silent ]
+  [ "$(keys "${st[@]}" '.review.accepted = {sha: "h1", status: "covered"}')" = bot-silent ]
 }
 
 @test "a bot pin without a trigger time counts as reviewed, as before" {

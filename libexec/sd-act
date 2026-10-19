@@ -157,7 +157,10 @@
 #             sd state recomputes them from base..HEAD on every call, so they
 #             outlive stderr and never go stale. Spends tokens.
 #             --accept: pin accepted at HEAD instead, reviewing nothing (HEAD
-#             is reviewed enough), and drop the findings
+#             is reviewed enough), record when (branch.<b>.sd-accepted), and
+#             drop the findings. It stands in for the local review, not the
+#             bot's: the bot is still triggered on HEAD, and only an accept
+#             made after that trigger ends a silent bot's wait (#181)
 #   describe  the agent writes the PR title and body (J6) from the task, the
 #             commits and the diff, read-only, in the branch's session; stored
 #             for HEAD and the PR's target. Spends tokens
@@ -249,6 +252,7 @@
 # .sd-harness, .sd-handled, .sd-lock ("<pid>@<host> <time>" while attached),
 # .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 # .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
+# .sd-accepted (when review --accept pinned accepted, by this machine's clock),
 # .sd-held (the CI config hold: the commit, then the paths, one per line);
 # sheepdog.repo (global) lists the enrolled repos.
 #
@@ -790,6 +794,7 @@ review() {
   head=$(git rev-parse "refs/heads/$b")
   if $accept; then
     pin_write "$b" accepted "$head" "$base"
+    git config "branch.$b.sd-accepted" "$(date -u +%FT%TZ)"
     git update-ref -d "refs/sheepdog/$b/findings"
     echo "accepted: $b at ${head:0:7} against ${base:0:7}; pinned accepted"
     return
@@ -1713,7 +1718,7 @@ values {s: this, why: sj(coalesce(errors, []), "; ")}
     when on(s.review.bot.status == "covered") then {done: f"the bot was already triggered on {s.head[0:7]}"}
     when not (coalesce(s.review.local.status, "") in ["covered", "rewritten-same"]
               or coalesce(s.review.accepted.status, "") in ["covered", "rewritten-same"])
-      then {soft: "the local review doesn't cover HEAD (sd act review)"}
+      then {soft: "neither the local review nor an accept covers HEAD (sd act review)"}
     else {} end
 EOF
 

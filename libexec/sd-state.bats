@@ -1842,6 +1842,18 @@ trigger_pin() { # bot pinned at HEAD, triggered at <time>
   [ "$(field .review.bot.waited)" = null ]
 }
 
+@test "review.accepted: at is when sd act review --accept pinned it; null without one (#181)" {
+  git switch -qc feat && commit a.txt a
+  pr_fixture feat
+  git update-ref refs/sheepdog/feat/accepted HEAD
+  state
+  [ "$(field .review.accepted.status)" = covered ]
+  [ "$(field .review.accepted.at)" = null ]
+  git config branch.feat.sd-accepted 2026-10-15T12:30:00Z
+  state
+  [ "$(field .review.accepted.at)" = 2026-10-15T12:30:00Z ]
+}
+
 @test "bot: settings.botTimeout is reported, 3600 s by default" {
   git switch -qc feat && commit a.txt a
   pr_fixture feat
