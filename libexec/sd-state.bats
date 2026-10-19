@@ -1307,29 +1307,67 @@ ready_pr() {
   [ "${lines[1]}" = "NEXT  you    ready to merge  → gh pr merge" ]
 }
 
-@test "base fresh: no ls-remote where ready can't apply" {
+@test "base fresh: no ls-remote where nothing spends or merges first" {
   ready_pr '.isDraft = true'
   state
+  [ "$(field '.next[0].key')" = draft ]
   pr_fixture feat '.mergeStateStatus = "BLOCKED"'
   state
   pr_fixture feat '.reviewDecision = "REVIEW_REQUIRED"'
   state
+  pr_fixture feat "$(checks '[{__typename:"CheckRun",name:"test",status:"IN_PROGRESS",conclusion:null}]')"
+  state
+  [ "$(field '.next[0].key')" = ci-wait ]
   pr_fixture feat '.state = "MERGED"'
   state
-  git switch -qc nopr && commit n.txt n
-  state
-  [ ! -e "$TMP/upload-pack.log" ]
-}
-
-@test "base fresh: no ls-remote while GitHub says CLEAN but sheepdog has steps first" {
-  ready_pr
-  git update-ref -d refs/sheepdog/feat/local
-  state
-  [ "$(field '.next[0].key')" = review ]
-  commit b.txt b && git update-ref refs/sheepdog/feat/local HEAD
+  git switch -qc nopr main && commit n.txt n
   state
   [ "$(field '.next[0].key')" = push ]
   [ ! -e "$TMP/upload-pack.log" ]
+}
+
+# Before a step that spends tokens or triggers the bot, too (#182): a head
+# about to be restacked would get the review or bot round again.
+@test "base fresh: main moved on the remote before review: fetch, not review" {
+  ready_pr
+  git update-ref -d refs/sheepdog/feat/local
+  commit m.txt m "$TMP/other" && git -C "$TMP/other" push -q origin main 2>/dev/null
+  state
+  [[ "$(field '.stale[0]')" == *"origin/main"* ]]
+  [ "$(field '.next[0].key')" = stale ]
+  [ "$(field '.next[0].cmd')" = "git fetch --prune origin" ]
+}
+
+@test "base fresh: main unchanged on the remote: review, after one ls-remote" {
+  ready_pr
+  git update-ref -d refs/sheepdog/feat/local
+  state
+  [ "$(field .fresh)" = true ]
+  [ "$(field '.next[0].key')" = review ]
+  [ "$(wc -l < "$TMP/upload-pack.log")" -eq 1 ]
+}
+
+@test "base fresh: main moved on the remote before bot-trigger: fetch, not trigger" {
+  ready_pr
+  "$SD_CONFIG" set --global settings.botCommand "/review-bot"
+  state
+  [ "$(field '.next[0].key')" = bot-trigger ]
+  commit m.txt m "$TMP/other" && git -C "$TMP/other" push -q origin main 2>/dev/null
+  state
+  [ "$(field '.next[0].key')" = stale ]
+  [[ "$(field '.stale[0]')" == *"origin/main"* ]]
+}
+
+@test "base fresh: no PR yet: the target moved on the remote before ship: fetch, not ship" {
+  ready_pr
+  git switch -qc nopr main && commit n.txt n && git push -q -u origin nopr 2>/dev/null
+  state
+  [ "$(field .pr)" = null ]
+  [ "$(field '.next[0].key')" = open-pr ]
+  commit m.txt m "$TMP/other" && git -C "$TMP/other" push -q origin main 2>/dev/null
+  state
+  [ "$(field '.next[0].key')" = stale ]
+  [[ "$(field '.stale[0]')" == *"origin/main"* ]]
 }
 
 # ── O5 CI ────────────────────────────────────────────────────────────────────

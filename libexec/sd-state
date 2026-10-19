@@ -71,8 +71,9 @@
 #             the agent's steps to chrismo (#121)
 #   fresh     false when GitHub's PR / parent-PR head differs from the local
 #             remote-tracking ref, i.e. sync and push answers need a fetch;
-#             or, when NEXT would be ready alone, when the remote's base
-#             branch (by ls-remote) does (#169)
+#             or, when NEXT's first step would be ready alone (#169), an
+#             agent step, open-pr or bot-trigger (#182), when the remote's
+#             base branch (by ls-remote; with no PR, sync.target) does
 #   stored    what sheepdog keeps for the branch: handled ids, refs/sheepdog/<b>/*
 #   rate_limit  GitHub's GraphQL quota: cost (this run's calls, summed),
 #             remaining and reset_at (the last call's; null when none
@@ -92,9 +93,10 @@
 # the parent's too), when they change, and removes a running marker whose
 # pid is gone. That makes it a .git/config writer:
 # while it holds config.lock, another git config write fails. Remote refs
-# are as fresh as the last fetch, except the PR's base when NEXT would be
-# ready alone: one git ls-remote of it, 10 s at most, and no check on a
-# failure (#169).
+# are as fresh as the last fetch, except the PR's base (or, with no PR, the
+# target) when NEXT's first step is ready alone, an agent step, open-pr or
+# bot-trigger: one git ls-remote of it, 10 s at most, and no check on a
+# failure (#169, #182).
 # One gh GraphQL call per PR (the branch's,
 # and a non-default parent's), by its stored number; a discovery by branch
 # comes first for a PR not yet known, and is the only call for a branch with
@@ -951,9 +953,13 @@ state=$(prc_json "$ASSEMBLE" "$args") || die "couldn't assemble the state"
 next=$(printf '%s\n' "$state" | prn_next "$remote") || die "lib/next.sh failed"
 # Before NEXT says ready, the PR's base on the remote: GitHub's CLEAN can lag a
 # base that just moved, and the merge then hits a conflict a fetch would have
-# shown (#169). One ls-remote, only when ready is the one step; a failure or
-# timeout leaves it unchecked. A moved base is stale, and NEXT is asked again.
-rb=$(prc_line 'where len(next) == 1 and next[0].key == "ready" | values s.pr.base' "{\"s\": $state, \"next\": $next}")
+# shown (#169). So too before a first step that spends tokens or triggers the
+# bot, on a head a restack would rewrite (#182); with no PR, the base is the
+# target. One ls-remote, only for those first steps; a failure or timeout
+# leaves it unchecked. A moved base is stale, and NEXT is asked again.
+rb=$(prc_line 'values {s, f: coalesce(next[0], {key: "", who: ""}), one: len(next) == 1}
+  | where f.who == "agent" or f.key in ["open-pr", "bot-trigger"] or (one and f.key == "ready")
+  | values coalesce(s.pr.base, s.sync.target)' "{\"s\": $state, \"next\": $next}")
 if [[ -n $rb ]]; then
   rb_sha=$(GIT_TERMINAL_PROMPT=0 with_timeout 10 git ls-remote "$remote" "refs/heads/$rb" 2>/dev/null </dev/null \
              | awk -v r="refs/heads/$rb" '$2 == r { print $1 }') || rb_sha=""
