@@ -24,6 +24,19 @@ setup() {
 branch_file() { echo "$TMP/repo/.git/sheepdog/$1.json"; }
 
 write_global() { printf '%s\n' "$1" > "$SHEEPDOG_CONFIG"; }
+
+# rebase_stopped — feat rebasing onto main, stopped on a conflict (detached
+# HEAD, as restack --resolve leaves it).
+rebase_stopped() {
+  echo ours > f.txt && git add f.txt && git commit -qm ours
+  git switch -q main
+  echo theirs > f.txt && git add f.txt && git commit -qm theirs
+  git switch -q feat
+  run git rebase -q main
+  [ "$status" -ne 0 ]
+  [ -d .git/rebase-merge ]
+  [ -z "$(git branch --show-current)" ]
+}
 write_branch() { mkdir -p "$(dirname "$(branch_file "$1")")"; printf '%s\n' "$2" > "$(branch_file "$1")"; }
 
 # get_field <step> <field> — one field of the step view as raw text ("" when absent).
@@ -209,6 +222,19 @@ GLOBAL='{"harness":"claude",
   [ "$(get_field describe model)" = strong ]
 }
 
+@test "step, get, set: mid-rebase (detached), the branch being rebased is the current one (#179)" {
+  write_global "$GLOBAL"
+  write_branch feat '{"harnesses":{"claude":{"model":"branch"}}}'
+  rebase_stopped
+  [ "$(get_field describe model)" = branch ]
+  run "$SD_CONFIG" get harnesses.claude.model
+  [ "$output" = branch ]
+  run "$SD_CONFIG" set harnesses.claude.model opus
+  [ "$status" -eq 0 ]
+  [ "$(jq -c . "$(branch_file feat)")" = '{"harnesses":{"claude":{"model":"opus"}}}' ]
+  [ "$(get_field describe model)" = opus ]
+}
+
 @test "init: writes an empty overrides file and says where" {
   write_global "$GLOBAL"
   run "$SD_CONFIG" init
@@ -355,6 +381,13 @@ branch  $(branch_file feat)" ]
   run "$SD_CONFIG" files
   [ "$status" -eq 0 ]
   [ "$(sed -n 2p <<<"$output")" = "branch  (none: not a git repository)" ]
+}
+
+@test "files: mid-rebase (detached), the branch being rebased's file (#179)" {
+  rebase_stopped
+  run "$SD_CONFIG" files
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 2p <<<"$output")" = "branch  $(branch_file feat)  (missing)" ]
 }
 
 @test "files --no-branch: only the global file" {
