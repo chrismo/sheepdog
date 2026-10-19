@@ -266,6 +266,24 @@ STACKED=('.parent.name = "base"' '.sync.target = "base"' '.sync.up_to_date = fal
   [ "$(step read cmd '.threads.owed_bot = 2' '.threads.info = 2')" = "sd act ack" ]
 }
 
+@test "info bot items wait until the pipeline can't move without chrismo (#168)" {
+  local info=('.threads.owed_bot = 1' '.threads.info = 1')
+  # soak 4: after restack --resolve, diverged, the review behind the rewrite
+  [ "$(keys "${info[@]}" '.push.ahead = 3' '.push.behind = 2' '.push.diverged = true' '.sync.ahead = 2' \
+            '.review.local = {sha: "x", status: "rewritten-changed"}')" = "push review" ]
+  [ "$(keys "${info[@]}" '.review.local = {sha: "x", status: "uncovered", uncovered: 1}')" = review ]
+  [ "$(keys "${info[@]}" '.review.local = {sha: "x", status: "uncovered", uncovered: 2}' \
+            '.review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}')" = review-fix ]
+  [ "$(keys "${info[@]}" '.bot = {command: "/review-bot"}' '.review.bot = {sha: null, status: "none"}')" = bot-trigger ]
+  [ "$(keys "${info[@]}" '.bot = {command: "/review-bot", timeout: 3600}' \
+            '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}')" = bot-wait ]
+  [ "$(keys "${info[@]}" '.ci.verdict = "inconclusive"')" = ci-rerun ]
+  [ "$(keys "${info[@]}" '.pr.base = "p"' \
+            '.parent = {"name": "p", "source": "pr", "merged": true, "pr": {"number": 25, "state": "MERGED", "head_sha": "x"}}')" = retarget ]
+  # still ahead of marking the draft ready
+  [ "$(keys "${info[@]}" '.pr.draft = true' '.pr.merge_state = "DRAFT"')" = "read draft" ]
+}
+
 @test "past settings.branchBudget: one you step in place of the agent steps; run steps still run (#121)" {
   local over='.spend = {"usd": 25.456, "budget": 25}'
   [ "$(keys "$over" '.ci.verdict = "red"' '.ci.failing = ["test"]' '.threads.owed_bot = 2')" = budget ]
