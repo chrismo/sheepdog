@@ -199,7 +199,7 @@ done
 ! $json || ! $long || die "--json and --long don't combine"
 prc_super_init || exit 1
 git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
-[[ -n $branch ]] || branch=$(git branch --show-current)
+[[ -n $branch ]] || branch=$(prc_current_branch)
 [[ -n $branch ]] || die "detached HEAD; name a branch"
 head=$(git rev-parse -q --verify "refs/heads/$branch^{commit}") || die "no such branch: $branch"
 remote=$(prc_get settings.remote "$branch" false) || die "sd config failed"

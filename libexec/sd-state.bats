@@ -2348,6 +2348,35 @@ review() {
   [ ! -e .git/sheepdog/feat.running ]
 }
 
+@test "session: mid restack --resolve (detached, rebase stopped), the branch comes from the rebase and the live marker outranks the conflict (#179)" {
+  git switch -qc feat && commit file.txt "one
+OURS
+three"
+  commit file.txt "one
+THEIRS
+three" "$TMP/other" && git -C "$TMP/other" push -q origin main 2>/dev/null
+  git fetch -q
+  state
+  [ "$(field '.next[0].key')" = conflict ]
+  run git rebase -q origin/main
+  [ "$status" -ne 0 ]
+  [ -d .git/rebase-merge ]
+  [ -z "$(git branch --show-current)" ]
+  mkdir -p .git/sheepdog
+  echo "$$ resolve 2026-10-18T14:03:00Z $(source "$BATS_TEST_DIRNAME/../lib/sheepdog.sh" && proc_start $$)" > .git/sheepdog/feat.running
+  state
+  [ "$(field .branch)" = feat ]
+  [ "$(field -c '[.next[] | [.key, .who, .say]]')" = '[["running","wait","agent: resolve running since 2026-10-18T14:03:00Z"]]' ]
+}
+
+@test "detached HEAD with no rebase and no branch named: fails with a message" {
+  commit a.txt a
+  git switch -q --detach
+  run "$SD_STATE"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"detached HEAD; name a branch"* ]]
+}
+
 @test "session: unenrolled branch" {
   git switch -qc feat
   state
