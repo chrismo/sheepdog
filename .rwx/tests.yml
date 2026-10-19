@@ -23,11 +23,11 @@ tasks:
       ref: ${{ init.commit-sha }}
 
   # Scripts run `#!/usr/bin/env bash5`; Ubuntu's bash 5.2 is new enough.
-  # uuid-runtime provides uuidgen.
+  # uuid-runtime provides uuidgen; procps, ps (proc_start).
   - key: system-packages
     run: |
       sudo apt-get update
-      sudo apt-get install -y git jq parallel uuid-runtime
+      sudo apt-get install -y git jq parallel procps uuid-runtime
       sudo apt-get clean
       sudo ln -sfn /bin/bash /usr/local/bin/bash5
       bash5 --version | head -1

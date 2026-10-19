@@ -16,6 +16,9 @@
 # chrismo's (#143). So are uncommitted changes there, which implement refuses;
 # and with errors, pr may be wrong, so nothing spends on implementing. A
 # remote with commits reset away here isn't empty: the #86 steps handle it.
+# While an agent step runs (session.running), its one step is to wait: the
+# worktree is the agent's, so its edits aren't chrismo's to commit, and no
+# other step should touch it (#170).
 #
 # An agent step's question standing at HEAD (sd state's question, #167) is
 # chrismo's question step, with the human items; the step that asked
@@ -94,7 +97,8 @@ values {...s, remote}
                : spend.usd > spend.budget
                ? step("budget", "you", f"spent {usd(spend.usd)} on this branch, past settings.branchBudget ({usd(spend.budget)}): raise it, or take over",
                       "sd act attach") : null)
-| unnest own_base ? [step("default", "you", f"on {branch}: start a branch", "sd act start")] : [
+| unnest own_base ? [step("default", "you", f"on {branch}: start a branch", "sd act start")]
+  : not nul(session.running) ? [step("running", "wait", f"agent: {session.running.step} running since {session.running.since}", null)] : [
     on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, remove its worktree and delete it", "sd act forget --remove") : null,
     on(pr.state == "CLOSED") ? step("closed", "you", "PR closed without merging", null) : null,
     open and len(errors) > 0

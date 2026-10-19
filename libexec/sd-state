@@ -60,7 +60,11 @@
 #             comments not yet marked handled)
 #   bot       the review bot's trigger comment (settings.botCommand), if any,
 #             and timeout (settings.botTimeout)
-#   session   pipeline enrollment, harness, session id, takeover lock
+#   session   pipeline enrollment, harness, session id, takeover lock;
+#             running: the agent step running on the branch, {step, pid,
+#             since}, from its running marker (lib/sheepdog.sh's
+#             running_file), else null. While it runs,
+#             NEXT is only to wait for it (#170)
 #   spend     usd: what the branch's agent steps have cost in this repo, by
 #             the usage record (usage.sup, harness_usage); budget:
 #             settings.branchBudget (USD, 25; 0 is none). Past it, NEXT hands
@@ -85,7 +89,8 @@
 #   --json    everything
 #
 # Never fetches, and writes only the PR numbers it finds (branch.<b>.sd-pr,
-# the parent's too), when they change. That makes it a .git/config writer:
+# the parent's too), when they change, and removes a running marker whose
+# pid is gone. That makes it a .git/config writer:
 # while it holds config.lock, another git config write fails. Remote refs
 # are as fresh as the last fetch, except the PR's base when NEXT would be
 # ready alone: one git ls-remote of it, 10 s at most, and no check on a
@@ -912,7 +917,7 @@ values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
               info: s.gh_ok ? len(coalesce([unnest owed | where mark == "i"], [])) : null,
               items: owed},
     bot: {command: nn(s.bot_command), timeout: s.bot_timeout},
-    session: {enrolled: s.enrolled == "true", harness: nn(s.harness), id: nn(s.session), locked: s.lock != ""},
+    session: {enrolled: s.enrolled == "true", harness: nn(s.harness), id: nn(s.session), locked: s.lock != "", running: s.running},
     spend: {usd: s.spend, budget: s.branch_budget},
     stored: {handled: s.handled,
              refs: unflatten(coalesce([
@@ -924,6 +929,8 @@ values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
   }
 EOF
 
+running=$(running_state "$branch") || die "couldn't read the branch's running marker"
+
 errors_json='[]'
 (( ${#errors[@]} == 0 )) || errors_json=$(printf '%s\n' "${errors[@]}" | prc_strings)
 refs_json=$(git for-each-ref --format='%(refname) %(objectname)' "refs/sheepdog/$branch/" | prc_strings)
@@ -931,14 +938,14 @@ args=$(printf '{"branch": %s, "head": %s, "task": %s, "pr": %s, "parent": %s, "p
   "target": %s, "default_branch": %s, "sync_ahead": %s, "behind": %s, "up_to_date": %s, "old_base": %s, "by_tree": %s, "conflict": %s, "undone": %s,
   "remote_sha": %s, "ahead": %s, "push_behind": %s, "diverged": %s, "remote_ours": %s, "theirs": %s, "remote_made": %s, "dirty": %s, "held": %s, "stale": %s,
   "r_local": %s, "r_bot": %s, "r_accepted": %s, "r_findings": %s, "r_findings_at_head": %s, "review_rounds": %s, "question": %s, "flags": %s, "flags_error": %s, "gh_ok": %s, "parent_ok": %s, "viewer": %s, "bots": %s, "bot_command": %s, "bot_triggered": %s, "bot_timeout": %s, "now": %s,
-  "required": %s, "ignore": %s, "ignore_body": %s, "handled": %s, "refs": %s, "enrolled": %s, "harness": %s, "session": %s, "lock": %s,
+  "required": %s, "ignore": %s, "ignore_body": %s, "handled": %s, "refs": %s, "enrolled": %s, "harness": %s, "session": %s, "lock": %s, "running": %s,
   "rl_cost": %s, "rl_remaining": %s, "rl_reset": %s, "rl_limited": %s, "spend": %s, "branch_budget": %s, "errors": %s}\n' \
   "$(jstr "$branch")" "$(jstr "$head")" "$(jstr "$(cfg sd-task)")" "$pr" "$(jstr "$parent")" "$(jstr "$parent_source")" "$parent_pr" "$parent_merged" "$parent_local" "$parent_remote" "$parent_unpushed" \
   "$(jstr "$target")" "$(jstr "$default_branch")" "$sync_ahead" "$behind" "$up_to_date" "$(jnull "$old_base")" "$by_tree" "$conflict" "$undone" \
   "$(jnull "$remote_sha")" "$ahead" "$push_behind" "$diverged" "$remote_ours" "$theirs" "$remote_made" "$dirty" "$held" "$stale_json" \
   "${review[local]}" "${review[bot]}" "${review[accepted]}" "$r_findings" "$r_findings_at_head" "$review_rounds" "$question" "$flags" "$(jstr "$flags_error")" "$gh_ok" "$parent_ok" "$(jstr "$viewer")" "$bots" "$(jstr "$bot_command")" "$(jnull "$bot_triggered")" "$bot_timeout" "$(jstr "$(date -u +%Y-%m-%dT%H:%M:%SZ)")" \
   "$required" "$ignore" "$ignore_body" "$(jlist "branch.$branch.sd-handled")" "$refs_json" \
-  "$(jstr "$(cfg sheepdog)")" "$(jstr "$(cfg sd-harness)")" "$(jstr "$(cfg sd-session)")" "$(jstr "$(cfg sd-lock)")" \
+  "$(jstr "$(cfg sheepdog)")" "$(jstr "$(cfg sd-harness)")" "$(jstr "$(cfg sd-session)")" "$(jstr "$(cfg sd-lock)")" "$running" \
   "$rl_cost" "$rl_remaining" "$(jnull "$rl_reset")" "$rl_limited" "$spend" "$branch_budget" "$errors_json")
 state=$(prc_json "$ASSEMBLE" "$args") || die "couldn't assemble the state"
 next=$(printf '%s\n' "$state" | prn_next "$remote") || die "lib/next.sh failed"

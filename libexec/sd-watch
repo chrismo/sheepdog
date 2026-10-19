@@ -33,7 +33,7 @@
 #   uninstall  remove the job
 #
 # Glyphs: ❌ needs chrismo   ⚠️ state unknown   🔧 work for later   ⏳ waiting (CI, review)
-#         ✅ ready to merge  🏁 merged          🚫 closed
+#         ✅ ready to merge  🏁 merged          🚫 closed           🤖 an agent step running
 #
 # Notified, once per lib/next.sh step entered (again only after it clears):
 #   ci-red ci-blocked conflict human foreign parent-closed restack-undone: ❌ the
@@ -58,8 +58,9 @@
 #   errors stale: ⚠️ sd state can't be sure, so what was notified carries over
 #   read: info-only bot items; nothing waits on them
 #   reset-dirty take: chrismo is mid-change on the branch; the 🔧 glyph shows it
-#   nothing-dirty: the same, or sd act start's implement mid-edit, which
-#     looks no different
+#   nothing-dirty: the same (an agent step's edits show as running instead)
+#   running: an agent step is running on the branch (#170); what was notified
+#     carries over, since it hides every other step
 #   blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it
 #   attached: chrismo is in the branch's session; like merge-wait, keeps ready
 #   bot: routine agent work, picked up when the branch is next worked on
@@ -117,8 +118,10 @@ values {next: kind(next) == "array" ? next : []}
           red: coalesce([unnest next | where key in ["ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "question", "restack-undone", "bot-silent", "budget", "ci-config", "nothing", "default"] | values {key, msg: say}], []),
           waiting: len(coalesce([unnest next | where who != "wait"], [])) == 0}
 | values {carry: len(next) == 0 or "errors" in k or "stale" in k,
+          hold: k == ["running"],
           keep: k == ["merge-wait"] or k == ["attached"] ? ["ready"] : [], ...(case
     when len(next) == 0 then {glyph: "⚠️", reasons: [], note: "sd state gave no next steps"}
+    when k == ["running"] then {glyph: "🤖", reasons: []}
     when k == ["merged"] then {glyph: "🏁", reasons: [{key: "merged", msg: next[0].say}]}
     when k == ["closed"] then {glyph: "🚫", reasons: []}
     when len(red) > 0 then {glyph: "❌", reasons: red}
@@ -246,9 +249,9 @@ check() {
   # A refresh can overlap a pass: unlocked, so both may notify a new reason
   # and the slower may write the older state. Only the temp file is per-process.
   prc_json 'values {...c, state: s, stale: st,
-                    failed: c.carry ? [...prev_failed, ...failed]
+                    failed: c.carry or c.hold ? [...prev_failed, ...failed]
                       : [...failed, ...coalesce([unnest {k: c.keep, p: prev_failed} | where p in k | values p], [])],
-                    notified: c.carry ? [...prev, ...sent]
+                    notified: c.carry or c.hold ? [...prev, ...sent]
                       : [...coalesce([unnest {k: c.keep, p: prev} | where p in k | values p], []),
                          ...coalesce([unnest {k: [...prev, ...sent], r: c.reasons} | where r.key in k | values r.key], [])]}' \
     "{\"c\": $cls, \"s\": $json, \"prev\": $prev, \"prev_failed\": $prev_failed, \"st\": $stale, \"sent\": [$(IFS=,; echo "${sent[*]}")], \"failed\": [$(IFS=,; echo "${failed[*]}")]}" > "$state_file.$$.tmp" \

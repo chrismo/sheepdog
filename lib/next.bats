@@ -175,6 +175,16 @@ step() { # step <key> <field> <jq-assignment...>
   [ "$(jq -r '.[1].key' <<<"$output")" = bot ]
 }
 
+@test "an agent step running: the only step is to wait for it, whatever else the state says (#170)" {
+  local run='.session.running = {"step": "implement", "pid": 123, "since": "2026-10-18T14:03:00Z"}'
+  run next "$run" '.threads.owed_bot = 2'
+  [ "$(jq -c '[.[] | [.key, .who, .say, .cmd]]' <<<"$output")" \
+    = '[["running","wait","agent: implement running since 2026-10-18T14:03:00Z",null]]' ]
+  # mid-implement: the agent's edits, not chrismo's to commit or remove
+  [ "$(keys "${FRESH[@]}" '.task = "add c"' '.push.dirty = true' "$run")" = running ]
+  [ "$(keys '.session.running = null')" = ready ]
+}
+
 @test "human items: chrismo replies, via the --long list" {
   [ "$(step human who '.threads.owed_human = 2')" = you ]
   [ "$(step human say '.threads.owed_human = 2')" = "reply to 2 human items" ]

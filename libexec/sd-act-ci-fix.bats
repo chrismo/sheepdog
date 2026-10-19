@@ -231,6 +231,15 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   [[ "$(prompt)" == *"Bash(grep -q THREE file.txt)"* ]]
 }
 
+@test "the branch's running marker lasts the whole step, both verifies included, then is gone (#170)" {
+  "$SD_CONFIG" set --global settings.verify "cat $TMP/repo/.git/sheepdog/feat.running >> $FX/during"
+  run "$SD_ACT" ci-fix
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$FX/during" | tr -d ' ')" = 2 ]
+  [ "$(cut -d' ' -f2 "$FX/during" | sort -u)" = ci-fix ]
+  [ ! -e "$TMP/repo/.git/sheepdog/feat.running" ]
+}
+
 @test "logs that can't be fetched are skipped, not fatal" {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/fakebin/rwx"
   rm "$FX/gha.log"

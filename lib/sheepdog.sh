@@ -7,11 +7,17 @@
 
 # with_timeout <seconds> <cmd...>: kills the command's whole process group
 # when time runs out (its children would otherwise hold our output pipe open).
+# In its own group, a Ctrl-C or a kill of ours doesn't reach the command, so
+# a HUP, INT or TERM is passed on, and waited for, before it ends us too: an
+# agent left running would edit after its running marker is gone (#170).
 with_timeout() {
   perl -e '
     my $t = shift;
     my $pid = fork // die "fork: $!\n";
     if (!$pid) { setpgrp(0, 0); exec @ARGV or die "exec $ARGV[0]: $!\n" }
+    for my $s (qw(HUP INT TERM)) {
+      $SIG{$s} = sub { kill "TERM", -$pid; waitpid $pid, 0; $SIG{$s} = "DEFAULT"; kill $s, $$ };
+    }
     $SIG{ALRM} = sub { kill "TERM", -$pid; print STDERR "timed out after ${t}s\n"; exit 124 };
     alarm $t;
     waitpid $pid, 0;
@@ -386,7 +392,102 @@ branch_spend() {
 # --resolve) has a detached HEAD, so callers set it.
 # The harness's stderr (claude can put protocol JSON there) shows only when
 # the step fails, and then all at once: nothing streams while it runs.
+# While it runs, the branch's running_file says so, for sd state (#170): the
+# step runs in a subshell whose trap removes the marker however it ends,
+# since a trap here would replace the caller's. A marker running_hold keeps
+# for the whole step is left alone; another live step's refuses this one.
 harness_run() {
+  local b marker
+  b=$(harness_branch)
+  [[ -n $b && ${RUNNING_HELD:-} != "$b" ]] || { harness_step "$@"; return; }
+  running_free "$b" || return 1
+  marker=$(running_file "$b") && mkdir -p "${marker%/*}" || return 1
+  (
+    pid=$BASHPID
+    line="$pid ${HARNESS_STEP:-agent} $(date -u +%Y-%m-%dT%H:%M:%SZ) $(proc_start "$pid")"
+    trap '[[ $(cat "$marker" 2>/dev/null) != "$line" ]] || rm -f "$marker"' EXIT
+    trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+    echo "$line" >"$marker" || exit 1
+    harness_step "$@"
+  )
+}
+
+# running_file <branch>: the marker kept while an agent step runs on
+# <branch>, one line: "<pid> <step> <start time> <the pid's proc_start>".
+running_file() {
+  local dir
+  dir=$(git rev-parse --path-format=absolute --git-common-dir) || return 1
+  echo "$dir/sheepdog/${1//\//__}.running"
+}
+
+# proc_start <pid>: when <pid> started, by ps, else nothing. It tells a
+# marker's process from a later one given the same pid.
+proc_start() { LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null | awk '{ $1 = $1; print }' || true; }
+
+# running_hold <branch> <step>: <branch>'s marker, for this (sub)shell, for a
+# step whose commit and verify come after its harness_run; running_release
+# removes it. No trap: a step that dies takes its pid with it, and sd state
+# clears the marker. RUNNING_HELD is exported, so the step's own children
+# (sd-review-local in implement's review rounds) run under its marker.
+running_hold() {
+  local f pid=$BASHPID
+  running_free "$1" || return 1
+  f=$(running_file "$1") && mkdir -p "${f%/*}" || return 1
+  echo "$pid $2 $(date -u +%Y-%m-%dT%H:%M:%SZ) $(proc_start "$pid")" >"$f" || return 1
+  export RUNNING_HELD=$1
+}
+
+running_release() {
+  local f pid rest
+  f=$(running_file "$1") || return 1
+  if [[ -s $f ]] && read -r pid rest <"$f" && [[ $pid == "$BASHPID" ]]; then rm -f "$f"; fi
+  RUNNING_HELD=
+}
+
+# running_free <branch>: fails, saying so, while another live process's agent
+# step holds <branch>'s marker, so a second pass doesn't start a second agent
+# on the worktree, or take the first one's marker. Not a lock: two steps
+# starting at once can both pass.
+running_free() {
+  local state pid step since rest
+  state=$(running_state "$1") || return 1
+  [[ $state != null ]] || return 0
+  read -r pid step since rest <"$(running_file "$1")" || return 0
+  [[ $pid != "$BASHPID" ]] || return 0
+  echo "$step is running on $1 (pid $pid, since $since): not starting another agent step" >&2
+  return 1
+}
+
+# running_during <branch> <step> <cmd...>: <cmd> with running_hold's marker,
+# or under the one this process or its parent already holds for <branch>.
+# Under set -e a failing <cmd> exits before the release (see running_hold).
+running_during() {
+  local rc
+  [[ ${RUNNING_HELD:-} != "$1" ]] || { "${@:3}"; return; }
+  running_hold "$1" "$2" || return 1
+  "${@:3}"; rc=$?
+  running_release "$1"
+  return "$rc"
+}
+
+# running_state <branch>: the agent step running on <branch>, as JSON
+# {step, pid, since}, else null. A marker whose pid is gone (its step was
+# killed past the trap), or now another process's, is removed, not trusted
+# (#79 design rule 4).
+running_state() {
+  local f pid step since start
+  f=$(running_file "$1") || return 1
+  [[ -s $f ]] && read -r pid step since start <"$f" || { echo null; return 0; }
+  if [[ $pid =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && [[ $(proc_start "$pid") == "$start" ]]; then
+    printf '{"step": %s, "pid": %s, "since": %s}\n' "$(prc_json_string "$step")" "$pid" "$(prc_json_string "$since")"
+  else
+    rm -f "$f"
+    echo null
+  fi
+}
+
+# harness_step: harness_run's step itself, with the same arguments.
+harness_step() {
   local h=$1 sid=$2 mode=$3 timeout=$4 prompt=$5 schema=$6 settings=${7:-'{}'} out err rc said budget cap=""
   local model effort provider use_key args fields before spent t0 cap_usd=0 args_cap=false i
   local -a typed=() extra f env=()
@@ -398,8 +499,8 @@ harness_run() {
   [[ ${#f[@]} -ge 6 && ${f[-1]} == "<end>" ]] || return 1
   model=${f[0]} effort=${f[1]} provider=${f[2]} use_key=${f[3]} args=$(printf '%s\n' "${f[@]:4:${#f[@]}-5}")
   read -ra extra <<<"$args"
-  # An interrupted step leaves this file behind (no trap: harness_run runs in
-  # its caller's shell, whose traps it would replace).
+  # An interrupted step leaves this file behind (harness_run's trap is only
+  # for the running marker; harness_step also runs bare, in its caller's shell).
   err=$(mktemp) || return 1
   case $h in
     claude)
