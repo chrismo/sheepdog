@@ -1551,6 +1551,32 @@ keys() { field '[.next[].key] | join(" ")'; }
   [ "$(field .review.findings.at_head)" = false ]
 }
 
+@test "question: stands at HEAD with the worktree the step left; NEXT's question step (#167)" {
+  git switch -qc feat && commit a.txt a
+  source "$BATS_TEST_DIRNAME/../lib/config.sh" && source "$BATS_TEST_DIRNAME/../lib/sheepdog.sh"
+  echo edit > a.txt
+  rec=$(jq -nc --arg h "$(git rev-parse HEAD)" --arg m "$(worktree_mark .)" \
+          '{head: $h, step: "ci-fix", mark: $m, text: "which test?\nrevert it, or keep it"}')
+  git update-ref refs/sheepdog/feat/question "$(git hash-object -w --stdin <<<"$rec")"
+  state
+  [ "$(field .question.step)" = ci-fix ]
+  [ "$(field .question.at_head)" = true ]
+  [ "$(field '.next[0].key')" = question ]
+  run "$SD_STATE"
+  [[ "$output" == *"? ci-fix asks"* ]]
+  run "$SD_STATE" --long
+  [[ "$output" == *"?  ci-fix asks:"*"which test?"*"revert it, or keep it"* ]]
+  echo more > b.txt   # the worktree moved on
+  state
+  [ "$(field .question.at_head)" = false ]
+  rm b.txt
+  state
+  [ "$(field .question.at_head)" = true ]
+  git commit -qam edit
+  state
+  [ "$(field .question.at_head)" = false ]
+}
+
 @test "review: findings are declined only when the agent declined every one that blocks" {
   git switch -qc feat && commit a.txt a
   rec=$(jq -nc --arg h "$(git rev-parse HEAD)" '{head: $h, base: $h, round: 1, findings: [

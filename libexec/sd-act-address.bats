@@ -449,6 +449,52 @@ allowed() { grep -A1 -x -- --allowedTools "$FX/claude.args" | tail -1; }
   [[ "$output" == *"needs chrismo"*"file.txt:1"* ]]
 }
 
+two_owed() { state_fixture '.threads.owed_bot = 2 | .threads.items += [{id: "T2", type: "thread", kind: "bot", path: "file.txt", line: 1, outdated: false, last: "review-bot"}]'; }
+question() { git cat-file blob refs/sheepdog/feat/question | jq -r "$1"; }
+
+@test "an ask is address's question on HEAD; a rerun refuses at zero tokens until an ack (#167)" {
+  two_owed
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NEXT shows the question until feat's HEAD or worktree changes"*"sd act ack --question"* ]]
+  [ "$(question .step)" = address ]
+  [ "$(question .head)" = "$(git rev-parse HEAD)" ]
+  [[ "$(question .text)" == "One for chrismo."*"needs chrismo:"*"Rename to what?"* ]]
+  rm -f "$FX/claude.args"
+  run "$SD_ACT" address
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not running address on feat: its agent asked"*"Rename to what?"* ]]
+  [ ! -e "$FX/claude.args" ]
+  "$SD_ACT" ack --question
+  run "$SD_ACT" address
+  [ -e "$FX/claude.args" ]
+}
+
+@test "done with nothing asked records no question (#167)" {
+  run "$SD_ACT" address
+  [ "$status" -eq 0 ]
+  run git rev-parse -q --verify refs/sheepdog/feat/question
+  [ "$status" -ne 0 ]
+}
+
+@test "verify failing with an ask: the question is recorded on the kept commit and named in the error (#167)" {
+  two_owed
+  "$SD_CONFIG" set --global settings.verify "grep -q nope file.txt"
+  agent_result '{outcome: "done", commit_message: "Uppercase three", summary: "",
+                 items: [{id: "T1", action: "fixed", reply: "Uppercased it."},
+                         {id: "T2", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"verify failed"*"NEXT shows the question"* ]]
+  [ "$(git log -1 --format=%s)" = "Uppercase three" ]
+  [ "$(question .head)" = "$(git rev-parse HEAD)" ]
+  [[ "$(question .text)" == *"Rename to what?"* ]]
+}
+
 @test "review bodies and PR comments: one PR comment, then marked handled" {
   state_fixture '.threads.owed_bot = 3 | .threads.items = [
     {id: "R1", type: "review", kind: "bot", path: null, line: null, outdated: null, last: "review-bot"},

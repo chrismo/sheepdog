@@ -792,6 +792,42 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   [[ "$output" == *"Which file?"* ]]
   [ -n "$(git status --porcelain)" ]
   [ "$(git log -1 --format=%s)" = init ]
+  [ "$(git cat-file blob refs/sheepdog/feat-x/question | jq -r '.step + " " + .text')" = "implement Which file?" ]
+}
+
+@test "implement: with its question standing, a rerun refuses before the agent runs; an ack lets it (#167)" {
+  started
+  rm -f "$FX/agent"
+  echo '{"outcome": "needs-input", "commit_message": null, "summary": "Which file?"}' > "$FX/result.json"
+  run "$SD_ACT" implement
+  [[ "$output" == *"answer in its session (sd act attach feat-x), then sd act ack --question and sd act implement"* ]]
+  rm -f "$FX/claude.args"
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not running implement on feat-x"*"Which file?"* ]]
+  [ ! -e "$FX/claude.args" ]
+  "$SD_ACT" ack --question feat-x
+  run "$SD_ACT" implement
+  [ -e "$FX/claude.args" ]
+}
+
+@test "implement: a fix round's ask is review-fix's question; a rerun refuses unless --force (#167)" {
+  started
+  findings_at HEAD 1
+  rm -f "$FX/agent"
+  answers '{"id": "1", "action": "ask", "reply": "B, or b?"}'
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [ "$(git cat-file blob refs/sheepdog/feat-x/question | jq -r .step)" = review-fix ]
+  [[ "$(git cat-file blob refs/sheepdog/feat-x/question | jq -r .text)" == *"[1] file.txt:2 B, or b?"* ]]
+  rm -f "$FX/claude.args"
+  run "$SD_ACT" implement
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not running review-fix on feat-x"*"B, or b?"* ]]
+  [ ! -e "$FX/claude.args" ]
+  run "$SD_ACT" implement --force
+  [[ "$output" == *"the review-fix agent's question on feat-x stands; running anyway"* ]]
+  [ -e "$FX/claude.args" ]
 }
 
 @test "implement: gave-up is nonzero with the agent's reason, nothing committed" {
