@@ -92,9 +92,28 @@ prc_branch_file() { # <branch>
   echo "$dir/sheepdog/${name//\//%2F}.json"
 }
 
+# prc_rebase_head [dir]: the branch a rebase paused there is rebasing.
+prc_rebase_head() {
+  local gd head
+  gd=$(git -C "${1:-.}" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  head=$(cat "$gd/rebase-merge/head-name" 2>/dev/null || cat "$gd/rebase-apply/head-name" 2>/dev/null) || return 1
+  [[ $head == refs/heads/* ]] || return 1
+  echo "${head#refs/heads/}"
+}
+
+# prc_current_branch: the checked-out branch, or the one a paused rebase is
+# rebasing (restack --resolve runs on a detached HEAD, #179); empty when
+# detached otherwise or outside a repo.
+prc_current_branch() {
+  local b
+  b=$(git branch --show-current 2>/dev/null) || b=
+  [[ -n $b ]] || b=$(prc_rebase_head) || b=
+  echo "$b"
+}
+
 prc_branch_arg() { # <branch-or-empty>
   local b=$1
-  [[ -n $b ]] || b=$(git branch --show-current 2>/dev/null) || b=
+  [[ -n $b ]] || b=$(prc_current_branch)
   [[ -n $b ]] || { prc_err "detached HEAD; name a branch"; return; }
   echo "$b"
 }
@@ -193,7 +212,7 @@ prc_files() {
   if [[ $2 == true ]]; then
     b=
   elif [[ -z $b ]]; then
-    b=$(git branch --show-current 2>/dev/null) || b=
+    b=$(prc_current_branch)
   fi
   gf=$(prc_global_file)
   g=$(prc_layer "$gf" global) || return
@@ -214,7 +233,7 @@ prc_paths() {
     if ! git rev-parse --git-dir >/dev/null 2>&1; then
       why="not a git repository"
     else
-      b=$(git branch --show-current) || return
+      b=$(prc_current_branch)
       [[ -n $b ]] || why="detached HEAD"
     fi
   fi

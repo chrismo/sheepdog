@@ -170,7 +170,7 @@ glyph_of() {
   local dir=${1:-.} top branch
   [[ -d $dir ]] || dir=$(dirname "$dir")
   top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null) || return 0
-  branch=$(git -C "$top" symbolic-ref -q HEAD) || branch=$(rebase_head "$top") || return 0
+  branch=$(git -C "$top" symbolic-ref -q HEAD) || branch=$(prc_rebase_head "$top") || return 0
   branch=${branch#refs/heads/}
   awk -F'\t' -v p="$top" -v b="$branch" '$1 == p && $2 == b { print $3; exit }' "$STATE_DIR/glyphs" 2>/dev/null || true
 }
@@ -368,15 +368,6 @@ fetch() {
   fi
 }
 
-# rebase_head <worktree>: the branch a rebase paused there is rebasing.
-rebase_head() {
-  local gd head
-  gd=$(git -C "$1" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  head=$(cat "$gd/rebase-merge/head-name" 2>/dev/null || cat "$gd/rebase-apply/head-name" 2>/dev/null) || return 1
-  [[ $head == refs/heads/* ]] || return 1
-  echo "${head#refs/heads/}"
-}
-
 # load_worktrees <repo>: worktree_of[<branch>] is the worktree it's checked out
 # in, counting one paused mid-rebase of it (listed as detached), and not one
 # whose directory is gone (rm -rf leaves git listing it).
@@ -387,7 +378,7 @@ load_worktrees() {
     case $key in
       worktree) wt_path=$val ;;
       branch) if [[ -d $wt_path ]]; then worktree_of[${val#refs/heads/}]=$wt_path; fi ;;
-      detached) if head=$(rebase_head "$wt_path"); then worktree_of[$head]=$wt_path; fi ;;
+      detached) if head=$(prc_rebase_head "$wt_path"); then worktree_of[$head]=$wt_path; fi ;;
     esac
   done < <(git -C "$1" worktree list --porcelain)
 }
