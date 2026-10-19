@@ -79,9 +79,11 @@ values {...s, remote}
                      or on(review.findings.at_head == false))
                     and not (covers(review.local) or covers(review.bot) or covers(review.accepted))),
       fixing:=(on(review.findings.at_head) and not (covers(review.local) or covers(review.bot) or covers(review.accepted))),
-      bot_due:=(coalesce(bot.command, null) is not null and covers(review.local)
-                and not covers(review.bot) and not covers(review.accepted)),
-      bot_waiting:=(covers(review.bot) and on(review.bot.replied == false) and not covers(review.accepted)),
+      -- an accept stands in for the local review, never for the bot (#181); it only ends a silent bot wait
+      bot_due:=(coalesce(bot.command, null) is not null and (covers(review.local) or covers(review.accepted))
+                and not covers(review.bot)),
+      bot_waiting:=(covers(review.bot) and on(review.bot.replied == false)
+                    and not (covers(review.accepted) and n(review.bot.waited) > n(bot.timeout))),
       own_base:=(on(branch == sync.default) or on(sync.target == branch)),
       empty:=(pr is null and on(sync.ahead == 0) and n(push.behind) == 0),
       tasked:=(coalesce(task, "") != ""),

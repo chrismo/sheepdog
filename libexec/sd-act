@@ -177,8 +177,8 @@
 #   trigger   post settings.botCommand on the PR so the review bot runs, and
 #             pin bot at HEAD, recording when (sd state then waits on the
 #             bot's reply); nothing when already pinned there. HEAD must
-#             be on the remote (the bot reviews what GitHub has); the local
-#             review not covering HEAD is a soft refusal
+#             be on the remote (the bot reviews what GitHub has); neither
+#             the local review nor an accept covering HEAD is a soft refusal
 #   attach    takeover (A9): hold branch.<b>.sd-lock, open the branch's
 #             session interactively in its worktree (claude --resume, or pi
 #             --session-id; a new session when none is stored, kept once the
@@ -218,8 +218,9 @@
 #   attach          take over a lock another attach still holds
 #   ci-fix          run again on a red the agent already called flaky
 #   implement, address, ci-fix   run though the agent's question stands
-#   trigger         even when the local review doesn't cover HEAD, or the bot
-#                   is already pinned at HEAD (trigger it again)
+#   trigger         even when neither the local review nor an accept covers
+#                   HEAD, or the bot is already pinned at HEAD (trigger it
+#                   again)
 #   unregister      even with branches still enrolled (the watcher drops them)
 #
 # start options:
@@ -1710,7 +1711,8 @@ values {s: this, why: sj(coalesce(errors, []), "; ")}
     when n(s.push.behind) > 0
       then {hard: f"{s.branch} isn't on the remote at HEAD; the bot reviews what GitHub has: take its commits first (git merge --ff-only)"}
     when on(s.review.bot.status == "covered") then {done: f"the bot was already triggered on {s.head[0:7]}"}
-    when not (coalesce(s.review.local.status, "") in ["covered", "rewritten-same"])
+    when not (coalesce(s.review.local.status, "") in ["covered", "rewritten-same"]
+              or coalesce(s.review.accepted.status, "") in ["covered", "rewritten-same"])
       then {soft: "the local review doesn't cover HEAD (sd act review)"}
     else {} end
 EOF

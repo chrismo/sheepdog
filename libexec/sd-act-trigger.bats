@@ -194,6 +194,16 @@ pin() { git rev-parse -q --verify "refs/sheepdog/feat/$1" || true; }
   [ "$(pin bot)" = "$(git rev-parse HEAD)" ]
 }
 
+@test "trigger: an accepted pin at HEAD stands in for the local review; no --force (#181)" {
+  git update-ref refs/sheepdog/feat/local HEAD~1
+  git update-ref refs/sheepdog/feat/accepted HEAD
+  git update-ref refs/sheepdog/feat/accepted-base main
+  run "$SD_ACT" trigger
+  [ "$status" -eq 0 ]
+  [[ "$(calls)" == *"comment "* ]] || false
+  [ "$(pin bot)" = "$(git rev-parse HEAD)" ]
+}
+
 @test "trigger: the comment failing pins nothing and records no time" {
   touch "$GH/fail-comment"
   run "$SD_ACT" trigger

@@ -604,6 +604,20 @@ FRESH=('.pr = null' '.sync.ahead = 0' '.push = {"remote_sha": null, "ahead": 0, 
   [ "$(keys "${st[@]}" '.pr.draft = true' '.pr.merge_state = "DRAFT"')" = bot-trigger ]
 }
 
+@test "HEAD accepted, the bot's round a commit behind: trigger it; an accept isn't the bot's review (#181)" {
+  local st=('.bot = {command: "/review-bot", timeout: 3600}'
+            '.review.local = {sha: "x", status: "uncovered", uncovered: 1}'
+            '.review.bot = {sha: "x", status: "uncovered", uncovered: 1, triggered: "t", replied: true, waited: 60}'
+            '.review.accepted = {sha: "h1", status: "covered"}')
+  [ "$(keys "${st[@]}")" = bot-trigger ]
+  [ "$(keys "${st[@]}" '.pr.draft = true' '.pr.merge_state = "DRAFT"')" = bot-trigger ]
+  # triggered on the accepted HEAD: wait on its reply, as without the accept
+  [ "$(keys "${st[@]}" '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}')" = bot-wait ]
+  [ "$(keys "${st[@]}" '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}' \
+            '.pr.draft = true' '.pr.merge_state = "DRAFT"')" = bot-wait ]
+  [ "$(keys "${st[@]}" '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: true, waited: 60}')" = ready ]
+}
+
 @test "bot triggered, no reply yet: wait on the bot; not ready, not draft-ready" {
   local st=('.bot = {command: "/review-bot", timeout: 3600}' '.review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}')
   [ "$(keys "${st[@]}")" = bot-wait ]
