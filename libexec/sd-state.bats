@@ -1263,6 +1263,75 @@ squash_parent_away() {
   [[ "$output" == *"stale: fetch"* ]]
 }
 
+# ── freshness: the PR's base on the remote, before ready (#169) ─────────────
+
+# ready_pr: feat pushed, reviewed, and an open CLEAN PR, so NEXT is ready; every
+# call to origin (ls-remote's upload-pack) is logged to $TMP/upload-pack.log.
+ready_pr() {
+  git switch -qc feat && commit a.txt a && git push -q -u origin feat 2>/dev/null
+  git update-ref refs/sheepdog/feat/local HEAD
+  pr_fixture feat "$@"
+  printf '#!/usr/bin/env bash\necho "$@" >> %q\nexec git-upload-pack "$@"\n' "$TMP/upload-pack.log" > "$TMP/fakebin/upload-pack"
+  chmod +x "$TMP/fakebin/upload-pack"
+  git config remote.origin.uploadpack "$TMP/fakebin/upload-pack"
+}
+
+@test "base fresh: main moved on the remote since the last fetch: fetch, not ready" {
+  ready_pr
+  commit m.txt m "$TMP/other" && git -C "$TMP/other" push -q origin main 2>/dev/null
+  state
+  [ "$(field .fresh)" = false ]
+  [[ "$(field '.stale[0]')" == *"origin/main"* ]]
+  [ "$(field '.next[0].key')" = stale ]
+  [ "$(field '.next[0].who')" = run ]
+  [ "$(field '.next[0].cmd')" = "git fetch --prune origin" ]
+  [ "$(field '[.next[] | select(.key == "ready")] | length')" = 0 ]
+  [ -s "$TMP/upload-pack.log" ]
+}
+
+@test "base fresh: main unchanged on the remote: ready, after one ls-remote" {
+  ready_pr
+  run "$SD_STATE"
+  [ "$status" -eq 0 ]
+  [ "${lines[1]}" = "NEXT  you    ready to merge  → gh pr merge" ]
+  [ "$(wc -l < "$TMP/upload-pack.log")" -eq 1 ]
+}
+
+@test "base fresh: ls-remote fails: ready as before, the rest intact" {
+  ready_pr
+  git remote set-url origin "$TMP/nowhere.git"
+  run "$SD_STATE"
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "https://example/pr/7 open · "* ]]
+  [[ "${lines[0]}" != *stale* ]]
+  [ "${lines[1]}" = "NEXT  you    ready to merge  → gh pr merge" ]
+}
+
+@test "base fresh: no ls-remote where ready can't apply" {
+  ready_pr '.isDraft = true'
+  state
+  pr_fixture feat '.mergeStateStatus = "BLOCKED"'
+  state
+  pr_fixture feat '.reviewDecision = "REVIEW_REQUIRED"'
+  state
+  pr_fixture feat '.state = "MERGED"'
+  state
+  git switch -qc nopr && commit n.txt n
+  state
+  [ ! -e "$TMP/upload-pack.log" ]
+}
+
+@test "base fresh: no ls-remote while GitHub says CLEAN but sheepdog has steps first" {
+  ready_pr
+  git update-ref -d refs/sheepdog/feat/local
+  state
+  [ "$(field '.next[0].key')" = review ]
+  commit b.txt b && git update-ref refs/sheepdog/feat/local HEAD
+  state
+  [ "$(field '.next[0].key')" = push ]
+  [ ! -e "$TMP/upload-pack.log" ]
+}
+
 # ── O5 CI ────────────────────────────────────────────────────────────────────
 
 @test "ci: no checks reported" {
