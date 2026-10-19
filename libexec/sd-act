@@ -207,8 +207,9 @@
 # recorded on HEAD, with a hash of the worktree's uncommitted state
 # (refs/sheepdog/<b>/question). While both are unchanged it stands: sd state's
 # NEXT shows it as chrismo's question step in place of the step that asked,
-# and that step refuses to run again (--force runs it). A commit, an edit, or
-# sd act ack --question ends it.
+# and that step refuses to run again. A commit, an edit, or sd act ack
+# --question ends it; that is the override the refusal names, as --force
+# also lifts the step's other gates.
 #
 # --force:
 #   address         run even if the branch is unpushed, diverged or taken over
@@ -919,7 +920,7 @@ question_gate() {
     echo "sd act: warning: the $2 agent's question on $1 stands; running anyway" >&2
     return 0
   fi
-  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer in its session (sd act attach $1), then sd act ack --question; or --force"
+  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer in its session (sd act attach $1), then sd act ack --question"
 }
 
 # ── attach: A9, takeover ─────────────────────────────────────────────────────
