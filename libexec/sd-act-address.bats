@@ -474,6 +474,68 @@ question() { git cat-file blob refs/sheepdog/feat/question | jq -r "$1"; }
   [ -e "$FX/claude.args" ]
 }
 
+@test "sd act answer resumes address's session with the answer, then drops the question (#178)" {
+  two_owed
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  [[ "$output" == *'sd act answer "<your answer>" feat; or answer on GitHub or in its session (sd act attach feat), then sd act ack --question'* ]]
+  sid=$(git config branch.feat.sd-session)
+  agent_result '{outcome: "done", commit_message: null, summary: "Named it bar.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}'
+  run "$SD_ACT" answer "call it bar"
+  [ "$status" -eq 0 ]
+  grep -q "call it bar" "$FX/claude.args"
+  [ "$(grep -A1 -x -- --resume "$FX/claude.args" | tail -1)" = "$sid" ]
+  run git rev-parse -q --verify refs/sheepdog/feat/question
+  [ "$status" -ne 0 ]
+}
+
+@test "sd act answer hands address the items owed now, so one that came after the question gets an answer (#178)" {
+  state_fixture '.threads.owed_bot = 1'
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  # T2 arrives; HEAD and the worktree don't change, so the question stands
+  two_owed
+  run "$SD_ACT" answer "call it bar"
+  grep -q "call it bar" "$FX/claude.args"
+  grep -q "Findings:" "$FX/claude.args"
+  grep -qF 'Rename `one`?' "$FX/claude.args"
+}
+
+@test "sd act answer with nothing left for the agent fails at zero tokens; the question stands (#178)" {
+  two_owed
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                         {id: "T2", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  rm -f "$FX/claude.args"
+  # answered on GitHub: nothing owed
+  state_fixture '.threads.owed_bot = 0 | .threads.items = []'
+  run "$SD_ACT" answer "call it bar"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nothing to address on feat"*"sd act ack --question"* ]]
+  [ ! -e "$FX/claude.args" ]
+  [ "$(question .step)" = address ]
+  # joined by someone else: nothing the agent can take
+  two_owed
+  jq '.data.nodes[0,1].comments.nodes += [{author: {__typename: "User", login: "stranger"}, body: "mine"}]' \
+    "$FX/nodes.json" > "$FX/n" && mv "$FX/n" "$FX/nodes.json"
+  rm -f "$FX/gh.log"
+  run "$SD_ACT" answer "call it bar"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no bot feedback the agent can take"*"sd act ack --question"* ]]
+  [ ! -e "$FX/claude.args" ]
+  [ "$(gh_ops)" = nodes ]   # nothing posted
+  [ "$(question .step)" = address ]
+}
+
 @test "done with nothing asked records no question (#167)" {
   run "$SD_ACT" address
   [ "$status" -eq 0 ]

@@ -11,6 +11,7 @@
 #   sd act unregister [--force] [<path>]
 #   sd act address  [--force] [--no-publish] [--harness <h>] [<branch>]
 #   sd act ack      [--id <id>]... [--question] [<branch>]
+#   sd act answer   [--force] <text> [<branch>]
 #   sd act restack  [--force] [--resolve] [<branch>]
 #   sd act retarget [<branch>]
 #   sd act push     [--force] [<branch>]
@@ -31,6 +32,7 @@
 #   sd act address --harness pi
 #   sd act ack                         after reading sd state --long: the i items are done
 #   sd act ack --question              after answering the agent's question in its session
+#   sd act answer "revert the test"    answer it headless; the step that asked goes on
 #   sd act restack && sd act push      catch up with the parent, then publish
 #   sd act restack --resolve           the same, with the agent resolving conflicts
 #   sd act review                      verify, then the local reviewer; clean pins local
@@ -84,6 +86,15 @@
 #             --question instead drops only the agent's standing question
 #             (below): chrismo has answered it, so NEXT offers the step that
 #             asked again
+#   answer    chrismo's answer to the agent's standing question (below), with
+#             no TUI: the step that asked (implement or its review-fix round,
+#             address, ci-fix) resumes the branch's session with <text> as its
+#             prompt, goes on from the edits it left, and finishes as that
+#             step does (commit, verify, push, replies), under the running
+#             marker. The question is dropped once the agent has run; a new
+#             needs-input records a new one. Refuses with no question, one
+#             that no longer stands, or an address question with no bot item
+#             left for the agent. Spends tokens
 #   restack   rebase --onto the parent (the default branch once the parent
 #             merged), check the branch's own change came through unchanged,
 #             else roll back; never pushes. When the old base isn't an
@@ -207,9 +218,11 @@
 # recorded on HEAD, with a hash of the worktree's uncommitted state
 # (refs/sheepdog/<b>/question). While both are unchanged it stands: sd state's
 # NEXT shows it as chrismo's question step in place of the step that asked,
-# and that step refuses to run again. A commit, an edit, or sd act ack
-# --question ends it; that is the override the refusal names, as --force
-# also lifts the step's other gates.
+# and that step refuses to run again. sd act answer carries chrismo's answer
+# to it (#178); a commit, an edit, or sd act ack --question ends it too, the
+# override the refusal names, as --force also lifts the step's other gates.
+# An edit that ends it is chrismo's to commit: NEXT says so (dirty) in place
+# of the agent steps that refuse a dirty worktree.
 #
 # --force:
 #   address         run even if the branch is unpushed, diverged or taken over
@@ -268,7 +281,7 @@ usage() { help >&2; exit 1; }
 verb=$1; shift
 if [[ $verb == -h || $verb == --help ]]; then help; exit 0; fi
 
-force=false accept=false remove=false no_publish=false resolve=false no_implement=false question=false harness_opt="" parent_opt="" branch=""
+force=false accept=false remove=false no_publish=false resolve=false no_implement=false question=false harness_opt="" parent_opt="" branch="" answer_text=""
 ids=() positionals=()
 while (( $# )); do
   case $1 in
@@ -295,6 +308,11 @@ if [[ $verb == start ]]; then
   (( ${#positionals[@]} >= 1 && ${#positionals[@]} <= 2 )) \
     || die "usage: sd act start [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]"
   branch=${positionals[0]} task_arg=${positionals[1]:-}
+fi
+if [[ $verb == answer ]]; then
+  (( ${#positionals[@]} >= 1 && ${#positionals[@]} <= 2 )) && [[ ${positionals[0]} =~ [^[:space:]] ]] \
+    || die "usage: sd act answer [--force] <text> [<branch>]"
+  answer_text=${positionals[0]} branch=${positionals[1]:-}
 fi
 if $accept && [[ $verb != review ]]; then die "--accept is for sd act review only"; fi
 if $remove && [[ $verb != forget ]]; then die "--remove is for sd act forget only"; fi
@@ -497,7 +515,7 @@ address() {
   local b=$branch wt remote state gate line owed nodes findings bots
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
+  [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
   remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
   git -C "$wt" fetch --quiet "$remote" || die "fetch from $remote failed"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
@@ -506,8 +524,13 @@ address() {
   line=$(gate_get "$gate" hard | head -1)
   [[ -z $line ]] || die "$line"
   owed=$(prc_json 'values coalesce([unnest threads.items | where kind == "bot"], [])' "$state")
+  # An answer that can't reach the agent fails, so NEXT's question step
+  # doesn't hand it to a loop again.
+  local unanswered=". The answer didn't reach the agent; sd act ack --question drops its question"
   if [[ $owed == '[]' ]]; then
-    echo "nothing to address on $b ($(prc_val "$state" 'coalesce(threads.owed_human, 0)') human item(s) are chrismo's)"
+    line="nothing to address on $b ($(prc_val "$state" 'coalesce(threads.owed_human, 0)') human item(s) are chrismo's)"
+    [[ -z $answer_text ]] || die "$line$unanswered"
+    echo "$line"
     return
   fi
   soft_gate "$gate" "addressing $b"
@@ -526,6 +549,7 @@ address() {
     | values {...this, action: "ask", reply: f"joined by {sj(untrusted, ", ")}: yours to answer"} | drop untrusted], [])' "$findings")
   findings=$(prc_json 'values coalesce([unnest this | where len(untrusted) == 0 | drop untrusted], [])' "$findings")
   if [[ $findings == '[]' ]]; then
+    [[ -z $answer_text ]] || die "no bot feedback the agent can take on $b$unanswered"
     report "$held" "no bot feedback the agent can take"
     return
   fi
@@ -536,11 +560,12 @@ address() {
   forced=${harness_opt:-$stored_h}
   cfg=$(prc_step address "$b" "$forced") || die "sd config failed"
   h=$(prc_val "$cfg" harness)
+  [[ -z $answer_text || -n $sid ]] || die "no session on $b to answer in (branch.$b.sd-session)"
   if [[ -n $sid ]]; then
     [[ $h == "${stored_h:-claude}" ]] \
       || die "branch.$b.sd-session belongs to ${stored_h:-claude}; unset it to start a $h session"
     mode=resume
-    if past_fork_limit "$b" "$h" "$sid"; then sid=; fi
+    if [[ -z $answer_text ]] && past_fork_limit "$b" "$h" "$sid"; then sid=; fi
   fi
   if [[ -z $sid ]]; then
     sid=$(uuidgen | tr 'A-F' 'a-f') mode=new
@@ -556,7 +581,10 @@ address() {
   local -a rules
   s=$(agent_rules "$wt" "$b") || die "sd config failed"
   rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
-  prompt="$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\nFindings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)"
+  local listed
+  listed=$'Findings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)"
+  prompt="$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\n'"$listed"
+  [[ -z $answer_text ]] || prompt=$(answer_prompt "$listed")
   [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
   if [[ $h == claude ]] && (( ${#rules[@]} )); then
     allow+=$(printf ',%s' "${rules[@]}")
@@ -572,6 +600,7 @@ address() {
     || { hold_since "$b" "$gbase" "$before"; die "the $h step failed or returned no usable result (session $sid)"; }
   git config "branch.$b.sd-session" "$sid"
   git config "branch.$b.sd-harness" "$h"
+  question_answered "$b"
   hold_since "$b" "$gbase" "$before"
   local agent_head
   agent_head=$(git rev-parse "refs/heads/$b")
@@ -604,7 +633,7 @@ address() {
   asks=$(prc_line "$REPORT" "$plan" | sed -n '/^needs chrismo:$/,$p')
   if [[ $outcome == needs-input || -n $asks ]]; then
     question_ask "$b" "$wt" address "$summary${asks:+$'\n'$asks}"
-    qmsg="$(question_say "$b"): answer on GitHub or in its session (sd act attach $b), then sd act ack --question"
+    qmsg="$(question_say "$b"): answer with $(answer_cmd "$b"); or answer on GitHub or in its session (sd act attach $b), then sd act ack --question"
   fi
   (( vrc == 0 )) || die "verify failed ($verify); the commit is kept in $wt, nothing pushed or posted${qmsg:+. $qmsg}"
 
@@ -664,7 +693,7 @@ address() {
 # ── verify ───────────────────────────────────────────────────────────────────
 
 VERIFY_TAIL=40
-VERIFY_CMD=""
+VERIFY_CMD="" AUTOFIX_COMMIT=""
 
 # verify_run <worktree> <branch>: settings.verify there, under
 # settings.stepTimeout, output captured. 0: passed, or nothing configured
@@ -860,11 +889,13 @@ step_session() {
   STEP_CFG=$(prc_step "$step" "$b" "${harness_opt:-$stored_h}") || die "sd config failed"
   STEP_H=$(prc_val "$STEP_CFG" harness)
   STEP_SID=$(git config --get "branch.$b.sd-session" || true)
+  # An answer goes to the session that asked, however big it is.
+  [[ -z $answer_text || -n $STEP_SID ]] || die "no session on $b to answer in (branch.$b.sd-session)"
   if [[ -n $STEP_SID ]]; then
     [[ $STEP_H == "${stored_h:-claude}" ]] \
       || die "branch.$b.sd-session belongs to ${stored_h:-claude}; unset it to start a $STEP_H session"
     STEP_MODE=resume
-    if past_fork_limit "$b" "$STEP_H" "$STEP_SID"; then STEP_SID=; fi
+    if [[ -z $answer_text ]] && past_fork_limit "$b" "$STEP_H" "$STEP_SID"; then STEP_SID=; fi
   fi
   if [[ -z $STEP_SID ]]; then
     STEP_SID=$(uuidgen | tr 'A-F' 'a-f') STEP_MODE=new
@@ -909,19 +940,57 @@ question_ask() {
 }
 
 question_say() { echo "NEXT shows the question until $1's HEAD or worktree changes, or sd act ack --question"; }
+answer_cmd() { echo "sd act answer \"<your answer>\" $1"; }
 
 # question_gate <branch> <step>: refuse, at zero tokens, to rerun the step
-# whose question stands; --force runs it anyway.
+# whose question stands; --force runs it anyway, and sd act answer goes on
+# from it.
 question_gate() {
   local q
+  [[ -z $answer_text ]] || return 0
   q=$(question_state "$1" "$(git rev-parse "refs/heads/$1")") && [[ -n $q ]] || return 0
   [[ $(prc_val "$q" "at_head and step == \"$2\"") == true ]] || return 0
   if $force; then
     echo "sd act: warning: the $2 agent's question on $1 stands; running anyway" >&2
     return 0
   fi
-  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer in its session (sd act attach $1), then sd act ack --question"
+  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer with $(answer_cmd "$1"); or answer in its session (sd act attach $1), then sd act ack --question"
 }
+
+# ── answer: an agent step's question, answered (#178) ────────────────────────
+
+# answer: resume the asking step (the question's step) in the branch's
+# session, with chrismo's answer as its whole prompt: the session holds the
+# step's own prompt, and its edits are still in the worktree, which the step
+# would otherwise refuse. The rest of the step (commit, verify, push, replies)
+# runs as usual, under the running marker. Only a question that still stands.
+answer() {
+  local b=$branch q step
+  q=$(question_state "$b" "$(git rev-parse "refs/heads/$b")") || die "refs/sheepdog/$b/question isn't a question record"
+  [[ -n $q ]] || die "no question to answer on $b"
+  step=$(prc_val "$q" step)
+  [[ $(prc_val "$q" at_head) == true ]] \
+    || die "the $step agent's question on $b no longer stands: HEAD or the worktree changed since it asked (sd act ack --question drops it)"
+  case $step in
+    implement|review-fix) running_during "$b" implement implement ;;
+    address) running_during "$b" address address ;;
+    ci-fix) running_during "$b" ci-fix ci_fix ;;
+    *) die "can't answer a $step question" ;;
+  esac
+}
+
+# answer_prompt [<items>]: the prompt for a step resumed with chrismo's
+# answer, then the items owed now (address: bot items can come in while the
+# question stands, and an item left unanswered is asked again).
+answer_prompt() {
+  printf '%s\n\n%s\n\n%s' "chrismo answers the question you asked:" "$answer_text" \
+    "Go on with the step you were on, from the worktree as you left it, and end with that step's JSON result, as before (every item again, for a step that answers items)."
+  [[ -z ${1:-} ]] || printf '\n\n%s\n%s' "The items to answer now, any that came in since you asked among them:" "$1"
+}
+
+# question_answered <branch>: once the answer reached the agent, its question
+# is done; a new one it asks is recorded anew.
+question_answered() { [[ -z $answer_text ]] || git update-ref -d "refs/sheepdog/$1/question"; }
 
 # ── attach: A9, takeover ─────────────────────────────────────────────────────
 
@@ -1240,7 +1309,7 @@ implement_run() {
   local b=$1 wt=$2 task verify before agent_head prompt result outcome summary msg extra rule rec state gbase guidance listed="" allow=$HARNESS_CLAUDE_ALLOW
   local numbered answered asks changed=false schema=$IMPLEMENT_SCHEMA
   local -a rules=()
-  [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
+  [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
   task=$(git config --get "branch.$b.sd-task" || true)
   before=$(git rev-parse "refs/heads/$b")
   # A fix round: sd act review's open findings, when they're about HEAD. The
@@ -1279,6 +1348,7 @@ implement_run() {
     guidance=$(step_guidance implementPrompt "$b" "$gbase" "$SD_LIB/prompts/implement.md") || die "can't read the implement guidance"
     prompt="$guidance"$'\n\n'"$IMPLEMENT_CONTRACT"$'\n\nTask:\n'"$task"
   fi
+  [[ -z $answer_text ]] || prompt=$(answer_prompt)
   [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
   if [[ $STEP_H == claude ]] && (( ${#rules[@]} )); then
     allow+=$(printf ',%s' "${rules[@]}")
@@ -1291,6 +1361,7 @@ implement_run() {
              && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" "$prompt" "$schema" "$STEP_CFG") \
     || { hold_since "$b" "$gbase" "$before"; die "the $STEP_H implement step failed or returned no usable result (session $STEP_SID)"; }
   step_store "$b"
+  question_answered "$b"
   hold_since "$b" "$gbase" "$before"
   agent_head=$(git rev-parse "refs/heads/$b")
 
@@ -1312,12 +1383,12 @@ implement_run() {
   fi
   if [[ $outcome == needs-input ]]; then
     question_ask "$b" "$wt" "$qstep" "$summary"
-    # implement refuses a dirty worktree, so with edits left the answer goes
-    # into the session itself.
+    # implement refuses a dirty worktree, so with edits left an answer in the
+    # session itself is chrismo's to commit; sd act answer goes on from them.
     if [[ -n $(git -C "$wt" status --porcelain) ]]; then
-      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"). Its edits are left uncommitted in $wt: answer in its session (sd act attach $b) and commit what you keep, or discard them and run sd act implement again"
+      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"). Its edits are left uncommitted in $wt: answer with $(answer_cmd "$b"), which goes on from them; or in its session (sd act attach $b) and commit what you keep; or discard them and run sd act implement again"
     fi
-    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b), then sd act ack --question and sd act implement"
+    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer with $(answer_cmd "$b"); or answer in its session (sd act attach $b), then sd act ack --question and sd act implement"
   fi
   if [[ -n $(git -C "$wt" status --porcelain) ]]; then
     msg=$(prc_line 'values {m: coalesce(commit_message, null)}
@@ -1435,7 +1506,7 @@ ci_fix() {
   local -a rules
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
+  [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
   remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
   git -C "$wt" fetch --quiet "$remote" || die "fetch from $remote failed"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
@@ -1464,39 +1535,45 @@ ci_fix() {
   # With no base from sd state, the trusted one guidance_base finds (maybe none).
   [[ -n $base ]] || base=$(guidance_base "$b") || die "can't find $b's base, to read its prompt guidance from"
   task=$(git config --get "branch.$b.sd-task" || true)
-
-  # Zero tokens first: verify, autofix, verify. A fix there is the whole step.
-  vout=$(mktemp)
-  verify_autofix "$wt" "$b" >"$vout" 2>&1 && vrc=0 || vrc=$?   # set -e: a failing verify is data here
-  if [[ -n $AUTOFIX_COMMIT ]]; then cat "$vout"; fi
-  if (( vrc == 0 )) && [[ -n $AUTOFIX_COMMIT ]]; then
-    rm -f "$vout"
-    git config "branch.$b.sd-ci-fix" "$sha autofix"
-    if $no_publish; then echo "autofix fixed what verify saw; not pushed (--no-publish): sd act push"; return; fi
-    hold_gate "$b" "pushing $b"
-    push_branch "$b" "$remote" || die "autofix's commit is kept in $wt, not pushed"
-    echo "autofix fixed what verify saw; CI reruns on the push"
-    return
-  fi
-
-  [[ -z $(git -C "$wt" status --porcelain) ]] \
-    || die "verify ($VERIFY_CMD) changed files in $wt (a formatter?); commit them, then sd act ci-fix"
-  logs=$(cd "$wt" && ci_logs "$sha")
   s=$(agent_rules "$wt" "$b") || die "sd config failed"
   rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
   verify=$(cd "$wt" && prc_get settings.verify "$b" false) || die "sd config failed"
-  prompt=$(cd "$wt" && step_guidance ciFixPrompt "$b" "$base" "$SD_LIB/prompts/ci-fix.md") || die "can't read the ci-fix guidance"
-  prompt+=$'\n\nTask: '"${task:-(none recorded)}"
-  prompt+=$'\n\nFailing checks on '"${sha:0:7}: $failing"
-  [[ -z $logs ]] || prompt+=$'\n\n'"$logs"
-  if [[ -z $VERIFY_CMD ]]; then
-    prompt+=$'\n\nNo local checks are configured (settings.verify), so only CI\'s logs say what failed.'
-  elif (( vrc == 0 )); then
-    prompt+=$'\n\nThe repo\'s checks ('"$VERIFY_CMD"$') pass locally, so the failure may be in CI\'s environment, or in what CI runs that the local checks don\'t.'
+
+  if [[ -n $answer_text ]]; then
+    # The session has the logs and the agent's edits are in the worktree, so
+    # neither verify nor autofix runs first.
+    prompt=$(answer_prompt)
   else
-    prompt+=$'\n\nThe repo\'s checks ('"$VERIFY_CMD"$') fail locally too:\n'"$(<"$vout")"
+    # Zero tokens first: verify, autofix, verify. A fix there is the whole step.
+    vout=$(mktemp)
+    verify_autofix "$wt" "$b" >"$vout" 2>&1 && vrc=0 || vrc=$?   # set -e: a failing verify is data here
+    if [[ -n $AUTOFIX_COMMIT ]]; then cat "$vout"; fi
+    if (( vrc == 0 )) && [[ -n $AUTOFIX_COMMIT ]]; then
+      rm -f "$vout"
+      git config "branch.$b.sd-ci-fix" "$sha autofix"
+      if $no_publish; then echo "autofix fixed what verify saw; not pushed (--no-publish): sd act push"; return; fi
+      hold_gate "$b" "pushing $b"
+      push_branch "$b" "$remote" || die "autofix's commit is kept in $wt, not pushed"
+      echo "autofix fixed what verify saw; CI reruns on the push"
+      return
+    fi
+
+    [[ -z $(git -C "$wt" status --porcelain) ]] \
+      || die "verify ($VERIFY_CMD) changed files in $wt (a formatter?); commit them, then sd act ci-fix"
+    logs=$(cd "$wt" && ci_logs "$sha")
+    prompt=$(cd "$wt" && step_guidance ciFixPrompt "$b" "$base" "$SD_LIB/prompts/ci-fix.md") || die "can't read the ci-fix guidance"
+    prompt+=$'\n\nTask: '"${task:-(none recorded)}"
+    prompt+=$'\n\nFailing checks on '"${sha:0:7}: $failing"
+    [[ -z $logs ]] || prompt+=$'\n\n'"$logs"
+    if [[ -z $VERIFY_CMD ]]; then
+      prompt+=$'\n\nNo local checks are configured (settings.verify), so only CI\'s logs say what failed.'
+    elif (( vrc == 0 )); then
+      prompt+=$'\n\nThe repo\'s checks ('"$VERIFY_CMD"$') pass locally, so the failure may be in CI\'s environment, or in what CI runs that the local checks don\'t.'
+    else
+      prompt+=$'\n\nThe repo\'s checks ('"$VERIFY_CMD"$') fail locally too:\n'"$(<"$vout")"
+    fi
+    rm -f "$vout"
   fi
-  rm -f "$vout"
   [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
   if [[ $STEP_H == claude ]] && (( ${#rules[@]} )); then
     allow+=$(printf ',%s' "${rules[@]}")
@@ -1510,6 +1587,7 @@ ci_fix() {
              && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" "$prompt" "$CI_FIX_SCHEMA" "$STEP_CFG") \
     || { hold_since "$b" "$base" "$before"; die "the $STEP_H ci-fix step failed or returned no usable result (session $STEP_SID)"; }
   step_store "$b"
+  question_answered "$b"
   hold_since "$b" "$base" "$before"
   agent_head=$(git rev-parse "refs/heads/$b")
 
@@ -1527,7 +1605,7 @@ ci_fix() {
       return ;;
     needs-input)
       question_ask "$b" "$wt" ci-fix "$summary"
-      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b). Edits (if any) are left uncommitted in $wt: commit or discard them, or with none, sd act ack --question; then sd act ci-fix" ;;
+      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer with $(answer_cmd "$b"), which goes on from its edits (if any) in $wt; or in its session (sd act attach $b), then commit or discard the edits, or with none, sd act ack --question; then sd act ci-fix" ;;
     gave-up) die "the agent gave up on $b: $summary. Edits (if any) are left uncommitted in $wt" ;;
     *) die "the agent returned outcome \"$outcome\"; edits (if any) are left uncommitted in $wt" ;;
   esac
@@ -2425,6 +2503,7 @@ case $verb in
   implement) running_during "$branch" implement implement ;;
   address) running_during "$branch" address address ;;
   ack) ack ;;
+  answer) answer ;;
   restack) restack ;;
   retarget) retarget ;;
   push) push ;;

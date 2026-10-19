@@ -360,7 +360,7 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   rm -f "$FX/claude.args"
   run "$SD_ACT" ci-fix
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*"then sd act ack --question" ]]
+  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*'sd act answer "<your answer>" feat; or answer in its session (sd act attach feat), then sd act ack --question' ]]
   [[ "$output" != *"--force"* ]]
   [ ! -e "$FX/claude.args" ]
   run "$SD_ACT" ack --question
@@ -384,6 +384,56 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   state_fixture
   run "$SD_ACT" ci-fix
   [ -e "$FX/claude.args" ]
+}
+
+@test "answer: resumes the asking session with chrismo's answer, its edits kept; commits, verifies, pushes, drops the question (#178)" {
+  "$SD_CONFIG" set --global settings.verify "grep -q THREE file.txt"
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "which test is right?"}'
+  run "$SD_ACT" ci-fix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'sd act answer "<your answer>"'* ]]
+  sid=$(git config branch.feat.sd-session)
+  [ -n "$(git status --porcelain)" ]
+  rm -f "$FX/agent" "$FX/gh.calls"
+  agent_result '{outcome: "fixed", commit_message: "Uppercase three", summary: "kept THREE, as chrismo said"}'
+  run "$SD_ACT" answer "keep THREE; the test is right"
+  [ "$status" -eq 0 ]
+  [[ "$(prompt)" == *"keep THREE; the test is right"* ]]
+  [[ "$(prompt)" != *"rwx: expected THREE"* ]]     # the session has the logs already
+  [ "$(grep -A1 -x -- --resume "$FX/claude.args" | tail -1)" = "$sid" ]
+  [ "$(git log -1 --format=%s)" = "Uppercase three" ]
+  [ -z "$(git status --porcelain)" ]
+  [ "$(remote_feat)" = "$(git rev-parse HEAD)" ]
+  run git rev-parse -q --verify refs/sheepdog/feat/question
+  [ "$status" -ne 0 ]
+}
+
+@test "answer: the agent asking again records the new question (#178)" {
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "which test is right?"}'
+  run "$SD_ACT" ci-fix
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "and the other one?"}'
+  run "$SD_ACT" answer "the first"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"and the other one?"* ]]
+  [ "$(git cat-file blob refs/sheepdog/feat/question | jq -r .text)" = "and the other one?" ]
+}
+
+@test "answer: refused at zero tokens with no text, no question, or one that no longer stands (#178)" {
+  run "$SD_ACT" answer
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"usage: sd act answer"* ]]
+  run "$SD_ACT" answer "yes"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no question to answer on feat"* ]]
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "which test is right?"}'
+  run "$SD_ACT" ci-fix
+  rm -f "$FX/claude.args"
+  echo "chrismo's edit" >> file.txt
+  run "$SD_ACT" answer "yes"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the ci-fix agent's question on feat no longer stands"* ]]
+  [ ! -e "$FX/claude.args" ]
 }
 
 @test "--no-publish: committed, not pushed" {

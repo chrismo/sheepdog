@@ -23,6 +23,12 @@
 # An agent step's question standing at HEAD (sd state's question, #167) is
 # chrismo's question step, with the human items; the step that asked
 # (asking: implement, review-fix, address, ci-fix) goes until it's answered.
+# Once it no longer stands, uncommitted edits are chrismo's (#178): the
+# steps that refuse them (ci-red, bot, review-fix, review, open-pr, and
+# restack's behind and conflict) give way to one dirty step, as the empty
+# branch's nothing-dirty does for implement; once commits were reset away,
+# reset-dirty is that step. While it stands the edits are the asker's, so
+# those steps wait behind the question instead.
 #
 # Behind the default branch alone is no step: it moves too often to chase.
 # A conflict with it is, and so is a restack after the parent merged.
@@ -97,6 +103,16 @@ values {...s, remote}
                : spend.usd > spend.budget
                ? step("budget", "you", f"spent {usd(spend.usd)} on this branch, past settings.branchBudget ({usd(spend.budget)}): raise it, or take over",
                       "sd act attach") : null)
+| put ci_red:=(has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push),
+      fix_due:=(fixing and not on(review.findings.declined) and n(review.findings.round) < n(review.findings.cap)),
+      restack_due:=(open and not undone and not parent_closed
+                    and (on(sync.up_to_date == false) and on(sync.conflict) ? not on(sync.by_tree)
+                         : on(sync.up_to_date == false) and chase ? sync.old_base is not null
+                         : has_pr and not on(sync.conflict) and gh_behind))
+| put dirty:=(open and on(push.dirty) and asking == ""
+              and (ci_red or bot_blocking > 0 or fix_due or (need_review and not fixing) or restack_due
+                   or (pr is null and not empty and not dropping)))
+| put refused:=(dirty or (open and on(push.dirty) and asking != ""))
 | unnest own_base ? [step("default", "you", f"on {branch}: start a branch", "sd act start")]
   : not nul(session.running) ? [step("running", "wait", f"agent: {session.running.step} running since {session.running.since}", null)] : [
     on(pr.state == "MERGED") ? step("merged", "run", "merged: drop the branch'"'"'s pins and enrollment, remove its worktree and delete it", "sd act forget --remove") : null,
@@ -114,7 +130,8 @@ values {...s, remote}
     open and n(threads.owed_human) > 0
       ? step("human", "you", f"reply to {plural(threads.owed_human, "human item")}", "sd state --long") : null,
     open and asking != ""
-      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer in its session, then sd act ack --question", "sd act attach") : null,
+      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question",
+             "sd act answer \"<your answer>\"") : null,
     open and undone
       ? step("restack-undone", "you",
              f"the restack was undone ({sync.undone} of {sync.target}'"'"'s commits {sync.undone == 1 ? "is a copy" : "are copies"} on {branch}; a plain git push after a restack?): redo it, and don'"'"'t sd act push before that, which would publish the copies{no_base ? f"; no base to redo it from on {sync.target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {parent.name} at>), then sd act restack" : ""}",
@@ -124,22 +141,27 @@ values {...s, remote}
     open and not undone and not parent_closed and on(sync.up_to_date == false) and on(sync.conflict)
       ? (on(sync.by_tree)
          ? step("conflict", "you", f"restack onto {sync.target} by tree conflicts, which --resolve can'"'"'t do: resolve it by hand (sd act restack says how)", "sd act restack")
+         : refused ? null
          : agent(budget, "conflict", f"restack onto {sync.target} conflicts: resolve it", "sd act restack --resolve")) : null,
     open and not undone and not parent_closed and on(sync.up_to_date == false) and not on(sync.conflict) and chase
       ? (sync.old_base is null
          ? step("behind", "you", f"restack onto {sync.target} ({sync.behind} behind): no base to restack from; see sd state'"'"'s errors", "sd state --json")
+         : refused ? null
          : step("behind", "run", on(sync.by_tree) ? f"restack onto {sync.target} by tree ({sync.behind} behind): its commits become one"
                                                   : f"restack onto {sync.target} ({sync.behind} behind)",
                 "sd act restack"))
-      : has_pr and not undone and not parent_closed and not on(sync.conflict) and gh_behind
+      : has_pr and not undone and not parent_closed and not on(sync.conflict) and gh_behind and not refused
       ? step("behind", "run", f"restack onto {sync.default} ({n(sync.behind)} behind): GitHub requires branches to be up to date",
              "sd act restack") : null,
-    has_pr and on(ci.verdict == "red") and on(ci.for_head) and not to_push and asking != "ci-fix"
+    dirty and not dropping
+      ? step("dirty", "you", "the worktree has uncommitted changes, which the agent steps refuse: they'"'"'re yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
+             "git status") : null,
+    ci_red and asking != "ci-fix" and not refused
       ? agent(budget, "ci-red", f"fix CI: {join(ci.failing, ", ")}", "sd act ci-fix") : null,
     has_pr and on(ci.verdict == "blocked") and on(ci.for_head) and not to_push
       ? step("ci-blocked", "you", f"CI blocked: {sj(coalesce(ci.blocked, []), ", ")} didn'"'"'t start or want approval; an agent can'"'"'t fix that",
              "gh pr checks") : null,
-    open and bot_blocking > 0 and asking != "address"
+    open and bot_blocking > 0 and asking != "address" and not refused
       ? agent(budget, "bot", f"address {plural(threads.owed_bot, "bot item")}", "sd act address") : null,
     -- only once nothing else moves without chrismo (#168)
     open and bot_blocking == 0 and n(threads.info) > 0
@@ -164,13 +186,13 @@ values {...s, remote}
              : on(push.diverged) ? f"force-push {plural(coalesce(sync.ahead, push.ahead), "commit")} (rewritten); a plain git push is rejected, and pulling would undo the rewrite"
              : n(push.ahead) == 0 ? f"force-push: drop {plural(push.behind, "commit")} the remote has, reset away here"
              : f"push {plural(push.ahead, "commit")}", "sd act push") : null,
-    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held and not empty
+    pr is null and len(errors) == 0 and not parent_unpushed and not ci_held and not empty and not refused
       ? spends(budget, step("open-pr", "run", "ship: push, open a draft PR", "sd act ship")) : null,
     has_pr and draft_ready and not need_review and not bot_due and not bot_waiting
       ? step("draft", "run", f"{on(ci.verdict == "none") ? "reviewed, no CI checks" : "CI green and reviewed"}: mark the PR ready for review",
              "gh pr ready") : null,
-    open and fixing and asking == "review-fix" ? null
-      : open and fixing and not on(review.findings.declined) and review.findings.round < review.findings.cap
+    open and fixing and (asking == "review-fix" or (refused and fix_due)) ? null
+      : open and fix_due
       ? agent(budget, "review-fix", f"fix {plural(review.findings.n, "review finding")} (round {review.findings.round}/{review.findings.cap})",
              "sd act implement")
       : open and fixing
@@ -178,7 +200,7 @@ values {...s, remote}
              f"{on(review.findings.declined) ? f"the agent declined {plural(review.findings.n, "review finding")}"
                 : f"{plural(review.findings.n, "review finding")} after {review.findings.round} rounds"}: fix {review.findings.n == 1 ? "it" : "them"}, or accept HEAD as reviewed (sd state --long lists them)",
              "sd act review --accept")
-      : open and need_review
+      : open and need_review and not refused
       ? agent(budget, "review", last_review is not null ? f"review again: {plural(last_review, "commit")} since the last review"
                                 : reviewed ? "review again: the branch was rewritten since the last review"
                                 : "review the branch'"'"'s change", "sd act review") : null,
