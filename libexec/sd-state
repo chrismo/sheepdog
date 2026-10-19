@@ -62,7 +62,8 @@
 #             and timeout (settings.botTimeout)
 #   session   pipeline enrollment, harness, session id, takeover lock;
 #             running: the agent step running on the branch, {step, pid,
-#             since}, from harness_run's marker, else null. While it runs,
+#             since}, from its running marker (lib/sheepdog.sh's
+#             running_file), else null. While it runs,
 #             NEXT is only to wait for it (#170)
 #   spend     usd: what the branch's agent steps have cost in this repo, by
 #             the usage record (usage.sup, harness_usage); budget:

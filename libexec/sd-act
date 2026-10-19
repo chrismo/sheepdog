@@ -1118,7 +1118,7 @@ start() {
     rc=1
     $no_implement || echo "sd act: fix it, then: sd act implement $b" >&2
   elif ! $no_implement; then
-    (implement_run "$b" "$dst") >&2 || rc=$?
+    (running_during "$b" implement implement_run "$b" "$dst") >&2 || rc=$?
   fi
   echo "$dst"
   return $rc
@@ -2419,15 +2419,17 @@ case $verb in
     echo "unregistered $path"
     ;;
   start) start ;;
-  implement) implement ;;
-  address) address ;;
+  # The agent steps that commit and verify after the agent: marked running
+  # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
+  implement) running_during "$branch" implement implement ;;
+  address) running_during "$branch" address address ;;
   ack) ack ;;
   restack) restack ;;
   retarget) retarget ;;
   push) push ;;
   verify) verify ;;
   autofix) autofix ;;
-  ci-fix) ci_fix ;;
+  ci-fix) running_during "$branch" ci-fix ci_fix ;;
   review) review ;;
   describe) describe ;;
   ship) ship ;;

@@ -848,6 +848,25 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   [ "$(git log -1 --format=%s)" = "Add c" ]
 }
 
+@test "implement: the branch's running marker lasts through the commit and verify, then is gone (#170)" {
+  started
+  printf '{"settings": {"verify": "cat %s >> %s; git log -1 --format=%%s >> %s"}}\n' \
+    "$TMP/repo/.git/sheepdog/feat-x.running" "$FX/during" "$FX/during" > "$SHEEPDOG_CONFIG"
+  run "$SD_ACT" implement
+  [ "$status" -eq 0 ]
+  head -1 "$FX/during" | grep -Eq '^[0-9]+ implement '
+  [ "$(sed -n 2p "$FX/during")" = "Add c" ]
+  [ ! -e "$TMP/repo/.git/sheepdog/feat-x.running" ]
+}
+
+@test "start: implement's running marker lasts through its verify, then is gone (#170)" {
+  printf '{"settings": {"verify": "cat %s >> %s"}}\n' "$TMP/repo/.git/sheepdog/feat-x.running" "$FX/during" > "$SHEEPDOG_CONFIG"
+  run "$SD_ACT" start feat-x "add a third line"
+  [ "$status" -eq 0 ]
+  grep -Eq '^[0-9]+ implement ' "$FX/during"
+  [ ! -e "$TMP/repo/.git/sheepdog/feat-x.running" ]
+}
+
 @test "implement: refuses a dirty worktree without calling the agent" {
   started
   echo dirt > dirt.txt

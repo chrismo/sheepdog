@@ -539,7 +539,7 @@ markers() { ls "$TMP/repo/.git/sheepdog/" 2>/dev/null | grep '\.running$' || tru
   harness_stubs
   HARNESS_STEP=implement run harness_run claude sid1 new 30 "do it" '{}'
   [ "$status" -eq 0 ]
-  head -1 "$FX/marker" | grep -Eq '^feat\.running [0-9]+ implement 20[0-9-]+T[0-9:]+Z$'
+  head -1 "$FX/marker" | grep -Eq '^feat\.running [0-9]+ implement 20[0-9-]+T[0-9:]+Z [A-Z].* [0-9]{4}$'
   [ "$(sed -n 2p "$FX/marker")" = alive ]
   [ -z "$(markers)" ]
 }
@@ -578,16 +578,54 @@ markers() { ls "$TMP/repo/.git/sheepdog/" 2>/dev/null | grep '\.running$' || tru
   run running_state feat
   [ "$output" = null ]
   mkdir -p .git/sheepdog
-  echo "$$ implement 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  echo "$$ implement 2026-10-18T14:03:00Z $(proc_start $$)" > .git/sheepdog/feat.running
   run running_state feat
   [ "$(prc_line 'values f"{step} {pid} {since}"' "$output")" = "implement $$ 2026-10-18T14:03:00Z" ]
   local dead
   sh -c 'exit 0' & dead=$!
   wait "$dead"
-  echo "$dead review 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  echo "$dead review 2026-10-18T14:03:00Z $(proc_start $$)" > .git/sheepdog/feat.running
   run running_state feat
   [ "$output" = null ]
   [ -z "$(markers)" ]
+}
+
+@test "running_state: a live pid that started at another time is a reused one: null, and the marker removed (#170)" {
+  [ -n "$(proc_start $$)" ]
+  mkdir -p .git/sheepdog
+  echo "$$ implement 2026-10-18T14:03:00Z Thu Jan 1 00:00:00 1970" > .git/sheepdog/feat.running
+  run running_state feat
+  [ "$output" = null ]
+  [ -z "$(markers)" ]
+}
+
+@test "running_hold: the marker lasts until running_release; harness_run in between leaves it alone (#170)" {
+  harness_stubs
+  local held
+  running_hold feat implement
+  held=$(cat .git/sheepdog/feat.running)
+  [ "$(cut -d' ' -f1,2 <<<"$held")" = "$BASHPID implement" ]
+  HARNESS_STEP=resolve run harness_run claude sid1 new 30 "do it" '{}'
+  [ "$status" -eq 0 ]
+  [ "$(head -1 "$FX/marker" | cut -d' ' -f2-)" = "$held" ]
+  [ "$(cat .git/sheepdog/feat.running)" = "$held" ]
+  running_release feat
+  [ -z "$(markers)" ]
+}
+
+@test "with_timeout: a TERM or INT to it ends the command's process group, and it waits for that (#170)" {
+  local sig job agent parent i
+  for sig in TERM INT; do
+    rm -f "$TMP/agent"
+    with_timeout 30 sh -c 'echo $$ $PPID > "$1.tmp" && mv "$1.tmp" "$1" && exec sleep 5' _ "$TMP/agent" &
+    job=$!
+    for i in $(seq 100); do [ -s "$TMP/agent" ] && break; sleep 0.1; done
+    read -r agent parent < "$TMP/agent"
+    kill -"$sig" "$parent"
+    wait "$job" || true
+    run kill -0 "$agent"
+    [ "$status" -ne 0 ]
+  done
 }
 
 @test "harness_tally: claude's context is its session's last turn, read from the transcript" {

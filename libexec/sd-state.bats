@@ -2334,7 +2334,7 @@ review() {
   git config branch.feat.sd-task "add a"
   echo wip > wip.txt
   mkdir -p .git/sheepdog
-  echo "$$ implement 2026-10-18T14:03:00Z" > .git/sheepdog/feat.running
+  echo "$$ implement 2026-10-18T14:03:00Z $(source "$BATS_TEST_DIRNAME/../lib/sheepdog.sh" && proc_start $$)" > .git/sheepdog/feat.running
   state
   [ "$(field -c .session.running)" = "{\"step\":\"implement\",\"pid\":$$,\"since\":\"2026-10-18T14:03:00Z\"}" ]
   [ "$(field -c '[.next[] | [.key, .who, .say]]')" = '[["running","wait","agent: implement running since 2026-10-18T14:03:00Z"]]' ]
