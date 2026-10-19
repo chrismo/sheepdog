@@ -57,11 +57,19 @@ worktree_for() {
 
 # worktree_mark <worktree>: a hash of what's uncommitted there, staged or not,
 # untracked files' contents included; writes nothing (no objects, no index
-# refresh). The same mark: nothing in the worktree changed.
+# refresh). The same mark: nothing in the worktree changed. Only regular
+# files' contents are hashed (hash-object can't open a nested repo's
+# directory, and --stdin-paths reads one name per line); status still
+# lists the rest.
 worktree_mark() {
+  local f
   { git -C "$1" --no-optional-locks status --porcelain -z --untracked-files=all \
     && git -C "$1" --no-optional-locks diff --binary --no-color --no-ext-diff --no-textconv HEAD \
-    && git -C "$1" -c core.quotePath=false ls-files -o --exclude-standard | git -C "$1" hash-object --stdin-paths; } \
+    && git -C "$1" ls-files -o -z --exclude-standard \
+      | while IFS= read -r -d '' f; do
+          if [[ -f $1/$f && $f != *$'\n'* ]]; then printf '%s\n' "$f"; fi
+        done \
+      | git -C "$1" hash-object --stdin-paths; } \
     | git -C "$1" hash-object --stdin
 }
 

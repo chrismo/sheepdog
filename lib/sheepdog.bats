@@ -294,6 +294,27 @@ stack_setup() {
   [[ "$output" == *"unknown pin"* ]]
 }
 
+# ── worktree_mark: the worktree's uncommitted state (#167) ──────────────────
+
+@test "worktree_mark: an untracked file's contents change the mark" {
+  echo a > u.txt
+  m=$(worktree_mark .)
+  echo b > u.txt
+  [ "$(worktree_mark .)" != "$m" ]
+}
+
+@test "worktree_mark: marks a worktree with a nested repo and names git quotes, under pipefail" {
+  set -o pipefail
+  git init -q sub && git -C sub commit -q --allow-empty -m s
+  printf a > 'q"t	b\x.txt'
+  run worktree_mark .
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ ^[0-9a-f]{40}$ ]]
+  m=$output
+  printf b > 'q"t	b\x.txt'
+  [ "$(worktree_mark .)" != "$m" ]
+}
+
 # harness_run's tests: claude and pi are stubs that put protocol noise on
 # stderr and print $FX/out on stdout, exiting $FX/status.
 harness_stubs() {
