@@ -800,7 +800,7 @@ findings_rec() { git cat-file blob refs/sheepdog/feat-x/findings | jq -c "$1"; }
   rm -f "$FX/agent"
   echo '{"outcome": "needs-input", "commit_message": null, "summary": "Which file?"}' > "$FX/result.json"
   run "$SD_ACT" implement
-  [[ "$output" == *'answer with sd act answer "<your answer>" feat-x, or in its session (sd act attach feat-x), then sd act ack --question and sd act implement'* ]]
+  [[ "$output" == *'answer with sd act answer "<your answer>" feat-x; or answer in its session (sd act attach feat-x), then sd act ack --question and sd act implement'* ]]
   rm -f "$FX/claude.args"
   run "$SD_ACT" implement
   [ "$status" -ne 0 ]

@@ -481,7 +481,7 @@ question() { git cat-file blob refs/sheepdog/feat/question | jq -r "$1"; }
                  items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
                          {id: "T2", action: "ask", reply: "Rename to what?"}]}'
   run "$SD_ACT" address
-  [[ "$output" == *'sd act answer "<your answer>"'* ]]
+  [[ "$output" == *'sd act answer "<your answer>" feat; or answer on GitHub or in its session (sd act attach feat), then sd act ack --question'* ]]
   sid=$(git config branch.feat.sd-session)
   agent_result '{outcome: "done", commit_message: null, summary: "Named it bar.",
                  items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
@@ -492,6 +492,20 @@ question() { git cat-file blob refs/sheepdog/feat/question | jq -r "$1"; }
   [ "$(grep -A1 -x -- --resume "$FX/claude.args" | tail -1)" = "$sid" ]
   run git rev-parse -q --verify refs/sheepdog/feat/question
   [ "$status" -ne 0 ]
+}
+
+@test "sd act answer hands address the items owed now, so one that came after the question gets an answer (#178)" {
+  state_fixture '.threads.owed_bot = 1'
+  agent_edits_nothing
+  agent_result '{outcome: "needs-input", commit_message: null, summary: "One for chrismo.",
+                 items: [{id: "T1", action: "ask", reply: "Rename to what?"}]}'
+  run "$SD_ACT" address
+  # T2 arrives; HEAD and the worktree don't change, so the question stands
+  two_owed
+  run "$SD_ACT" answer "call it bar"
+  grep -q "call it bar" "$FX/claude.args"
+  grep -q "Findings:" "$FX/claude.args"
+  grep -qF 'Rename `one`?' "$FX/claude.args"
 }
 
 @test "sd act answer with nothing left for the agent fails at zero tokens; the question stands (#178)" {

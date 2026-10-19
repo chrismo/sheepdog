@@ -581,8 +581,10 @@ address() {
   local -a rules
   s=$(agent_rules "$wt" "$b") || die "sd config failed"
   rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
-  prompt="$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\nFindings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)"
-  [[ -z $answer_text ]] || prompt=$(answer_prompt)
+  local listed
+  listed=$'Findings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)"
+  prompt="$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\n'"$listed"
+  [[ -z $answer_text ]] || prompt=$(answer_prompt "$listed")
   [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
   if [[ $h == claude ]] && (( ${#rules[@]} )); then
     allow+=$(printf ',%s' "${rules[@]}")
@@ -631,7 +633,7 @@ address() {
   asks=$(prc_line "$REPORT" "$plan" | sed -n '/^needs chrismo:$/,$p')
   if [[ $outcome == needs-input || -n $asks ]]; then
     question_ask "$b" "$wt" address "$summary${asks:+$'\n'$asks}"
-    qmsg="$(question_say "$b"): answer with $(answer_cmd "$b"), or on GitHub or in its session (sd act attach $b), then sd act ack --question"
+    qmsg="$(question_say "$b"): answer with $(answer_cmd "$b"); or answer on GitHub or in its session (sd act attach $b), then sd act ack --question"
   fi
   (( vrc == 0 )) || die "verify failed ($verify); the commit is kept in $wt, nothing pushed or posted${qmsg:+. $qmsg}"
 
@@ -952,7 +954,7 @@ question_gate() {
     echo "sd act: warning: the $2 agent's question on $1 stands; running anyway" >&2
     return 0
   fi
-  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer with $(answer_cmd "$1"), or in its session (sd act attach $1), then sd act ack --question"
+  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer with $(answer_cmd "$1"); or answer in its session (sd act attach $1), then sd act ack --question"
 }
 
 # ── answer: an agent step's question, answered (#178) ────────────────────────
@@ -977,10 +979,13 @@ answer() {
   esac
 }
 
-# answer_prompt: the prompt for a step resumed with chrismo's answer.
+# answer_prompt [<items>]: the prompt for a step resumed with chrismo's
+# answer, then the items owed now (address: bot items can come in while the
+# question stands, and an item left unanswered is asked again).
 answer_prompt() {
   printf '%s\n\n%s\n\n%s' "chrismo answers the question you asked:" "$answer_text" \
     "Go on with the step you were on, from the worktree as you left it, and end with that step's JSON result, as before (every item again, for a step that answers items)."
+  [[ -z ${1:-} ]] || printf '\n\n%s\n%s' "The items to answer now, any that came in since you asked among them:" "$1"
 }
 
 # question_answered <branch>: once the answer reached the agent, its question
@@ -1383,7 +1388,7 @@ implement_run() {
     if [[ -n $(git -C "$wt" status --porcelain) ]]; then
       die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"). Its edits are left uncommitted in $wt: answer with $(answer_cmd "$b"), which goes on from them; or in its session (sd act attach $b) and commit what you keep; or discard them and run sd act implement again"
     fi
-    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer with $(answer_cmd "$b"), or in its session (sd act attach $b), then sd act ack --question and sd act implement"
+    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer with $(answer_cmd "$b"); or answer in its session (sd act attach $b), then sd act ack --question and sd act implement"
   fi
   if [[ -n $(git -C "$wt" status --porcelain) ]]; then
     msg=$(prc_line 'values {m: coalesce(commit_message, null)}

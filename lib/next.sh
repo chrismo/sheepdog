@@ -130,7 +130,7 @@ values {...s, remote}
     open and n(threads.owed_human) > 0
       ? step("human", "you", f"reply to {plural(threads.owed_human, "human item")}", "sd state --long") : null,
     open and asking != ""
-      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer it with sd act answer, or in its session (sd act attach), then sd act ack --question",
+      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question",
              "sd act answer \"<your answer>\"") : null,
     open and undone
       ? step("restack-undone", "you",

@@ -789,7 +789,7 @@ asked() { # asked <step> [<at_head>]: sd state's question field
   [ "$(keys "${red[@]}" "$(asked ci-fix)")" = question ]
   [ "$(step question who "${red[@]}" "$(asked ci-fix)")" = you ]
   [ "$(step question say "${red[@]}" "$(asked ci-fix)")" \
-    = "the agent asks (ci-fix): Which test is right?; answer it with sd act answer, or in its session (sd act attach), then sd act ack --question" ]
+    = "the agent asks (ci-fix): Which test is right?; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question" ]
   [ "$(step question cmd "${red[@]}" "$(asked ci-fix)")" = 'sd act answer "<your answer>"' ]
   # about an older HEAD or worktree: it no longer stands
   [ "$(keys "${red[@]}" "$(asked ci-fix false)")" = ci-red ]

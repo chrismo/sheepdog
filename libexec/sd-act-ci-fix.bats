@@ -360,7 +360,7 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   rm -f "$FX/claude.args"
   run "$SD_ACT" ci-fix
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*'sd act answer "<your answer>" feat'*"then sd act ack --question" ]]
+  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*'sd act answer "<your answer>" feat; or answer in its session (sd act attach feat), then sd act ack --question' ]]
   [[ "$output" != *"--force"* ]]
   [ ! -e "$FX/claude.args" ]
   run "$SD_ACT" ack --question
