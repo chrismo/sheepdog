@@ -68,7 +68,7 @@ worktree_mark() {
 # An agent step's standing question (#167): refs/sheepdog/<b>/question, a
 # blob {head, step, mark, text}: what the step (implement, review-fix,
 # address, ci-fix) asked chrismo, at the HEAD and worktree_mark it left. It
-# stands while both are unchanged, until sd act ack drops it.
+# stands while both are unchanged, until sd act ack --question drops it.
 # question_state <branch> <head>: the record as sd state shows it, {step, sha,
 # text, at_head}; nothing with no record, status 1 for one that isn't one.
 question_state() {

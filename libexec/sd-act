@@ -10,7 +10,7 @@
 #   sd act forget   [--remove] [<branch>]
 #   sd act unregister [--force] [<path>]
 #   sd act address  [--force] [--no-publish] [--harness <h>] [<branch>]
-#   sd act ack      [--id <id>]... [<branch>]
+#   sd act ack      [--id <id>]... [--question] [<branch>]
 #   sd act restack  [--force] [--resolve] [<branch>]
 #   sd act retarget [<branch>]
 #   sd act push     [--force] [<branch>]
@@ -30,6 +30,7 @@
 #   sd act address --no-publish        the agent fixes locally; nothing pushed or posted
 #   sd act address --harness pi
 #   sd act ack                         after reading sd state --long: the i items are done
+#   sd act ack --question              after answering the agent's question in its session
 #   sd act restack && sd act push      catch up with the parent, then publish
 #   sd act restack --resolve           the same, with the agent resolving conflicts
 #   sd act review                      verify, then the local reviewer; clean pins local
@@ -80,8 +81,9 @@
 #             defanged. The agent may run what implement's may. Spends tokens
 #   ack       mark owed bot review bodies and comments read, with no reply:
 #             every i item, or only the --id ones (ids from sd state --json).
-#             Without --id, also drop the agent's standing question (below):
-#             chrismo has answered it, so NEXT offers the step that asked again
+#             --question instead drops only the agent's standing question
+#             (below): chrismo has answered it, so NEXT offers the step that
+#             asked again
 #   restack   rebase --onto the parent (the default branch once the parent
 #             merged), check the branch's own change came through unchanged,
 #             else roll back; never pushes. When the old base isn't an
@@ -206,7 +208,7 @@
 # (refs/sheepdog/<b>/question). While both are unchanged it stands: sd state's
 # NEXT shows it as chrismo's question step in place of the step that asked,
 # and that step refuses to run again (--force runs it). A commit, an edit, or
-# sd act ack ends it.
+# sd act ack --question ends it.
 #
 # --force:
 #   address         run even if the branch is unpushed, diverged or taken over
@@ -265,7 +267,7 @@ usage() { help >&2; exit 1; }
 verb=$1; shift
 if [[ $verb == -h || $verb == --help ]]; then help; exit 0; fi
 
-force=false accept=false remove=false no_publish=false resolve=false no_implement=false harness_opt="" parent_opt="" branch=""
+force=false accept=false remove=false no_publish=false resolve=false no_implement=false question=false harness_opt="" parent_opt="" branch=""
 ids=() positionals=()
 while (( $# )); do
   case $1 in
@@ -275,6 +277,7 @@ while (( $# )); do
     --no-publish) no_publish=true ;;
     --resolve) resolve=true ;;
     --no-implement) no_implement=true ;;
+    --question) question=true ;;
     --parent) (( $# > 1 )) || die "--parent needs a value"; parent_opt=$2; shift ;;
     --harness) (( $# > 1 )) || die "--harness needs a value"; harness_opt=$2; shift ;;
     --id) (( $# > 1 )) || die "--id needs a value"; ids+=("$2"); shift ;;
@@ -294,6 +297,7 @@ if [[ $verb == start ]]; then
 fi
 if $accept && [[ $verb != review ]]; then die "--accept is for sd act review only"; fi
 if $remove && [[ $verb != forget ]]; then die "--remove is for sd act forget only"; fi
+if $question && [[ $verb != ack ]]; then die "--question is for sd act ack only"; fi
 positional=$branch
 branch=${branch:-$(git branch --show-current)}
 [[ -n $branch ]] || die "detached HEAD; name a branch"
@@ -599,7 +603,7 @@ address() {
   asks=$(prc_line "$REPORT" "$plan" | sed -n '/^needs chrismo:$/,$p')
   if [[ $outcome == needs-input || -n $asks ]]; then
     question_ask "$b" "$wt" address "$summary${asks:+$'\n'$asks}"
-    qmsg="$(question_say "$b"): answer on GitHub or in its session (sd act attach $b), then sd act ack"
+    qmsg="$(question_say "$b"): answer on GitHub or in its session (sd act attach $b), then sd act ack --question"
   fi
   (( vrc == 0 )) || die "verify failed ($verify); the commit is kept in $wt, nothing pushed or posted${qmsg:+. $qmsg}"
 
@@ -903,7 +907,7 @@ question_ask() {
     || echo "sd act: warning: couldn't record the question on $b, so NEXT won't show it" >&2
 }
 
-question_say() { echo "NEXT shows the question until $1's HEAD or worktree changes, or sd act ack"; }
+question_say() { echo "NEXT shows the question until $1's HEAD or worktree changes, or sd act ack --question"; }
 
 # question_gate <branch> <step>: refuse, at zero tokens, to rerun the step
 # whose question stands; --force runs it anyway.
@@ -915,7 +919,7 @@ question_gate() {
     echo "sd act: warning: the $2 agent's question on $1 stands; running anyway" >&2
     return 0
   fi
-  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer in its session (sd act attach $1), then sd act ack; or --force"
+  die "not running $2 on $1: its agent asked, and nothing has changed since:"$'\n'"$(prc_val "$q" text)"$'\n'"Answer in its session (sd act attach $1), then sd act ack --question; or --force"
 }
 
 # ── attach: A9, takeover ─────────────────────────────────────────────────────
@@ -1312,7 +1316,7 @@ implement_run() {
     if [[ -n $(git -C "$wt" status --porcelain) ]]; then
       die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"). Its edits are left uncommitted in $wt: answer in its session (sd act attach $b) and commit what you keep, or discard them and run sd act implement again"
     fi
-    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b), then sd act ack and sd act implement"
+    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b), then sd act ack --question and sd act implement"
   fi
   if [[ -n $(git -C "$wt" status --porcelain) ]]; then
     msg=$(prc_line 'values {m: coalesce(commit_message, null)}
@@ -1522,7 +1526,7 @@ ci_fix() {
       return ;;
     needs-input)
       question_ask "$b" "$wt" ci-fix "$summary"
-      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b). Edits (if any) are left uncommitted in $wt: commit or discard them, or with none, sd act ack; then sd act ci-fix" ;;
+      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer in its session (sd act attach $b). Edits (if any) are left uncommitted in $wt: commit or discard them, or with none, sd act ack --question; then sd act ci-fix" ;;
     gave-up) die "the agent gave up on $b: $summary. Edits (if any) are left uncommitted in $wt" ;;
     *) die "the agent returned outcome \"$outcome\"; edits (if any) are left uncommitted in $wt" ;;
   esac
@@ -2239,13 +2243,15 @@ unnest {ids, it: s.threads.items}
 EOF
 
 ack() {
-  local b=$branch state check out id why what ids_json="" sep="" q asked=false
+  local b=$branch state check out id why what ids_json="" sep="" q
   local -a picked=() shown=() bad=()
   local -A found=()
-  if (( ! ${#ids[@]} )) && q=$(git cat-file blob "refs/sheepdog/$b/question" 2>/dev/null); then
+  if $question; then
+    (( ! ${#ids[@]} )) || die "--question takes no --id"
+    if ! q=$(git cat-file blob "refs/sheepdog/$b/question" 2>/dev/null); then echo "no question to ack on $b"; return; fi
     git update-ref -d "refs/sheepdog/$b/question"
     echo "acked the agent's question on $b ($(prc_val "$q" 'coalesce(step, "?")' 2>/dev/null || echo '?'))"
-    asked=true
+    return
   fi
   state=$(sd-state --json "$b") || die "sd state failed"
   check=$(prc_line 'values nul(threads.owed_bot) ? f"can'"'"'t read the PR from GitHub: {sj(coalesce(errors, []), "; ")}" : "ok"' "$state") \
@@ -2261,7 +2267,7 @@ ack() {
   done <<<"$out"
   for id in "${ids[@]}"; do [[ -n ${found[$id]:-} ]] || bad+=("$id isn't owed on $b"); done
   if (( ${#bad[@]} )); then printf 'sd act: %s\n' "${bad[@]}" >&2; exit 1; fi
-  if (( ! ${#picked[@]} )); then $asked || echo "nothing to ack on $b"; return; fi
+  if (( ! ${#picked[@]} )); then echo "nothing to ack on $b"; return; fi
   for id in "${picked[@]}"; do git config --add "branch.$b.sd-handled" "$id"; done
   echo "acked ${#picked[@]} on $b:"
   printf '  %s\n' "${shown[@]}"

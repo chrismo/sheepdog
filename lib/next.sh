@@ -110,7 +110,7 @@ values {...s, remote}
     open and n(threads.owed_human) > 0
       ? step("human", "you", f"reply to {plural(threads.owed_human, "human item")}", "sd state --long") : null,
     open and asking != ""
-      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer in its session, then sd act ack", "sd act attach") : null,
+      ? step("question", "you", f"the agent asks ({asking}): {asked}; answer in its session, then sd act ack --question", "sd act attach") : null,
     open and undone
       ? step("restack-undone", "you",
              f"the restack was undone ({sync.undone} of {sync.target}'"'"'s commits {sync.undone == 1 ? "is a copy" : "are copies"} on {branch}; a plain git push after a restack?): redo it, and don'"'"'t sd act push before that, which would publish the copies{no_base ? f"; no base to redo it from on {sync.target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {parent.name} at>), then sd act restack" : ""}",

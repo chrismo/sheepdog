@@ -343,7 +343,7 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   agent_result '{outcome: "needs-input", commit_message: null, summary: "I changed nothing: which test is right?\n1. revert it"}'
   run "$SD_ACT" ci-fix
   [ "$status" -ne 0 ]
-  [[ "$output" == *"NEXT shows the question until feat's HEAD or worktree changes, or sd act ack"* ]]
+  [[ "$output" == *"NEXT shows the question until feat's HEAD or worktree changes, or sd act ack --question"* ]]
   rec=$(git cat-file blob refs/sheepdog/feat/question)
   [ "$(jq -r .head <<<"$rec")" = "$(git rev-parse HEAD)" ]
   [ "$(jq -r .step <<<"$rec")" = ci-fix ]
@@ -351,9 +351,9 @@ recorded() { git config --get branch.feat.sd-ci-fix; }
   rm -f "$FX/claude.args"
   run "$SD_ACT" ci-fix
   [ "$status" -ne 0 ]
-  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*"sd act ack; or --force"* ]]
+  [[ "$output" == *"not running ci-fix on feat: its agent asked"*"which test is right?"*"sd act ack --question; or --force"* ]]
   [ ! -e "$FX/claude.args" ]
-  run "$SD_ACT" ack
+  run "$SD_ACT" ack --question
   [[ "$output" == *"acked the agent's question on feat (ci-fix)"* ]]
   run git rev-parse -q --verify refs/sheepdog/feat/question
   [ "$status" -ne 0 ]

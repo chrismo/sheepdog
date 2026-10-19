@@ -111,3 +111,43 @@ handled() { git config --get-all branch.feat.sd-handled || true; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"sd state failed"* ]]
 }
+
+# ── the agent's question (#167) ──────────────────────────────────────────────
+
+question() { # a standing question record on feat
+  git update-ref refs/sheepdog/feat/question \
+    "$(jq -nc --arg h "$(git rev-parse HEAD)" '{head: $h, step: "ci-fix", mark: "m", text: "which?"}' | git hash-object -w --stdin)"
+}
+
+@test "ack: info items only; a standing question stays" {
+  question
+  state "$(item R1 review bot i)"
+  run "$SD_ACT" ack
+  [ "$status" -eq 0 ]
+  [ "$(handled)" = R1 ]
+  git rev-parse -q --verify refs/sheepdog/feat/question
+}
+
+@test "ack --question: drops the question only, without asking sd state" {
+  question
+  state "$(item R1 review bot i)"
+  run "$SD_ACT" ack --question
+  [ "$status" -eq 0 ]
+  [ "$output" = "acked the agent's question on feat (ci-fix)" ]
+  [ -z "$(handled)" ]
+  [ ! -e "$FX/sd-state.calls" ]
+  run git rev-parse -q --verify refs/sheepdog/feat/question
+  [ "$status" -ne 0 ]
+}
+
+@test "ack --question: none standing says so; with --id, or on another verb, it's refused" {
+  run "$SD_ACT" ack --question
+  [ "$status" -eq 0 ]
+  [ "$output" = "no question to ack on feat" ]
+  run "$SD_ACT" ack --question --id R1
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--question takes no --id"* ]]
+  run "$SD_ACT" push --question
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"--question is for sd act ack only"* ]]
+}
