@@ -50,7 +50,7 @@ own branches current and reviewed, last what chrismo already does by hand
 | Amp PR follow-up (docs read 2026-10-17, not run) | Agent-drives: GitHub events (PR comments, reviews, CI) are routed into the agent's thread and the agent decides. Cloud / orbs only. See below and #80 |
 | GitHub native stacks (gh-stack) | Not adopted, #17. Server-side restack, but too heavy |
 | agent-orchestrator (AO) | Desktop app + daemon, telemetry on by default, repo moved 3×, 827 open issues, owns agent launch. Its reaction model inspired the watcher |
-| Archon, Attractor, continuous-claude, Ralph | Pipeline or loop engines; Archon is the closest to principles 1–2 in philosophy but Claude-centric with a web UI |
+| Archon, Attractor, continuous-claude, Ralph | Pipeline or loop engines; Archon is the closest to principles 1–2 in philosophy but it has a web UI and no stack support stated. #80 called it Claude-centric; its README (2026-10-18) lists Claude, Codex and Pi |
 | LangGraph, CrewAI, Dify | Wrong layer: they build agents from raw model API calls, so they'd replace Claude / pi rather than drive them (breaks principle 3) and add a Python / server runtime; CrewAI's role-play is the opposite of principle 1 |
 | OpenHands | A harness (peer of Claude / pi), not an orchestrator. Only its resolver's verify-before-reply idea applies |
 | Gerrit's TRIVIAL_REBASE / NO_CODE_CHANGE (in-memory replay + tree compare) | Candidate for #66 (Re-review policy), not adopted |
@@ -102,27 +102,29 @@ was run.
 A neutral side-by-side, not a scorecard: the columns are what each tool
 documents, so an empty cell means the sources don't say, not that the feature
 is missing. Sources are #79 and #80 (2026-10-11), the Amp docs (2026-10-17) and
-this repo's AGENTS.md. Nothing but sheepdog was run, and the others were read
-from docs and READMEs, so treat them as claims.
+this repo's AGENTS.md. Symphony and Roast were read from the shallow clones in
+`~/modev/pr-workflow-prior-art/` (Symphony at be10a1b, 2026-09-15; Roast at
+40b87a5, 2026-10-06), Archon and Gas Town from their READMEs on 2026-10-18.
+Nothing but sheepdog was run, so treat the rest as claims.
 
 | Tool | Who drives | Where it runs | Harnesses | Stacks | State | CI / review reactions | Who pushes / opens the PR |
 |---|---|---|---|---|---|---|---|
 | sheepdog | Pipeline; agents are bounded workers | Local, worktree per branch | Claude, pi | Yes: `rebase --onto` restack with a patch-id post-condition. Native GitHub stacks only guarded (#17) | Git refs + git config + JSON config files | `sd state` observes CI on the head SHA, review freshness and threads owed a reply; `sd act` verbs act. The unattended loop is not built (#12) | Pipeline. Agents don't need to know it exists |
 | Sortie | Orchestrator | Fresh clone per ticket; Go | Claude, Copilot, OpenCode, Codex, Kiro, Gemini, generic ACP | No | SQLite | Documented contracts for CI, review, auto-merge, bot review, merge conflict; cancelled CI = inconclusive | The agent or a hook (its `WORKFLOW.md` puts `git push` in a hook). Read-only on the forge: never replies or resolves |
-| Symphony (openai) | Agent | Per-issue workspace, Linear polling; Elixir | Codex (per #80) | Not stated | Tracker state is the human lock | Agent handles PR, CI and review through prompts and skills | Agent |
-| Gas Town | Agent | Long-lived tmux agents | Not stated | Integration branches instead of stacks; Bors-style merge queue | Not stated | Not stated | Not stated |
-| Archon | Pipeline (YAML DAG) | Worktree per run, web UI | Claude-centric | Not stated | Not stated | Human gates and `loop: until:` nodes; PR reactions not stated | Not stated |
-| Roast (Shopify) | Pipeline (Ruby DSL) | Run-to-completion engine that drives the CLIs | Claude, pi | No | Not stated | None: no watcher, no PR lifecycle | Not stated |
+| Symphony (openai) | Agent: the repo's `WORKFLOW.md` prompt and skills drive PR, CI and review | Per-issue workspace, Linear polling; SPEC.md plus an Elixir reference implementation | Codex (the spec targets `codex app-server`) | Not stated | No durable database by design; restart recovery from the tracker and filesystem. Tracker state is the human lock | The reference `WORKFLOW.md` has the agent sweep PR comments, reviews and checks before `Human Review`, treating every actionable comment as blocking until addressed or pushed back. Its `land` skill watches checks, merges `origin/main` to resolve conflicts, fixes failures, and squash-merges when green | Agent, through its `push` and `land` skills |
+| Gas Town | Agent (long-lived tmux agents) | Local: per-agent git worktrees, a per-rig Refinery merge queue | Claude Code by default; presets for gemini, codex, kiro, cursor, auggie, amp, opencode, copilot, pi, omp, and custom commands | Not mentioned in the README. #80: integration branches instead of stacks | Beads (git-backed issue tracking) plus git-worktree hooks | The Refinery batches merge requests, runs verification gates and merges to main with a Bors-style bisecting queue. Code review and CI handling are not described | `gt done` pushes a branch and creates an MR bead; "polecats never push directly to main". Whether MRs are GitHub PRs is not stated |
+| Archon | Pipeline (YAML DAG workflows in the repo) | Local binary, Homebrew or source; `archon serve` web console; Docker / VPS covered. Worktree per run or reuse. Triggered from web UI, CLI, Telegram, Slack, Discord, GitHub webhooks | Claude, Codex, Pi | Not stated | SQLite or PostgreSQL (14 core tables); workflows are YAML under `.archon/workflows/` | `archon-deliver`: implement → draft PR → review → fix findings → validate → CI → ready for review. How a CI failure is handled is not stated. `archon-review` reviews a PR or diff through parallel specialist lenses, and a finished PR with review comments can be returned to | `archon-pr` opens the PR. Merging is not stated |
+| Roast (Shopify) | Pipeline (Ruby DSL of cogs: `cmd`, `agent`, `ruby`, `chat`, `repeat`, `map`, `call`) | Run-to-completion engine that drives local agent CLIs | Pi (default) and Claude Code for the `agent` cog; the `chat` cog calls OpenAI, Anthropic, Perplexity, Gemini and Bedrock APIs | No (per #80) | Not a store: each agent result carries a session id | No watcher and no PR lifecycle; nothing under `examples/` or `tutorial/` mentions pull requests | Not stated |
 | Amp PR follow-up | Agent, in its thread | Cloud (orbs), GitHub App and webhooks | Amp's own agent | Not stated | Threads and subscriptions on Amp's side | Subscribes to PR comments, reviews and CI for the latest commit; fix and merge behavior not stated | Not stated; subscriptions grant no permission to push, writes run as the user |
 
 | Tool | Local review before the bot | Replies to / resolves threads | Takeover of a running session | Maturity per #80 |
 |---|---|---|---|---|
 | sheepdog | Yes: configurable `settings.review`, findings go to the branch's own agent | Bot threads only, after replying; human threads left to the user (A7) | Lock plus interactive resume of the persistent session | Single user, this repo |
 | Sortie | "Self-review" phase (verify commands plus an agent review turn) before completion is accepted | No | None; parking label | 198★, created 2026-03-17 |
-| Symphony (openai) | Not stated | Not stated | Not stated | 27.6k★; v0.0.3 2026-09-15 |
-| Gas Town | Not stated | Not stated | Not stated | 18.3k★ |
-| Archon | Not stated | Not stated | Not stated | 23.7k★, MIT |
-| Roast (Shopify) | Not stated | Not stated | Not stated | 1.25k★, MIT |
+| Symphony (openai) | Plan self-review in the workpad, then the PR feedback sweep and green checks before `Human Review` | Yes, by the agent: per comment it accepts, clarifies or pushes back, replying inline on review comments | Not stated; the `Human Review` ticket state holds the human lock | 27.6k★; v0.0.3 2026-09-15 |
+| Gas Town | Refinery verification gates before the merge; a human review step is not described | Not stated | `gt mayor attach` joins the Mayor session; `gt crew add` gives a person a personal clone; `gt seance` queries predecessor sessions. The README doesn't use the word takeover | 18.3k★ |
+| Archon | `archon-deliver` reviews and fixes findings before the PR is marked ready; workflows can pause for human approval | Not stated | Runs and sessions persist and can be resumed; handing a live session to someone else is not stated | 23.7k★, MIT |
+| Roast (Shopify) | Not applicable: no PR lifecycle | Not applicable | Sessions can be resumed by id and are forked by default (Claude `--fork-session`, pi `--fork`) | 1.25k★, MIT |
 | Amp PR follow-up | Not stated | Not stated | Not stated | Hosted product; announced 2026-10-12 |
 
 ## Still open
