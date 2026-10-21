@@ -1,11 +1,14 @@
 # Alternatives considered
 
-Pulled from two issues on 2026-10-17: #79 (Design record) and #80 (Prior art
-record). They stay the source for the full reasoning; this file collects only
-what was weighed and not chosen, so the "why not" is in one place. Open
-decisions have their own issues and are listed at the end.
+What was weighed and not chosen, so the "why not" is in one place. This file
+is the record: it began as a summary of #79 (Design record) and #80 (Prior art
+record) and now stands on its own, so the reasoning doesn't need those issues.
+Issues stay as the inbox for things to look at later and for work still to do.
 
-## Rejected design alternatives (#79)
+Two parts: our own design choices that were rejected, and other tools we read.
+
+## Rejected design alternatives
+
 
 | Instead of | We chose | Why not the alternative |
 |---|---|---|
@@ -33,6 +36,7 @@ decisions have their own issues and are listed at the end.
 | A branch file holding a full copy of the settings | Overrides only (2026-10-13) | A full copy froze the branch, so later global edits never reached it |
 | Claude's `--bg` / `claude attach` | Headless `-p` + resume | Claude-only |
 | Blocking an agent's accidental push or PR | Log, don't block; reconcile | A detected push is recorded and surfaced; a repeat offender means the step-contract prompt needs tightening. Per case: a push with no PR yet makes ship's push a no-op; a push with a PR costs one early CI run, since "ready" and the bot trigger need the `local` pin to cover HEAD; a force-push after an amend is ours if the remote SHA is in the reflog, else refused; an agent's `gh pr create` makes ship find-and-fix-up title, body and base; a push to the wrong branch (`HEAD:main`) is not ours to absorb, server-side branch protection covers it |
+| Stay in bash, or Go with super embedded as a library | Rust, native, side by side on main, verb by verb (decided 2026-10-21, #138, plan #193) | SuperSQL is a means, not a goal: the queries reshape one small JSON document each, and most of their text works around SuperDB's missing-field and empty-subquery behavior. Bash was never a chosen language, and the 2026-10-17 spike measured its costs: one `sd state` took about 6 s, 3.4 s of it in 56 super calls, and parsing dominates (PRN_QUERY 638 ms to parse, 1.3 ms to run; the config type-check parsed 7 times per run); upstream main parses only ~5% faster. Process supervision for the loop (#12) needs perl in bash. Go with embedded super would keep the queries and the black-box bats suite, but Rust is the cleaner end state once SuperSQL is a means |
 
 Build order was also a choice: manual first (2026-10-12), every step an
 `sd act` verb run by hand, each verb checking its own preconditions with
@@ -40,42 +44,56 @@ Build order was also a choice: manual first (2026-10-12), every step an
 own branches current and reviewed, last what chrismo already does by hand
 (start, PR creation).
 
-## Prior art: rejected or not adopted (#80)
+## Other tools we read
 
-| Alternative | Verdict |
-|---|---|
-| Sortie (sortie-ai/sortie) | Design reference, not a base. Adopting means giving up pi, giving up (or adding) stacks, accepting SQLite, and letting the agent push. Its reaction contracts (architecture docs 12–16 and 19, the ADRs) map onto O5–O7 / J2–J4 |
-| Roast (Shopify) | Matches principles 1–3 and drives Claude and pi, but is a run-to-completion engine with no watcher, no PR lifecycle, no stacks. Reference for step and session mechanics |
-| Symphony (openai/symphony), Gas Town | Agent-drives designs; the opposite of principle 2 |
-| Amp PR follow-up (docs read 2026-10-17, not run) | Agent-drives: GitHub events (PR comments, reviews, CI) are routed into the agent's thread and the agent decides. Cloud / orbs only. See below and #80 |
-| GitHub native stacks (gh-stack) | Not adopted, #17. Server-side restack, but too heavy |
-| agent-orchestrator (AO) | Desktop app + daemon, telemetry on by default, repo moved 3×, 827 open issues, owns agent launch. Its reaction model inspired the watcher |
-| Archon, Attractor, continuous-claude, Ralph | Pipeline or loop engines; Archon is the closest to principles 1–2 in philosophy but it has a web UI and no stack support stated. #80 called it Claude-centric; its README (2026-10-18) lists Claude, Codex and Pi |
-| LangGraph, CrewAI, Dify | Wrong layer: they build agents from raw model API calls, so they'd replace Claude / pi rather than drive them (breaks principle 3) and add a Python / server runtime; CrewAI's role-play is the opposite of principle 1 |
-| OpenHands | A harness (peer of Claude / pi), not an orchestrator. Only its resolver's verify-before-reply idea applies |
-| Gerrit's TRIVIAL_REBASE / NO_CODE_CHANGE (in-memory replay + tree compare) | Candidate for #66 (Re-review policy), not adopted |
-| ezyang/ghstack, spacedentist/spr | Never force-push PR branches (append "base update" commits or merges) to keep review threads anchored; informs O7's outdated-thread handling but not adopted |
-| ejoffe/spr, modular/stack-pr, mergify-cli | One commit per PR, identity in a trailer; doesn't fit the branch-per-PR model |
-| Claude Code Projects beta | Cloud-only at launch per reports; not usable for local worktrees and stacks |
-| Other ticket → agent → PR daemons (symphony-ts, Copilot coding agent, Codex cloud, Cursor background agents, Devin) | None is local + worktree + pi + stack-aware |
-| herdr, vibe-kanban, claude-squad, superset, omnigent, emdash | Terminal runtimes or dashboards with no PR loop, or shut down |
+Read for prior art, not run, except where an entry says otherwise. The table is
+a neutral side-by-side of what each tool documents: an empty or "not stated"
+cell means the sources don't say, not that the feature is missing. The entries
+below hold the rest of what was read. Sources: #79 and #80 (2026-10-11), the
+Amp docs (2026-10-17), shallow clones in `~/modev/pr-workflow-prior-art/`
+(Symphony at be10a1b, 2026-09-15; Roast at 40b87a5, 2026-10-06; Open SWE at
+c560ff7, Nasiko at 50b0a34, Evener at a4dcbc1 and samcdavid/dotfiles at
+2e73af1, 2026-10-16), READMEs for Archon and Gas Town (2026-10-18) and for
+shepherd-pr (2026-10-21). Nothing but sheepdog was run, so treat the rest as
+claims.
 
-### Candidate changes from the prior art (decided 2026-10-11)
+| Tool | Who drives | Where it runs | Harnesses | Stacks | Who pushes / opens the PR |
+|---|---|---|---|---|---|
+| sheepdog | Pipeline; agents are bounded workers | Local, worktree per branch | Claude, pi | Yes: `rebase --onto` restack with a patch-id post-condition. Native GitHub stacks only guarded (#17) | Pipeline. Agents don't need to know it exists |
+| Sortie | Orchestrator | Fresh clone per ticket; Go | Claude, Copilot, OpenCode, Codex, Kiro, Gemini, generic ACP | No | The agent or a hook; read-only on the forge |
+| Archon | Pipeline (YAML DAG workflows in the repo) | Local binary; `archon serve` web console; Docker / VPS | Claude, Codex, Pi | Not stated | `archon-pr` opens the PR; merging not stated |
+| Roast (Shopify) | Pipeline (Ruby DSL of cogs) | Run-to-completion engine driving local agent CLIs | Pi (default), Claude Code; API-backed `chat` cog | No (per #80) | Not stated |
+| Symphony (openai) | Agent, via the repo's `WORKFLOW.md` and skills | Per-issue workspace, Linear polling | Codex | Not stated | Agent, through its `push` and `land` skills |
+| Gas Town | Agent (long-lived tmux agents) | Local: per-agent worktrees, a per-rig Refinery merge queue | Claude Code by default; presets for gemini, codex, kiro, cursor, auggie, amp, opencode, copilot, pi, omp, custom | Not mentioned; integration branches (#80) | `gt done` pushes a branch and creates an MR bead; whether MRs are GitHub PRs is not stated |
+| Open SWE | Agent (a Deep Agents / LangGraph graph) | Persistent per-thread cloud sandboxes | Its own agent | Not stated | Not stated |
+| shepherd-pr | Agent, on the user's request; installing the skill starts nothing | Local (Bash, Python 3 stdlib, authenticated `gh`; macOS or Linux; GitHub.com only) | Guides for Claude Code, Cursor, Codex, Devin CLI, Kimi Code, Gemini CLI, OpenCode, Pi, Hermes Agent and others | Not stated | The agent pushes scoped fixes to an authorized branch; the bundled tools write nothing. Asks before comments, reruns or merges |
+| Amp PR follow-up | Agent, in its thread | Cloud (orbs), GitHub App and webhooks | Amp's own agent | Not stated | Not stated; writes run as the user |
 
-Adopted 1–4, rejected 5:
+### The agent drives the loop (opposite of design rule 2)
 
-1. Deterministic verify before A8 (`settings.verify`): adopted.
-2. Split caps (local 3, remote CI 2, autofix before J2): adopted.
-3. Scope judge via `SHEEPDOG_TASK`: adopted.
-4. Cheap per-step tool deny alongside reconciliation: adopted.
-5. Per-step turn cap next to `--max-budget-usd`: **rejected**, no turn-cap flag in either CLI.
+**Symphony (openai/symphony).** 27.6k★, v0.0.3 2026-09-15. SPEC.md plus an
+Elixir reference implementation; no durable database by design, so restart
+recovery comes from the tracker and filesystem, and the tracker state is the
+human lock. The reference `WORKFLOW.md` has the agent sweep PR comments,
+reviews and checks before `Human Review`, treating every actionable comment as
+blocking until addressed or pushed back, and the agent replies inline per
+comment (accept, clarify or push back). Its `land` skill watches checks,
+merges `origin/main` to resolve conflicts, fixes failures and squash-merges
+when green. Local review is a plan self-review in the workpad.
 
-### Amp PR follow-up (#80, docs read 2026-10-17)
+**Gas Town.** 18.3k★. State is Beads (git-backed issue tracking) plus
+git-worktree hooks. The Refinery batches merge requests, runs verification
+gates and merges to main with a Bors-style bisecting queue; code review and CI
+handling are not described. "Polecats never push directly to main." Takeover:
+`gt mayor attach` joins the Mayor session, `gt crew add` gives a person a
+personal clone, `gt seance` queries predecessor sessions; the README doesn't
+use the word takeover.
 
-Announced 2026-10-12 ([news](https://ampcode.com/news/github-listeners));
-details from [docs/github](https://ampcode.com/docs/github) and
-[docs/orbs/event-driven](https://ampcode.com/docs/orbs/event-driven). Nothing
-was run.
+**Amp PR follow-up** (docs read 2026-10-17, announced 2026-10-12;
+[news](https://ampcode.com/news/github-listeners),
+[docs/github](https://ampcode.com/docs/github),
+[docs/orbs/event-driven](https://ampcode.com/docs/orbs/event-driven)). A
+hosted product, cloud / orbs only.
 
 - **Subscribing:** asked for in the receiving thread (repo, PR number, handling
   instructions). When GitHub subscription tools are available, Amp is
@@ -97,39 +115,167 @@ was run.
   itself, merging, limits, cost, the CI polling interval, filters beyond
   labels.
 
-## Feature comparison
+**shepherd-pr** (prime-radiant-inc, README read 2026-10-21). "A portable
+coding-agent skill for taking a GitHub pull request through CI and review to
+an authorized merge, or reporting an evidenced blocker." Its bundled tools are
+read-only: a change watcher ("a change feed, not a gate verdict"), a settle
+detector (head unchanged, no outstanding check, RoboRev's review names that
+exact head), a review reader (RoboRev states passed, current, stale,
+review-failed) and stale-PR triage. State is local snapshots and locks under
+`~/.local/state/shepherd-pr`, keyed by repo and PR. Session-owned jobs may stop
+when the session ends. The README warns that a generated harness guide is not
+proof of a verified install. Closest in spirit to `sd state`, without the
+pipeline, stacks or unattended loop. Thread replies, local review before bots
+and takeover are not stated. 2★, 0 forks, MIT, 21 commits, no releases.
 
-A neutral side-by-side, not a scorecard: the columns are what each tool
-documents, so an empty cell means the sources don't say, not that the feature
-is missing. Sources are #79 and #80 (2026-10-11), the Amp docs (2026-10-17) and
-this repo's AGENTS.md. Symphony and Roast were read from the shallow clones in
-`~/modev/pr-workflow-prior-art/` (Symphony at be10a1b, 2026-09-15; Roast at
-40b87a5, 2026-10-06), Archon and Gas Town from their READMEs on 2026-10-18.
-Nothing but sheepdog was run, so treat the rest as claims.
+**Open SWE (langchain-ai/open-swe).** A software-factory system on Deep Agents
+and LangGraph: issue- or conversation-triggered coding, PR review, persistent
+per-thread cloud sandboxes and a `/baby-sit` monitor for opted-in PRs. Broader
+and more platform-oriented than sheepdog. The closest reference for the CI
+feedback loop (`openswe/baby_sit.py`, `openswe/github/ci.py`, the
+`baby-sit-failure` prompt), read from source:
 
-| Tool | Who drives | Where it runs | Harnesses | Stacks | State | CI / review reactions | Who pushes / opens the PR |
-|---|---|---|---|---|---|---|---|
-| sheepdog | Pipeline; agents are bounded workers | Local, worktree per branch | Claude, pi | Yes: `rebase --onto` restack with a patch-id post-condition. Native GitHub stacks only guarded (#17) | Git refs + git config + JSON config files | `sd state` observes CI on the head SHA, review freshness and threads owed a reply; `sd act` verbs act. The unattended loop is not built (#12) | Pipeline. Agents don't need to know it exists |
-| Sortie | Orchestrator | Fresh clone per ticket; Go | Claude, Copilot, OpenCode, Codex, Kiro, Gemini, generic ACP | No | SQLite | Documented contracts for CI, review, auto-merge, bot review, merge conflict; cancelled CI = inconclusive | The agent or a hook (its `WORKFLOW.md` puts `git push` in a hook). Read-only on the forge: never replies or resolves |
-| Symphony (openai) | Agent: the repo's `WORKFLOW.md` prompt and skills drive PR, CI and review | Per-issue workspace, Linear polling; SPEC.md plus an Elixir reference implementation | Codex (the spec targets `codex app-server`) | Not stated | No durable database by design; restart recovery from the tracker and filesystem. Tracker state is the human lock | The reference `WORKFLOW.md` has the agent sweep PR comments, reviews and checks before `Human Review`, treating every actionable comment as blocking until addressed or pushed back. Its `land` skill watches checks, merges `origin/main` to resolve conflicts, fixes failures, and squash-merges when green | Agent, through its `push` and `land` skills |
-| Gas Town | Agent (long-lived tmux agents) | Local: per-agent git worktrees, a per-rig Refinery merge queue | Claude Code by default; presets for gemini, codex, kiro, cursor, auggie, amp, opencode, copilot, pi, omp, and custom commands | Not mentioned in the README. #80: integration branches instead of stacks | Beads (git-backed issue tracking) plus git-worktree hooks | The Refinery batches merge requests, runs verification gates and merges to main with a Bors-style bisecting queue. Code review and CI handling are not described | `gt done` pushes a branch and creates an MR bead; "polecats never push directly to main". Whether MRs are GitHub PRs is not stated |
-| Archon | Pipeline (YAML DAG workflows in the repo) | Local binary, Homebrew or source; `archon serve` web console; Docker / VPS covered. Worktree per run or reuse. Triggered from web UI, CLI, Telegram, Slack, Discord, GitHub webhooks | Claude, Codex, Pi | Not stated | SQLite or PostgreSQL (14 core tables); workflows are YAML under `.archon/workflows/` | `archon-deliver`: implement → draft PR → review → fix findings → validate → CI → ready for review. How a CI failure is handled is not stated. `archon-review` reviews a PR or diff through parallel specialist lenses, and a finished PR with review comments can be returned to | `archon-pr` opens the PR. Merging is not stated |
-| Roast (Shopify) | Pipeline (Ruby DSL of cogs: `cmd`, `agent`, `ruby`, `chat`, `repeat`, `map`, `call`) | Run-to-completion engine that drives local agent CLIs | Pi (default) and Claude Code for the `agent` cog; the `chat` cog calls OpenAI, Anthropic, Perplexity, Gemini and Bedrock APIs | No (per #80) | Not a store: each agent result carries a session id | No watcher and no PR lifecycle; nothing under `examples/` or `tutorial/` mentions pull requests | Not stated |
-| Amp PR follow-up | Agent, in its thread | Cloud (orbs), GitHub App and webhooks | Amp's own agent | Not stated | Threads and subscriptions on Amp's side | Subscribes to PR comments, reviews and CI for the latest commit; fix and merge behavior not stated | Not stated; subscriptions grant no permission to push, writes run as the user |
+- Retry state and each dispatch fingerprint are pinned to the exact head SHA;
+  the count resets when the head changes and a delayed retry naming a stale SHA
+  is rejected.
+- Reruns need evidence of a transient failure and are capped at three per head;
+  the agent does the rerun itself, so the server's cap is on recording them.
+- CI outcomes are modeled as pending, success, failure, or terminal but
+  unrecognized / blocked, not "every non-green is fixable".
+- Before readiness it verifies that required checks have actually reported,
+  through classic branch protection and rulesets.
+- Dispatch fingerprints persist and watch evaluation is serialized with a
+  lease-like lock, so concurrent webhooks don't start duplicate agent runs.
 
-| Tool | Local review before the bot | Replies to / resolves threads | Takeover of a running session | Maturity per #80 |
-|---|---|---|---|---|
-| sheepdog | Yes: configurable `settings.review`, findings go to the branch's own agent | Bot threads only, after replying; human threads left to the user (A7) | Lock plus interactive resume of the persistent session | Single user, this repo |
-| Sortie | "Self-review" phase (verify commands plus an agent review turn) before completion is accepted | No | None; parking label | 198★, created 2026-03-17 |
-| Symphony (openai) | Plan self-review in the workpad, then the PR feedback sweep and green checks before `Human Review` | Yes, by the agent: per comment it accepts, clarifies or pushes back, replying inline on review comments | Not stated; the `Human Review` ticket state holds the human lock | 27.6k★; v0.0.3 2026-09-15 |
-| Gas Town | Refinery verification gates before the merge; a human review step is not described | Not stated | `gt mayor attach` joins the Mayor session; `gt crew add` gives a person a personal clone; `gt seance` queries predecessor sessions. The README doesn't use the word takeover | 18.3k★ |
-| Archon | `archon-deliver` reviews and fixes findings before the PR is marked ready; workflows can pause for human approval | Not stated | Runs and sessions persist and can be resumed; handing a live session to someone else is not stated | 23.7k★, MIT |
-| Roast (Shopify) | Not applicable: no PR lifecycle | Not applicable | Sessions can be resumed by id and are forked by default (Claude `--fork-session`, pi `--fork`) | 1.25k★, MIT |
-| Amp PR follow-up | Not stated | Not stated | Not stated | Hosted product; announced 2026-10-12 |
+Taken from it: #123 (undraft waits for required checks), #124 (agent steps
+that touch CI config commit and hand off, they don't push), #128 (describe
+follows the repo's PR template).
+
+### Pipeline and workflow engines
+
+**Sortie (sortie-ai/sortie).** A design reference, not a base. Adopting means
+giving up pi, giving up (or adding) stacks, accepting SQLite and letting the
+agent push (its `WORKFLOW.md` puts `git push` in a hook). Its reaction
+contracts (architecture docs 12–16 and 19, the ADRs) map onto O5–O7 / J2–J4:
+documented contracts for CI, review, auto-merge, bot review and merge
+conflict, with cancelled CI as inconclusive. A "self-review" phase (verify
+commands plus an agent review turn) runs before completion is accepted. It
+never replies to or resolves threads, and has no takeover, only a parking
+label. 198★, created 2026-03-17.
+
+**Archon.** Closest to principles 1–2 in philosophy, but it has a web UI and
+no stack support stated. #80 called it Claude-centric; the README (2026-10-18)
+lists Claude, Codex and Pi. Triggered from the web UI, CLI, Telegram, Slack,
+Discord or GitHub webhooks; worktree per run or reuse; SQLite or PostgreSQL;
+workflows are YAML under `.archon/workflows/`. `archon-deliver`: implement →
+draft PR → review → fix findings → validate → CI → ready for review (how a CI
+failure is handled is not stated); `archon-review` reviews through parallel
+specialist lenses; workflows can pause for human approval; runs persist and
+resume. 23.7k★, MIT.
+
+**Roast (Shopify).** Matches principles 1–3 and drives Claude and pi, but is a
+run-to-completion engine with no watcher, no PR lifecycle (nothing under
+`examples/` or `tutorial/` mentions pull requests) and no stacks. A reference
+for step and session mechanics: each agent result carries a session id, and
+sessions are forked by default (Claude `--fork-session`, pi `--fork`).
+1.25k★, MIT.
+
+**agent-orchestrator (AO).** Not adopted: a desktop app plus daemon, telemetry
+on by default, repo moved 3×, 827 open issues, and it owns agent launch. Its
+reaction model inspired the watcher.
+
+**Attractor, continuous-claude, Ralph.** Pipeline or loop engines; not
+adopted.
+
+**LangGraph, CrewAI, Dify.** Wrong layer: they build agents from raw model API
+calls, so they'd replace Claude / pi rather than drive them (breaks principle
+3) and add a Python / server runtime. CrewAI's role-play is the opposite of
+principle 1.
+
+### Harnesses, runtimes and platforms
+
+**OpenHands.** A harness (peer of Claude / pi), not an orchestrator. Only its
+resolver's verify-before-reply idea applies, and it's parked until fix steps
+move to cheaper models.
+
+**Evener (prime-radiant-inc/evener).** A local coding-agent runtime with a
+hub / UI, sessions, delegates, managed worktrees and durable background jobs;
+not a PR lifecycle manager. Its worktree API is far more than sheepdog needs,
+but its safety rules are a checklist (`docs/developing-evener/worktrees.md`,
+`docs/job-control.md`):
+
+- Git worktree locks guard active lanes; a crash leaves the lock as fail-safe
+  residue and recovery needs the owner identity and an explicit unlock.
+- Cleanup is conservative: dirty or unmerged worktrees are kept and `prune`
+  says why it skipped one. Branch deletion needs evidence the work is captured
+  elsewhere, not Git's context-dependent "merged".
+- Its cherry-based check can prove a single-commit squash; a multi-commit
+  squash can't be proven by ancestry, so those lanes are left for explicit
+  attestation.
+- Worktree summaries show branch, lock, dirtiness, age and commits ahead.
+- Restart reconciliation reports lost processes as `runtime_lost` rather than
+  implying they resumed.
+
+Not imported wholesale. Taken: a comment on #12 (the loop): PID-reuse-safe
+liveness, quota limits pause the loop, an outcome vocabulary.
+
+**Nasiko (Nasiko-Labs/nasiko).** An adjacent platform: an agent runtime and
+control plane that discovers and routes existing coding harnesses, accounts
+for model usage (much deeper than first read), and deploys A2A agents. Its
+coding-agent example puts filesystem and shell behind a `Sandbox` trait with a
+local implementation; the remote phase is marked not started, so it isn't
+shipped. No end-to-end PR / CI shepherd. A modest reference if execution
+backends ever need to vary. Taken: a comment on #121 (cost guards): unknown
+spend isn't $0, fail closed, transcript context size.
+
+**Claude Code Projects beta.** Cloud-only at launch per reports; not usable
+for local worktrees and stacks.
+
+**Other ticket → agent → PR daemons** (symphony-ts, Copilot coding agent, Codex
+cloud, Cursor background agents, Devin). None is local + worktree + pi +
+stack-aware.
+
+**herdr, vibe-kanban, claude-squad, superset, omnigent, emdash.** Terminal
+runtimes or dashboards with no PR loop, or shut down.
+
+### Stack tools and rebase strategies
+
+**GitHub native stacks (gh-stack).** Not adopted, #17: server-side restack, but
+too heavy for local automation. Guard only.
+
+**ezyang/ghstack, spacedentist/spr.** Never force-push PR branches (they append
+"base update" commits or merges) to keep review threads anchored. Informs
+O7's outdated-thread handling; not adopted.
+
+**ejoffe/spr, modular/stack-pr, mergify-cli.** One commit per PR with identity
+in a trailer; doesn't fit the branch-per-PR model.
+
+**Gerrit's TRIVIAL_REBASE / NO_CODE_CHANGE** (in-memory replay plus tree
+compare). A candidate for #66 (Re-review policy); not adopted.
+
+### Skill collections
+
+**samcdavid/dotfiles `claude/skills`.** Short skills. On 2026-10-14 the author
+deleted their own "multi-stage pipeline, runner agents, verifier tiers" in
+favor of them; the shallow clone doesn't show why. Taken: #125 (a zero-token
+diff check for new suppressions, test skips and edited existing tests), #126
+(local review: an importance bar and a self-check before each finding), #127
+(default prompt wording for the editing steps).
+
+### Candidate changes from the prior art (decided 2026-10-11)
+
+Adopted 1–4, rejected 5:
+
+1. Deterministic verify before A8 (`settings.verify`): adopted.
+2. Split caps (local 3, remote CI 2, autofix before J2): adopted.
+3. Scope judge via `SHEEPDOG_TASK`: adopted.
+4. Cheap per-step tool deny alongside reconciliation: adopted.
+5. Per-step turn cap next to `--max-budget-usd`: **rejected**, no turn-cap flag in either CLI.
 
 ## Still open
 
 - Fork per step vs. one persistent session per branch: #69.
-- Language: stay in bash, or Go (super embedded) or Rust/Go native: #138.
 - Whether sheepdog accepts warnings at the review cap: #142.
-- More prior art (Open SWE, Nasiko, Evener): #37.
+
+No tools are queued to read; the earlier list (#37: Open SWE, Nasiko, Evener) is
+done and recorded above.
