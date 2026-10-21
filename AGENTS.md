@@ -9,7 +9,9 @@ Edit this repo, never `~/.local/bin/sd` — it's a symlink made by `./install.sh
 
 ## Design rules
 
-The reasoning is in #79 (Design record); these are the rules agents build by:
+The alternatives weighed against these, and the tools compared, are in
+`docs/alternatives.md`; #79 (Design record, closed) holds the rest of the
+reasoning. These are the rules agents build by:
 
 1. **Deterministic wherever possible.** Scripts observe and act at zero token
    cost; an agent runs only for judgment. The verbs that run one are
@@ -30,9 +32,33 @@ The reasoning is in #79 (Design record); these are the rules agents build by:
    on.
 5. **Idempotent, keyed on SHA.** Any step can be rerun safely.
 
-Step labels in comments and test headers (O1–O8 observe, A0–A11 act, J0–J6
-judgment, N2–N3 notify) are the design's atomic actions; the legend is in #79
-(Design record, "Atomic actions").
+### Step labels
+
+Step labels in comments and test headers are the design's atomic actions:
+
+- **Observe** (`sd state`, read-only): **O1** PR lookup (number, base, head SHA,
+  draft, mergeable; native-stack membership, #17) · **O2** parent state (from
+  config; open / merged / closed) · **O3** sync vs parent (behind? would a
+  restack conflict?) · **O4** local vs remote (unpushed? remote moved? whose
+  SHA, via reflog) · **O5** CI on the head SHA (cancelled is inconclusive, not
+  red; checks on a non-HEAD SHA give no verdict) · **O6** review freshness
+  (HEAD covered by `local` / `bot` / `accepted`? bot replied since trigger,
+  #63) · **O7** threads owed a reply (unresolved threads and review bodies
+  where the last speaker isn't us; bot vs human; outdated-but-unresolved) ·
+  **O8** session (harness, session id, lock, step in flight, #12).
+- **Act** (`sd act`, mechanical): **A0** start · **A1** fetch · **A2** restack ·
+  **A3** push · **A4** retarget · **A5** trigger the bot · **A6** rerun flaky
+  CI (not built, #12) · **A7** post reply / resolve thread · **A8** local
+  review (spends tokens) · **A9** attach (#14) · **A10** verify · **A11** autofix (#65).
+- **Judgment** (agent steps in the branch's session): **J0** implement · **J1**
+  resolve restack conflicts · **J2** diagnose / fix red CI (#49) · **J3** triage
+  findings: change code, reply only, push back, or ask · **J4** write the reply
+  (bot threads only; the pipeline posts it) · **J5** does the change since the
+  last review need one? none / local / remote (#66) · **J6** write the PR
+  description.
+- **Notify:** **N2** surface to chrismo (tab glyph, notification) · **N3**
+  "seen" markers so a rerun reports only what's new. (N1, messaging a live
+  session, was dropped: the pipeline resumes the session itself.)
 
 ## Workflow
 
