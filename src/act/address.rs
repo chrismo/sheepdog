@@ -12,8 +12,8 @@ use super::{cfg, die, state_json, Args};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Step, PI_TOOLS};
-use crate::proc;
-use crate::running;
+use crate::state::unbot;
+use crate::{proc, running};
 use crate::val::{at, n, on, sj, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -124,10 +124,6 @@ fn gql(fields: &[(&str, &str)]) -> Option<String> {
     let o = proc::run("gh", &args, None, None);
     eprint!("{}", o.stderr);
     o.ok.then_some(o.stdout)
-}
-
-fn unbot(s: &str) -> &str {
-    s.strip_suffix("[bot]").unwrap_or(s)
 }
 
 /// The owed items' text, from the nodes(ids:) answer <n>, each with who else
@@ -297,7 +293,7 @@ fn pr_comment(prefix: &str, plan: &[Map<String, Value>]) -> Option<String> {
 /// The replies posted and threads resolved (all but pushback), then the PR
 /// comment, whose items go in branch.<b>.sd-handled. False when any failed.
 fn post(b: &str, pr_url: &str, plan: &[Map<String, Value>]) -> bool {
-    let prefix = cfg("settings.replyPrefix", b);
+    let prefix = cfg("settings.replyPrefix", b).trim_end_matches('\n').to_string();
     let mut ok = true;
     for it in plan.iter().filter(|it| !is_ask(it) && field(it, "type") == "thread") {
         let (id, at) = (field(it, "id"), place(it));
@@ -404,13 +400,13 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     if all.is_empty() {
         die("none of the owed items could be fetched");
     }
-    let held: Vec<Map<String, Value>> = all.iter().filter(|(_, u)| !u.is_empty()).map(|(f, u)| self::held(f, u)).collect();
+    let theirs: Vec<Map<String, Value>> = all.iter().filter(|(_, u)| !u.is_empty()).map(|(f, u)| held(f, u)).collect();
     let fs: Vec<Map<String, Value>> = all.into_iter().filter(|(_, u)| u.is_empty()).map(|(f, _)| f).collect();
     if fs.is_empty() {
         if answering {
             die(format!("no bot feedback the agent can take on {b}{UNANSWERED}"));
         }
-        print_report(b, "no bot feedback the agent can take", &report(&held));
+        print_report(b, "no bot feedback the agent can take", &report(&theirs));
         return true;
     }
 
@@ -469,7 +465,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         _ => die(format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
     }
     let changed = !status(wt).is_empty();
-    let plan = scrubbed(plan(&fs, &result, changed, &held));
+    let plan = scrubbed(plan(&fs, &result, changed, &theirs));
     if changed {
         let msg = commit_message(&result);
         for args in [&["add", "-A"][..], &["commit", "-q", "-m", &msg]] {

@@ -842,7 +842,8 @@ instruction. Inline threads are matched by author only (their bodies aren't
 fetched by `sd state`).
 
 The agent's reply *text* is scrubbed before posting (#70, 2026-10-16): a
-`/command` or `@mention` gets a lookalike glyph, see `SCRUB_Q`.
+`/command` or `@mention` gets a lookalike glyph, see `scrub` in
+`src/act/address.rs`.
 
 ## `sd act restack` and `sd act push` — built 2026-10-13
 
