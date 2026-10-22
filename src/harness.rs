@@ -82,21 +82,13 @@ pub fn run_step(s: &Step) -> Result<Vec<Value>, i32> {
 
 fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
     let (h, sid) = (s.harness, s.session);
-    let set = |k: &str| t(s.settings, k);
     // Only the first line, as bash's read -ra took it.
-    let args = set("args");
+    let args = t(s.settings, "args");
     let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
-    let mut typed: Vec<String> = Vec::new();
-    let mut flag = |f: &str, v: String| {
-        if !v.is_empty() {
-            typed.extend([f.to_string(), v]);
-        }
-    };
+    let mut typed = typed_flags(h, s.settings);
     let (mut cap, mut cap_note) = (0.0, String::new());
     let mut c = match h {
         "claude" => {
-            flag("--model", set("model"));
-            flag("--effort", set("effort"));
             let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
                 for l in lines {
                     eprintln!("sd config: {l}");
@@ -113,9 +105,6 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
             claude_command(s)
         }
         "pi" => {
-            flag("--provider", set("provider"));
-            flag("--model", set("model"));
-            flag("--thinking", set("effort"));
             let mut c = Command::new("pi");
             c.args(["-p", "--session-id", sid, "--tools", s.pi_tools]);
             c
@@ -224,30 +213,44 @@ fn usd(v: &str) -> Option<f64> {
 /// run_step passes them, and args split on whitespace. claude runs without
 /// ANTHROPIC_API_KEY unless useApiKey, as run_step does (#68).
 pub fn tui(h: &str, sid: &str, resume: bool, block: &Value) -> Result<Command, String> {
-    let (mut c, typed): (Command, &[(&str, &str)]) = match h {
+    let mut c = match h {
         "claude" => {
             let mut c = Command::new("claude");
             c.args([if resume { "--resume" } else { "--session-id" }, sid]);
-            if !on(block, "useApiKey") {
-                c.env_remove("ANTHROPIC_API_KEY");
-            }
-            (c, &[("--model", "model"), ("--effort", "effort")])
+            login_only(&mut c, block);
+            c
         }
         "pi" => {
             let mut c = Command::new("pi");
             c.args(["--session-id", sid]);
-            (c, &[("--provider", "provider"), ("--model", "model"), ("--thinking", "effort")])
+            c
         }
         _ => return Err(format!("unknown harness: {h} (claude or pi)")),
     };
-    for &(flag, k) in typed {
-        let v = t(block, k);
-        if !v.is_empty() {
-            c.args([flag, v.as_str()]);
-        }
-    }
-    c.args(t(block, "args").split_whitespace());
+    c.args(typed_flags(h, block)).args(t(block, "args").split_whitespace());
     Ok(c)
+}
+
+/// <h>'s flags for the block's provider, model and effort, those it sets.
+fn typed_flags(h: &str, block: &Value) -> Vec<String> {
+    let table: &[(&str, &str)] = match h {
+        "claude" => &[("--model", "model"), ("--effort", "effort")],
+        "pi" => &[("--provider", "provider"), ("--model", "model"), ("--thinking", "effort")],
+        _ => &[],
+    };
+    table
+        .iter()
+        .map(|&(f, k)| (f, t(block, k)))
+        .filter(|(_, v)| !v.is_empty())
+        .flat_map(|(f, v)| [f.to_string(), v])
+        .collect()
+}
+
+/// claude on the claude.ai login: ANTHROPIC_API_KEY unset unless useApiKey.
+fn login_only(c: &mut Command, block: &Value) {
+    if !on(block, "useApiKey") {
+        c.env_remove("ANTHROPIC_API_KEY");
+    }
 }
 
 /// The harness wrote a transcript for <sid>: the session began.
@@ -263,9 +266,7 @@ fn claude_command(s: &Step) -> Command {
     // variadic and would swallow a trailing one.
     c.args(["-p", s.prompt, sess, s.session, "--output-format", "json", "--json-schema", s.schema])
         .args(["--permission-mode", "acceptEdits", "--allowedTools", s.claude_allow, "--disallowedTools", CLAUDE_DENY]);
-    if !on(s.settings, "useApiKey") {
-        c.env_remove("ANTHROPIC_API_KEY");
-    }
+    login_only(&mut c, s.settings);
     c
 }
 

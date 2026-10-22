@@ -8,6 +8,8 @@ use crate::git::{git, git_out, worktree_for};
 use crate::val::at;
 use crate::{config, harness, proc, time};
 use serde_json::Value;
+use std::io::Write;
+use std::path::Path;
 
 fn get(key: &str) -> String {
     git_out(".", &["config", "--get", key]).unwrap_or_default()
@@ -62,6 +64,9 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     if wt.is_empty() {
         die(format!("{b} isn't checked out in any worktree"));
     }
+    if !Path::new(&wt).is_dir() {
+        die(format!("{b}'s worktree {wt} is gone; git worktree prune forgets it"));
+    }
     let key = |k: &str| format!("branch.{b}.sd-{k}");
     if let Some(note) = take(b, &get(&key("lock")), force).unwrap_or_else(|e| die(e)) {
         eprintln!("sd act: {note}");
@@ -83,17 +88,22 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     eprintln!("sd act: attached to {b}: {h} ({mode} session {sid}) in {wt}; agent steps wait until you exit");
     let mut rc = proc::foreground(c);
 
+    // A closed terminal leaves stderr dead, and eprint! would panic there,
+    // lock and all: what's left to say is said or dropped.
+    let say = |m: &str| {
+        let _ = std::io::stderr().write_all(m.as_bytes());
+    };
     if resume || harness::session_exists(&h, &sid) {
         for (k, v) in [("session", &sid), ("harness", &h)] {
             let o = git(".", &["config", &key(k), v]);
             if !o.ok {
-                eprint!("{}", o.stderr);
+                say(&o.stderr);
                 rc = o.code;
                 break;
             }
         }
     } else {
-        eprintln!("sd act: {h} wrote no transcript for session {sid}, so nothing is stored; attach again to start one");
+        say(&format!("sd act: {h} wrote no transcript for session {sid}, so nothing is stored; attach again to start one\n"));
     }
     // Only the lock this attach took: a --force may have taken it over since.
     if get(&key("lock")) == mine {
