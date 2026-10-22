@@ -332,173 +332,11 @@ positional=$branch
 branch=${branch:-$(git branch --show-current)}
 [[ -n $branch ]] || die "detached HEAD; name a branch"
 
-# ── address ──────────────────────────────────────────────────────────────────
+# ── gates ────────────────────────────────────────────────────────────────────
 
-# Hard refusals (no PR, closed, GitHub unreadable) can't be forced; soft ones
-# can; warnings never block. A list of {hard}, {soft} and {warn} records.
-read -r -d '' GATE <<'EOF' || true
-values [
-  nul(pr) ? {hard: f"no PR for {branch}"}
-  : on(pr.state != "OPEN") ? {hard: f"PR #{pr.number} is {lower(pr.state)}"}
-  : nul(threads.owed_bot) ? {hard: f"can't read the PR from GitHub: {sj(coalesce(errors, []), "; ")}"}
-  : null,
-  on(session.locked) ? {soft: f"taken over (branch.{branch}.sd-lock is set)"} : null,
-  on(sync.conflict) ? {soft: "restack due, and it would conflict"}
-  : nul(sync.up_to_date) ? {soft: f"sync with {coalesce(sync.target, "the parent")} unknown"}
-  : null,
-  nul(push.remote_sha) ? {soft: "not pushed"}
-  : on(push.diverged) ? {soft: "diverged from the remote branch"}
-  : n(push.behind) > 0 ? {soft: f"the remote branch has {push.behind} commit(s) you don't"}
-  : n(push.ahead) > 0 ? {soft: f"{push.ahead} unpushed commit(s)"}
-  : null,
-  on(sync.up_to_date == false) and not on(sync.conflict) ? {warn: f"behind {sync.target} by {sync.behind}"} : null,
-  on(ci.verdict == "pending") ? {warn: "CI is still running"} : null
-]
-| values coalesce([unnest this | where this is not null], [])
-EOF
-
-read -r -d '' NODES_Q <<'EOF' || true
-query($ids: [ID!]!) {
-  viewer { login }
-  nodes(ids: $ids) {
-    __typename
-    ... on PullRequestReviewThread { id path line isOutdated
-      comments(first: 50) { nodes { author { __typename login } body } } }
-    ... on PullRequestReview { id url author { __typename login } body }
-    ... on IssueComment { id url author { __typename login } body }
-  }
-}
-EOF
-
-read -r -d '' SCHEMA <<'EOF' || true
-{"type": "object", "required": ["outcome", "commit_message", "summary", "items"],
- "properties": {
-   "outcome": {"enum": ["done", "needs-input", "gave-up"]},
-   "commit_message": {"type": ["string", "null"]},
-   "summary": {"type": "string"},
-   "items": {"type": "array", "items": {"type": "object", "required": ["id", "action", "reply"],
-     "properties": {"id": {"type": "string"},
-                    "action": {"enum": ["fixed", "reply", "pushback", "ask"]},
-                    "reply": {"type": "string"}}}}}}
-EOF
-
-# The address step's prompt: guidance (settings.addressPrompt, else
-# .sheepdog/address.md in the base commit, else lib/prompts/address.md), then
-# this contract, which the schema, the posting and the pipeline rely on.
-read -r -d '' ADDRESS_CONTRACT <<'EOF' || true
-For each finding below, pick exactly one action:
-- fixed:    you changed code to address it
-- reply:    no change needed (already handled, or a question you can answer)
-- pushback: you disagree; say why
-- ask:      it needs a decision from the PR's author; say what the question is
-
-Do not commit, push, or run gh: the pipeline commits your edits, runs checks,
-pushes, and posts each `reply` on the PR. A /word or @login in a reply is posted
-with a lookalike glyph so it can't trigger a bot or ping anyone; for a path,
-use a relative one. Return one item per finding id, a one-line commit_message
-if you changed anything (else null), and outcome "done", "needs-input"
-(anything you marked ask) or "gave-up" (you couldn't make sense of it; nothing
-is posted).
-EOF
-
-# The owed items' text, from the nodes(ids:) answer: {bots, n}. Anyone else
-# in a thread is untrusted: their text would steer edits that verify runs and
-# the push publishes.
-read -r -d '' FINDINGS_Q <<'EOF' || true
-fn unbot(s): regexp_replace(s, "\\[bot\\]$", "")
-values {ctx: {me: n.data.viewer.login, bots: coalesce([unnest bots | values unbot(this)], [])},
-        nodes: coalesce([unnest n.data.nodes | where this is not null], [])}
-| values coalesce([
-    unnest {ctx, x: nodes}
-    | values {ctx, f: {
-        id: x.id,
-        type: case x.__typename when "PullRequestReviewThread" then "thread"
-                                when "PullRequestReview" then "review"
-                                when "IssueComment" then "comment" else null end,
-        url: coalesce(x.url, null), path: coalesce(x.path, null), line: coalesce(x.line, null),
-        outdated: coalesce(x.isOutdated, null),
-        conversation: coalesce([
-          unnest (coalesce(x.comments.nodes, null) is not null ? x.comments.nodes : [x])
-          | values {author: author.login, bot: author.__typename == "Bot", body}
-        ], [])}}
-    | values {f, untrusted: coalesce([
-        unnest {ctx, c: f.conversation}
-        | where not (c.bot or coalesce(c.author == ctx.me, false) or coalesce(unbot(c.author) in ctx.bots, false))
-        | values c.author
-        | sort this
-        | uniq
-      ], [])}
-    | values {...f, conversation: coalesce([unnest f.conversation | values {author, body}], []), untrusted}
-  ], [])
-EOF
-
-# The findings with the agent's answers: {f: findings, r: result, changed, held}.
-read -r -d '' PLAN_Q <<'EOF' || true
-values {held, f, ctx: {changed, items: kind(coalesce(r.items, null)) == "array" ? r.items : []}}
-| values [
-    ...coalesce([
-      unnest {ctx, f}
-      | values {f, changed: ctx.changed,
-                a: coalesce(coalesce([unnest {f, i: ctx.items} | where i.id == f.id | values i], [])[0], {})}
-      | values {f, changed, act: coalesce(a.action, ""), rep: coalesce(a.reply, null)}
-      | values {...f, ...(case
-          when not (act in ["fixed", "reply", "pushback", "ask"]) then {action: "ask", reply: "(the agent did not answer this one)"}
-          when not is(rep, <string>) then {action: "ask", reply: "(the agent gave no reply text)"}
-          when not grep("\\S", rep) then {action: "ask", reply: "(the agent gave no reply text)"}
-          when act == "fixed" and not changed then {action: "ask", reply: f"(said fixed but changed nothing): {rep}"}
-          else {action: act, reply: rep} end)}
-    ], []),
-    ...held
-  ]
-EOF
-
-# The plan, as printed: the agent's answers, then the ask items under
-# "needs chrismo:" when there are any.
-read -r -d '' REPORT <<'EOF' || true
-fn where(it): it.type == "thread" ? f"{it.path}:{it.line}" : it.type == "review" ? "review body" : "PR comment"
-fn pad(s, n): len(s) >= n ? s : s || "                    "[0:n-len(s)]
-values [
-  ...coalesce([unnest this | where action != "ask" | values f"  {pad(action, 9)} {pad(where(this), 20)} {reply}"], []),
-  ...(len(coalesce([unnest this | where action == "ask"], [])) > 0 ? ["needs chrismo:"] : []),
-  ...coalesce([unnest this | where action == "ask" | values f"  {pad(where(this), 20)} {reply}"], [])
-] | unnest this
-EOF
-
-# The thread replies to post: id, action, where and the reply (any number of
-# lines), then a record separator, per item.
-read -r -d '' REPLIES <<'EOF' || true
-fn where(it): it.type == "thread" ? f"{it.path}:{it.line}" : it.type == "review" ? "review body" : "PR comment"
-unnest this | where this.type == "thread" and action != "ask"
-| values id, action, where(this), reply, "\u001e"
-EOF
-
-# A reply is posted as written, so a /command or @mention in it would run a
-# bot or ping a person. Lookalike glyphs keep the reading: a /command written
-# as a word (a /word at a line start or after whitespace, a bracket or a
-# quote, not followed by more path) gets U+2215 for its slash, which defeats
-# the line-start regexes and whitespace-delimited substring checks bots use;
-# an @login after anything but a letter, a digit or a slash gets U+FF20, which
-# GitHub doesn't read as a mention (t@e.com and medium.com/@who stay; _@who_
-# is scrubbed, since markdown runs before mention detection). Not covered: a
-# /word glued to other text (foo/marge, **/marge**, a URL ending in /marge),
-# which stays as written, and a one-segment absolute path (/tmp, /README.md),
-# which reads as a command, code spans included (so does an @ in code, like
-# `npm i @types/node`), and an @ right after a slash outside a URL (a/@who),
-# which GitHub may still read as a mention (unverified). Only posted text is
-# touched: ask items stay as the agent wrote them, since chrismo reads those,
-# and the terminal report shows the posted text, glyphs included, on purpose.
-# Two passes, because a match
-# eats the character after the command, which may be the boundary of the next
-# one ("/a /b").
-read -r -d '' SCRUB_Q <<'EOF' || true
-fn cmd(s): regexp_replace(s, "(^|[\\s(\\[\"'`])/([A-Za-z][A-Za-z0-9_-]*)($|[^A-Za-z0-9_/-])", "${1}∕${2}${3}")
-fn scrub(s): regexp_replace(cmd(cmd(s)), "(^|[^A-Za-z0-9/])@([A-Za-z0-9])", "${1}＠${2}")
-values coalesce([unnest this | values {...this, reply: is(reply, <string>) and action != "ask" ? scrub(reply) : reply}], [])
-EOF
-
-# A gate is a list of {hard}, {soft}, {warn} and {done} records (address,
-# restack) or one such record (retarget). gate_get <gate> <key>
-# prints that key's lines, in order.
+# A gate is a list of {hard}, {soft}, {warn} and {done} records (restack
+# --resolve's RESTACK_GATE). gate_get <gate> <key> prints that key's lines,
+# in order.
 gate_get() {
   local q="unnest (kind(this) == \"array\" ? this : [this]) | where coalesce($2, null) is not null | values $2"
   prc_line "$q" "$1"
@@ -513,192 +351,6 @@ soft_gate() {
     sed 's/^/  - /' <<<"$soft"
     echo "(--force to run anyway)"; } >&2
   exit 1
-}
-
-gql() { gh api graphql "$@"; }
-
-report() { # report <plan> <summary>
-  echo "$branch: $2"
-  prc_line "$REPORT" "$1"
-}
-
-address() {
-  local b=$branch wt remote state gate line owed nodes findings bots
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  remote=$(repo_remote) || die "sd config failed"
-  git -C "$wt" fetch --quiet "$remote" || die "fetch from $remote failed"
-  state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-
-  gate=$(prc_json "$GATE" "$state") || die "can't parse sd state's answer"
-  line=$(gate_get "$gate" hard | head -1)
-  [[ -z $line ]] || die "$line"
-  owed=$(prc_json 'values coalesce([unnest threads.items | where kind == "bot"], [])' "$state")
-  # An answer that can't reach the agent fails, so NEXT's question step
-  # doesn't hand it to a loop again.
-  local unanswered=". The answer didn't reach the agent; sd act ack --question drops its question"
-  if [[ $owed == '[]' ]]; then
-    line="nothing to address on $b ($(prc_val "$state" 'coalesce(threads.owed_human, 0)') human item(s) are chrismo's)"
-    [[ -z $answer_text ]] || die "$line$unanswered"
-    echo "$line"
-    return
-  fi
-  soft_gate "$gate" "addressing $b"
-  question_gate "$b" address
-  gate_get "$gate" warn | sed 's/^/sd-act: warning: /' >&2
-
-  local -a id_args=()
-  (( $(prc_val "$owed" 'len(this)') <= 100 )) || echo "sd act: warning: over 100 owed items; taking the first 100" >&2
-  while IFS= read -r line; do id_args+=(-f "ids[]=$line"); done < <(prc_line 'unnest this | head 100 | values id' "$owed")
-  nodes=$(gql -f query="$NODES_Q" "${id_args[@]}") || die "couldn't fetch the findings' text"
-  bots=$(prc_get settings.botLogin "$b" false json) || die "sd config failed"
-  findings=$(prc_json "$FINDINGS_Q" "{\"bots\": $bots, \"n\": $nodes}") || die "couldn't read the findings' text"
-  [[ $findings != '[]' ]] || die "none of the owed items could be fetched"
-  local held
-  held=$(prc_json 'values coalesce([unnest this | where len(untrusted) > 0
-    | values {...this, action: "ask", reply: f"joined by {sj(untrusted, ", ")}: yours to answer"} | drop untrusted], [])' "$findings")
-  findings=$(prc_json 'values coalesce([unnest this | where len(untrusted) == 0 | drop untrusted], [])' "$findings")
-  if [[ $findings == '[]' ]]; then
-    [[ -z $answer_text ]] || die "no bot feedback the agent can take on $b$unanswered"
-    report "$held" "no bot feedback the agent can take"
-    return
-  fi
-
-  local stored_h sid h mode result outcome plan timeout cfg forced verify guidance gbase
-  stored_h=$(git config --get "branch.$b.sd-harness" || true)
-  sid=$(git config --get "branch.$b.sd-session" || true)
-  forced=${harness_opt:-$stored_h}
-  cfg=$(prc_step address "$b" "$forced") || die "sd config failed"
-  h=$(prc_val "$cfg" harness)
-  [[ -z $answer_text || -n $sid ]] || die "no session on $b to answer in (branch.$b.sd-session)"
-  if [[ -n $sid ]]; then
-    [[ $h == "${stored_h:-claude}" ]] \
-      || die "branch.$b.sd-session belongs to ${stored_h:-claude}; unset it to start a $h session"
-    mode=resume
-    if [[ -z $answer_text ]] && past_fork_limit "$b" "$h" "$sid"; then sid=; fi
-  fi
-  if [[ -z $sid ]]; then
-    sid=$(uuidgen | tr 'A-F' 'a-f') mode=new
-  fi
-  timeout=$(prc_get settings.stepTimeout "$b" false) || die "sd config failed"
-  [[ $timeout =~ ^[1-9][0-9]*$ ]] || die "settings.stepTimeout must be whole seconds: $timeout"
-  verify=$(cd "$wt" && prc_get settings.verify "$b" false) || die "sd config failed"
-  [[ $verify != *$'\n'* ]] || die "verify must be a single command, not a list"
-  gbase=$(guidance_base "$b") || die "can't find $b's base, to read its prompt guidance from"
-  guidance=$(cd "$wt" && step_guidance addressPrompt "$b" "$gbase" "$SD_LIB/prompts/address.md") \
-    || die "can't read the address guidance"
-  local s prompt allow=$HARNESS_CLAUDE_ALLOW
-  local -a rules
-  s=$(agent_rules "$wt" "$b") || die "sd config failed"
-  rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
-  local listed
-  listed=$'Findings:\n'"$(printf '%s\n' "$findings" | prc_super -i json -J -c 'values this' -)"
-  prompt="$guidance"$'\n\n'"$ADDRESS_CONTRACT"$'\n\nPR '"$(prc_val "$state" pr.url)"$'\n'"$listed"
-  [[ -z $answer_text ]] || prompt=$(answer_prompt "$listed")
-  [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
-  if [[ $h == claude ]] && (( ${#rules[@]} )); then
-    allow+=$(printf ',%s' "${rules[@]}")
-    prompt+=$'\n\nBeyond reading files and read-only git, you may run only these (Claude Code permission rules); anything else is refused:\n'"$(printf '%s\n' "${rules[@]}")"
-  else
-    prompt+=$'\n\nYou can\'t run commands here beyond read-only git.'
-  fi
-  echo "sd act: $h ($mode session $sid) is addressing $(prc_val "$findings" 'len(this)') item(s) on $b…" >&2
-  local before
-  before=$(git rev-parse "refs/heads/$b")
-  result=$(cd "$wt" && HARNESS_CLAUDE_ALLOW=$allow && HARNESS_STEP=address HARNESS_BRANCH=$b \
-             harness_run "$h" "$sid" "$mode" "$timeout" "$prompt" "$SCHEMA" "$cfg") \
-    || { hold_since "$b" "$gbase" "$before"; die "the $h step failed or returned no usable result (session $sid)"; }
-  git config "branch.$b.sd-session" "$sid"
-  git config "branch.$b.sd-harness" "$h"
-  question_answered "$b"
-  hold_since "$b" "$gbase" "$before"
-  local agent_head
-  agent_head=$(git rev-parse "refs/heads/$b")
-
-  # pi has no schema enforcement, so check the shape here too.
-  outcome=$(prc_val "$result" 'coalesce(outcome, "")')
-  case $outcome in
-    done|needs-input) ;;
-    gave-up) die "the agent gave up: $(prc_val "$result" 'coalesce(summary, "")'). Any edits are left uncommitted in $wt" ;;
-    *) die "the agent returned outcome \"$outcome\"; edits (if any) are left uncommitted in $wt" ;;
-  esac
-  local changed=false
-  [[ -n $(git -C "$wt" status --porcelain) ]] && changed=true
-  plan=$(prc_json "$PLAN_Q" "{\"f\": $findings, \"r\": $result, \"changed\": $changed, \"held\": $held}") \
-    || die "couldn't read the agent's answer; edits (if any) are left uncommitted in $wt"
-  plan=$(prc_json "$SCRUB_Q" "$plan") || die "couldn't scrub the replies; edits (if any) are left uncommitted in $wt"
-
-  local msg
-  if $changed; then
-    msg=$(prc_line 'values {m: coalesce(commit_message, null)}
-      | values case when is(m, <string>) and grep("\\S", m) then m else "Address review feedback" end' "$result")
-    git -C "$wt" add -A && git -C "$wt" commit -q -m "$msg" || die "commit failed; the edits are left in $wt"
-  fi
-  hold_since "$b" "$gbase" "$agent_head"
-  local vrc=0 summary asks qmsg=""
-  verify_autofix "$wt" "$b" || vrc=$?
-  # The asks stay owed, so the bot step would hand them over again: the
-  # question replaces it, recorded on HEAD as verify left it (a push keeps it).
-  summary=$(prc_val "$result" 'coalesce(summary, "")')
-  asks=$(prc_line "$REPORT" "$plan" | sed -n '/^needs chrismo:$/,$p')
-  if [[ $outcome == needs-input || -n $asks ]]; then
-    question_ask "$b" "$wt" address "$summary${asks:+$'\n'$asks}"
-    qmsg="$(question_say "$b"): answer with $(answer_cmd "$b"); or answer on GitHub or in its session (sd act attach $b), then sd act ack --question"
-  fi
-  (( vrc == 0 )) || die "verify failed ($verify); the commit is kept in $wt, nothing pushed or posted${qmsg:+. $qmsg}"
-
-  report "$plan" "$summary"
-  [[ -z $qmsg ]] || echo "$qmsg"
-  if $no_publish; then
-    echo "not published: nothing pushed or posted"
-    return
-  fi
-
-  # The plan isn't kept: after the push, the items are still owed, and a
-  # second address finds the fix already in (it spends tokens again).
-  hold_gate "$b" "pushing $b" "The replies weren't posted, so the items are still owed: after sd act push, sd act address answers them again, or answer them on GitHub"
-  push_branch "$b" "$remote" || die "not pushed, so nothing posted"
-  local prefix id action at reply line failed=0 pr_id body=""
-  prefix=$(prc_get settings.replyPrefix "$b" false) || die "sd config failed"
-  while IFS= read -r id && IFS= read -r action && IFS= read -r at; do
-    reply=""
-    while IFS= read -r line && [[ $line != $'\x1e' ]]; do reply+=$line$'\n'; done
-    gql -f query='mutation($thread: ID!, $body: String!) {
-          addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { id } } }' \
-        -f thread="$id" -f body="$prefix${reply%$'\n'}" >/dev/null \
-      || { echo "sd act: replying to $at failed" >&2; failed=1; continue; }
-    if [[ $action != pushback ]]; then
-      gql -f query='mutation($thread: ID!) { resolveReviewThread(input: {threadId: $thread}) { thread { id } } }' \
-          -f thread="$id" >/dev/null \
-        || { echo "sd act: resolving $at failed" >&2; failed=1; }
-    fi
-  done < <(prc_line "$REPLIES" "$plan")
-
-  # Review bodies and PR comments can't be replied to or resolved: answer them
-  # in one PR comment and remember them in branch.<b>.sd-handled. Link, don't
-  # quote: quoted text can carry what other bots act on (/commands, @mentions).
-  local pj
-  pj=$(prc_json_string "$prefix") || die "settings.replyPrefix isn't usable"
-  body=$(prc_line '
-    values {p, parts: coalesce([unnest plan | where this.type != "thread" and action != "ask"
-                                | values f"[{this.type == "review" ? "Review" : "Comment"}]({url})\n\n{reply}"], [])}
-    | where len(parts) > 0
-    | values f"{p}Addressed review feedback:\n\n{join(parts, "\n\n")}"' "{\"p\": $pj, \"plan\": $plan}")
-  if [[ -n $body ]]; then
-    # By URL, not {owner}/{repo}: gh's default repo may be a fork.
-    if pr_id=$(gql -f url="$(prc_val "$state" pr.url)" \
-                 -f query='query($url: URI!) { resource(url: $url) { ... on PullRequest { id } } }' \
-               | prc_line 'values data.resource.id') \
-       && gql -f query='mutation($subject: ID!, $body: String!) { addComment(input: {subjectId: $subject, body: $body}) { clientMutationId } }' \
-              -f subject="$pr_id" -f body="$body" >/dev/null; then
-      while IFS= read -r id; do git config --add "branch.$b.sd-handled" "$id"; done \
-        < <(prc_line 'unnest this | where this.type != "thread" and action != "ask" | values id' "$plan")
-    else
-      echo "sd act: posting the PR comment failed" >&2; failed=1
-    fi
-  fi
-  return "$failed"
 }
 
 # ── verify ───────────────────────────────────────────────────────────────────
@@ -799,9 +451,9 @@ no_base_why() {
 # ── agent sessions ───────────────────────────────────────────────────────────
 
 # This section, the questions and guidance_base, agent_rules and the CI
-# config hold below are the bash agent steps' (address, ci-fix, describe,
-# restack --resolve). src/act/step.rs and src/act/hold.rs do the same for
-# implement: change both.
+# config hold below are the bash agent steps' (ci-fix, describe, restack
+# --resolve). src/act/step.rs and src/act/hold.rs do the same for implement
+# and address: change both.
 
 # step_session <branch> <step>: the harness and session a step runs in: the
 # branch's session (branch.<b>.sd-session) resumed, else a new one. Sets
@@ -899,12 +551,13 @@ answer() {
   [[ $(prc_val "$q" at_head) == true ]] \
     || die "the $step agent's question on $b no longer stands: HEAD or the worktree changed since it asked (sd act ack --question drops it)"
   case $step in
-    # implement is Rust (src/act/implement.rs): --answer hands it the answer.
-    implement|review-fix)
+    # implement and address are Rust (src/act/): --answer hands them the answer.
+    implement|review-fix|address)
       if $force; then flags+=(--force); fi
+      if $no_publish; then flags+=(--no-publish); fi
       if [[ -n $harness_opt ]]; then flags+=(--harness "$harness_opt"); fi
-      exec "$SD_LIB/../target/release/sd" act implement --answer "$answer_text" "${flags[@]}" "$b" ;;
-    address) running_during "$b" address address ;;
+      [[ $step == address ]] || step=implement
+      exec "$SD_LIB/../target/release/sd" act "$step" --answer "$answer_text" "${flags[@]}" "$b" ;;
     ci-fix) running_during "$b" ci-fix ci_fix ;;
     *) die "can't answer a $step question" ;;
   esac
@@ -1858,9 +1511,7 @@ case $verb in
   unregister) act_rs ;;
   start) act_rs ;;
   implement) act_rs ;;
-  # The agent steps that commit and verify after the agent: marked running
-  # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
-  address) running_during "$branch" address address ;;
+  address) act_rs ;;
   ack) act_rs ;;
   answer) answer ;;
   restack) if $resolve; then restack; else act_rs; fi ;;
@@ -1868,6 +1519,8 @@ case $verb in
   push) act_rs ;;
   verify) act_rs ;;
   autofix) act_rs ;;
+  # The agent steps that commit and verify after the agent: marked running
+  # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
   ci-fix) running_during "$branch" ci-fix ci_fix ;;
   review) act_rs ;;
   describe) describe ;;

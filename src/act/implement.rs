@@ -85,7 +85,7 @@ fn field(f: &Map<String, Value>, k: &str, none: &str) -> String {
 }
 
 /// No \S in it, as RE2 has \s: tab, newline, form feed, CR and space.
-fn blank(s: &str) -> bool {
+pub(super) fn blank(s: &str) -> bool {
     s.chars().all(|c| matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '))
 }
 

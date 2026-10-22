@@ -1,5 +1,5 @@
 // push (A3). libexec/sd-act's push_branch, push_ref and track still do the
-// same for address, ci-fix, ship and start: change both.
+// same for ci-fix and ship: change both.
 
 use super::{die, plural};
 use crate::git::{self, commits_not_ours, count, git, git_ok, git_out, made_here, remote_default, rev, strip_nl, worktree_for};
@@ -31,7 +31,7 @@ pub fn push(b: &str, remote: &str, force: bool) {
 /// Publish <b> as fetched just now. Rewritten history, or a pushed commit
 /// reset away, is force-pushed with a lease on that remote head, and only when
 /// the head is in the branch's reflog (we put it there). Err is why not.
-fn push_branch(b: &str, remote: &str) -> Result<(), String> {
+pub(super) fn push_branch(b: &str, remote: &str) -> Result<(), String> {
     let f = git(".", &["fetch", "--quiet", "--prune", remote]);
     eprint!("{}", f.stderr);
     if !f.ok {

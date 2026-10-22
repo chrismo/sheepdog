@@ -1,8 +1,8 @@
 // What every agent step shares: the branch's session, the commit its repo
 // guidance is read from, what the agent may run, and the step's question for
 // chrismo (#167). libexec/sd-act's step_session, past_fork_limit, step_store,
-// guidance_base, agent_rules and question_* still do the same for address,
-// ci-fix, describe and restack --resolve: change both.
+// guidance_base, agent_rules and question_* still do the same for ci-fix,
+// describe and restack --resolve: change both.
 
 use super::commands::step_timeout;
 use super::start::start_default;
