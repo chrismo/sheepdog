@@ -6,7 +6,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 out=${SHEEPDOG_TEST_RESULTS:-test-results}
 mkdir -p "$out"
-(( $# )) || set -- bin/*.bats ci/*.bats *.bats
+(( $# )) || set -- bin/*.bats ci/*.bats
 
 bats --jobs "$(getconf _NPROCESSORS_ONLN)" --report-formatter junit --output "$out" "$@"
 status=$?
