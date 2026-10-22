@@ -122,18 +122,16 @@ impl Args {
             }
             (self.answer, self.branch) = (self.positionals[0].clone(), second);
         }
-        let one_verb = [
-            (self.accept, "--accept", "review"),
-            (self.remove, "--remove", "forget"),
-            (self.question, "--question", "ack"),
+        let one_verb: [(bool, &str, &[&str]); 4] = [
+            (self.accept, "--accept", &["review"]),
+            (self.remove, "--remove", &["forget"]),
+            (self.question, "--question", &["ack"]),
+            (!self.answer.is_empty() && verb != "answer", "--answer", &["implement", "address", "ci-fix"]),
         ];
         for (set, flag, only) in one_verb {
-            if set && verb != only {
-                return Err(format!("{flag} is for sd act {only} only"));
+            if set && !only.contains(&verb) {
+                return Err(format!("{flag} is for sd act {} only", only.join(" or ")));
             }
-        }
-        if !self.answer.is_empty() && !matches!(verb, "answer" | "implement" | "address" | "ci-fix") {
-            return Err("--answer is for sd act implement, address and ci-fix only".into());
         }
         Ok(())
     }
@@ -345,7 +343,7 @@ mod tests {
         assert_eq!(parsed("address", &["--answer", "bar"]).unwrap().answer, "bar");
         let a = parsed("ci-fix", &["--answer", "yes", "feat"]).unwrap();
         assert_eq!((a.answer.as_str(), a.branch.as_str()), ("yes", "feat"));
-        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement, address and ci-fix only".into()));
+        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement or address or ci-fix only".into()));
     }
 
     #[test]

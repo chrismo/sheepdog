@@ -20,6 +20,7 @@ use crate::val::{at, n, on, sj, t, text};
 use regex::Regex;
 use serde_json::Value;
 use std::fs;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 
 const CI_FIX_SCHEMA: &str = r#"{"type": "object", "required": ["outcome", "commit_message", "summary"],
@@ -63,16 +64,20 @@ fn rwx_failed(out: &str) -> Vec<(String, String)> {
     failed(&results, "Tasks", "Status.Result", &["failed"]).iter().map(task).filter(|(_, id)| !id.is_empty()).collect()
 }
 
+/// A fresh directory for task <i>'s logs: 0700 whatever the umask, as the
+/// bash's mktemp -d made it.
+fn log_dir(i: usize) -> Option<PathBuf> {
+    let dir = std::env::temp_dir().join(format!("sd-ci-fix-{}-{i}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::DirBuilder::new().mode(0o700).create(&dir).ok().map(|()| dir)
+}
+
 /// The failed tasks' logs of RWX run <run>.
 fn rwx_logs(run: &str) -> String {
     let mut logs = String::new();
     let results = proc::run("rwx", &["results", run, "--json"], None, None);
     for (i, (key, id)) in rwx_failed(&results.stdout).iter().enumerate() {
-        let dir = std::env::temp_dir().join(format!("sd-ci-fix-{}-{i}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        if fs::create_dir(&dir).is_err() {
-            continue;
-        }
+        let Some(dir) = log_dir(i) else { continue };
         if proc::run("rwx", &["logs", id, "--output", &dir.to_string_lossy()], None, None).ok {
             let mut files: Vec<PathBuf> = fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
             files.retain(|f| f.is_file() && f.extension().is_some_and(|x| x == "log"));
@@ -323,6 +328,15 @@ pub fn ci_fix(b: &str, remote: &str, a: &Args) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn log_dir_is_private_whatever_the_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = log_dir(999).unwrap();
+        let mode = fs::metadata(&dir).unwrap().permissions().mode();
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(mode & 0o777, 0o700);
+    }
 
     #[test]
     fn judged_flaky_only_for_a_flaky_record_on_the_same_sha() {
