@@ -25,9 +25,9 @@ reasoning. These are the rules agents build by:
    commits, pushes and talks to GitHub. Agents never need to know the
    pipeline exists.
 3. **Harness-agnostic.** Claude and pi both work. The per-harness code is
-   `harness_run` in `lib/sheepdog.sh`, plus the tool-rule wording a step's
-   prompt needs (`implement_run` branches on the harness for that); nothing
-   else may.
+   `src/harness.rs` (`lib/sheepdog.sh`'s `harness_run` calls it), plus the
+   tool-rule wording a step's prompt needs (`implement_run` branches on the
+   harness for that); nothing else may.
 4. **Reconcile, don't rely on enforcement.** Never assume sheepdog is the only
    writer: each pass compares observed state to desired state and closes the
    gap. Per-step tool denies are cheap extras, never what correctness depends
@@ -211,6 +211,6 @@ SuperSQL with the superdb MCP, not shell probes.
 - **No JSON encoder** (`sd config get` prints with a second call) and
   **`-f line` prints strings raw**, one per line: an empty string is an empty
   line, and `$( )` strips trailing newlines, so a run that needs to count lines
-  ends with a marker (`harness_run`).
+  ends with a marker.
 - **Startup is about 17 ms per call** (jq: 4 ms), about 50 ms per config file
   read, so queries are batched where a loop would have called jq per item.

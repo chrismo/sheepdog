@@ -20,6 +20,7 @@ fn main() -> ExitCode {
     match verb.as_str() {
         "act" => sheepdog::act::run(&rest),
         "config" => sheepdog::config::run(&rest),
+        "harness" => sheepdog::harness::run(&rest),
         "state" => sheepdog::state::run(&rest),
         "watch" => sheepdog::watch::run(&rest),
         _ => {

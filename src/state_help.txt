@@ -66,11 +66,11 @@ Reports, for <branch> (default: the current one):
             and timeout (settings.botTimeout)
   session   pipeline enrollment, harness, session id, takeover lock;
             running: the agent step running on the branch, {step, pid,
-            since}, from its running marker (lib/sheepdog.sh's
-            running_file), else null. While it runs,
+            since}, from its running marker (src/running.rs), else
+            null. While it runs,
             NEXT is only to wait for it (#170)
   spend     usd: what the branch's agent steps have cost in this repo, by
-            the usage record (usage.sup, harness_usage); budget:
+            the usage record (usage.sup, src/usage.rs); budget:
             settings.branchBudget (USD, 25; 0 is none). Past it, NEXT hands
             the agent's steps to chrismo (#121)
   fresh     false when GitHub's PR / parent-PR head differs from the local

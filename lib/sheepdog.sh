@@ -1,9 +1,11 @@
 # Shared by sd act and sd review-local. Source it after lib/config.sh;
 # needs bash 5 and super 0.3.0.
 #
-# harness_run is the harness adapter: the per-harness code, apart from the
-# tool-rule wording in implement_run (#79 Design record). with_timeout and
-# pin_write are shared helpers.
+# harness_run runs the harness adapter, src/harness.rs: the per-harness code,
+# apart from the tool-rule wording in implement_run (#79 Design record).
+# with_timeout and pin_write are shared helpers.
+
+SD_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/target/release/sd"
 
 # with_timeout <seconds> <cmd...>: kills the command's whole process group
 # when time runs out (its children would otherwise hold our output pipe open).
@@ -222,205 +224,42 @@ protected_hits() {
   done <<<"$2"
 }
 
-# Claude may read and edit; the pipeline commits, pushes and talks to GitHub.
+# The tools harness_run gives the agent, the only copy (src/harness.rs has
+# none), here for the steps that add to them. Claude may read and edit; the
+# pipeline commits, pushes and talks to GitHub.
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
-HARNESS_CLAUDE_DENY="Bash(git commit *),Bash(git push *),Bash(gh *)"
 # pi has no per-command bash rules, so no bash at all.
 HARNESS_PI_TOOLS="read,edit,write"
 # Read-only steps (review, describe) set HARNESS_CLAUDE_ALLOW to this and
 # HARNESS_PI_TOOLS to "read" before calling harness_run.
 HARNESS_READONLY_ALLOW="Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)"
 
-# harness_object: the JSON object on stdin, or status 1 (not JSON, not an
-# object, nothing at all).
-harness_object() {
-  local r
-  r=$(prc_json 'where kind(this) == "record"' 2>/dev/null) && [[ -n $r ]] || return 1
-  printf '%s\n' "$r"
+# harness_run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]
+# Runs one headless agent step in $PWD; prints the step's JSON result.
+# settings-json is prc_step's output. $HARNESS_STEP names the step in
+# usage.sup when the caller sets it, and $HARNESS_BRANCH its branch, else the
+# worktree's. src/harness.rs has the rest: the API key, the step budget, the
+# usage record and the running marker.
+harness_run() {
+  HARNESS_STEP=${HARNESS_STEP:-} HARNESS_BRANCH=${HARNESS_BRANCH:-} HARNESS_CLAUDE_ALLOW=$HARNESS_CLAUDE_ALLOW \
+    HARNESS_PI_TOOLS=$HARNESS_PI_TOOLS "$SD_BIN" harness run "$@"
 }
 
-# harness_result <claude --output-format json output>: the step's result
-# object: structured_output, else the result text parsed as JSON; nothing on
-# an error result (status 1).
-harness_result() {
-  prc_json 'where not coalesce(is_error, false)
-    | values coalesce(structured_output, parse_sup(coalesce(result, "")), null)' "$1" 2>/dev/null | harness_object
-}
+# harness_tally <harness> <session-id>: what the session's transcript says, as
+# one JSON object; {} with no transcript. context is its last turn's tokens.
+harness_tally() { "$SD_BIN" harness tally "$@"; }
 
-harness_branch() { [[ -n ${HARNESS_BRANCH:-} ]] && echo "$HARNESS_BRANCH" || git branch --show-current 2>/dev/null; }
+# harness_transcript <harness> <session-id>: the file the harness keeps the
+# session's transcript in, if it wrote one.
+harness_transcript() { "$SD_BIN" harness transcript "$@"; }
 
 # main_worktree: the repo's main worktree, where sheepdog's shared files live
 # and the name usage.sup knows the repo by.
 main_worktree() { git worktree list --porcelain | sed -n '1s/^worktree //p'; }
 
-usage_file() { echo "${SHEEPDOG_STATE_DIR:-$HOME/.local/state/sheepdog}/usage.sup"; }
-
-# harness_transcript <harness> <session-id>: the file the harness keeps the
-# session's transcript in, if it wrote one.
-harness_transcript() {
-  case $1 in
-    claude) find "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects" -maxdepth 2 -name "$2.jsonl" 2>/dev/null | head -1 ;;
-    pi) find "${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}" -maxdepth 2 -name "*_$2.jsonl" 2>/dev/null | head -1 ;;
-  esac
-}
-
-# harness_tally <harness> <session-id>: what the session's transcript says, as
-# one JSON object; {} with no transcript. context is its last turn's tokens,
-# the whole context then: what a resume or fork inherits (#121). For claude,
-# also entries, its assistant lines: more after a step than before means the
-# step ran turns. For pi, which prints no usage, also cost, input,
-# cache_create, cache_read, output and turns, summed over the session. A grep
-# for the role first: a transcript runs to megabytes. claude's top-level type
-# is the record's; a nested one is a subagent's progress, and a quoted one a
-# tool result's text. A "<synthetic>" model's entry is claude's note of an
-# API error (prompt too long), all zeros: no turn, and no context. Two passes each: an aggregate's collect has no order to
-# take the last from.
-harness_tally() {
-  local f r ctx sel
-  f=$(harness_transcript "$1" "$2")
-  if [[ -n $f ]]; then
-    case $1 in
-      claude)
-        sel='where type == "assistant" and not on(isSidechain) and not nul(message.usage)
-               and coalesce(message.model, "") != "<synthetic>"'
-        ctx=$(grep -F '"type":"assistant"' "$f" | prc_line "$sel | tail 1
-          | values n(message.usage.input_tokens) + n(message.usage.cache_creation_input_tokens)
-                   + n(message.usage.cache_read_input_tokens) + n(message.usage.output_tokens)" 2>/dev/null) || ctx=
-        r=$(grep -F '"type":"assistant"' "$f" | prc_json "$sel | aggregate entries:=count()
-          | values {...this, context: ${ctx:-null}}" 2>/dev/null) || r= ;;
-      pi)
-        ctx=$(grep -F '"role":"assistant"' "$f" | prc_line 'where on(message.role == "assistant") and not nul(message.usage)
-          | tail 1 | values n(message.usage.totalTokens)' 2>/dev/null) || ctx=
-        r=$(grep -F '"role":"assistant"' "$f" | prc_json 'where on(message.role == "assistant") and not nul(message.usage)
-          | aggregate cost:=sum(n(message.usage.cost.total)), input:=sum(n(message.usage.input)),
-                      cache_create:=sum(n(message.usage.cacheWrite)), cache_read:=sum(n(message.usage.cacheRead)),
-                      output:=sum(n(message.usage.output)), turns:=count()
-          | values {...this, context: '"${ctx:-null}"'}' 2>/dev/null) || r= ;;
-    esac
-  fi
-  echo "${r:-"{}"}"
-}
-
-# STEP_COST_FN: step_cost(total, prev), a claude step's cost from its
-# session's total_cost_usd, which on a resume is the running total (#150):
-# what it gained since prev, the total usage.sup last knew (session_total),
-# rounded off float noise. A total below prev isn't a running total, so the
-# step is charged all of it.
-read -r -d '' STEP_COST_FN <<'EOF' || true
-fn step_cost(total, prev): prev > 0 and total >= prev ? round((total - prev) * 1000000000.) / 1000000000. : total
-EOF
-
-# The usage record, over {t, repo, branch, step, harness, session, mode,
-# status, ms, cap: the step's --max-budget-usd ("0": none known), prev:
-# session_total before the step, o: claude's result object, a and b:
-# harness_tally after and before}. t is passed in, not now(), so the output is
-# the same every run. A claude step with no result (killed by stepTimeout, or
-# crashed) that still ran turns is charged its cap, the most it could spend,
-# and marked estimated; with no cap its cost is unknown (null), and still
-# marked. Its session total is unknown, so the next step's cost counts from
-# the last one known, and may count the killed step's real spend again.
-read -r -d '' USAGE_Q <<'EOF' || true
-fn nn(s): s == "" ? null : s
-values {time: t::time, repo: nn(repo), branch: nn(branch), step: nn(step), harness, session, mode, status,
-  context: coalesce(a.context, null), cap: cap::float64,
-  unseen: harness == "claude" and nul(o) and n(a.entries) > n(b.entries),
-  u: harness == "claude"
-     ? (nul(o) ? null : {cost: step_cost(coalesce(o.total_cost_usd, 0), prev::float64), total: coalesce(o.total_cost_usd, null),
-                         input: n(o.usage.input_tokens), cache_create: n(o.usage.cache_creation_input_tokens),
-                         cache_read: n(o.usage.cache_read_input_tokens), output: n(o.usage.output_tokens),
-                         duration_ms: n(o.duration_ms), turns: n(o.num_turns)})
-     : (nul(a.turns) ? null : {cost: a.cost - n(b.cost), input: a.input - n(b.input),
-                               cache_create: a.cache_create - n(b.cache_create), cache_read: a.cache_read - n(b.cache_read),
-                               output: a.output - n(b.output), duration_ms: ms, turns: a.turns - n(b.turns)})}
-| values {time, repo, branch, step, harness, session, mode, status: status::int64,
-          cost_usd: not nul(u) ? u.cost::float64 : unseen and cap > 0 ? cap : null,
-          total_cost_usd: nul(u.total) ? null : u.total::float64,
-          estimated: unseen,
-          input: nul(u) ? null : u.input::int64, cache_create: nul(u) ? null : u.cache_create::int64,
-          cache_read: nul(u) ? null : u.cache_read::int64, output: nul(u) ? null : u.output::int64,
-          duration_ms: nul(u) ? null : u.duration_ms::int64, turns: nul(u) ? null : u.turns::int64,
-          context: nul(context) ? null : context::int64}
-EOF
-
-# session_total <harness> <session-id>: the session's running total in USD as
-# usage.sup last knew it, for step_cost: its last claude row's
-# total_cost_usd, or the cost_usd of a row from before #150, which was that
-# total. 0 with none, unreadable, or for pi, whose cost is per step already.
-session_total() {
-  local file out
-  file=$(usage_file)
-  [[ $1 == claude && -s $file ]] || { echo 0; return 0; }
-  out=$({ grep -F "session:$(prc_json_string "$2")," "$file" | grep -E '^\{time:.*\}$' || true; } \
-          | prc_super -i sup -f line -c "$PRC_FNS"$'\n''where harness == "claude"
-              | values coalesce(total_cost_usd, on(estimated) ? null : cost_usd)
-              | where this is not null | tail 1' - 2>/dev/null) || out=
-  [[ $out =~ ^[0-9.e+-]+$ ]] || out=0
-  echo "$out"
-}
-
-# harness_usage <harness> <session-id> <mode> <status> <output> <tally-before> <ms> <cap> <session-total-before>:
-# one record per step, a line of Super (SUP) appended to usage.sup in
-# $SHEEPDOG_STATE_DIR: time, repo, branch, step, harness, session, mode, status,
-# cost_usd, total_cost_usd (claude's session total, from which cost_usd is
-# derived), estimated (USAGE_Q), the tokens (input, cache_create, cache_read,
-# output), duration_ms, turns, and context (harness_tally). claude's numbers
-# are from its JSON output, its tokens per step; pi's, which prints none, are
-# what its transcript gained during the step; null when there are none. The
-# cost is the harness's estimate, not how it was billed. A usage.tsv from
-# before #121 is left as it was.
-harness_usage() {
-  local file rec obj=null after strs
-  file=$(usage_file)
-  if [[ $1 == claude ]]; then obj=$(printf '%s\n' "$5" | harness_object) || obj=null; fi
-  after=$(harness_tally "$1" "$2")
-  strs=$(printf '"t": "%s", "repo": %s, "branch": %s, "step": %s, "harness": %s, "session": %s, "mode": %s' \
-           "$(date -u +%FT%TZ)" "$(prc_json_string "$(main_worktree 2>/dev/null)")" "$(prc_json_string "$(harness_branch)")" \
-           "$(prc_json_string "${HARNESS_STEP:-}")" "$(prc_json_string "$1")" "$(prc_json_string "$2")" "$(prc_json_string "$3")") \
-    || return 0
-  rec=$(printf '{%s, "status": %s, "ms": %s, "cap": "%s", "prev": "%s", "o": %s, "a": %s, "b": %s}\n' \
-          "$strs" "$4" "$7" "${8:-0}" "${9:-0}" "$obj" "$after" "$6" \
-          | prc_super -i json -s -c "$PRC_FNS"$'\n'"$STEP_COST_FN"$'\n'"$USAGE_Q" - 2>/dev/null) && [[ -n $rec ]] || return 0
-  mkdir -p "${file%/*}" 2>/dev/null || return 0
-  printf '%s\n' "$rec" >> "$file"
-}
-
-# harness_run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]
-# Runs one headless agent step in $PWD; prints the step's JSON result.
-# settings-json is prc_step's output: model, effort, provider, args, and for
-# claude useApiKey. Claude runs with ANTHROPIC_API_KEY unset unless that is
-# true: an exported key overrides the claude.ai login (#68), and the one in a
-# shell rc is often not the one to bill. pi can't use the login, so it keeps
-# the key. settings.stepBudget (USD, read here for the worktree's branch)
-# caps a claude step through --max-budget-usd; 0 is no cap. pi has no such
-# flag: settings.branchBudget (sd state) is its only guard. Every step
-# appends a record to $SHEEPDOG_STATE_DIR/usage.sup (harness_usage), with
-# $HARNESS_STEP as the step name when the caller sets it. The branch is
-# $HARNESS_BRANCH, else the worktree's: a step that runs mid-rebase (restack
-# --resolve) has a detached HEAD, so callers set it.
-# The harness's stderr (claude can put protocol JSON there) shows only when
-# the step fails, and then all at once: nothing streams while it runs.
-# While it runs, the branch's running_file says so, for sd state (#170): the
-# step runs in a subshell whose trap removes the marker however it ends,
-# since a trap here would replace the caller's. A marker running_hold keeps
-# for the whole step is left alone; another live step's refuses this one.
-harness_run() {
-  local b marker
-  b=$(harness_branch)
-  [[ -n $b && ${RUNNING_HELD:-} != "$b" ]] || { harness_step "$@"; return; }
-  running_free "$b" || return 1
-  marker=$(running_file "$b") && mkdir -p "${marker%/*}" || return 1
-  (
-    pid=$BASHPID
-    line="$pid ${HARNESS_STEP:-agent} $(date -u +%Y-%m-%dT%H:%M:%SZ) $(proc_start "$pid")"
-    trap '[[ $(cat "$marker" 2>/dev/null) != "$line" ]] || rm -f "$marker"' EXIT
-    trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
-    echo "$line" >"$marker" || exit 1
-    harness_step "$@"
-  )
-}
-
 # running_file <branch>: the marker kept while an agent step runs on
 # <branch>, one line: "<pid> <step> <start time> <the pid's proc_start>".
+# harness_run's own is src/running.rs's, the same file.
 running_file() {
   local dir
   dir=$(git rev-parse --path-format=absolute --git-common-dir) || return 1
@@ -491,89 +330,6 @@ running_state() {
     rm -f "$f"
     echo null
   fi
-}
-
-# harness_step: harness_run's step itself, with the same arguments.
-harness_step() {
-  local h=$1 sid=$2 mode=$3 timeout=$4 prompt=$5 schema=$6 settings=${7:-'{}'} out err rc said budget cap=""
-  local model effort provider use_key args fields before spent t0 cap_usd=0 args_cap=false i
-  local -a typed=() extra f env=()
-  # args last, so a newline in it shifts nothing; the end marker survives $( )
-  # stripping the trailing newlines of empty fields.
-  fields=$(prc_line 'where kind(this) == "record"
-    | values coalesce(model, ""), coalesce(effort, ""), coalesce(provider, ""), coalesce(useApiKey, false), coalesce(args, ""), "<end>"' "$settings") || return 1
-  mapfile -t f <<<"$fields"
-  [[ ${#f[@]} -ge 6 && ${f[-1]} == "<end>" ]] || return 1
-  model=${f[0]} effort=${f[1]} provider=${f[2]} use_key=${f[3]} args=$(printf '%s\n' "${f[@]:4:${#f[@]}-5}")
-  read -ra extra <<<"$args"
-  # An interrupted step leaves this file behind (harness_run's trap is only
-  # for the running marker; harness_step also runs bare, in its caller's shell).
-  err=$(mktemp) || return 1
-  case $h in
-    claude)
-      [[ $use_key == true ]] || env=(env -u ANTHROPIC_API_KEY)
-      if [[ -n $model ]]; then typed+=(--model "$model"); fi
-      if [[ -n $effort ]]; then typed+=(--effort "$effort"); fi
-      budget=$(prc_get settings.stepBudget "$(harness_branch)" false) || { echo "sd config failed" >&2; rm -f "$err"; return 1; }
-      [[ $budget != -* ]] || { echo "settings.stepBudget must be 0 or more: $budget" >&2; rm -f "$err"; return 1; }
-      # A cap in args is the more specific one, so it replaces stepBudget's.
-      for i in "${!extra[@]}"; do
-        case ${extra[i]} in
-          --max-budget-usd) cap_usd=${extra[i+1]:-0} args_cap=true ;;
-          --max-budget-usd=*) cap_usd=${extra[i]#*=} args_cap=true ;;
-        esac
-      done
-      [[ $budget =~ ^0*(\.0*)?$ || $args_cap == true ]] \
-        || { typed+=(--max-budget-usd "$budget"); cap=" (settings.stepBudget $budget USD)" cap_usd=$budget; } ;;
-    pi)
-      if [[ -n $provider ]]; then typed+=(--provider "$provider"); fi
-      if [[ -n $model ]]; then typed+=(--model "$model"); fi
-      if [[ -n $effort ]]; then typed+=(--thinking "$effort"); fi ;;
-  esac
-  before=$(harness_tally "$h" "$sid")
-  spent=$(session_total "$h" "$sid")
-  t0=${EPOCHREALTIME//[.,]/}
-  case $h in
-    claude)
-      local -a sess=(--session-id "$sid")
-      [[ $mode == resume ]] && sess=(--resume "$sid")
-      # The prompt goes first: --allowedTools and --disallowedTools are variadic
-      # and would swallow a trailing one.
-      out=$(with_timeout "$timeout" "${env[@]}" claude -p "$prompt" "${sess[@]}" --output-format json --json-schema "$schema" \
-              --permission-mode acceptEdits --allowedTools "$HARNESS_CLAUDE_ALLOW" \
-              --disallowedTools "$HARNESS_CLAUDE_DENY" "${typed[@]}" "${extra[@]}" </dev/null 2>"$err") \
-        && harness_result "$out"
-      ;;
-    pi)
-      # pi has no schema flag: the prompt asks for a final ```json block.
-      out=$(with_timeout "$timeout" pi -p --session-id "$sid" --tools "$HARNESS_PI_TOOLS" "${typed[@]}" "${extra[@]}" \
-              "$prompt"$'\n\nEnd your reply with the result as one ```json fenced block matching this JSON Schema:\n'"$schema" \
-              </dev/null 2>"$err") \
-        && awk '/^```json/ { buf = ""; on = 1; next } /^```/ { if (on) last = buf; on = 0; next }
-                on { buf = buf $0 "\n" } END { printf "%s", last }' <<<"$out" | harness_object
-      ;;
-    *) echo "unknown harness: $h (claude or pi)" >&2; rm -f "$err"; return 1 ;;
-  esac
-  rc=$?
-  harness_usage "$h" "$sid" "$mode" "$rc" "$out" "$before" $(( (${EPOCHREALTIME//[.,]/} - t0) / 1000 )) "$cap_usd" "$spent"
-  if (( rc != 0 )); then
-    tail -n 40 "$err" >&2
-    # The end of the harness's own account of the failure: the budget hit,
-    # else claude's result text, else an error result's subtype (e.g.
-    # error_max_turns), else stdout that isn't JSON; pi's reply.
-    said=$out
-    if [[ $h == claude ]]; then
-      said=$(prc_line "$STEP_COST_FN"$'\n''where kind(this) == "record"
-        | values on(subtype == "error_max_budget_usd")
-            ? f"hit the step budget'"$cap"': the step cost {step_cost(coalesce(total_cost_usd, 0), '"$spent"'::float64)} USD"
-              || ('"$spent"'::float64 > 0 ? f" (session total {coalesce(total_cost_usd, 0)} USD)" : "")
-            : coalesce(nullif(result, ""), coalesce(is_error, false) ? subtype : null, "")
-        | where this != ""' "$out" 2>/dev/null) || said=$out
-    fi
-    [[ -z $said ]] || tail -n 20 <<<"$said" >&2
-  fi
-  rm -f "$err"
-  return "$rc"
 }
 
 # stacked_on <branch> <remote> <default>: the branch <branch> was made from when

@@ -1,9 +1,13 @@
 pub mod act;
 pub mod config;
 pub mod git;
+pub mod harness;
 pub mod json;
 pub mod next;
 pub mod proc;
+pub mod running;
 pub mod state;
+pub mod time;
+pub mod usage;
 pub mod val;
 pub mod watch;
