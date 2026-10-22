@@ -364,7 +364,7 @@ mod autofix {
     fn the_commits_hooks_are_heard_a_pre_commit_hooks_output_passes_through() {
         let sd = sd();
         autofix_cmd(&sd, "echo d >> file.txt");
-        sd.script(&sd.cwd.join(".git/hooks/pre-commit"),"#!/bin/sh\necho hook-out\necho hook-err >&2\n");
+        sd.script(&sd.cwd.join(".git/hooks/pre-commit"), "#!/bin/sh\necho hook-out\necho hook-err >&2\n");
         let r = sd.run(&["autofix"]);
         assert_eq!(r.status, 0);
         assert_has(&r.output, &["hook-out"]);

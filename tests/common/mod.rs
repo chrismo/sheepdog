@@ -166,20 +166,21 @@ impl Sd {
     /// bin/sd-<verb>, a link to the binary, made on first use: another verb
     /// a test runs, as the bats suites ran libexec/sd-config.
     pub fn link(&self, verb: &str) -> PathBuf {
-        let l = self.tmp.join(format!("bin/sd-{verb}"));
-        if !l.exists() {
-            std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_sd"), &l).unwrap();
-        }
-        l
+        self.link_in("bin", verb)
     }
 
     /// fakebin/sd-<verb>, a link to the binary: the real verb on PATH, as
     /// the bats suites had libexec/ there.
     pub fn on_path(&self, verb: &str) {
-        let l = self.tmp.join(format!("fakebin/sd-{verb}"));
+        self.link_in("fakebin", verb);
+    }
+
+    fn link_in(&self, dir: &str, verb: &str) -> PathBuf {
+        let l = self.tmp.join(format!("{dir}/sd-{verb}"));
         if !l.exists() {
             std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_sd"), &l).unwrap();
         }
+        l
     }
 
     /// fakebin/<name> := <script>, executable.
