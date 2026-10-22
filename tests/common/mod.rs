@@ -166,17 +166,7 @@ impl Sd {
     /// bin/sd-<verb>, a link to the binary, made on first use: another verb
     /// a test runs, as the bats suites ran libexec/sd-config.
     pub fn link(&self, verb: &str) -> PathBuf {
-        self.link_in("bin", verb)
-    }
-
-    /// fakebin/sd-<verb>, a link to the binary: the real verb on PATH, as
-    /// the bats suites had libexec/ there.
-    pub fn on_path(&self, verb: &str) {
-        self.link_in("fakebin", verb);
-    }
-
-    fn link_in(&self, dir: &str, verb: &str) -> PathBuf {
-        let l = self.tmp.join(format!("{dir}/sd-{verb}"));
+        let l = self.tmp.join(format!("bin/sd-{verb}"));
         if !l.exists() {
             std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_sd"), &l).unwrap();
         }
@@ -215,6 +205,7 @@ impl Sd {
             "GIT_INDEX_FILE",
             "GH_REPO",
             "SHEEPDOG_STATE_FIXTURES",
+            "SHEEPDOG_STATE_PROGRAM",
         ] {
             c.env_remove(v);
         }

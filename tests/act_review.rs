@@ -1,11 +1,11 @@
 // Black-box tests of sd act review (A8) (#203): verify first, then the local
-// reviewer (settings.localReview, default sd-review-local) over the branch's
+// reviewer (settings.localReview, default sd review-local) over the branch's
 // own change. Clean → pin local at HEAD with its base. Findings → printed as
 // JSON, nothing pinned. Reviewer failure → nonzero, never clean. The built
 // binary, run as sd-act through a link (tests/common). Moved from
 // libexec/sd-act-review.bats; each test keeps the bats test's title above it.
 //
-// Real git, the real sd state (in-process) and sd review-local on PATH (gh is
+// Real git, the real sd state (in-process) and sd review-local (gh is
 // a stub that fails, so only git facts). The reviewer is a stub that records
 // its env and prints $FX/findings.json.
 
@@ -35,7 +35,6 @@ fn sd() -> Sd {
     ];
     fs::create_dir(sd.tmp.join("fx")).unwrap();
     sd.fake("gh", GH_FAILS);
-    sd.on_path("review-local");
     sd.script(&sd.tmp.join("reviewer"), REVIEWER);
     sd.findings("[]");
     sd.set_global("settings.localReview", &sd.path("reviewer"));

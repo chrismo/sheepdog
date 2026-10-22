@@ -23,18 +23,25 @@ build by are in `AGENTS.md`.
 ## Install
 
 ```bash
-./install.sh        # builds sd, links it and installs its launchd watcher
+./install.sh        # builds sd, links it, hooks git to rebuild it, installs its launchd watcher
 ```
 
-The installer builds the Rust half of `sd` (`cargo build --release`; `sd`
-rebuilds it on its own when the source is newer, as after a pull), links `bin/sd` into
-`~/.local/bin` (`$LOCAL_BIN` to change the link directory) and, on macOS,
-starts the watcher, which checks enrolled
-branches every five minutes by default. Re-run it to update both. Use
+The installer builds `sd` (`cargo build --release`), links `bin/sd`, a link
+to the build, into `~/.local/bin` (`$LOCAL_BIN` to change the link
+directory), writes post-merge and post-rewrite hooks into the checkout's git
+hooks directory that rebuild `sd` after a pull or a rebase (a hook already
+there that isn't sheepdog's is left alone, and the installer says so) and, on
+macOS, starts the watcher, which checks enrolled branches every five minutes
+by default. Re-run it to rewrite the link, the hooks and the watcher. Use
 `sd watch uninstall` to stop the background job, or `sd watch install` to
-start it again (with the same `$LOCAL_BIN`, if you changed it). On other platforms, only the CLI is linked; the background
-watcher requires macOS (launchd). Anything at `$LOCAL_BIN/sd` that isn't a
-symlink blocks installation before any links or jobs are changed.
+start it again (with the same `$LOCAL_BIN`, if you changed it). On other
+platforms, only the CLI is linked; the background watcher requires macOS
+(launchd). Anything at `$LOCAL_BIN/sd` that isn't a symlink blocks
+installation before any links or jobs are changed.
+
+Upgrading from a checkout where `bin/sd` was still a bash script: run
+`./install.sh` once after the pull that brings this in. Before then nothing
+rebuilds `sd`, and the watcher's old build looks for verbs that are gone.
 
 Needs on `PATH`: `bash5` (a link to bash 5+; the commands are
 `#!/usr/bin/env bash5`), `cargo` to build (https://rustup.rs), `git`, `gh`,
@@ -73,8 +80,8 @@ branch to fork from, or the branch is the default branch), the `.sheepdog/` file
 default, and a relative path is an error. The shipped defaults are in
 `lib/prompts/`.
 
-A custom local reviewer (`settings.localReview`) keeps the contract in
-`src/review_local.rs`'s header: `SHEEPDOG_BASE`, `SHEEPDOG_HEAD` and
+A custom local reviewer (`settings.localReview`) keeps the contract that
+`sd review-local --help` prints: `SHEEPDOG_BASE`, `SHEEPDOG_HEAD` and
 `SHEEPDOG_TASK` in, a JSON list of findings out.
 
 ## Interfaces with other tools

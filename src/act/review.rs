@@ -84,18 +84,24 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
         die(format!("verify failed ({cmd}); not reviewing"));
     }
     let mut secs = step_timeout(b);
-    // A child process on purpose, sd-review-local too: by contract
-    // (src/review_local.rs) settings.localReview is any script.
+    // A child process on purpose, sd review-local too: by contract
+    // (sd review-local --help) settings.localReview is any script.
     let mut reviewer = cfg("settings.localReview", b);
-    if reviewer.is_empty() {
+    let mut c = if reviewer.is_empty() {
         // Its harness step's own stepTimeout must fire first: this one can't
         // reach the harness, which would go on spending tokens.
-        reviewer = "sd-review-local".into();
         secs += 30;
-    }
+        reviewer = "sd review-local".into();
+        let mut c = Command::new(proc::sd_itself().unwrap_or_else(|e| die(format!("can't find sd itself: {e}"))));
+        c.arg("review-local");
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.args(["-c", &reviewer]);
+        c
+    };
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
-    let mut c = Command::new("sh");
-    c.args(["-c", &reviewer]).current_dir(&wt);
+    c.current_dir(&wt);
     c.env("SHEEPDOG_BASE", &base).env("SHEEPDOG_HEAD", &head).env("SHEEPDOG_TASK", &task);
     let o = proc::timeout_passing_stderr(secs, c);
     eprint!("{}", o.stderr);

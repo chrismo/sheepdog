@@ -1,5 +1,4 @@
 // sd act: the verbs that change a branch's PR (src/act_help.txt).
-// libexec/sd-act links here.
 
 mod address;
 mod answer;

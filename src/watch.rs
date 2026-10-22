@@ -5,7 +5,7 @@ mod pass;
 
 use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};
-use crate::proc::executable;
+use crate::proc::{self, executable};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -91,33 +91,18 @@ fn plist(prog: &str, interval: &str, path: &str, log: &str) -> String {
 }
 
 /// The job's PATH: <bindir> first unless it's ~/.local/bin, which stays on
-/// PATH anyway (bash5 and claude are linked there), and cargo's directory
-/// last unless it's already on it.
-fn job_path(home: &str, bindir: &str, cargo: Option<&str>) -> String {
-    let mut path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
-    if bindir != format!("{home}/.local/bin") {
-        path = format!("{bindir}:{path}");
+/// PATH anyway (bash5 and claude are linked there).
+fn job_path(home: &str, bindir: &str) -> String {
+    let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+    if bindir == format!("{home}/.local/bin") {
+        path
+    } else {
+        format!("{bindir}:{path}")
     }
-    if let Some(dir) = cargo.map(|c| c.rsplit_once('/').map_or(c, |(d, _)| d)) {
-        if !format!(":{path}:").contains(&format!(":{dir}:")) {
-            path = format!("{path}:{dir}");
-        }
-    }
-    path
 }
 
 fn whole_seconds(s: &str) -> bool {
     s.starts_with(|c: char| ('1'..='9').contains(&c)) && s.chars().all(|c| c.is_ascii_digit())
-}
-
-/// command -v <cmd>: <cmd> itself when it names a path, else the first
-/// executable of that name on PATH.
-fn command_v(cmd: &str) -> Option<String> {
-    if cmd.contains('/') {
-        return executable(Path::new(cmd)).then(|| cmd.to_string());
-    }
-    let path = std::env::var("PATH").unwrap_or_default();
-    path.split(':').map(|d| format!("{}/{cmd}", if d.is_empty() { "." } else { d })).find(|p| executable(Path::new(p)))
 }
 
 /// cd <dir> && pwd: <dir> made absolute, with its . and .. resolved.
@@ -133,13 +118,6 @@ fn absolute(dir: &str) -> String {
         }
     }
     out.to_string_lossy().into_owned()
-}
-
-/// The repo's bin/sd, from the binary (target/release/sd).
-fn repo_sd() -> String {
-    let exe = std::env::current_exe().and_then(fs::canonicalize).unwrap_or_default();
-    let sd = exe.ancestors().nth(3).unwrap_or(Path::new("/")).join("bin/sd");
-    fs::canonicalize(&sd).unwrap_or(sd).to_string_lossy().into_owned()
 }
 
 fn bootout(uid: &str, label: &str) {
@@ -158,14 +136,10 @@ fn install() -> ExitCode {
         bindir = absolute(&bindir);
     }
     let mut prog = format!("{bindir}/sd");
-    // sd rebuilds its Rust half after a pull (bin/sd), and the job has to find cargo.
-    let cargo = command_v(&env_or("CARGO", || "cargo".into()));
-    if cargo.is_none() {
-        eprintln!("sd watch: no cargo on PATH, so the watcher can't rebuild sd after a pull; run ./install.sh by hand");
-    }
-    let path = job_path(&home(), &bindir, cargo.as_deref());
+    let path = job_path(&home(), &bindir);
+    // Else this sd: the repo's target/release/sd, which bin/sd links to.
     if !executable(Path::new(&prog)) {
-        prog = repo_sd();
+        prog = proc::sd_itself().unwrap_or_else(|e| die(format!("can't find sd itself: {e}"))).to_string_lossy().into_owned();
     }
     let interval = config::get_global("settings.interval", false).unwrap_or_else(|lines| {
         for l in lines {
@@ -288,13 +262,10 @@ mod tests {
     }
 
     #[test]
-    fn job_path_leads_with_a_local_bin_that_isnt_the_default_and_ends_with_cargos_dir() {
+    fn job_path_leads_with_a_local_bin_that_isnt_the_default() {
         let base = "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-        assert_eq!(job_path("/h", "/h/.local/bin", None), base);
-        assert_eq!(job_path("/h", "/lb", None), format!("/lb:{base}"));
-        assert_eq!(job_path("/h", "/h/.local/bin", Some("/c/bin/cargo")), format!("{base}:/c/bin"));
-        assert_eq!(job_path("/h", "/lb", Some("/lb/cargo")), format!("/lb:{base}"));
-        assert_eq!(job_path("/h", "/h/.local/bin", Some("/usr/bin/cargo")), base);
+        assert_eq!(job_path("/h", "/h/.local/bin"), base);
+        assert_eq!(job_path("/h", "/lb"), format!("/lb:{base}"));
     }
 
     #[test]

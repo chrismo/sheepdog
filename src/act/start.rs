@@ -89,13 +89,9 @@ fn git_or_die(args: &[&str], what: &str) {
 }
 
 /// implement in the new worktree, in its own process as bash's subshell had
-/// it, so that whatever ends implement, start still prints the path. The
-/// binary itself, not the link this ran as: on macOS current_exe is the
-/// sd-act link, which would take "act" for its verb.
+/// it, so that whatever ends implement, start still prints the path.
 fn implement(dst: &str, b: &str, a: &Args) -> i32 {
-    let exe = std::env::current_exe()
-        .and_then(std::fs::canonicalize)
-        .unwrap_or_else(|e| die(format!("can't find sd itself: {e}")));
+    let exe = proc::sd_itself().unwrap_or_else(|e| die(format!("can't find sd itself: {e}")));
     let mut c = Command::new(exe);
     c.args(["act", "implement"]).current_dir(dst);
     if !a.harness.is_empty() {

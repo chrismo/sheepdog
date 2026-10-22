@@ -1,7 +1,7 @@
 // The harness adapter: the per-harness code (#79 Design record, rule 3): the
 // headless steps, the TUI sd act attach opens, and the tool-rule wording a
 // step's prompt needs. `sd harness` runs a step or tallies a session from the
-// command line; bin/sd doesn't list it: tests/harness.rs drives run_step
+// command line; sd --help doesn't list it: tests/harness.rs drives run_step
 // through it (#203).
 
 use crate::git::{git_out, main_worktree};

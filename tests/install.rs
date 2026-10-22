@@ -2,13 +2,14 @@
 // a temp dir (tests/common) beside a fixture repo/bin/sd that records watcher
 // installation without touching launchd, and a fake cargo and uname first on
 // PATH. Moved from install.bats; each test keeps the bats test's title above it.
+// repo/ is a git checkout, so install.sh writes its hooks there (#204).
 
 mod common;
 
-use common::{assert_has, chomp, Run, Sd};
+use common::{assert_has, assert_lacks, chomp, Run, Sd};
 use std::fs;
-use std::os::unix::fs::symlink;
-use std::path::Path;
+use std::os::unix::fs::{symlink, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 const UNAME: &str = "#!/usr/bin/env bash\nprintf '%s\\n' \"${TEST_OS:-Darwin}\"\n";
 
@@ -24,10 +25,12 @@ exit "${WATCH_EXIT:-0}"
 "#;
 
 /// install.bats' setup on top of tests/common's (whose bin/sd-install link and
-/// config env go unused): repo/install.sh (sd.bin) and the fixture repo/bin/sd,
-/// the fakes, and LOCAL_BIN, WATCH_CALLS and CARGO_CALLS exported.
+/// config env go unused): the checkout repo/, its install.sh (sd.bin) and the
+/// fixture repo/bin/sd, the fakes, and LOCAL_BIN, WATCH_CALLS and CARGO_CALLS
+/// exported.
 fn sd() -> Sd {
     let mut sd = Sd::for_verb("install");
+    sd.git(&["init", "-q", &sd.path("repo")]);
     fs::create_dir_all(sd.tmp.join("repo/bin")).unwrap();
     sd.env = [
         ("LOCAL_BIN", "local-bin"),
@@ -65,6 +68,26 @@ impl Sd {
     fn readlink(&self, p: &Path) -> String {
         fs::read_link(p).unwrap().display().to_string()
     }
+
+    /// repo/.git/hooks/<name>.
+    fn hook(&self, name: &str) -> PathBuf {
+        self.tmp.join("repo/.git/hooks").join(name)
+    }
+
+    /// <hook> run as git runs it after a merge, in repo/, with <env>.
+    fn run_hook(&mut self, hook: &Path, env: &[(&str, &str)]) -> Run {
+        let cwd = self.cwd.clone();
+        self.cd("repo");
+        let r = self.exec(hook, env, &["0"]);
+        self.cwd = cwd;
+        r
+    }
+}
+
+const HOOKS: [&str; 2] = ["post-merge", "post-rewrite"];
+
+fn is_executable(p: &Path) -> bool {
+    fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 fn is_link(p: &Path) -> bool {
@@ -244,4 +267,134 @@ fn on_linux_links_sd_and_explains_that_the_background_watcher_requires_macos() {
     assert!(is_link(&sd.local_bin("sd")));
     assert!(!sd.tmp.join("watch-calls").exists());
     assert_has(&r.output, &["watcher requires macOS"]);
+}
+
+// ── the git hooks that rebuild sd after a pull or a rebase (#204) ───────────
+
+#[test]
+fn writes_post_merge_and_post_rewrite_hooks_that_rebuild_sd_in_the_checkout() {
+    let mut sd = sd();
+    let r = sd.run(&[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    let build = format!("build --release --quiet --manifest-path {}", sd.path("repo/Cargo.toml"));
+    for h in HOOKS {
+        let hook = sd.hook(h);
+        assert!(is_executable(&hook), "{h}");
+        fs::remove_file(sd.tmp.join("cargo-calls")).unwrap();
+        let r = sd.run_hook(&hook, &[]);
+        assert_eq!(r.status, 0, "{h}: {}", r.output);
+        assert_eq!(sd.read("cargo-calls"), build, "{h}");
+    }
+}
+
+#[test]
+fn the_hooks_run_the_cargo_install_sh_found_without_it_on_path() {
+    let mut sd = sd();
+    sd.ok(&[]);
+    fs::remove_file(sd.tmp.join("cargo-calls")).unwrap();
+    let r = sd.run_hook(&sd.hook("post-merge"), &[("PATH", "/usr/bin:/bin")]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert!(sd.tmp.join("cargo-calls").exists());
+}
+
+/// A cargo that records the CARGO_TARGET_DIR it was run with.
+const CARGO_TARGET: &str = r#"#!/usr/bin/env bash
+printf '%s\n' "${CARGO_TARGET_DIR-unset}" >> "$CARGO_CALLS"
+"#;
+
+#[test]
+fn install_and_the_hooks_build_into_the_checkouts_target_whatever_cargo_target_dir_says() {
+    let mut sd = sd();
+    sd.fake("cargo", CARGO_TARGET);
+    let elsewhere = [("CARGO_TARGET_DIR", "/elsewhere")];
+    let r = sd.run_env(&elsewhere, &[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.read("cargo-calls"), "unset");
+    fs::remove_file(sd.tmp.join("cargo-calls")).unwrap();
+    for h in HOOKS {
+        let r = sd.run_hook(&sd.hook(h), &elsewhere);
+        assert_eq!(r.status, 0, "{h}: {}", r.output);
+    }
+    assert_eq!(sd.read("cargo-calls"), "unset\nunset");
+}
+
+#[test]
+fn a_failed_rebuild_says_so_and_names_install_sh() {
+    let mut sd = sd();
+    sd.ok(&[]);
+    let r = sd.run_hook(&sd.hook("post-merge"), &[("CARGO_EXIT", "101")]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["couldn't rebuild sd", &sd.path("repo/install.sh")]);
+}
+
+#[test]
+fn a_hook_whose_checkout_is_gone_says_so_and_doesnt_fail_the_pull() {
+    let sd = sd();
+    assert_eq!(sd.run(&[]).status, 0);
+    // As when it was written from a worktree since deleted: the hook outlives
+    // the checkout it builds.
+    let hook = sd.tmp.join("post-merge");
+    fs::copy(sd.hook("post-merge"), &hook).unwrap();
+    fs::rename(sd.tmp.join("repo"), sd.tmp.join("moved")).unwrap();
+    fs::remove_file(sd.tmp.join("cargo-calls")).unwrap();
+    let r = sd.exec(&hook, &[], &["0"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["is gone"]);
+    assert!(!sd.tmp.join("cargo-calls").exists());
+}
+
+#[test]
+fn a_failed_build_writes_no_hooks() {
+    let sd = sd();
+    let r = sd.run_env(&[("CARGO_EXIT", "101")], &[]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    for h in HOOKS {
+        assert!(!sd.hook(h).exists(), "{h}");
+    }
+}
+
+#[test]
+fn the_hooks_go_where_git_looks_for_them_core_hookspath() {
+    let sd = sd();
+    sd.git_in("repo", &["config", "core.hooksPath", &sd.path("my-hooks")]);
+    let r = sd.run(&[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    for h in HOOKS {
+        assert!(is_executable(&sd.tmp.join("my-hooks").join(h)), "{h}");
+        assert!(!sd.hook(h).exists(), "{h}");
+    }
+}
+
+#[test]
+fn a_hook_that_isnt_sheepdogs_is_left_alone_and_said_so() {
+    let sd = sd();
+    let mine = "#!/bin/sh\necho mine\n";
+    sd.script(&sd.hook("post-merge"), mine);
+    let r = sd.run(&[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(fs::read_to_string(sd.hook("post-merge")).unwrap(), mine);
+    assert_has(&r.output, &[&sd.hook("post-merge").display().to_string(), "isn't sheepdog's"]);
+    assert!(is_executable(&sd.hook("post-rewrite")));
+}
+
+#[test]
+fn rerunning_rewrites_sheepdogs_own_hooks() {
+    let sd = sd();
+    sd.ok(&[]);
+    let fresh = fs::read_to_string(sd.hook("post-merge")).unwrap();
+    fs::write(sd.hook("post-merge"), fresh.replace(&sd.path("repo"), "/an/old/checkout")).unwrap();
+    let r = sd.run(&[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_lacks(&r.output, "isn't sheepdog's");
+    assert_eq!(fs::read_to_string(sd.hook("post-merge")).unwrap(), fresh);
+}
+
+#[test]
+fn not_a_git_checkout_links_sd_and_says_nothing_will_rebuild_it() {
+    let sd = sd();
+    fs::remove_dir_all(sd.tmp.join("repo/.git")).unwrap();
+    let r = sd.run(&[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert!(is_link(&sd.local_bin("sd")));
+    assert_has(&r.output, &["not a git checkout", "install.sh"]);
 }

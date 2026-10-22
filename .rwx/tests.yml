@@ -43,7 +43,7 @@ tasks:
   - key: captain
     call: rwx/install-captain 1.2.0
 
-  # Ported verbs' libexec/sd-<verb> links to target/release/sd (#193).
+  # bin/sd links to target/release/sd (#193, #204).
   - key: rust
     call: rust-lang/install 1.1.1
     with:
@@ -71,7 +71,7 @@ tasks:
       - tests/**
       - lib/prompts/**
       - lib/review-rules.md
-      - "libexec/*"
+      - bin/sd
       - install.sh
 
   - key: test

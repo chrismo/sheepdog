@@ -1,13 +1,15 @@
 # sheepdog
 
-The PR pipeline: `sd state`, `sd act`, `sd watch`, `sd config`. `bin/sd`
-dispatches each verb to `libexec/sd-<verb>`, a bash script or, for a verb
-ported to Rust (#193), a link to the one binary `target/release/sd` built from
-`src/`, which runs as the verb it's named for. Split out of agent-rig on
+The PR pipeline: `sd state`, `sd act`, `sd watch`, `sd config`. `sd` is one
+Rust binary, `target/release/sd` built from `src/` (#193, #204); `src/main.rs`
+dispatches its verbs, and run through a link named `sd-<verb>` it runs as that
+verb. `bin/sd` is a committed link to the build. Split out of agent-rig on
 2026-10-13 with its history; commits before that date are agent-rig commits
 filtered down to these paths. Named pr-tend until 2026-10-15 (#40).
 
-Edit this repo, never `~/.local/bin/sd` — it's a symlink made by `./install.sh`.
+Edit this repo, never `~/.local/bin/sd`: it's a link to `bin/sd` made by
+`./install.sh`, which also writes the post-merge and post-rewrite git hooks
+that rebuild `target/release/sd` after a pull or a rebase.
 
 ## Design rules
 
@@ -94,21 +96,21 @@ from chrismo's real config, glyphs and launchd job.
 
 ## Development
 
-This is a TDD repo: write a failing test first, then make it pass. A ported
-verb's acceptance tests are Rust, in `tests/<verb>.rs` (the built binary run
-through a link named `sd-<verb>`, by `tests/common`'s harness, #199); the bash
-verbs' are bats.
+This is a TDD repo: write a failing test first, then make it pass. A verb's
+acceptance tests are Rust, in `tests/<verb>.rs` (the built binary run through
+a link named `sd-<verb>`, by `tests/common`'s harness, #199); `sd`'s own
+dispatch is `tests/cli.rs`. The only bats suite left is `ci/test.bats`.
 
-**Build before bats.** The verbs' links point at the release binary, so every
-bats suite needs `cargo build --release` after a change under `src/`.
-`cargo test` runs the Rust unit tests and `tests/`, against its own debug build.
+**`cargo test` builds its own debug binary.** It runs the Rust unit tests and
+`tests/` against it. `bin/sd` runs the release build: after a change under
+`src/`, `cargo build --release` before trying `bin/sd` by hand.
 
 **The full suite runs on the PR's CI, not locally and not by `rwx run`.**
 Locally, run only the tests you're writing or changing during red-green,
 picked by name with `-f`, not whole files and never the suite:
 
 ```bash
-bats -f 'usage names every verb' bin/sd.bats
+bats -f 'every default glob' ci/test.bats
 cargo test --test act_review no_usable_round
 ```
 

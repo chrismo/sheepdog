@@ -3,7 +3,7 @@
 // in a repo on feat one commit past main. `sd harness run` is run_step from
 // the command line, its tool lists in HARNESS_CLAUDE_ALLOW and
 // HARNESS_PI_TOOLS, the step's name and branch in HARNESS_STEP and
-// HARNESS_BRANCH; bin/sd doesn't list it. Moved from lib/sheepdog.bats;
+// HARNESS_BRANCH; sd --help doesn't list it. Moved from lib/sheepdog.bats;
 // each test keeps the bats test's title above it. harness_tally's tests are
 // src/harness.rs's unit tests.
 //

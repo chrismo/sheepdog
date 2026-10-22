@@ -103,6 +103,13 @@ pub fn executable(p: &Path) -> bool {
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
+/// sd itself, to run another of its verbs as a child: `<sd> <verb> ...`. The
+/// binary, not the link this ran as: on macOS current_exe is the link, and a
+/// link named sd-<verb> would take <verb> for its own.
+pub fn sd_itself() -> std::io::Result<PathBuf> {
+    std::env::current_exe().and_then(std::fs::canonicalize)
+}
+
 /// A fresh directory <name>-<pid>-<n> in the temp dir: 0700 whatever the
 /// umask, as mktemp -d makes it. A name already taken is someone else's, so
 /// it's skipped, never reused or removed.
