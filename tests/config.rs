@@ -4,12 +4,12 @@
 // is what one pipeline step runs with, `get` reads any dotted path.
 // lib/config.sh's tests, and the super it pins, stay in bats: lib/config.bats.
 
+mod common;
+
+use common::{chomp, Sd};
 use serde_json::Value;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 const GLOBAL: &str = r#"{"harness":"claude",
   "harnesses":{"claude":{"model":"strong","effort":"high"},
@@ -17,192 +17,15 @@ const GLOBAL: &str = r#"{"harness":"claude",
   "steps":{"address":{"harness":"pi","pi":{"model":"cheaper","effort":null}},
            "review":{"claude":{"effort":"max"}}}}"#;
 
-/// One run, as bats `run` sees it: `output` is stdout and stderr together,
-/// or stdout alone from `run_sep` (bats' --separate-stderr), trailing
-/// newlines stripped.
-struct Run {
-    status: i32,
-    output: String,
-    stderr: String,
-}
-
-impl Run {
-    /// bats' `lines`: the output's non-empty lines.
-    fn lines(&self) -> Vec<&str> {
-        self.output.split('\n').filter(|l| !l.is_empty()).collect()
-    }
-
-    /// `sed -n <n>p`: the output's nth line, 1-based, or "".
-    fn line(&self, n: usize) -> &str {
-        self.output.split('\n').nth(n - 1).unwrap_or("")
-    }
-}
-
-fn chomp(s: &str) -> String {
-    s.trim_end_matches('\n').to_string()
-}
-
-/// A temp dir holding a git repo on branch feat (off main), a link named
-/// sd-config to the binary under test, and the global file's path.
-struct Sd {
-    root: PathBuf,
-    tmp: PathBuf,
-    cwd: PathBuf,
-    bin: PathBuf,
-    config: Option<PathBuf>,
-    xdg: Option<PathBuf>,
-}
-
-impl Drop for Sd {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
 impl Sd {
+    /// The harness with a git repo on branch feat (off main) as cwd.
     fn new() -> Sd {
-        static N: AtomicUsize = AtomicUsize::new(0);
-        let root = std::env::temp_dir().join(format!(
-            "sd-config-test-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let tmp = fs::canonicalize(&root).unwrap();
-        fs::create_dir(tmp.join("bin")).unwrap();
-        let bin = tmp.join("bin/sd-config");
-        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_sd"), &bin).unwrap();
-        fs::write(
-            tmp.join("gitconfig-global"),
-            "[user]\n\temail = t@example.com\n\tname = Tester\n[init]\n\tdefaultBranch = main\n",
-        )
-        .unwrap();
-        let mut sd = Sd {
-            root,
-            cwd: tmp.clone(),
-            config: Some(tmp.join("global.json")),
-            xdg: None,
-            bin,
-            tmp,
-        };
+        let mut sd = Sd::for_verb("config");
         sd.git(&["init", "-q", "repo"]);
         sd.cd("repo");
         sd.git(&["commit", "-q", "--allow-empty", "-m", "init"]);
         sd.git(&["switch", "-qc", "feat"]);
         sd
-    }
-
-    /// cd <path>, relative to the temp dir.
-    fn cd(&mut self, path: &str) {
-        self.cwd = self.tmp.join(path);
-    }
-
-    fn command(&self, program: &Path) -> Command {
-        let mut c = Command::new(program);
-        c.current_dir(&self.cwd)
-            .env("GIT_CONFIG_GLOBAL", self.tmp.join("gitconfig-global"))
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .env_remove("SHEEPDOG_CONFIG")
-            .env_remove("XDG_CONFIG_HOME");
-        for v in [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_COMMON_DIR",
-            "GIT_INDEX_FILE",
-        ] {
-            c.env_remove(v);
-        }
-        if let Some(p) = &self.config {
-            c.env("SHEEPDOG_CONFIG", p);
-        }
-        if let Some(p) = &self.xdg {
-            c.env("XDG_CONFIG_HOME", p);
-        }
-        c
-    }
-
-    fn git_status(&self, args: &[&str]) -> i32 {
-        let out = self.command(Path::new("git")).args(args).output().unwrap();
-        out.status.code().unwrap_or(-1)
-    }
-
-    /// git <args>, which must succeed; its stdout, chomped.
-    fn git(&self, args: &[&str]) -> String {
-        let out = self.command(Path::new("git")).args(args).output().unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        chomp(&String::from_utf8_lossy(&out.stdout))
-    }
-
-    /// bats `run`: stdout and stderr interleaved on one pipe.
-    fn run(&self, args: &[&str]) -> Run {
-        let (mut r, w) = std::io::pipe().unwrap();
-        let mut c = self.command(&self.bin);
-        c.args(args)
-            .stdin(Stdio::null())
-            .stdout(w.try_clone().unwrap())
-            .stderr(w);
-        let mut child = c.spawn().unwrap();
-        drop(c);
-        let mut buf = Vec::new();
-        r.read_to_end(&mut buf).unwrap();
-        let status = child.wait().unwrap().code().unwrap_or(-1);
-        Run {
-            status,
-            output: chomp(&String::from_utf8_lossy(&buf)),
-            stderr: String::new(),
-        }
-    }
-
-    /// bats `run --separate-stderr`.
-    fn run_sep(&self, args: &[&str]) -> Run {
-        let out = self
-            .command(&self.bin)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
-        Run {
-            status: out.status.code().unwrap_or(-1),
-            output: chomp(&String::from_utf8_lossy(&out.stdout)),
-            stderr: chomp(&String::from_utf8_lossy(&out.stderr)),
-        }
-    }
-
-    /// stdout as written, whatever the status.
-    fn stdout(&self, args: &[&str]) -> String {
-        let out = self
-            .command(&self.bin)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    }
-
-    /// `$(sd-config <args>)`.
-    fn out(&self, args: &[&str]) -> String {
-        chomp(&self.stdout(args))
-    }
-
-    /// A bare command line in a bats test, which must succeed; its stdout.
-    fn ok(&self, args: &[&str]) -> String {
-        let out = self
-            .command(&self.bin)
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "sd-config {args:?}: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     /// One field of the step view as raw text ("" when absent).
@@ -212,10 +35,6 @@ impl Sd {
             Value::Null | Value::Bool(false) => String::new(),
             f => raw(f),
         }
-    }
-
-    fn cfg(&self) -> &Path {
-        self.config.as_deref().unwrap()
     }
 
     fn cfg_s(&self) -> String {
@@ -231,19 +50,10 @@ impl Sd {
         self.branch_file(b).display().to_string()
     }
 
-    fn write_global(&self, s: &str) {
-        fs::write(self.cfg(), format!("{s}\n")).unwrap();
-    }
-
     fn write_branch(&self, b: &str, s: &str) {
         let f = self.branch_file(b);
         fs::create_dir_all(f.parent().unwrap()).unwrap();
         fs::write(f, format!("{s}\n")).unwrap();
-    }
-
-    /// cwd/<name> := <content>
-    fn write(&self, name: &str, content: &str) {
-        fs::write(self.cwd.join(name), content).unwrap();
     }
 
     /// feat rebasing onto main, stopped on a conflict (detached HEAD, as
