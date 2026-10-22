@@ -26,10 +26,12 @@ build by are in `AGENTS.md`.
 Upgrading from pr-tend? [Migrate its state first](#coming-from-pr-tend).
 
 ```bash
-./install.sh        # links sd and installs its launchd watcher
+./install.sh        # builds sd, links it and installs its launchd watcher
 ```
 
-The installer links `bin/sd` into `~/.local/bin` (`$LOCAL_BIN` to change the
+The installer builds the Rust half of `sd` (`cargo build --release`; sheepdog
+is moving from bash to Rust a verb at a time, #193; `sd` rebuilds it on its
+own when the source is newer, as after a pull), links `bin/sd` into `~/.local/bin` (`$LOCAL_BIN` to change the
 link directory) and, on macOS, starts the watcher, which checks enrolled
 branches every five minutes by default. Re-run it to update both. Use
 `sd watch uninstall` to stop the background job, or `sd watch install` to
@@ -38,8 +40,8 @@ watcher requires macOS (launchd). Anything at `$LOCAL_BIN/sd` that isn't a
 symlink blocks installation before any links or jobs are changed.
 
 Needs on `PATH`: `bash5` (a link to bash 5+; the commands are
-`#!/usr/bin/env bash5`), `git`, `gh`, `jq`, and SuperDB `super` **0.3.0**
-exactly. `claude` and/or `pi` for the agent steps.
+`#!/usr/bin/env bash5`), `cargo` to build (https://rustup.rs), `git`, `gh`,
+`jq`, and SuperDB `super` **0.3.0** exactly. `claude` and/or `pi` for the agent steps.
 
 ## Agent credentials
 

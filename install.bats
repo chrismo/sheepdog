@@ -15,6 +15,13 @@ setup() {
 printf '%s\n' "${TEST_OS:-Darwin}"
 EOF
   chmod +x "$TEST_DIR/fakebin/uname"
+  export CARGO_CALLS="$TEST_DIR/cargo-calls"
+  cat > "$TEST_DIR/fakebin/cargo" <<'EOF'
+#!/usr/bin/env bash5
+printf '%s\n' "$*" >> "$CARGO_CALLS"
+exit "${CARGO_EXIT:-0}"
+EOF
+  chmod +x "$TEST_DIR/fakebin/cargo"
   export PATH="$TEST_DIR/fakebin:$PATH"
   cp "$BATS_TEST_DIRNAME/install.sh" "$INSTALLER"
   cat > "$TEST_DIR/repo/bin/sd" <<'EOF'
@@ -35,6 +42,30 @@ teardown() {
   [ "$status" -eq 0 ]
   [ -L "$LOCAL_BIN/sd" ]
   [ "$(readlink "$LOCAL_BIN/sd")" = "$TEST_DIR/repo/bin/sd" ]
+}
+
+@test "builds the Rust verbs in the repo before linking (#193)" {
+  run "$INSTALLER"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$CARGO_CALLS")" = "build --release --quiet --manifest-path $TEST_DIR/repo/Cargo.toml" ]
+  [ -L "$LOCAL_BIN/sd" ]
+}
+
+@test "a failed build links nothing and installs no watcher" {
+  export CARGO_EXIT=101
+  run "$INSTALLER"
+  [ "$status" -eq 1 ]
+  [ ! -e "$LOCAL_BIN/sd" ]
+  [ ! -e "$WATCH_CALLS" ]
+  [[ "$output" == *"cargo build failed"* ]]
+}
+
+@test "no cargo: says what's needed and links nothing" {
+  export CARGO="$TEST_DIR/no-such-cargo"
+  run "$INSTALLER"
+  [ "$status" -eq 1 ]
+  [ ! -e "$LOCAL_BIN/sd" ]
+  [[ "$output" == *"needs cargo"*"rustup.rs"* ]]
 }
 
 @test "links nothing else: the verbs are reached through sd" {

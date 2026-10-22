@@ -90,10 +90,12 @@ verify_cmd() { "$SD_CONFIG" set --global settings.verify "$1"; }
 }
 
 @test "a list-valued verify is refused before anything runs" {
-  "$SD_CONFIG" set --global --json settings.verify '["true","false"]'
+  run "$SD_CONFIG" set --global --json settings.verify '["true","false"]'
+  [ "$status" -eq 1 ]
+  printf '%s\n' '{"settings":{"verify":["true","false"]}}' > "$SHEEPDOG_CONFIG"
   run "$SD_ACT" verify
   [ "$status" -ne 0 ]
-  [[ "$output" == *"single command"* ]]
+  [[ "$output" == *'settings.verify: expected a string, got ["true","false"]'* ]]
 }
 
 @test "the branch file's verify beats the global file's" {

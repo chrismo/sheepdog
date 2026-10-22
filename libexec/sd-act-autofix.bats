@@ -127,10 +127,12 @@ head_sha() { git rev-parse HEAD; }
 }
 
 @test "a list-valued autofix is refused before anything runs" {
-  "$SD_CONFIG" set --global --json settings.autofix '["true","false"]'
+  run "$SD_CONFIG" set --global --json settings.autofix '["true","false"]'
+  [ "$status" -eq 1 ]
+  printf '%s\n' '{"settings":{"autofix":["true","false"]}}' > "$SHEEPDOG_CONFIG"
   run "$SD_ACT" autofix
   [ "$status" -ne 0 ]
-  [[ "$output" == *"single command"* ]]
+  [[ "$output" == *'settings.autofix: expected a string, got ["true","false"]'* ]]
 }
 
 @test "the branch file's autofix beats the global file's" {

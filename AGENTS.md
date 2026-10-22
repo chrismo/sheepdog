@@ -1,7 +1,9 @@
 # sheepdog
 
 The PR pipeline: `sd state`, `sd act`, `sd watch`, `sd config`. `bin/sd`
-dispatches each verb to `libexec/sd-<verb>`. Split out of agent-rig on
+dispatches each verb to `libexec/sd-<verb>`, a bash script or, for a verb
+ported to Rust (#193), a link to the one binary `target/release/sd` built from
+`src/`, which runs as the verb it's named for. Split out of agent-rig on
 2026-10-13 with its history; commits before that date are agent-rig commits
 filtered down to these paths. Named pr-tend until 2026-10-15 (#40).
 
@@ -94,6 +96,11 @@ from chrismo's real config, glyphs and launchd job.
 ## Development
 
 This is a TDD repo: write a failing bats test first, then make it pass.
+
+**Build before bats.** The ported verbs' links point at the release binary, and
+lib/config.sh's `prc_get` and `prc_step` run it, so every suite needs
+`cargo build --release` after a change under `src/`. Rust unit tests:
+`cargo test`. The bats suites are the acceptance tests for both languages.
 
 **The full suite runs on the PR's CI, not locally and not by `rwx run`.**
 Locally, run only the tests you're writing or changing during red-green,

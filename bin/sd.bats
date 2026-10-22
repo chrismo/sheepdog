@@ -13,10 +13,25 @@ setup() {
 }
 
 # fake_layout — a copy of bin/sd next to a libexec/ holding one probe verb, so
-# dispatch can be checked without running a real verb.
+# dispatch can be checked without running a real verb. Its Rust build is up to
+# date; the fake cargo on PATH logs to $CARGO_CALLS and "builds" by creating
+# target/release/sd, unless $CARGO_EXIT says it failed.
 fake_layout() {
-  mkdir -p "$TMP/x/bin" "$TMP/x/libexec"
+  mkdir -p "$TMP/x/bin" "$TMP/x/libexec" "$TMP/x/src" "$TMP/x/target/release" "$TMP/fakebin"
   cp "$SD" "$TMP/x/bin/sd"
+  touch -t 202601010000 "$TMP/x/src/main.rs" "$TMP/x/Cargo.toml" "$TMP/x/Cargo.lock"
+  printf '#!/bin/sh\n' > "$TMP/x/target/release/sd"
+  chmod +x "$TMP/x/target/release/sd"
+  export CARGO_CALLS="$TMP/cargo-calls"
+  cat > "$TMP/fakebin/cargo" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CARGO_CALLS"
+(( ${CARGO_EXIT:-0} == 0 )) || exit "$CARGO_EXIT"
+printf '#!/bin/sh\n' > "${5%/Cargo.toml}/target/release/sd"
+chmod +x "${5%/Cargo.toml}/target/release/sd"
+EOF
+  chmod +x "$TMP/fakebin/cargo"
+  PATH="$TMP/fakebin:$PATH"
   cat > "$TMP/x/libexec/sd-probe" <<'EOF'
 #!/usr/bin/env bash
 printf 'arg:%s\n' "$@"
@@ -110,4 +125,62 @@ EOF
   run "$SD" config --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"Usage"* ]]
+}
+
+# ── the Rust build: rebuilt when missing or older than its source (#193) ────
+
+@test "an up-to-date build isn't rebuilt" {
+  fake_layout
+  run "$TMP/x/bin/sd" probe
+  [ "$status" -eq 0 ]
+  [ ! -e "$CARGO_CALLS" ]
+}
+
+@test "a missing build is built before the verb runs" {
+  fake_layout
+  rm "$TMP/x/target/release/sd"
+  run --separate-stderr "$TMP/x/bin/sd" probe hi
+  [ "$status" -eq 0 ]
+  [ "$(cat "$CARGO_CALLS")" = "build --release --quiet --manifest-path $TMP/x/Cargo.toml" ]
+  [ "${lines[0]}" = "arg:hi" ]
+}
+
+@test "a source, Cargo.toml or Cargo.lock newer than the build is rebuilt, once" {
+  fake_layout
+  local f
+  for f in src/main.rs Cargo.toml Cargo.lock; do
+    rm -f "$CARGO_CALLS"
+    touch -t 202601010000 "$TMP/x/target/release/sd"
+    touch "$TMP/x/$f"
+    run "$TMP/x/bin/sd" probe
+    [ "$status" -eq 0 ]
+    [ "$(wc -l < "$CARGO_CALLS" | tr -d ' ')" = 1 ] || { echo "$f not rebuilt"; return 1; }
+    run "$TMP/x/bin/sd" probe
+    [ "$(wc -l < "$CARGO_CALLS" | tr -d ' ')" = 1 ] || { echo "$f rebuilt twice"; return 1; }
+  done
+}
+
+@test "a failed build stops before the verb, naming install.sh" {
+  fake_layout
+  rm "$TMP/x/target/release/sd"
+  CARGO_EXIT=101 run "$TMP/x/bin/sd" probe
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"arg:"* ]]
+  [[ "$output" == *"couldn't build"*"$TMP/x/install.sh"* ]]
+}
+
+@test "no cargo: stops the same way" {
+  fake_layout
+  rm "$TMP/x/target/release/sd"
+  CARGO="$TMP/no-such-cargo" run "$TMP/x/bin/sd" probe
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"couldn't build"*"$TMP/x/install.sh"* ]]
+}
+
+@test "help needs no build" {
+  fake_layout
+  rm "$TMP/x/target/release/sd"
+  CARGO_EXIT=101 run "$TMP/x/bin/sd" --help
+  [ "$status" -eq 0 ]
+  [ ! -e "$CARGO_CALLS" ]
 }
