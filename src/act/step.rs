@@ -1,17 +1,33 @@
 // What every agent step shares: the branch's session, the commit its repo
 // guidance is read from, what the agent may run, and the step's question for
 // chrismo (#167). libexec/sd-act's step_session, past_fork_limit, step_store,
-// guidance_base, agent_rules and question_* still do the same for ci-fix and
-// restack --resolve: change both.
+// guidance_base, agent_rules and question_* still do the same for restack
+// --resolve: change both.
 
 use super::commands::step_timeout;
 use super::start::start_default;
 use super::{attached_check, cfg, die, or_die, repo_remote};
-use crate::git::{git, git_input, git_out, rev, show_ref, strip_nl, worktree_mark};
+use crate::git::{git, git_input, git_out, rev, show_ref, strip_nl, worktree_for, worktree_mark};
 use crate::val::{at, on, t};
-use crate::{config, harness, json, state};
+use crate::{config, harness, json, running, state};
 use regex::Regex;
 use serde_json::{json, Value};
+
+/// <run> in <b>'s worktree, given its path, marked running as <step> for
+/// all of it, commit and verify included, so NEXT doesn't hand the worktree
+/// on mid-step (#170).
+pub fn in_worktree(b: &str, step: &str, run: impl FnOnce(&str)) {
+    let wt = worktree_for(".", b);
+    if wt.is_empty() {
+        die(format!("{b} isn't checked out in any worktree"));
+    }
+    if let Err(e) = std::env::set_current_dir(&wt) {
+        die(format!("can't work in {wt}: {e}"));
+    }
+    if running::holding(b, step, || run(&wt)).is_none() {
+        std::process::exit(1);
+    }
+}
 
 /// The harness and session a step runs in: step_session's STEP_*.
 pub struct Session {
@@ -85,11 +101,23 @@ fn over(limit: i64, tally: &Value) -> Option<i64> {
     at(tally, "context").as_i64().filter(|ctx| limit > 0 && *ctx > limit)
 }
 
-fn must(args: &[&str]) {
+pub(super) fn must(args: &[&str]) {
     let o = git(".", args);
     if !o.ok {
         eprint!("{}", o.stderr);
         std::process::exit(o.code);
+    }
+}
+
+/// The agent's edits in <wt>, committed with <msg>.
+pub(super) fn commit_edits(wt: &str, msg: &str) {
+    for args in [&["add", "-A"][..], &["commit", "-q", "-m", msg]] {
+        let g = git(wt, args);
+        print!("{}", g.stdout);
+        eprint!("{}", g.stderr);
+        if !g.ok {
+            die(format!("commit failed; the edits are left in {wt}"));
+        }
     }
 }
 

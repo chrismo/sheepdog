@@ -6,6 +6,7 @@
 mod address;
 mod attach;
 mod bookkeeping;
+mod ci_fix;
 mod commands;
 mod describe;
 mod github;
@@ -121,18 +122,21 @@ impl Args {
             }
             (self.answer, self.branch) = (self.positionals[0].clone(), second);
         }
-        let one_verb = [
-            (self.accept, "--accept", "review"),
-            (self.remove, "--remove", "forget"),
-            (self.question, "--question", "ack"),
+        let one_verb: [(bool, &str, &[&str]); 4] = [
+            (self.accept, "--accept", &["review"]),
+            (self.remove, "--remove", &["forget"]),
+            (self.question, "--question", &["ack"]),
+            (!self.answer.is_empty() && verb != "answer", "--answer", &["implement", "address", "ci-fix"]),
         ];
         for (set, flag, only) in one_verb {
-            if set && verb != only {
-                return Err(format!("{flag} is for sd act {only} only"));
+            if set && !only.contains(&verb) {
+                let verbs = match only.split_last() {
+                    Some((last, [])) => last.to_string(),
+                    Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+                    None => String::new(),
+                };
+                return Err(format!("{flag} is for sd act {verbs} only"));
             }
-        }
-        if !self.answer.is_empty() && !matches!(verb, "answer" | "implement" | "address") {
-            return Err("--answer is for sd act implement and address only".into());
         }
         Ok(())
     }
@@ -258,6 +262,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         "address" => address::address(&b, &remote, &a),
         "describe" => describe::describe(&b, &remote, &a),
         "ship" => ship::ship(&b, &remote, &a),
+        "ci-fix" => ci_fix::ci_fix(&b, &remote, &a),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
@@ -337,11 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn answer_hands_implement_and_address_the_answer_and_no_other_verb() {
+    fn answer_hands_implement_address_and_ci_fix_the_answer_and_no_other_verb() {
         let a = parsed("implement", &["--answer", "-x, not y", "feat"]).unwrap();
         assert_eq!((a.answer.as_str(), a.branch.as_str()), ("-x, not y", "feat"));
         assert_eq!(parsed("address", &["--answer", "bar"]).unwrap().answer, "bar");
-        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement and address only".into()));
+        let a = parsed("ci-fix", &["--answer", "yes", "feat"]).unwrap();
+        assert_eq!((a.answer.as_str(), a.branch.as_str()), ("yes", "feat"));
+        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement, address or ci-fix only".into()));
     }
 
     #[test]

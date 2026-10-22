@@ -4,14 +4,14 @@
 
 use super::commands::{status, verify_autofix};
 use super::hold::hold_since;
-use super::step::{agent_rules, answer_cmd, answer_prompt, guidance_base, question_answered, question_ask, question_gate,
-                  question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, guidance_base, in_worktree, question_answered,
+                  question_ask, question_gate, question_say, step_session, step_store};
 use super::{die, state_json, Args};
-use crate::git::{git, git_input, git_out, rev, strip_nl, worktree_for};
+use crate::git::{git, git_input, git_out, rev, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Step, PI_TOOLS};
 use crate::val::{at, on, t, text};
-use crate::{json, running};
+use crate::json;
 use serde_json::{Map, Value};
 
 // The implement step's prompt: guidance (settings.implementPrompt, else
@@ -295,15 +295,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         die(format!("the agent needs input on {b}: {summary}\n{}: answer with {}; or answer in its session (sd act attach {b}), then sd act ack --question and sd act implement", question_say(b), answer_cmd(b)));
     }
     if !status(wt).is_empty() {
-        let msg = commit_message(&result, fixing, &task);
-        for args in [&["add", "-A"][..], &["commit", "-q", "-m", &msg]] {
-            let g = git(wt, args);
-            print!("{}", g.stdout);
-            eprint!("{}", g.stderr);
-            if !g.ok {
-                die(format!("commit failed; the edits are left in {wt}"));
-            }
-        }
+        commit_edits(wt, &commit_message(&result, fixing, &task));
     } else if !changed && !fixing {
         die(format!("the agent says done but changed nothing (session {sid})"));
     }
@@ -331,20 +323,8 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     }
 }
 
-/// implement, marked running for all of it, commit and verify included, so
-/// NEXT doesn't hand the worktree on mid-step (#170). It runs in the
-/// branch's worktree.
 pub fn implement(b: &str, a: &Args) {
-    let wt = worktree_for(".", b);
-    if wt.is_empty() {
-        die(format!("{b} isn't checked out in any worktree"));
-    }
-    if let Err(e) = std::env::set_current_dir(&wt) {
-        die(format!("can't work in {wt}: {e}"));
-    }
-    if running::holding(b, "implement", || implement_run(b, &wt, a)).is_none() {
-        std::process::exit(1);
-    }
+    in_worktree(b, "implement", |wt| implement_run(b, wt, a));
 }
 
 #[cfg(test)]
