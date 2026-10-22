@@ -97,9 +97,10 @@ fn code(st: ExitStatus) -> i32 {
 }
 
 /// <c> in its own process group, stdin from /dev/null. At the deadline the
-/// whole group gets TERM (an agent's subprocesses too), and it's Out's
-/// timed_out: status 124, "timed out after <secs>s" on stderr (or on stdout,
-/// merged), after what the command printed till then.
+/// whole group gets TERM (an agent's subprocesses too), KILL a second later
+/// if the command is still running, and it's Out's timed_out: status 124,
+/// "timed out after <secs>s" on stderr (or on stdout, merged), after what the
+/// command printed till then.
 pub fn timeout(secs: u64, mut c: Command, merged: bool) -> Out {
     let prog = c.get_program().to_string_lossy().into_owned();
     c.stdin(Stdio::null()).process_group(0);
@@ -127,13 +128,11 @@ pub fn timeout(secs: u64, mut c: Command, merged: bool) -> Out {
         match child.try_wait() {
             Ok(Some(st)) => break Some(st),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = Command::new("kill").args(["-TERM", &format!("-{}", child.id())]).status();
-                let _ = child.wait();
-                break None;
-            }
+            _ => break None,
         }
     };
+    let group = format!("-{}", child.id());
+    let kill = |sig: &str| Command::new("kill").args([sig, &group]).status();
     match status {
         // As $( ) does, wait for what it started to stop writing.
         Some(_) => {
@@ -141,10 +140,18 @@ pub fn timeout(secs: u64, mut c: Command, merged: bool) -> Out {
                 let _ = h.join();
             }
         }
+        // The bash with_timeout didn't wait at all; this waits a second for
+        // the group to stop, then KILLs it if the command ignored TERM.
         None => {
+            let _ = kill("-TERM");
             let grace = Instant::now() + Duration::from_secs(1);
-            while !readers.iter().all(JoinHandle::is_finished) && Instant::now() < grace {
+            let mut exited = || matches!(child.try_wait(), Ok(Some(_)));
+            while !(exited() && readers.iter().all(JoinHandle::is_finished)) && Instant::now() < grace {
                 std::thread::sleep(Duration::from_millis(10));
+            }
+            if !exited() {
+                let _ = kill("-KILL");
+                let _ = child.wait();
             }
         }
     }
@@ -190,22 +197,32 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sd-proc-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let pidf = dir.join("pid");
-        // A grandchild in the background: only a kill of the group reaches it.
-        let script = format!("echo early; sleep 30 & echo $! > {}; wait", pidf.display());
+        let late = dir.join("late");
+        // A grandchild in the background: only a kill of the group stops it
+        // writing. (Checked by what it does, not kill -0: an orphan nobody
+        // reaps stays a zombie.)
+        let script = format!("echo early; (sleep 2; echo late > {}) & wait", late.display());
         let start = Instant::now();
         let o = with_timeout(1, "sh", &["-c", &script], None);
         assert!(start.elapsed() < Duration::from_secs(10));
         assert_eq!((o.ok, o.code, o.timed_out), (false, 124, true));
         assert_eq!(o.stdout, "early\n");
         assert_eq!(o.stderr, "timed out after 1s\n");
-        let pid = std::fs::read_to_string(&pidf).unwrap();
-        std::thread::sleep(Duration::from_millis(200));
-        let alive = Command::new("kill").args(["-0", pid.trim()]).stderr(Stdio::null()).status().unwrap().success();
-        assert!(!alive, "the grandchild outlived the timeout");
+        std::thread::sleep(Duration::from_secs(3).saturating_sub(start.elapsed()));
+        assert!(!late.exists(), "the grandchild outlived the timeout");
         let o = with_timeout_merged(1, "sh", &["-c", "echo early >&2; sleep 30"], None);
         assert_eq!(o.stdout, "early\ntimed out after 1s\n");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_timeout_doesnt_wait_on_a_command_that_ignores_term() {
+        let start = Instant::now();
+        let o = with_timeout(1, "sh", &["-c", "trap '' TERM; echo hi; sleep 6; echo after"], None);
+        assert!(start.elapsed() < Duration::from_secs(4), "waited {:?}", start.elapsed());
+        assert_eq!((o.ok, o.code, o.timed_out), (false, 124, true));
+        assert_eq!(o.stdout, "hi\n");
+        assert_eq!(o.stderr, "timed out after 1s\n");
     }
 
     #[test]

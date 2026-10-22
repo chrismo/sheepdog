@@ -450,8 +450,8 @@ fn paths(b: &str, no_branch: bool) -> Res<String> {
     Ok(out)
 }
 
-/// prc_step for the verbs ported to Rust: what `sd config step` prints, or
-/// the lines it would print to stderr.
+/// prc_step for the verbs ported to Rust: the JSON value `sd config step`
+/// prints, or the lines it would print to stderr.
 pub fn step(name: &str, b: &str, forced: &str) -> Result<Value, Vec<String>> {
     stderr_lines(step_block(name, b, forced))
 }
