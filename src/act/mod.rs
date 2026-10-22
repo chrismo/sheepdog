@@ -130,7 +130,12 @@ impl Args {
         ];
         for (set, flag, only) in one_verb {
             if set && !only.contains(&verb) {
-                return Err(format!("{flag} is for sd act {} only", only.join(" or ")));
+                let verbs = match only.split_last() {
+                    Some((last, [])) => last.to_string(),
+                    Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+                    None => String::new(),
+                };
+                return Err(format!("{flag} is for sd act {verbs} only"));
             }
         }
         Ok(())
@@ -343,7 +348,7 @@ mod tests {
         assert_eq!(parsed("address", &["--answer", "bar"]).unwrap().answer, "bar");
         let a = parsed("ci-fix", &["--answer", "yes", "feat"]).unwrap();
         assert_eq!((a.answer.as_str(), a.branch.as_str()), ("yes", "feat"));
-        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement or address or ci-fix only".into()));
+        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement, address or ci-fix only".into()));
     }
 
     #[test]
