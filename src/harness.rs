@@ -167,6 +167,7 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
 /// a note naming stepBudget as its source. A cap in args is the more specific
 /// one, so it replaces stepBudget's. A cap that is negative, or in args
 /// missing or not a number, is an error: 0 would silently mean no cap.
+/// So is stepBudget not a number.
 fn step_cap(budget: &str, extra: &[&str]) -> Result<(Vec<String>, f64, String), String> {
     let mut in_args = None;
     for (i, a) in extra.iter().enumerate() {
@@ -177,22 +178,27 @@ fn step_cap(budget: &str, extra: &[&str]) -> Result<(Vec<String>, f64, String), 
         }
     }
     if let Some(v) = in_args {
-        return match v.parse::<f64>() {
-            Ok(c) if c >= 0.0 => Ok((vec![], c, String::new())),
-            _ => Err(format!("--max-budget-usd in args must be 0 or more, not \"{v}\"")),
+        return match usd(v) {
+            Some(c) => Ok((vec![], c, String::new())),
+            None => Err(format!("--max-budget-usd in args must be 0 or more, not \"{v}\"")),
         };
-    }
-    if budget.starts_with('-') {
-        return Err(format!("settings.stepBudget must be 0 or more, not \"{budget}\""));
     }
     if Regex::new(r"^0*(\.0*)?$").expect("a fixed pattern compiles").is_match(budget) {
         return Ok((vec![], 0.0, String::new()));
     }
+    let Some(cap) = usd(budget).filter(|_| !budget.starts_with('-')) else {
+        return Err(format!("settings.stepBudget must be 0 or more, not \"{budget}\""));
+    };
     Ok((
         vec!["--max-budget-usd".to_string(), budget.to_string()],
-        budget.parse().unwrap_or(0.0),
+        cap,
         format!(" (settings.stepBudget {budget} USD)"),
     ))
+}
+
+/// <v> as a finite amount of 0 or more; None otherwise.
+fn usd(v: &str) -> Option<f64> {
+    v.parse::<f64>().ok().filter(|c| c.is_finite() && *c >= 0.0)
 }
 
 /// claude's command for the step, before the typed flags and args.
@@ -402,7 +408,7 @@ pub fn run(argv: &[String]) -> ExitCode {
                 eprintln!("sd harness: settings aren't a JSON object: {settings}");
                 return ExitCode::from(1);
             };
-            let Some(timeout) = timeout.parse::<f64>().ok().filter(|t| *t >= 0.0) else {
+            let Some(timeout) = timeout.parse::<f64>().ok().filter(|t| t.is_finite() && *t >= 0.0) else {
                 eprintln!("sd harness: timeout isn't seconds: {timeout}");
                 return ExitCode::from(1);
             };
@@ -533,6 +539,10 @@ mod tests {
         assert!(flags("0", &["--max-budget-usd"]).is_err());
         assert!(flags("0", &["--max-budget-usd", "lots"]).is_err());
         assert!(flags("0", &["--max-budget-usd=-3"]).is_err());
+        assert!(flags("0", &["--max-budget-usd", "inf"]).is_err());
+        assert!(flags("abc", &[]).unwrap_err().contains("stepBudget must be 0 or more"));
+        assert!(flags("1e", &[]).is_err());
+        assert!(flags("inf", &[]).is_err());
     }
 
     #[test]
