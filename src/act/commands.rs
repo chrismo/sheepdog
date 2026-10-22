@@ -1,0 +1,104 @@
+// verify (A10) and autofix (A11). libexec/sd-act's verify_run and
+// autofix_run still do the same for the bash agent steps: change both.
+
+use super::{cfg, die, plural};
+use crate::git::{git, git_out, worktree_for};
+use crate::proc;
+
+const VERIFY_TAIL: usize = 40;
+
+fn worktree(b: &str) -> String {
+    let wt = worktree_for(".", b);
+    if wt.is_empty() {
+        die(format!("{b} is not checked out in any worktree"));
+    }
+    wt
+}
+
+fn command(name: &str, b: &str) -> String {
+    let c = cfg(&format!("settings.{name}"), b);
+    if c.contains('\n') {
+        die(format!("{name} must be a single command, not a list"));
+    }
+    c
+}
+
+fn step_timeout(b: &str) -> u64 {
+    let t = cfg("settings.stepTimeout", b);
+    let whole = !t.starts_with('0') && t.bytes().all(|c| c.is_ascii_digit());
+    match t.parse() {
+        Ok(secs) if whole => secs,
+        _ => die(format!("settings.stepTimeout must be whole seconds: {t}")),
+    }
+}
+
+fn status(wt: &str) -> String {
+    git_out(wt, &["status", "--porcelain"]).unwrap_or_default()
+}
+
+fn print_tail(out: &str) {
+    let n = out.matches('\n').count();
+    if n > VERIFY_TAIL {
+        println!("… (last {VERIFY_TAIL} of {n} lines)");
+    }
+    let lines: Vec<&str> = out.split_terminator('\n').collect();
+    for l in &lines[lines.len().saturating_sub(VERIFY_TAIL)..] {
+        println!("{l}");
+    }
+}
+
+pub fn verify(b: &str) {
+    let wt = worktree(b);
+    let cmd = command("verify", b);
+    if cmd.is_empty() {
+        println!("no settings.verify configured; nothing to run");
+        return;
+    }
+    let secs = step_timeout(b);
+    let before = status(&wt);
+    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(&wt));
+    if o.ok && status(&wt) != before {
+        println!("verify changed files in {wt} (a formatter?); commit them and rerun");
+    } else if !o.ok {
+        print_tail(&o.stdout);
+    } else {
+        println!("verify passed ({cmd})");
+        return;
+    }
+    die(format!("verify failed ({cmd})"))
+}
+
+pub fn autofix(b: &str) {
+    let wt = worktree(b);
+    let cmd = command("autofix", b);
+    if cmd.is_empty() {
+        println!("no settings.autofix configured; nothing to run");
+        return;
+    }
+    if !status(&wt).is_empty() {
+        die(format!("{wt} has uncommitted changes; autofix needs a clean tree to commit from"));
+    }
+    let secs = step_timeout(b);
+    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(&wt));
+    let changed = status(&wt).lines().count();
+    if !o.ok {
+        print_tail(&o.stdout);
+        if changed > 0 {
+            println!("autofix changed {} in {wt} before failing; left uncommitted", plural(changed, "file"));
+        }
+        die(format!("autofix failed ({cmd})"));
+    }
+    if changed == 0 {
+        println!("autofix changed nothing ({cmd})");
+        return;
+    }
+    for args in [&["add", "-A"][..], &["commit", "-q", "-m", &format!("autofix: {cmd}")]] {
+        let g = git(&wt, args);
+        if !g.ok {
+            eprint!("{}", g.stderr);
+            die(format!("commit failed; autofix's changes are left in {wt}"));
+        }
+    }
+    let sha = git_out(&wt, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+    println!("autofix committed {sha}: {} ({cmd})", plural(changed, "file"));
+}

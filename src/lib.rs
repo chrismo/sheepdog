@@ -1,3 +1,4 @@
+pub mod act;
 pub mod config;
 pub mod git;
 pub mod json;

@@ -18,6 +18,7 @@ fn main() -> ExitCode {
         None => rest.remove(0),
     };
     match verb.as_str() {
+        "act" => sheepdog::act::run(&rest),
         "config" => sheepdog::config::run(&rest),
         "state" => sheepdog::state::run(&rest),
         _ => {
