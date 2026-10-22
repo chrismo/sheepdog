@@ -2,18 +2,19 @@
 // watch read its --json, so that stays byte for byte what the bash version
 // printed (src/json.rs); NEXT is src/next.rs.
 
-use crate::next::text as next_text;
-use crate::{config, git, json, next};
+use crate::git::{
+    commits_not_ours, count, git, git_ok, git_out, is_ancestor, made_here, main_worktree, patch_id, rev, show_ref, stacked_on,
+    stacked_unclear, strip_nl, worktree_for, worktree_mark,
+};
+use crate::val::{at, n, on, sj, t, text, NULL};
+use crate::{config, git, json, next, proc};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
-use std::os::unix::process::CommandExt;
-use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const HELP: &str = include_str!("state_help.txt");
 
@@ -61,13 +62,6 @@ const DISCOVER: &str = r#"query($owner: String!, $repo: String!, $branch: String
   }
 }"#;
 
-static NULL: Value = Value::Null;
-
-/// The field at a dotted path; null when it or a parent is missing.
-fn at<'a>(v: &'a Value, path: &str) -> &'a Value {
-    path.split('.').try_fold(v, |cur, k| cur.as_object()?.get(k)).unwrap_or(&NULL)
-}
-
 fn str_or<'a>(v: &'a Value, d: &'a str) -> &'a str {
     v.as_str().unwrap_or(d)
 }
@@ -91,307 +85,6 @@ fn re(p: &str) -> Regex {
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("sd state: {msg}");
     std::process::exit(1)
-}
-
-// ── processes ────────────────────────────────────────────────────────────────
-
-struct Out {
-    ok: bool,
-    code: i32,
-    stdout: String,
-    stderr: String,
-}
-
-fn run_cmd(prog: &str, args: &[&str], dir: Option<&str>, input: Option<&[u8]>) -> Out {
-    let mut c = Command::new(prog);
-    c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
-    if let Some(d) = dir {
-        c.current_dir(d);
-    }
-    let Ok(mut child) = c.spawn() else {
-        return Out { ok: false, code: 127, stdout: String::new(), stderr: format!("{prog}: not found\n") };
-    };
-    if let Some(i) = input {
-        let mut stdin = child.stdin.take().expect("piped");
-        let i = i.to_vec();
-        std::thread::spawn(move || {
-            let _ = stdin.write_all(&i);
-        });
-    }
-    let o = child.wait_with_output().expect("wait on a spawned child");
-    Out {
-        ok: o.status.success(),
-        code: o.status.code().unwrap_or(128),
-        stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-    }
-}
-
-fn git(args: &[&str]) -> Out {
-    run_cmd("git", args, None, None)
-}
-
-fn git_out(args: &[&str]) -> Option<String> {
-    let o = git(args);
-    o.ok.then(|| strip_nl(o.stdout))
-}
-
-fn strip_nl(mut s: String) -> String {
-    while s.ends_with('\n') {
-        s.pop();
-    }
-    s
-}
-
-fn git_ok(args: &[&str]) -> bool {
-    git(args).ok
-}
-
-/// lib/sheepdog.sh's with_timeout: the command in its own process group,
-/// killed whole when time runs out; its stdout, or None.
-fn with_timeout(secs: u64, prog: &str, args: &[&str]) -> Option<String> {
-    let mut child = Command::new(prog)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()
-        .ok()?;
-    let mut stdout = child.stdout.take().expect("piped");
-    let reader = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = stdout.read_to_string(&mut s);
-        s
-    });
-    let deadline = Instant::now() + Duration::from_secs(secs);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return reader.join().ok(),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = Command::new("kill").args(["-TERM", &format!("-{}", child.id())]).status();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    }
-}
-
-// ── git helpers ──────────────────────────────────────────────────────────────
-
-fn rev(r: &str) -> String {
-    git_out(&["rev-parse", "-q", "--verify", &format!("{r}^{{commit}}")]).unwrap_or_default()
-}
-
-fn is_ancestor(a: &str, b: &str) -> bool {
-    git_ok(&["merge-base", "--is-ancestor", a, b])
-}
-
-fn count(args: &[&str]) -> i64 {
-    let mut a = vec!["rev-list", "--count"];
-    a.extend_from_slice(args);
-    git_out(&a).and_then(|s| s.trim().parse().ok()).unwrap_or(0)
-}
-
-/// -U0: an upstream edit next to our lines must not read as a changed patch.
-fn patch_id(a: &str, b: &str) -> String {
-    let d = git(&["diff", "-U0", a, b]);
-    let p = run_cmd("git", &["patch-id", "--stable"], None, Some(d.stdout.as_bytes()));
-    p.stdout.split(' ').next().unwrap_or("").trim_end_matches('\n').to_string()
-}
-
-fn show_ref(r: &str) -> bool {
-    git_ok(&["show-ref", "-q", "--verify", r])
-}
-
-fn worktree_for(b: &str) -> String {
-    let want = format!("branch refs/heads/{b}");
-    let mut wt = "";
-    let list = git(&["worktree", "list", "--porcelain"]).stdout;
-    for l in list.lines() {
-        if let Some(w) = l.strip_prefix("worktree ") {
-            wt = w;
-        } else if l == want {
-            return wt.to_string();
-        }
-    }
-    String::new()
-}
-
-fn main_worktree() -> String {
-    let list = git(&["worktree", "list", "--porcelain"]).stdout;
-    list.lines().next().and_then(|l| l.strip_prefix("worktree ")).unwrap_or("").to_string()
-}
-
-/// lib/sheepdog.sh's worktree_mark, byte for byte: sd act writes the mark a
-/// question records, and this compares it.
-fn worktree_mark(wt: &str) -> Option<String> {
-    let mut buf: Vec<u8> = Vec::new();
-    let st = Command::new("git")
-        .args(["-C", wt, "--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=all"])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    buf.extend_from_slice(&st.stdout);
-    if st.status.success() {
-        let d = Command::new("git")
-            .args(["-C", wt, "--no-optional-locks", "diff", "--binary", "--no-color", "--no-ext-diff", "--no-textconv", "HEAD"])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        buf.extend_from_slice(&d.stdout);
-        if d.status.success() {
-            let o = Command::new("git")
-                .args(["-C", wt, "ls-files", "-o", "-z", "--exclude-standard"])
-                .stderr(Stdio::null())
-                .output()
-                .ok()?;
-            let paths: String = o
-                .stdout
-                .split(|b| *b == 0)
-                .filter(|f| !f.is_empty())
-                .map(|f| String::from_utf8_lossy(f).into_owned())
-                .filter(|f| !f.contains('\n') && Path::new(wt).join(f).is_file())
-                .map(|f| f + "\n")
-                .collect();
-            let h = run_cmd("git", &["-C", wt, "hash-object", "--stdin-paths"], None, Some(paths.as_bytes()));
-            buf.extend_from_slice(h.stdout.as_bytes());
-        }
-    }
-    let h = run_cmd("git", &["-C", wt, "hash-object", "--stdin"], None, Some(&buf));
-    h.ok.then(|| strip_nl(h.stdout))
-}
-
-/// What the remote says its HEAD is, else refs/remotes/<remote>/HEAD, else main.
-fn remote_default(remote: &str) -> String {
-    let out = with_timeout(10, "git", &["ls-remote", "--symref", remote, "HEAD"]).unwrap_or_default();
-    let from_remote = out
-        .lines()
-        .find_map(|l| l.strip_prefix("ref: refs/heads/").and_then(|r| r.strip_suffix("\tHEAD")))
-        .map(str::to_string);
-    let r = from_remote.unwrap_or_else(|| {
-        let r = git_out(&["symbolic-ref", "-q", "--short", &format!("refs/remotes/{remote}/HEAD")]).unwrap_or_default();
-        r.strip_prefix(&format!("{remote}/")).unwrap_or(&r).to_string()
-    });
-    if r.is_empty() {
-        "main".into()
-    } else {
-        r
-    }
-}
-
-/// How many commits of <sha> no reflog entry reaches.
-fn commits_not_ours(reflog: &str, sha: &str) -> Value {
-    let input: String = reflog.lines().filter(|l| !l.is_empty()).map(|l| format!("^{l}\n")).collect();
-    let o = run_cmd("git", &["rev-list", "--count", "--stdin", sha], None, Some(input.as_bytes()));
-    o.stdout.trim().parse::<i64>().map_or(Value::Null, |n| json!(n))
-}
-
-/// Every commit in <range> was authored and committed by this repo's user.
-fn made_here(range: &str) -> bool {
-    let Some(me) = git_out(&["config", "user.email"]).filter(|m| !m.is_empty()) else { return false };
-    let Some(people) = git_out(&["log", "--format=%ae%n%ce", range]) else { return false };
-    people.lines().all(|p| p == me)
-}
-
-/// lib/sheepdog.sh's stacked_on: the branch <b> was made from when no one
-/// recorded it. Ok((name, base)), or Err(1) none, Err(2) a tie, Err(3)
-/// unclear, the names in the string.
-fn stacked_on(b: &str, remote: &str, default: &str) -> Result<(String, String), (i32, String)> {
-    let def = format!("refs/remotes/{remote}/{default}");
-    if b == default {
-        return Err((1, String::new()));
-    }
-    let mut not = vec![format!("^{def}")];
-    if show_ref(&format!("refs/heads/{default}")) {
-        not.push(format!("^refs/heads/{default}"));
-    }
-    let head = format!("refs/heads/{b}");
-    let mut a: Vec<&str> = vec!["rev-list", "--topo-order", "--reverse", &head];
-    a.extend(not.iter().map(String::as_str));
-    let Some(oldest) = git_out(&a) else { return Err((1, String::new())) };
-    let oldest = oldest.lines().next().unwrap_or("").to_string();
-    if oldest.is_empty() {
-        return Err((1, String::new()));
-    }
-    let mut a: Vec<&str> = vec![&head];
-    a.extend(not.iter().map(String::as_str));
-    let total = count(&a);
-    let locals: HashSet<String> = git(&["for-each-ref", "--format=%(refname:short)", "refs/heads"])
-        .stdout
-        .lines()
-        .map(str::to_string)
-        .collect();
-    let mut reached: HashSet<String> = HashSet::new();
-    for l in git(&["reflog", "show", "--format=%H %gs", &head, "--"]).stdout.lines() {
-        let (sha, msg) = l.split_once(' ').unwrap_or((l, ""));
-        let made = msg.starts_with("branch: Created from ")
-            || msg.starts_with("Branch: renamed ")
-            || msg.starts_with("reset: moving to ")
-            || msg.starts_with("branch: Reset to ")
-            || msg.ends_with(": Fast-forward");
-        if !made {
-            reached.insert(sha.to_string());
-        }
-    }
-    let (mut best, mut best_base, mut best_score, mut best_theirs) = (String::new(), String::new(), 0i64, 0i64);
-    let mut tie: Vec<String> = Vec::new();
-    let refs = git(&["for-each-ref", "--contains", &oldest, "--format=%(refname)", "refs/heads", &format!("refs/remotes/{remote}")]).stdout;
-    for r in refs.lines() {
-        let name = r.strip_prefix("refs/heads/").unwrap_or(r);
-        let name = name.strip_prefix(&format!("refs/remotes/{remote}/")).unwrap_or(name).to_string();
-        if name == b || name == default || !locals.contains(&name) {
-            continue;
-        }
-        let excl = format!("^{r}");
-        let mut a: Vec<&str> = vec![&head];
-        a.extend(not.iter().map(String::as_str));
-        a.push(&excl);
-        let own = count(&a);
-        if own <= 0 {
-            continue;
-        }
-        if git_out(&["config", "--get", &format!("branch.{name}.sd-parent")]).as_deref() == Some(b) {
-            continue;
-        }
-        let excl = format!("^refs/heads/{b}");
-        let mut a: Vec<&str> = vec![r];
-        a.extend(not.iter().map(String::as_str));
-        a.push(&excl);
-        let theirs = count(&a);
-        let fork = git_out(&["merge-base", &head, r]).unwrap_or_default();
-        if reached.contains(&fork) {
-            continue;
-        }
-        let score = (total - own) * 2 + i64::from(theirs == 0);
-        if score > best_score {
-            (best, best_base, best_score, best_theirs) = (name, fork, score, theirs);
-            tie.clear();
-        } else if score == best_score && name != best && !tie.contains(&name) {
-            tie.push(name);
-        }
-    }
-    if best.is_empty() {
-        return Err((1, String::new()));
-    }
-    if best_theirs > 0 || !tie.is_empty() {
-        let mut names = vec![best];
-        names.extend(tie);
-        names.sort();
-        return Err((if best_theirs == 0 { 2 } else { 3 }, names.join(" ")));
-    }
-    Ok((best, best_base))
-}
-
-fn stacked_unclear(b: &str, names: &str, default: &str) -> String {
-    let name = if names.contains(' ') { "<name>" } else { names };
-    format!(
-        "shares commits with {}, and each has its own since, so git can't tell which, if either, was made from the other: git config branch.{b}.sd-parent {name} if {b} was, or git config branch.{b}.sd-parent {default} if not",
-        names.replace(' ', " or ")
-    )
 }
 
 // ── usage.sup: what the branch has spent (#121) ──────────────────────────────
@@ -465,7 +158,7 @@ fn branch_spend(b: &str) -> Result<Value, ()> {
         Ok(t) if !t.is_empty() => String::from_utf8_lossy(&t).into_owned(),
         _ => return Ok(json!(0)),
     };
-    let (spend, skipped) = spend_in(&text, &main_worktree(), b);
+    let (spend, skipped) = spend_in(&text, &main_worktree("."), b);
     if skipped > 0 {
         eprintln!("sd state: warning: {skipped} line(s) of {file} aren't usage records; their cost isn't counted");
     }
@@ -553,7 +246,7 @@ fn question_state(b: &str, head: &str) -> Result<Option<Value>, ()> {
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
     let (Some(h), Some(step), Some(m), Some(text)) = (s("head"), s("step"), s("mark"), s("text")) else { return Err(()) };
     let at_head = h == head && {
-        let wt = worktree_for(b);
+        let wt = worktree_for(".", b);
         !wt.is_empty() && worktree_mark(&wt).as_deref() == Some(m)
     };
     Ok(Some(json!({"step": step, "sha": h, "text": text, "at_head": at_head})))
@@ -588,7 +281,7 @@ impl Gh {
     fn call(&mut self, label: &str, fields: &[String]) -> Call {
         let mut args: Vec<&str> = vec!["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}"];
         args.extend(fields.iter().map(String::as_str));
-        let o = run_cmd("gh", &args, None, None);
+        let o = proc::run("gh", &args, None, None);
         if !o.ok {
             self.resp = Value::Null;
             if o.stderr.contains("Could not resolve to a PullRequest") {
@@ -633,8 +326,8 @@ impl Gh {
     /// closed unmerged: then discovery picks one and stores its number (unset
     /// for none), for a local branch only. Err when gh failed.
     fn lookup_pr(&mut self, b: &str, commits: bool) -> Result<Value, ()> {
-        let n = git_out(&["config", "--get", &format!("branch.{b}.sd-pr")]).unwrap_or_default();
-        let is_local = show_ref(&format!("refs/heads/{b}"));
+        let n = git_out(".", &["config", "--get", &format!("branch.{b}.sd-pr")]).unwrap_or_default();
+        let is_local = show_ref(".", &format!("refs/heads/{b}"));
         let mut fetched = String::new();
         let mut fetched_pr = Value::Null;
         if !n.is_empty() {
@@ -662,13 +355,13 @@ impl Gh {
         let pick = pick_pr(&self.resp);
         let Some(pick) = pick else {
             if !n.is_empty() && is_local {
-                let _ = git(&["config", "--unset", &format!("branch.{b}.sd-pr")]);
+                let _ = git(".", &["config", "--unset", &format!("branch.{b}.sd-pr")]);
             }
             return Ok(Value::Null);
         };
         // A lost race with another writer only costs a discovery next time.
         if pick != n && is_local {
-            let _ = git(&["config", &format!("branch.{b}.sd-pr"), &pick]);
+            let _ = git(".", &["config", &format!("branch.{b}.sd-pr"), &pick]);
         }
         if pick == fetched {
             return Ok(fetched_pr);
@@ -695,7 +388,7 @@ fn pick_pr(resp: &Value) -> Option<String> {
     let pick = nodes.iter().find(|x| at(x, "state").as_str() == Some("OPEN")).or(nodes.first())?;
     match at(pick, "number") {
         Value::Null => None,
-        v => Some(next_text(v)),
+        v => Some(text(v)),
     }
 }
 
@@ -758,7 +451,7 @@ fn is_test(p: &str, globs: &[String]) -> bool {
 /// first removed line: a hunk of a test file. -U0, so a hunk is only changed
 /// lines; a removed line is always one the base had.
 fn git_diff_lines(base: &str, hd: &str, tests: &HashSet<String>) -> Option<Vec<String>> {
-    let d = git(&[
+    let d = git(".", &[
         "-c", "core.quotePath=false", "diff", "-M", "-U0", "--no-color", "--no-ext-diff", "--no-textconv",
         "--src-prefix=a/", "--dst-prefix=b/", base, hd,
     ]);
@@ -825,8 +518,8 @@ fn flags_json(base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> Result<Value
     let (Some(sup), Some(skips)) = (compile_all(at(cfg, "suppressions")), compile_all(at(cfg, "skips"))) else {
         return Err(format!("settings.flags has an invalid regex: {cfg_text}"));
     };
-    let globs: Vec<String> = arr(at(cfg, "testFiles")).iter().map(next_text).collect();
-    let changed = git(&["-c", "core.quotePath=false", "diff", "-M", "--name-status", base, hd]);
+    let globs: Vec<String> = arr(at(cfg, "testFiles")).iter().map(text).collect();
+    let changed = git(".", &["-c", "core.quotePath=false", "diff", "-M", "--name-status", base, hd]);
     if !changed.ok {
         return Err(format!("couldn't list the files {}..{} changes", &base[..7.min(base.len())], &hd[..7.min(hd.len())]));
     }
@@ -889,7 +582,7 @@ fn flags_json(base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> Result<Value
             args.push(format!("{ln},{ln}"));
         }
         args.extend([hd.to_string(), "--".into(), f.clone()]);
-        let o = git(&args.iter().map(String::as_str).collect::<Vec<_>>());
+        let o = git(".", &args.iter().map(String::as_str).collect::<Vec<_>>());
         for l in o.stdout.lines() {
             let w: Vec<&str> = l.split_whitespace().collect();
             if w.len() >= 3
@@ -912,7 +605,7 @@ fn flags_json(base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> Result<Value
                 if new != "/dev/null" && new != file {
                     args.push(&new);
                 }
-                let shas = git_out(&args).ok_or(format!("couldn't list the commits that touched {file}"))?;
+                let shas = git_out(".", &args).ok_or(format!("couldn't list the commits that touched {file}"))?;
                 touched.insert(file.clone(), shas.lines().filter(|s| !s.is_empty()).map(|s| json!(s)).collect());
             }
             touched[&file].clone()
@@ -1153,11 +846,11 @@ fn assemble(s: &Facts) -> Value {
             let name = first_of(x, "name", "context");
             let key = format!(
                 "{}/{}/{}/{}/{}",
-                next_text(at(x, "__typename")),
+                text(at(x, "__typename")),
                 str_or(at(x, "checkSuite.app.slug"), ""),
                 str_or(at(x, "checkSuite.workflowRun.workflow.name"), ""),
                 str_or(at(x, "checkSuite.workflowRun.event"), ""),
-                next_text(&name)
+                text(&name)
             );
             (name, ci_class(x), at(x, "databaseId").as_i64().unwrap_or(0), key)
         })
@@ -1375,32 +1068,32 @@ fn raw_json(text: &str) -> Value {
 }
 
 fn pin_status(branch: &str, kind: &str, head: &str, target_ref: &str, old_base: &str, stackless: bool) -> Value {
-    let pin = rev(&format!("refs/sheepdog/{branch}/{kind}"));
+    let pin = rev(".", &format!("refs/sheepdog/{branch}/{kind}"));
     if pin.is_empty() {
         return json!({"sha": null, "status": "none"});
     }
     if pin == head {
         return json!({"sha": pin, "status": "covered"});
     }
-    if is_ancestor(&pin, head) {
-        return json!({"sha": pin, "status": "uncovered", "uncovered": count(&[&format!("{pin}..{head}")])});
+    if is_ancestor(".", &pin, head) {
+        return json!({"sha": pin, "status": "uncovered", "uncovered": count(".", &[&format!("{pin}..{head}")])});
     }
     let against = if target_ref.is_empty() { head } else { target_ref };
-    let mut pin_base = rev(&format!("refs/sheepdog/{branch}/{kind}-base"));
+    let mut pin_base = rev(".", &format!("refs/sheepdog/{branch}/{kind}-base"));
     let mut head_base = old_base.to_string();
     // The merge-base only when not stacked, as in O3: with a stacked parent,
     // open or merged, it can lie below the parent's commits (#97).
     if stackless {
         if pin_base.is_empty() {
-            pin_base = git_out(&["merge-base", &pin, against]).unwrap_or_default();
+            pin_base = git_out(".", &["merge-base", &pin, against]).unwrap_or_default();
         }
         if head_base.is_empty() {
-            head_base = git_out(&["merge-base", head, against]).unwrap_or_default();
+            head_base = git_out(".", &["merge-base", head, against]).unwrap_or_default();
         }
     }
     let mut status = "unknown";
     if !pin_base.is_empty() && !head_base.is_empty() {
-        status = if patch_id(&pin_base, &pin) == patch_id(&head_base, head) { "rewritten-same" } else { "rewritten-changed" };
+        status = if patch_id(".", &pin_base, &pin) == patch_id(".", &head_base, head) { "rewritten-same" } else { "rewritten-changed" };
     }
     json!({"sha": pin, "status": status})
 }
@@ -1410,7 +1103,7 @@ fn pin_status(branch: &str, kind: &str, head: &str, target_ref: &str, old_base: 
 /// it's a rate limit; any other failure is Err with gh's stderr.
 fn required_checks(base: &str) -> Result<Value, String> {
     let rest = |path: &str| -> Result<Value, String> {
-        let o = run_cmd("gh", &["api", path], None, None);
+        let o = proc::run("gh", &["api", path], None, None);
         if o.ok {
             return serde_json::from_str(&o.stdout).map_err(|_| String::new());
         }
@@ -1425,18 +1118,18 @@ fn required_checks(base: &str) -> Result<Value, String> {
     let branch = rest(&format!("repos/{{owner}}/{{repo}}/branches/{base}"))?;
     let mut out: Vec<String> = Vec::new();
     for r in arr(&rules).iter().filter(|r| at(r, "type").as_str() == Some("required_status_checks")) {
-        out.extend(arr(at(r, "parameters.required_status_checks")).iter().map(|c| next_text(at(c, "context"))));
+        out.extend(arr(at(r, "parameters.required_status_checks")).iter().map(|c| text(at(c, "context"))));
     }
-    out.extend(arr(at(&branch, "protection.required_status_checks.contexts")).iter().map(next_text));
-    out.extend(arr(at(&branch, "protection.required_status_checks.checks")).iter().map(|c| next_text(at(c, "context"))));
+    out.extend(arr(at(&branch, "protection.required_status_checks.contexts")).iter().map(text));
+    out.extend(arr(at(&branch, "protection.required_status_checks.checks")).iter().map(|c| text(at(c, "context"))));
     out.sort();
     out.dedup();
     Ok(json!(out))
 }
 
 fn observe(branch: &str, remote: &str) -> (Value, Value) {
-    let cfg = |k: &str| git_out(&["config", "--get", &format!("branch.{branch}.{k}")]).unwrap_or_default();
-    let head = rev(&format!("refs/heads/{branch}"));
+    let cfg = |k: &str| git_out(".", &["config", "--get", &format!("branch.{branch}.{k}")]).unwrap_or_default();
+    let head = rev(".", &format!("refs/heads/{branch}"));
     let bots = raw_json(&cfg_text("settings.botLogin", branch, true));
     let ignore = raw_json(&cfg_text("settings.botIgnore", branch, true));
     let ignore_body_text = cfg_text("settings.botIgnoreBody", branch, true);
@@ -1466,13 +1159,13 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     }
     errors.append(&mut gh.errors);
     if default_branch.is_empty() {
-        default_branch = remote_default(remote);
+        default_branch = git::remote_default(".", remote);
     }
     let mut parent = cfg("sd-parent");
     let mut parent_source = "config";
     if parent.is_empty() {
         if !pr.is_null() {
-            parent = next_text(at(&pr, "baseRefName"));
+            parent = text(at(&pr, "baseRefName"));
             parent_source = "pr";
         } else {
             parent = default_branch.clone();
@@ -1480,7 +1173,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
             // A plain git branch from another's tip records no parent (#94): flag it,
             // unless gh failed and a PR we couldn't see may name the parent.
             if gh_ok {
-                match stacked_on(branch, remote, &default_branch) {
+                match stacked_on(".", branch, remote, &default_branch) {
                     Ok((name, _)) => errors.push(format!("stacked on {name} without sheepdog knowing: sd act enroll records it")),
                     Err((2, names)) => errors.push(format!(
                         "stacked on {} without sheepdog knowing: record one with git config branch.{branch}.sd-parent <name>",
@@ -1511,13 +1204,13 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     // commits above the remote head repeat a target commit's author date and
     // subject.
     let mut undone = 0i64;
-    let u_pin = rev(&format!("refs/sheepdog/{branch}/base"));
-    let u_tr = rev(&format!("refs/remotes/{remote}/{target}"));
-    let u_rs = rev(&format!("refs/remotes/{remote}/{branch}"));
-    if !u_pin.is_empty() && !u_tr.is_empty() && !u_rs.is_empty() && is_ancestor(&u_rs, &head) && !is_ancestor(&u_pin, &head) {
-        if let Some(u_mb) = git_out(&["merge-base", &u_tr, &head]) {
+    let u_pin = rev(".", &format!("refs/sheepdog/{branch}/base"));
+    let u_tr = rev(".", &format!("refs/remotes/{remote}/{target}"));
+    let u_rs = rev(".", &format!("refs/remotes/{remote}/{branch}"));
+    if !u_pin.is_empty() && !u_tr.is_empty() && !u_rs.is_empty() && is_ancestor(".", &u_rs, &head) && !is_ancestor(".", &u_pin, &head) {
+        if let Some(u_mb) = git_out(".", &["merge-base", &u_tr, &head]) {
             let set = |range: String| -> HashSet<String> {
-                git(&["log", "--format=%at %s", &range]).stdout.lines().map(str::to_string).collect()
+                git(".", &["log", "--format=%at %s", &range]).stdout.lines().map(str::to_string).collect()
             };
             let ours = set(format!("{u_rs}..{head}"));
             undone = set(format!("{u_mb}..{u_tr}")).intersection(&ours).count() as i64;
@@ -1529,19 +1222,19 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     // only a parent known to have no PR counts.
     let (mut parent_local, mut parent_remote, mut parent_unpushed, mut parent_landed) = (Value::Null, Value::Null, false, false);
     if parent != default_branch {
-        let l = show_ref(&format!("refs/heads/{parent}"));
-        let r = !rev(&format!("refs/remotes/{remote}/{parent}")).is_empty();
+        let l = show_ref(".", &format!("refs/heads/{parent}"));
+        let r = !rev(".", &format!("refs/remotes/{remote}/{parent}")).is_empty();
         parent_local = json!(l);
         parent_remote = json!(r);
         if l && !r && parent_merged == false && parent_pr.is_null() {
-            if is_ancestor(&format!("refs/heads/{parent}"), &format!("refs/remotes/{remote}/{default_branch}")) {
+            if is_ancestor(".", &format!("refs/heads/{parent}"), &format!("refs/remotes/{remote}/{default_branch}")) {
                 parent_landed = true;
             } else {
                 parent_unpushed = true;
             }
         }
     }
-    let target_ref = rev(&format!("refs/remotes/{remote}/{target}"));
+    let target_ref = rev(".", &format!("refs/remotes/{remote}/{target}"));
     let (mut sync_ahead, mut behind, mut up_to_date, mut old_base, mut conflict, mut by_tree) =
         (Value::Null, Value::Null, Value::Null, String::new(), Value::Null, false);
     if target_ref.is_empty() {
@@ -1551,39 +1244,39 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
             errors.push(format!("no {remote}/{target} ref (not fetched?)"));
         }
     } else {
-        sync_ahead = json!(count(&[&format!("{target_ref}..{head}")]));
-        behind = json!(count(&[&format!("{head}..{target_ref}")]));
-        let base_pin = rev(&format!("refs/sheepdog/{branch}/base"));
+        sync_ahead = json!(count(".", &[&format!("{target_ref}..{head}")]));
+        behind = json!(count(".", &[&format!("{head}..{target_ref}")]));
+        let base_pin = rev(".", &format!("refs/sheepdog/{branch}/base"));
         let merged_head = str_or(at(&parent_pr, "headRefOid"), "").to_string();
-        if !base_pin.is_empty() && !is_ancestor(&base_pin, &head) && undone == 0 {
+        if !base_pin.is_empty() && !is_ancestor(".", &base_pin, &head) && undone == 0 {
             errors.push(format!("base pin {} is no longer in {branch}'s history (rewritten outside sheepdog?)", &base_pin[..7]));
         }
         // parent_in_head: HEAD holds the merged parent's whole change (squash merges only).
         let parent_in_head = || -> bool {
-            if merged_head.is_empty() || !git_ok(&["cat-file", "-e", &format!("{merged_head}^{{commit}}")]) {
+            if merged_head.is_empty() || !git_ok(".", &["cat-file", "-e", &format!("{merged_head}^{{commit}}")]) {
                 return false;
             }
-            if is_ancestor(&merged_head, &target_ref) {
+            if is_ancestor(".", &merged_head, &target_ref) {
                 return false;
             }
-            let Some(base) = git_out(&["merge-base", &merged_head, &target_ref]) else { return false };
-            if git_out(&["merge-base", &head, &target_ref]).as_deref() != Some(base.as_str()) {
+            let Some(base) = git_out(".", &["merge-base", &merged_head, &target_ref]) else { return false };
+            if git_out(".", &["merge-base", &head, &target_ref]).as_deref() != Some(base.as_str()) {
                 return false;
             }
-            let o = git(&["merge-tree", "--write-tree", &format!("--merge-base={base}"), &head, &merged_head]);
-            o.ok && strip_nl(o.stdout) == git_out(&["rev-parse", &format!("{head}^{{tree}}")]).unwrap_or_default()
+            let o = git(".", &["merge-tree", "--write-tree", &format!("--merge-base={base}"), &head, &merged_head]);
+            o.ok && strip_nl(o.stdout) == git_out(".", &["rev-parse", &format!("{head}^{{tree}}")]).unwrap_or_default()
         };
-        if !base_pin.is_empty() && is_ancestor(&base_pin, &head) {
+        if !base_pin.is_empty() && is_ancestor(".", &base_pin, &head) {
             old_base = base_pin.clone();
             // A rebase or fast-forward outside sheepdog leaves the pin below the
             // default branch's commits HEAD now holds (#120).
-            if target == default_branch && is_ancestor(&base_pin, &target_ref) {
-                old_base = git_out(&["merge-base", &target_ref, &head]).unwrap_or_default();
+            if target == default_branch && is_ancestor(".", &base_pin, &target_ref) {
+                old_base = git_out(".", &["merge-base", &target_ref, &head]).unwrap_or_default();
             }
-        } else if parent_merged == true && !merged_head.is_empty() && is_ancestor(&merged_head, &head) {
+        } else if parent_merged == true && !merged_head.is_empty() && is_ancestor(".", &merged_head, &head) {
             old_base = merged_head.clone();
-        } else if let Some(fp) = (!rev(&format!("refs/remotes/{remote}/{parent}")).is_empty())
-            .then(|| git_out(&["merge-base", "--fork-point", &format!("refs/remotes/{remote}/{parent}"), &head]))
+        } else if let Some(fp) = (!rev(".", &format!("refs/remotes/{remote}/{parent}")).is_empty())
+            .then(|| git_out(".", &["merge-base", "--fork-point", &format!("refs/remotes/{remote}/{parent}"), &head]))
             .flatten()
         {
             old_base = fp;
@@ -1594,10 +1287,10 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
         // Not with the default branch once a stacked parent merged, nor with an
         // open stacked parent (#97).
         } else if target == parent && parent == default_branch {
-            old_base = git_out(&["merge-base", &target_ref, &head]).unwrap_or_default();
+            old_base = git_out(".", &["merge-base", &target_ref, &head]).unwrap_or_default();
         }
 
-        if is_ancestor(&target_ref, &head) {
+        if is_ancestor(".", &target_ref, &head) {
             up_to_date = json!(true);
             conflict = json!(false);
             // A tree base is for a restack, and there's none to do.
@@ -1609,9 +1302,9 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
             // merged parent's.
             if old_base.is_empty() {
                 let commits: HashSet<String> =
-                    arr(at(&parent_pr, "allCommits.nodes")).iter().map(|n| next_text(at(n, "commit.oid"))).collect();
+                    arr(at(&parent_pr, "allCommits.nodes")).iter().map(|n| text(at(n, "commit.oid"))).collect();
                 let holds = !commits.is_empty()
-                    && git(&["rev-list", &format!("{target_ref}..{head}")]).stdout.lines().any(|c| commits.contains(c));
+                    && git(".", &["rev-list", &format!("{target_ref}..{head}")]).stdout.lines().any(|c| commits.contains(c));
                 if holds {
                     errors.push(format!("no base for {branch} on {parent}: {branch} is on {remote}/{target} but still has the merged parent's commits"));
                 } else {
@@ -1625,7 +1318,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
                 if at(&parent_pr, "state").as_str() == Some("CLOSED") {
                     errors.push(format!(
                         "no base for {branch} on {parent}: {parent}'s PR #{} was closed without merging; decide what {branch} targets",
-                        next_text(at(&parent_pr, "number"))
+                        text(at(&parent_pr, "number"))
                     ));
                 } else if base_pin.is_empty() {
                     errors.push(format!("no base for {branch} on {parent}: no base pin, and no fork-point in {remote}/{parent}'s reflog; if {parent} wasn't rewritten, pin where {branch} left it: git update-ref refs/sheepdog/{branch}/base $(git merge-base {remote}/{parent} {branch})"));
@@ -1637,7 +1330,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
             }
         } else {
             up_to_date = json!(false);
-            let o = git(&["merge-tree", "--write-tree", &format!("--merge-base={old_base}"), &target_ref, &head]);
+            let o = git(".", &["merge-tree", "--write-tree", &format!("--merge-base={old_base}"), &target_ref, &head]);
             match o.code {
                 0 => conflict = json!(false),
                 1 => conflict = json!(true),
@@ -1647,35 +1340,35 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     }
 
     // ── O4 local vs remote ──
-    let remote_sha = rev(&format!("refs/remotes/{remote}/{branch}"));
+    let remote_sha = rev(".", &format!("refs/remotes/{remote}/{branch}"));
     let (mut remote_ours, mut diverged, mut push_behind, mut theirs) = (Value::Null, false, 0i64, Value::Null);
     let ahead;
     if remote_sha.is_empty() {
-        ahead = count(&[&head, "--not", &format!("--remotes={remote}")]);
+        ahead = count(".", &[&head, "--not", &format!("--remotes={remote}")]);
     } else {
-        ahead = count(&[&format!("{remote_sha}..{head}")]);
-        push_behind = count(&[&format!("{head}..{remote_sha}")]);
+        ahead = count(".", &[&format!("{remote_sha}..{head}")]);
+        push_behind = count(".", &[&format!("{head}..{remote_sha}")]);
         diverged = ahead > 0 && push_behind > 0;
-        let reflog = git_out(&["reflog", "show", "--format=%H", &format!("refs/heads/{branch}")]).unwrap_or_default();
+        let reflog = git_out(".", &["reflog", "show", "--format=%H", &format!("refs/heads/{branch}")]).unwrap_or_default();
         if reflog.lines().any(|l| l == remote_sha) {
             remote_ours = json!(true);
         } else {
             remote_ours = json!(false);
-            theirs = commits_not_ours(&reflog, &remote_sha);
+            theirs = commits_not_ours(".", &reflog, &remote_sha).map_or(Value::Null, |n| json!(n));
         }
     }
     // The remote ahead of a branch that once had its commits: made here and
     // reset away, or taken from someone and reset away (#86).
     let mut remote_made = Value::Null;
     if remote_ours == true && ahead == 0 && push_behind > 0 {
-        remote_made = json!(made_here(&format!("{head}..{remote_sha}")));
+        remote_made = json!(made_here(".", &format!("{head}..{remote_sha}")));
     }
     // dirty: the worktree has uncommitted changes (#143, #178); null when the
     // branch is checked out nowhere or git status fails.
     let mut dirty = Value::Null;
-    let wt = worktree_for(branch);
+    let wt = worktree_for(".", branch);
     if !wt.is_empty() {
-        let o = git(&["-C", &wt, "--no-optional-locks", "status", "--porcelain"]);
+        let o = git(&wt, &["--no-optional-locks", "status", "--porcelain"]);
         if o.ok {
             dirty = json!(!o.stdout.is_empty());
         }
@@ -1688,7 +1381,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     if !held_v.is_empty() {
         let mut ls = held_v.split('\n');
         let sha = ls.next().unwrap_or("").to_string();
-        if remote_sha.is_empty() || !is_ancestor(&sha, &remote_sha) {
+        if remote_sha.is_empty() || !is_ancestor(".", &sha, &remote_sha) {
             held = json!({"sha": sha, "paths": ls.collect::<Vec<_>>()});
         }
     }
@@ -1698,7 +1391,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     for (p, name) in [(&pr, branch), (&parent_pr, parent.as_str())] {
         if at(p, "state").as_str() == Some("OPEN") {
             if let Some(gh_sha) = at(p, "headRefOid").as_str().filter(|s| !s.is_empty()) {
-                if gh_sha != rev(&format!("refs/remotes/{remote}/{name}")) {
+                if gh_sha != rev(".", &format!("refs/remotes/{remote}/{name}")) {
                     stale.push(format!("{remote}/{name} is not at GitHub's {}", &gh_sha[..7.min(gh_sha.len())]));
                 }
             }
@@ -1717,7 +1410,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
         }
         _ => Value::Null,
     };
-    if r_findings.is_null() && git_ok(&["rev-parse", "-q", "--verify", &format!("refs/sheepdog/{branch}/findings")]) {
+    if r_findings.is_null() && git_ok(".", &["rev-parse", "-q", "--verify", &format!("refs/sheepdog/{branch}/findings")]) {
         errors.push(format!("review findings: refs/sheepdog/{branch}/findings isn't a findings record"));
         r_findings = Value::Null;
     }
@@ -1727,12 +1420,12 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     if !r_findings.is_null() {
         let f_head = str_or(at(&r_findings, "head"), "").to_string();
         let f_base = str_or(at(&r_findings, "base"), "").to_string();
-        let exists = |c: &str| git_ok(&["cat-file", "-e", &format!("{c}^{{commit}}")]);
+        let exists = |c: &str| git_ok(".", &["cat-file", "-e", &format!("{c}^{{commit}}")]);
         if f_head == head {
             r_findings_at_head = true;
         } else if !f_base.is_empty() && !old_base.is_empty() && exists(&f_head) && exists(&f_base) {
-            let f_patch = patch_id(&f_base, &f_head);
-            r_findings_at_head = !f_patch.is_empty() && f_patch == patch_id(&old_base, &head);
+            let f_patch = patch_id(".", &f_base, &f_head);
+            r_findings_at_head = !f_patch.is_empty() && f_patch == patch_id(".", &old_base, &head);
         }
     }
     let question = match question_state(branch, &head) {
@@ -1748,7 +1441,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     // ── O5 required checks (#123) ──
     let mut required = Value::Null;
     if at(&pr, "state").as_str() == Some("OPEN") && at(&pr, "isDraft") == &Value::Bool(true) {
-        let r_base = next_text(at(&pr, "baseRefName"));
+        let r_base = text(at(&pr, "baseRefName"));
         match required_checks(&r_base) {
             Ok(r) => required = r,
             Err(e) => errors.push(format!("gh (required checks on {r_base}): {}", e.replace('\n', " "))),
@@ -1763,7 +1456,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
         let flag_text = cfg_text("settings.flags", branch, true);
         // A tree base (sync.by_tree) isn't HEAD's ancestor: diffing against it
         // would show the parent's later lines as the branch's.
-        if !is_ancestor(&old_base, &head) {
+        if !is_ancestor(".", &old_base, &head) {
             flags_error = format!("the base {} isn't in {branch}'s history (a tree restack is due); no check until the restack", &old_base[..7]);
         } else {
             match flags_json(&old_base, &head, &raw_json(&flag_text), &flag_text) {
@@ -1774,10 +1467,10 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     }
 
     let running = running_state(branch).unwrap_or_else(|| die("couldn't read the branch's running marker"));
-    let handled: Vec<String> = git_out(&["config", "--get-all", &format!("branch.{branch}.sd-handled")])
+    let handled: Vec<String> = git_out(".", &["config", "--get-all", &format!("branch.{branch}.sd-handled")])
         .map(|s| s.lines().map(str::to_string).collect())
         .unwrap_or_default();
-    let refs: Vec<(String, String)> = git(&["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/sheepdog/{branch}/")])
+    let refs: Vec<(String, String)> = git(".", &["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/sheepdog/{branch}/")])
         .stdout
         .lines()
         .filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.split(' ').next().unwrap_or("").to_string())))
@@ -1865,12 +1558,12 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
         let rb = first_of(&state, "pr.base", "sync.target");
         if let Some(rb) = rb.as_str().filter(|r| !r.is_empty()) {
             let want = format!("refs/heads/{rb}");
-            let rb_sha = with_timeout(10, "git", &["ls-remote", remote, &want])
-                .unwrap_or_default()
+            let ls = git::git_timed(".", 10, &["ls-remote", remote, &want]);
+            let rb_sha = if ls.timed_out { "" } else { &ls.stdout }
                 .lines()
                 .find_map(|l| l.split_once('\t').filter(|(_, r)| *r == want).map(|(s, _)| s.to_string()))
                 .unwrap_or_default();
-            if !rb_sha.is_empty() && rb_sha != rev(&format!("refs/remotes/{remote}/{rb}")) {
+            if !rb_sha.is_empty() && rb_sha != rev(".", &format!("refs/remotes/{remote}/{rb}")) {
                 state["fresh"] = json!(false);
                 let m = format!("{remote}/{rb} is not at {remote}'s {}", &rb_sha[..7.min(rb_sha.len())]);
                 state["stale"].as_array_mut().expect("stale is a list").push(json!(m));
@@ -1883,22 +1576,6 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
 }
 
 // ── output ───────────────────────────────────────────────────────────────────
-
-fn t(v: &Value, p: &str) -> String {
-    next_text(at(v, p))
-}
-
-fn on(v: &Value, p: &str) -> bool {
-    at(v, p) == &Value::Bool(true)
-}
-
-fn n(v: &Value, p: &str) -> f64 {
-    at(v, p).as_f64().unwrap_or(0.0)
-}
-
-fn sj(v: &Value, sep: &str) -> String {
-    arr(v).iter().map(next_text).collect::<Vec<_>>().join(sep)
-}
 
 fn summary(s: &Value) -> String {
     let pin = |k: &str, p: &Value| -> Option<String> {
@@ -2024,7 +1701,7 @@ fn long_lines(s: &Value) -> String {
     for f in arr(at(s, "flags")) {
         let kind = t(f, "kind");
         let removed = if kind == "test-edit" { format!(" (-{})", t(f, "n")) } else { String::new() };
-        let commits: Vec<String> = arr(at(f, "commits")).iter().map(|c| next_text(c).chars().take(7).collect()).collect();
+        let commits: Vec<String> = arr(at(f, "commits")).iter().map(|c| text(c).chars().take(7).collect()).collect();
         out.push_str(&format!(
             "  ⚑  {kind}  {}:{}{removed}  {}  {}\n",
             t(f, "file"),
@@ -2074,7 +1751,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     if branch.is_empty() {
         branch = git::current_branch().unwrap_or_else(|| die("detached HEAD; name a branch"));
     }
-    if rev(&format!("refs/heads/{branch}")).is_empty() {
+    if rev(".", &format!("refs/heads/{branch}")).is_empty() {
         die(format!("no such branch: {branch}"));
     }
     let remote = cfg_text("settings.remote", &branch, false);

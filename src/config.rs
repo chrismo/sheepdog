@@ -399,14 +399,27 @@ fn get(path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
     })
 }
 
+/// The lines sd config would print to stderr for a failure; none when unset.
+fn stderr_lines<T>(r: Res<T>) -> Result<T, Vec<String>> {
+    r.map_err(|f| match f {
+        Fail::Unset => vec![],
+        Fail::Error(lines) => lines,
+    })
+}
+
 /// prc_get for the verbs ported to Rust: what `sd config get` prints, less
 /// the last newline, or the lines it would print to stderr (none when unset).
 pub fn get_text(path: &str, b: &str, as_json: bool) -> Result<String, Vec<String>> {
-    match get(path, b, false, as_json) {
-        Ok(out) => Ok(out.strip_suffix('\n').unwrap_or(&out).to_string()),
-        Err(Fail::Unset) => Err(vec![]),
-        Err(Fail::Error(lines)) => Err(lines),
-    }
+    get_line(path, b, false, as_json)
+}
+
+/// get_text with no branch file: prc_get <path> '' true.
+pub fn get_global(path: &str, as_json: bool) -> Result<String, Vec<String>> {
+    get_line(path, "", true, as_json)
+}
+
+fn get_line(path: &str, b: &str, no_branch: bool, as_json: bool) -> Result<String, Vec<String>> {
+    stderr_lines(get(path, b, no_branch, as_json)).map(|out| out.strip_suffix('\n').unwrap_or(&out).to_string())
 }
 
 fn show(b: &str, no_branch: bool) -> Res<String> {
@@ -437,7 +450,14 @@ fn paths(b: &str, no_branch: bool) -> Res<String> {
     Ok(out)
 }
 
-fn step(name: &str, b: &str, forced: &str) -> Res<String> {
+/// prc_step for the verbs ported to Rust: what `sd config step` prints, or
+/// the lines it would print to stderr.
+pub fn step(name: &str, b: &str, forced: &str) -> Result<Value, Vec<String>> {
+    stderr_lines(step_block(name, b, forced))
+}
+
+/// The harness <name> runs on, its block, and the step's block for it.
+fn step_block(name: &str, b: &str, forced: &str) -> Res<Value> {
     if !STEPS.contains(&name) {
         return err(format!("unknown step: {name} ({})", STEPS.join(" ")));
     }
@@ -469,7 +489,7 @@ fn step(name: &str, b: &str, forced: &str) -> Res<String> {
         }
     }
     out.retain(|_, v| !v.is_null());
-    Ok(format!("{}\n", Value::Object(out)))
+    Ok(Value::Object(out))
 }
 
 /// Effort level names depend on the model. A step block that writes effort,
@@ -664,7 +684,7 @@ fn cli(argv: &[String]) -> Res<String> {
             if !(n == 1 || n == 2) {
                 needs(verb, "<step> [<branch>]");
             }
-            step(arg(0), arg(1), &harness_opt)
+            step_block(arg(0), arg(1), &harness_opt).map(|v| format!("{v}\n"))
         }
         "init" if has("--global") => {
             if n != 0 {
@@ -818,5 +838,29 @@ mod tests {
         for bad in ["", "1 2", r#"1, "harness": "claude""#, "[a"] {
             assert!(one_value(bad).is_none(), "accepted {bad:?}");
         }
+    }
+
+    // The only unit test that reads a config file: no other sets SHEEPDOG_CONFIG.
+    #[test]
+    fn get_global_reads_the_global_file_over_the_defaults_and_no_branch_file() {
+        let dir = std::env::temp_dir().join(format!("sd-config-unit-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.json");
+        fs::write(&file, r#"{"settings": {"botTimeout": 900, "botLogin": ["x"]}}"#).unwrap();
+        std::env::set_var("SHEEPDOG_CONFIG", &file);
+        assert_eq!(get_global("settings.botTimeout", false), Ok("900".into()));
+        assert_eq!(get_global("settings.botLogin", false), Ok("x".into()));
+        assert_eq!(get_global("settings.botLogin", true), Ok(r#"["x"]"#.into()));
+        assert_eq!(get_global("settings.remote", false), Ok("origin".into()));
+        assert_eq!(get_global("settings.nope", false), Err(vec![]));
+        fs::write(&file, "[]").unwrap();
+        assert_eq!(get_global("settings.remote", false), Err(vec![format!("not a JSON object: {}", file.display())]));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn step_refuses_an_unknown_step_or_harness_with_sd_configs_lines() {
+        assert_eq!(step("deploy", "", ""), Err(vec!["unknown step: deploy (address ci-fix describe implement review)".into()]));
+        assert_eq!(step("review", "", "codex"), Err(vec!["unknown harness: codex (claude pi)".into()]));
     }
 }

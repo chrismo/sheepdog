@@ -43,33 +43,16 @@
 // Not guarded: ship-parent, whose describe spends on the parent; this state
 // has only this branch's spend, so the parent's budget isn't checked here.
 //
-// Field reads follow the SuperDB query this replaced: a missing field reads
-// as null, on() is "true", n() is "the number, else 0", and an equality
-// holds only between two present values.
+// Field reads follow the SuperDB query this replaced (src/val.rs), and an
+// equality holds only between two present values.
 
+use crate::val::{self, at, sj, text};
 use serde_json::{json, Value};
-
-static NULL: Value = Value::Null;
-
-/// The field at a dotted path; null when it or a parent is missing or null.
-fn at<'a>(v: &'a Value, path: &str) -> &'a Value {
-    path.split('.').try_fold(v, |cur, k| cur.as_object()?.get(k)).unwrap_or(&NULL)
-}
 
 /// "x is null" in the query: present and null. A missing field there was an
 /// error value, which no condition took.
 fn is_null(v: &Value, path: &str) -> bool {
     path.split('.').try_fold(v, |cur, k| cur.as_object()?.get(k)).is_some_and(Value::is_null)
-}
-
-/// f-string text: strings raw, null as nothing.
-pub(crate) fn text(v: &Value) -> String {
-    match v {
-        Value::Null => String::new(),
-        Value::String(s) => s.clone(),
-        Value::Number(n) => crate::json::number(n),
-        _ => crate::json::to_string(v),
-    }
 }
 
 fn plural(k: &Value, w: &str) -> String {
@@ -111,10 +94,6 @@ fn why_blocked(m: &str) -> String {
     }
 }
 
-fn join(v: &Value, sep: &str) -> String {
-    v.as_array().map_or(String::new(), |a| a.iter().map(text).collect::<Vec<_>>().join(sep))
-}
-
 fn len(v: &Value) -> usize {
     v.as_array().map_or(0, Vec::len)
 }
@@ -125,9 +104,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         return Err("sd state JSON must be one record".into());
     }
     let g = |p: &str| at(s, p);
-    let on = |p: &str| g(p) == &Value::Bool(true);
+    let on = |p: &str| val::on(s, p);
     let off = |p: &str| g(p) == &Value::Bool(false);
-    let n = |p: &str| g(p).as_f64().unwrap_or(0.0);
+    let n = |p: &str| val::n(s, p);
     let nul = |p: &str| g(p).is_null();
     let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
     let eq = |a: &str, b: &str| !nul(a) && !nul(b) && g(a) == g(b);
@@ -135,7 +114,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     let status_in = |p: &str, set: &[&str]| g(p).get("status").and_then(Value::as_str).is_some_and(|x| set.contains(&x));
     let covers = |p: &str| status_in(p, &["covered", "rewritten-same"]);
     let trails = |p: &str| status_in(p, &["uncovered", "rewritten-changed", "unknown"]);
-    let t = |p: &str| text(g(p));
+    let t = |p: &str| val::t(s, p);
 
     let pr_null = is_null(s, "pr");
     let open = pr_null || is("pr.state", "OPEN");
@@ -395,7 +374,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 None
             },
             if ci_red && asking != "ci-fix" && !refused {
-                agent(budget, "ci-red", format!("fix CI: {}", join(g("ci.failing"), ", ")), "sd act ci-fix")
+                agent(budget, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else {
                 None
             },
@@ -403,7 +382,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 step("ci-blocked", "you",
                     format!(
                         "CI blocked: {} didn't start or want approval; an agent can't fix that",
-                        join(g("ci.blocked"), ", ")
+                        sj(g("ci.blocked"), ", ")
                     ),
                     cmd("gh pr checks"),
                 )
@@ -459,7 +438,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 None
             },
             if open && ci_held {
-                let paths = join(g("push.held.paths"), ", ");
+                let paths = sj(g("push.held.paths"), ", ");
                 if foreign || undone || parent_unpushed {
                     step("ci-config", "you",
                         format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
@@ -608,7 +587,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                         format!(
                             "waiting on required check{} {} to report{draft}",
                             if len(missing) == 1 { "" } else { "s" },
-                            join(missing, ", ")
+                            sj(missing, ", ")
                         )
                     } else {
                         "CI running".into()
@@ -640,7 +619,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 let reqs = g("pr.review_requests");
                 step("review-wait", "wait",
                     if len(reqs) > 0 {
-                        format!("waiting on review from {}", join(reqs, ", "))
+                        format!("waiting on review from {}", sj(reqs, ", "))
                     } else {
                         "waiting on a required review".into()
                     },
