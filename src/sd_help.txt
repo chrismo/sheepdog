@@ -1,0 +1,12 @@
+sd - sheepdog, the PR pipeline: it tends a branch's PR until it can merge.
+
+Usage: sd <verb> [<args>]
+
+Verbs:
+  state         where a branch's PR stands, and what's next
+  act           the pipeline's verbs: start, push, enroll, address, ship...
+  watch         the watcher: one pass, or install it as a launchd job
+  config        harness and settings
+  review-local  the default local reviewer (sd act review runs it)
+
+sd <verb> --help for each verb's own usage.

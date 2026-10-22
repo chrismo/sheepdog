@@ -1,0 +1,11 @@
+sd review-local - the default local reviewer (A8): one fresh, read-only
+model session over a branch's change; findings as JSON on stdout.
+
+Usage: SHEEPDOG_BASE=<sha> SHEEPDOG_HEAD=<sha> [SHEEPDOG_TASK=<text>] sd review-local
+
+The contract, which any script named by settings.localReview must keep:
+  input   env SHEEPDOG_BASE, SHEEPDOG_HEAD (SHAs); SHEEPDOG_TASK (the task, so
+          out-of-scope changes can be flagged); cwd = the worktree
+  output  a JSON list [{file, line, severity, body}] on stdout
+  exit    0: the review completed (the list may be empty); non-zero: the
+          reviewer failed, which sd act review never treats as clean

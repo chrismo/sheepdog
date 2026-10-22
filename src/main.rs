@@ -1,8 +1,11 @@
-// libexec/sd-<verb> links here for each verb ported from bash (#193), so the
-// name it runs as picks the verb.
+// sd <verb> [<args>] (src/sd_help.txt): bin/sd links here. Run through a
+// link named sd-<verb>, as tests/common's harness runs it, the name picks
+// the verb.
 
 use std::path::Path;
 use std::process::ExitCode;
+
+const HELP: &str = include_str!("sd_help.txt");
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().map(|a| a.to_string_lossy().into_owned());
@@ -14,7 +17,10 @@ fn main() -> ExitCode {
     let mut rest: Vec<String> = args.collect();
     let verb = match name.strip_prefix("sd-") {
         Some(v) => v.to_string(),
-        None if rest.is_empty() => String::new(),
+        None if rest.is_empty() => {
+            eprint!("{HELP}");
+            return ExitCode::from(1);
+        }
         None => rest.remove(0),
     };
     match verb.as_str() {
@@ -24,6 +30,10 @@ fn main() -> ExitCode {
         "review-local" => sheepdog::review_local::run(&rest),
         "state" => sheepdog::state::run(&rest),
         "watch" => sheepdog::watch::run(&rest),
+        "help" | "-h" | "--help" => {
+            print!("{HELP}");
+            ExitCode::SUCCESS
+        }
         _ => {
             eprintln!("sd: unknown verb: {verb}");
             ExitCode::from(1)

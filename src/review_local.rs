@@ -1,14 +1,5 @@
-// sd review-local - the default local reviewer (A8): one fresh, read-only
-// model session over a branch's change; findings as JSON on stdout.
-//
-// Usage: SHEEPDOG_BASE=<sha> SHEEPDOG_HEAD=<sha> [SHEEPDOG_TASK=<text>] sd review-local
-//
-// The contract, which any script named by settings.localReview must keep:
-//   input   env SHEEPDOG_BASE, SHEEPDOG_HEAD (SHAs); SHEEPDOG_TASK (the task, so
-//           out-of-scope changes can be flagged); cwd = the worktree
-//   output  a JSON list [{file, line, severity, body}] on stdout
-//   exit    0: the review completed (the list may be empty); non-zero: the
-//           reviewer failed, which sd act review never treats as clean
+// sd review-local (src/review_local_help.txt, which holds the contract any
+// script named by settings.localReview must keep).
 //
 // Harness, model and effort come from `sd config step review`. Every run is a
 // new session (fresh context, never the authoring conversation) with read-only
@@ -26,6 +17,8 @@ use crate::val::t;
 use crate::{config, json};
 use regex::Regex;
 use std::process::ExitCode;
+
+const HELP: &str = include_str!("review_local_help.txt");
 
 const SCHEMA: &str = r#"{"type": "object", "required": ["findings"],
  "properties": {"findings": {"type": "array", "items": {
@@ -59,7 +52,11 @@ fn git_or_die(args: &[&str], what: &str) -> String {
     strip_nl(o.stdout)
 }
 
-pub fn run(_argv: &[String]) -> ExitCode {
+pub fn run(argv: &[String]) -> ExitCode {
+    if matches!(argv.first().map(String::as_str), Some("-h" | "--help")) {
+        print!("{HELP}");
+        return ExitCode::SUCCESS;
+    }
     let env = |k: &str| std::env::var(k).unwrap_or_default();
     let (base, head) = (env("SHEEPDOG_BASE"), env("SHEEPDOG_HEAD"));
     if base.is_empty() {

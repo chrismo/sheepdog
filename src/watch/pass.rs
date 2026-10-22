@@ -1,9 +1,9 @@
 // The pass, refresh and vacuum (src/watch_help.txt): sd state every enrolled
 // branch, glyph it, notify per the policy, and keep each branch's state for
-// the next pass. sd state runs as sd-state from PATH, a process of its own,
-// so a hung one can be timed out (the suite puts a fake one there): on
-// purpose not state::observe in-process, as sd act calls it, since the
-// watcher supervises its children with deadlines (#12).
+// the next pass. sd state runs as `sd state`, this binary in a process of its
+// own, so a hung one can be timed out: on purpose not state::observe
+// in-process, as sd act calls it, since the watcher supervises its children
+// with deadlines (#12).
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
@@ -38,6 +38,18 @@ struct Class {
     /// {key, msg}: the steps that notify.
     reasons: Vec<Value>,
     note: Option<&'static str>,
+}
+
+/// The program that is sd state, and the args before its own: sd itself and
+/// "state". In a debug build (cargo test's) with SHEEPDOG_STATE_PROGRAM set,
+/// that program instead, run as sd-state was: the suite fakes sd state with
+/// it. A release build, the one installed, never reads it.
+fn state_program() -> (String, &'static [&'static str]) {
+    let fake = if cfg!(debug_assertions) { std::env::var("SHEEPDOG_STATE_PROGRAM") } else { Err(std::env::VarError::NotPresent) };
+    match fake {
+        Ok(p) if !p.is_empty() => (p, &[]),
+        _ => (proc::sd_itself().map_or("sd".into(), |p| p.to_string_lossy().into_owned()), &["state"]),
+    }
 }
 
 fn reason(step: &Value) -> Value {
@@ -418,7 +430,8 @@ impl Watch {
     /// Check one branch: its pass lines, whether sd state answered, and why
     /// the pass must stop for the rate limit, if it must.
     fn check(&mut self, repo: &str, name: &str, b: &str, wt: &str) -> (String, bool, Option<String>) {
-        let o = proc::with_timeout(self.timeout, "sd-state", &["--json", b], Some(repo));
+        let (prog, verb) = state_program();
+        let o = proc::with_timeout(self.timeout, &prog, &[verb, &["--json", b]].concat(), Some(repo));
         if !o.ok {
             let why = format!("sd state failed: {}", o.stderr.lines().next().unwrap_or(""));
             self.write_glyph(wt, b, "⚠️");

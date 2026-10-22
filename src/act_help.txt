@@ -145,7 +145,7 @@ Verbs:
             unpushed commits (push first) and on cancelled CI (rerun it).
             Spends tokens
   review    verify, then the local reviewer (settings.localReview, default
-            libexec/sd-review-local) over the branch's own change, base..HEAD.
+            sd review-local) over the branch's own change, base..HEAD.
             Clean, or only nits: pin local at HEAD. Errors or warnings:
             printed as JSON and recorded (refs/sheepdog/<b>/findings: head,
             base, round, findings; implement adds each finding's id, action

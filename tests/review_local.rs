@@ -376,3 +376,13 @@ fn two_results_from_the_harness_stdout_is_still_one_findings_list_the_last() {
     assert_eq!(r.output.lines().count(), 1);
     assert_eq!(jq(&["-r", ".[0].body"], &r.output), "last");
 }
+
+#[test]
+fn help_prints_the_usage_and_the_contract_without_a_base() {
+    let mut sd = sd();
+    sd.env.retain(|(n, _)| n != "SHEEPDOG_BASE");
+    let r = sd.run(&["--help"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["Usage: ", "sd review-local", "settings.localReview"]);
+    assert!(!sd.fx_exists("claude.args"));
+}

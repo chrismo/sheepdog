@@ -1,12 +1,12 @@
 // Black-box tests of sd watch (#201): the built binary, run as sd-watch
 // through a link (tests/common), making its passes over the registered
 // repos. Moved from libexec/sd-watch.bats; each test keeps the bats test's
-// title above it. The libexec/sd-watch link's test is in tests/links.rs,
-// beside the other verbs'.
+// title above it.
 //
-// Real git for repos, enrollment and fetch. sd state is faked: it serves
-// $PS_FIXTURES/<branch>.json, so each glyph/notification rule can be driven
-// directly. Notifications go to a stub configured as settings.notify.
+// Real git for repos, enrollment and fetch. sd state is faked: fakebin/sd-state,
+// which SHEEPDOG_STATE_PROGRAM names (a debug build's seam, src/watch/pass.rs),
+// serves $PS_FIXTURES/<branch>.json, so each glyph/notification rule can be
+// driven directly. Notifications go to a stub configured as settings.notify.
 
 mod common;
 
@@ -56,6 +56,7 @@ fn sd() -> Sd {
         ("SHEEPDOG_STATE_DIR".to_string(), sd.path("state")),
         ("STATUS_DIR".to_string(), sd.path("status")),
         ("PS_FIXTURES".to_string(), sd.path("ps")),
+        ("SHEEPDOG_STATE_PROGRAM".to_string(), sd.path("fakebin/sd-state")),
     ];
     sd.env = env;
     fs::create_dir(sd.tmp.join("ps")).unwrap();
@@ -277,6 +278,17 @@ fn no_registered_repos_nothing_to_do_exit_0() {
     sd.git(&["config", "--global", "--unset-all", "sheepdog.repo"]);
     sd.pass();
     assert!(!sd.ps("calls").exists());
+}
+
+#[test]
+fn sd_state_is_this_binarys_own_not_an_sd_state_on_path() {
+    let mut sd = sd();
+    sd.env.retain(|(k, _)| k != "SHEEPDOG_STATE_PROGRAM");
+    sd.fake("gh", common::GH_FAILS);
+    sd.pass();
+    assert!(!sd.ps("calls").exists());
+    assert_match(&sd.last_pass(), "repo\tfeat\t");
+    assert_lacks(&sd.last_pass(), "No such file");
 }
 
 // @test "only enrolled branches are checked, from the repo directory"
@@ -2483,13 +2495,12 @@ fn no_plutil() -> bool {
 
 impl Sd {
     /// setup_launchd: the plist's directory in the temp dir, a fake launchctl
-    /// logging to $PS_FIXTURES/launchctl, and no LOCAL_BIN. Nor CARGO, which
-    /// cargo test sets and bats never had: sd watch reads both empty as unset.
+    /// logging to $PS_FIXTURES/launchctl, and no LOCAL_BIN: sd watch reads
+    /// it empty as unset.
     fn setup_launchd(&mut self) -> PathBuf {
         let agents = self.path("LaunchAgents");
         self.env.extend([
             ("LOCAL_BIN".into(), String::new()),
-            ("CARGO".into(), String::new()),
             ("SHEEPDOG_WATCH_LAUNCH_AGENTS".into(), agents.clone()),
         ]);
         self.fake("launchctl", "#!/usr/bin/env bash\necho \"$*\" >> \"$PS_FIXTURES/launchctl\"\n");
@@ -2500,10 +2511,12 @@ impl Sd {
         cat(&self.ps("launchctl"))
     }
 
-    /// A dir in the temp dir holding a link to the repo's bin/sd, as LOCAL_BIN.
+    /// A dir in the temp dir holding a link to the binary under test, as
+    /// LOCAL_BIN. Not the repo's bin/sd: that links to a release build,
+    /// which cargo test doesn't make.
     fn local_bin(&self) -> String {
         fs::create_dir_all(self.tmp.join("local-bin")).unwrap();
-        std::os::unix::fs::symlink(concat!(env!("CARGO_MANIFEST_DIR"), "/bin/sd"), self.tmp.join("local-bin/sd")).unwrap();
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_sd"), self.tmp.join("local-bin/sd")).unwrap();
         self.path("local-bin")
     }
 }
@@ -2581,6 +2594,19 @@ fn install_the_job_runs_sd_watch() {
     assert_eq!(extract(&plist, "ProgramArguments.1"), "watch");
 }
 
+#[test]
+fn install_with_no_sd_in_local_bin_the_job_runs_this_sd_itself() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    let plist = sd.setup_launchd();
+    let r = sd.run(&["install"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    let me = fs::canonicalize(env!("CARGO_BIN_EXE_sd")).unwrap();
+    assert_eq!(extract(&plist, "ProgramArguments.0"), me.display().to_string());
+}
+
 // @test "install: the job runs the sd in LOCAL_BIN, which leads its PATH ahead of ~/.local/bin"
 #[test]
 fn install_the_job_runs_the_sd_in_local_bin_which_leads_its_path_ahead_of_local_bin() {
@@ -2594,54 +2620,6 @@ fn install_the_job_runs_the_sd_in_local_bin_which_leads_its_path_ahead_of_local_
     assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(extract(&plist, "ProgramArguments.0"), format!("{lb}/sd"));
     assert!(extract(&plist, "EnvironmentVariables.PATH").starts_with(&format!("{lb}:{}/.local/bin:/", sd.path("home"))));
-}
-
-// @test "install: cargo's directory ends the job's PATH, so sd can rebuild itself after a pull (#193)"
-#[test]
-fn install_cargos_directory_ends_the_jobs_path_so_sd_can_rebuild_itself_after_a_pull_193() {
-    if no_plutil() {
-        return;
-    }
-    let mut sd = sd();
-    let plist = sd.setup_launchd();
-    fs::create_dir_all(sd.tmp.join("cargo-bin")).unwrap();
-    sd.fake("../cargo-bin/cargo", "#!/bin/sh\n");
-    let path = format!("{}:{}:{}", sd.path("cargo-bin"), sd.path("fakebin"), std::env::var("PATH").unwrap_or_default());
-    let r = sd.run_env(&[("PATH", &path)], &["install"]);
-    assert_eq!(r.status, 0, "{}", r.output);
-    let job = extract(&plist, "EnvironmentVariables.PATH");
-    assert!(job.starts_with(&format!("{}/.local/bin:", sd.path("home"))), "{job}");
-    assert!(job.ends_with(&format!(":{}", sd.path("cargo-bin"))), "{job}");
-}
-
-// @test "install: cargo in a directory already on the job's PATH isn't added again"
-#[test]
-fn install_cargo_in_a_directory_already_on_the_jobs_path_isnt_added_again() {
-    if no_plutil() {
-        return;
-    }
-    let mut sd = sd();
-    let plist = sd.setup_launchd();
-    let lb = sd.local_bin();
-    sd.fake("../local-bin/cargo", "#!/bin/sh\n");
-    let cargo = format!("{lb}/cargo");
-    let r = sd.run_env(&[("CARGO", &cargo), ("LOCAL_BIN", &lb)], &["install"]);
-    assert_eq!(r.status, 0, "{}", r.output);
-    assert_eq!(extract(&plist, "EnvironmentVariables.PATH").split(':').filter(|d| *d == lb).count(), 1);
-}
-
-// @test "install: no cargo warns that the watcher can't rebuild sd, and still installs"
-#[test]
-fn install_no_cargo_warns_that_the_watcher_cant_rebuild_sd_and_still_installs() {
-    if no_plutil() {
-        return;
-    }
-    let mut sd = sd();
-    let plist = sd.setup_launchd();
-    let r = sd.run_env(&[("CARGO", &sd.path("no-such-cargo"))], &["install"]);
-    assert_eq!(r.status, 0, "{}", r.output);
-    assert_has(&r.output, &["no cargo", "can't rebuild"]);
-    lint(&plist);
 }
 
 // @test "install: a relative LOCAL_BIN is made absolute, since launchd runs jobs from /"
