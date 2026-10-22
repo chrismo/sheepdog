@@ -136,7 +136,8 @@ bash --version | head -1
 PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
 ```
 
-**Every script is `#!/usr/bin/env bash5`, `install.sh` included.** Test them
+**Every script is `#!/usr/bin/env bash5` but `install.sh`**, which is plain
+`bash` and must run under macOS's 3.2 (#204). Test them
 by running them, not sourcing, so the shebang picks the bash. agent-rig's
 `install.sh` makes the `~/.local/bin/bash5` link; without it a script fails
 with `env: bash5: No such file or directory`.

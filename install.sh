@@ -1,6 +1,6 @@
-#!/usr/bin/env bash5
+#!/usr/bin/env bash
 # Build sd's Rust verbs, link sd into ~/.local/bin ($LOCAL_BIN) and install
-# its launchd watcher. Safe to re-run.
+# its launchd watcher. Safe to re-run. Plain bash: it runs under macOS's 3.2.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -24,13 +24,6 @@ else
   ln -sfn "$REPO_DIR/bin/sd" "$dest"
   echo "✓ Linked sd -> $LOCAL_BIN/"
 fi
-
-for cmd in pr-state pr-act pr-watch pr-config pr-review-local; do
-  if [[ -L $LOCAL_BIN/$cmd ]]; then
-    rm "$LOCAL_BIN/$cmd"
-    echo "✓ Removed $cmd (now sd ${cmd#pr-})"
-  fi
-done
 
 if [[ $(uname -s) == Darwin ]]; then
   "$dest" watch install || {
