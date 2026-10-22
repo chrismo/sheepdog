@@ -78,7 +78,7 @@ default, and a relative path is an error. The shipped defaults are in
 `lib/prompts/`.
 
 A custom local reviewer (`settings.localReview`) keeps the contract in
-`libexec/sd-review-local`'s header: `SHEEPDOG_BASE`, `SHEEPDOG_HEAD` and
+`src/review_local.rs`'s header: `SHEEPDOG_BASE`, `SHEEPDOG_HEAD` and
 `SHEEPDOG_TASK` in, a JSON list of findings out.
 
 ## Interfaces with other tools

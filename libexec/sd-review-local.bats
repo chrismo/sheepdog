@@ -39,6 +39,7 @@ done
 printf '%s' "$prompt" > "$FX/claude.prompt"
 echo "$PWD" > "$FX/claude.cwd"
 [[ -e $FX/fail ]] && { echo "claude: boom" >&2; exit 1; }
+[[ -e $FX/earlier.json ]] && jq -n --argjson r "$(cat "$FX/earlier.json")" '{type: "result", is_error: false, structured_output: $r}'
 jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, structured_output: $r}'
 EOF
   cat > "$TMP/fakebin/pi" <<'EOF'
@@ -58,9 +59,9 @@ EOF
   export SHEEPDOG_BASE=$BASE SHEEPDOG_HEAD=$HEAD_SHA SHEEPDOG_TASK="add a third line"
 }
 
-@test "runs under bash 5 via the bash5 shebang" {
-  run head -1 "$REVIEW"
-  [ "$output" = "#!/usr/bin/env bash5" ]
+@test "is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$REVIEW")" = ../target/release/sd ]
+  [ -x "$REVIEW" ]
 }
 
 @test "without SHEEPDOG_BASE and SHEEPDOG_HEAD: fails and says so" {
@@ -219,4 +220,13 @@ EOF
   "$REVIEW" >/dev/null
   [ "$(head -1 "$FX/claude.prompt")" = "Repo review guidance." ]
   grep -q 'No findings is a valid' "$FX/claude.prompt"
+}
+
+@test "two results from the harness: stdout is still one findings list, the last" {
+  echo '{"findings": [{"file": "a", "line": 1, "severity": "nit", "body": "earlier"}]}' > "$FX/earlier.json"
+  echo '{"findings": [{"file": "b", "line": 2, "severity": "nit", "body": "last"}]}' > "$FX/result.json"
+  run --separate-stderr "$REVIEW"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -eq 1 ]
+  [ "$(jq -r '.[0].body' <<<"$output")" = last ]
 }

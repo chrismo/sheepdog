@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         "act" => sheepdog::act::run(&rest),
         "config" => sheepdog::config::run(&rest),
         "harness" => sheepdog::harness::run(&rest),
+        "review-local" => sheepdog::review_local::run(&rest),
         "state" => sheepdog::state::run(&rest),
         "watch" => sheepdog::watch::run(&rest),
         _ => {
