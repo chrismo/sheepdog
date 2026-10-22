@@ -1,7 +1,7 @@
 // The CI config hold (#124): an agent step's commit that touches a protected
 // path isn't pushed until chrismo has looked. libexec/sd-act's hold_* and
-// lib/sheepdog.sh's protected_paths still do the same for ci-fix, ship and
-// restack --resolve: change both.
+// lib/sheepdog.sh's protected_paths still do the same for restack --resolve:
+// change both.
 
 use super::{die, repo_remote};
 use crate::git::{git, git_out, is_ancestor, rev};

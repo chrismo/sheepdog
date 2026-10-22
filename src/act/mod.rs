@@ -6,6 +6,7 @@
 mod address;
 mod attach;
 mod bookkeeping;
+mod ci_fix;
 mod commands;
 mod describe;
 mod github;
@@ -131,8 +132,8 @@ impl Args {
                 return Err(format!("{flag} is for sd act {only} only"));
             }
         }
-        if !self.answer.is_empty() && !matches!(verb, "answer" | "implement" | "address") {
-            return Err("--answer is for sd act implement and address only".into());
+        if !self.answer.is_empty() && !matches!(verb, "answer" | "implement" | "address" | "ci-fix") {
+            return Err("--answer is for sd act implement, address and ci-fix only".into());
         }
         Ok(())
     }
@@ -258,6 +259,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         "address" => address::address(&b, &remote, &a),
         "describe" => describe::describe(&b, &remote, &a),
         "ship" => ship::ship(&b, &remote, &a),
+        "ci-fix" => ci_fix::ci_fix(&b, &remote, &a),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
@@ -337,11 +339,13 @@ mod tests {
     }
 
     #[test]
-    fn answer_hands_implement_and_address_the_answer_and_no_other_verb() {
+    fn answer_hands_implement_address_and_ci_fix_the_answer_and_no_other_verb() {
         let a = parsed("implement", &["--answer", "-x, not y", "feat"]).unwrap();
         assert_eq!((a.answer.as_str(), a.branch.as_str()), ("-x, not y", "feat"));
         assert_eq!(parsed("address", &["--answer", "bar"]).unwrap().answer, "bar");
-        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement and address only".into()));
+        let a = parsed("ci-fix", &["--answer", "yes", "feat"]).unwrap();
+        assert_eq!((a.answer.as_str(), a.branch.as_str()), ("yes", "feat"));
+        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement, address and ci-fix only".into()));
     }
 
     #[test]

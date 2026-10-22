@@ -442,9 +442,9 @@ verify_autofix() {
 # ── agent sessions ───────────────────────────────────────────────────────────
 
 # This section, the questions and guidance_base, agent_rules and the CI
-# config hold below are the bash agent steps' (ci-fix, restack --resolve).
+# config hold below are the bash agent step's (restack --resolve).
 # src/act/step.rs and src/act/hold.rs do the same for implement, address,
-# describe and ship: change both.
+# ci-fix, describe and ship: change both.
 
 # step_session <branch> <step>: the harness and session a step runs in: the
 # branch's session (branch.<b>.sd-session) resumed, else a new one. Sets
@@ -541,15 +541,14 @@ answer() {
   step=$(prc_val "$q" step)
   [[ $(prc_val "$q" at_head) == true ]] \
     || die "the $step agent's question on $b no longer stands: HEAD or the worktree changed since it asked (sd act ack --question drops it)"
+  if $force; then flags+=(--force); fi
+  if $no_publish; then flags+=(--no-publish); fi
+  if [[ -n $harness_opt ]]; then flags+=(--harness "$harness_opt"); fi
   case $step in
-    # implement and address are Rust (src/act/): --answer hands them the answer.
-    implement|review-fix|address)
-      if $force; then flags+=(--force); fi
-      if $no_publish; then flags+=(--no-publish); fi
-      if [[ -n $harness_opt ]]; then flags+=(--harness "$harness_opt"); fi
-      [[ $step == address ]] || step=implement
+    # implement, address and ci-fix are Rust (src/act/): --answer hands them the answer.
+    implement|review-fix|address|ci-fix)
+      case $step in address|ci-fix) ;; *) step=implement ;; esac
       exec "$SD_LIB/../target/release/sd" act "$step" --answer "$answer_text" "${flags[@]}" "$b" ;;
-    ci-fix) running_during "$b" ci-fix ci_fix ;;
     *) die "can't answer a $step question" ;;
   esac
 }
@@ -637,74 +636,6 @@ guidance_base() {
   return 0
 }
 
-# ── ci-fix: J2 ───────────────────────────────────────────────────────────────
-
-read -r -d '' CI_FIX_SCHEMA <<'EOF' || true
-{"type": "object", "required": ["outcome", "commit_message", "summary"],
- "properties": {"outcome": {"enum": ["fixed", "flaky", "needs-input", "gave-up"]},
-                "commit_message": {"type": ["string", "null"]},
-                "summary": {"type": "string"}}}
-EOF
-
-CI_LOG_TAIL=150
-
-# ci_tail: stdin cut to its last $CI_LOG_TAIL lines, with a note when cut.
-ci_tail() {
-  local t n
-  t=$(mktemp) || return
-  cat > "$t"
-  n=$(wc -l < "$t" | tr -d " ")
-  (( n <= CI_LOG_TAIL )) || echo "… (last $CI_LOG_TAIL of $n lines)"
-  tail -n "$CI_LOG_TAIL" "$t"
-  rm -f "$t"
-}
-
-# ci_logs_rwx <run-id>: the failed tasks' logs of an RWX run.
-ci_logs_rwx() {
-  local run=$1 key tid dir f
-  while IFS=$'\t' read -r key tid; do
-    [[ -n $tid ]] || continue
-    dir=$(mktemp -d) || continue
-    if rwx logs "$tid" --output "$dir" >/dev/null 2>&1; then
-      for f in "$dir"/*.log; do
-        [[ -f $f ]] || continue
-        echo "### task $key (rwx logs $tid)"
-        ci_tail < "$f"
-      done
-    fi
-    rm -rf "$dir"
-  done < <(rwx results "$run" --json 2>/dev/null | sed -n '/^{/,$p' \
-           | prc_line 'unnest coalesce(Tasks, []) | where coalesce(Status.Result, "") == "failed" | values f"{Key}\t{ID}"' 2>/dev/null || true)
-}
-
-# ci_logs <sha>: the failing checks and what can be fetched of their logs, for
-# the prompt. All REST: the commit's statuses (RWX and other external CI; an
-# RWX run's logs through rwx results and rwx logs) and its check runs (GitHub
-# Actions; gh run view --log-failed). Each log is cut to its last $CI_LOG_TAIL
-# lines; a source that can't be read is left out, never fatal. @tsv escapes
-# tabs and newlines in a field, which %b puts back; the separating tabs
-# become \037, since read would merge the tabs around an empty field.
-ci_logs() {
-  local sha=$1 ctx desc url name title summary
-  while IFS=$'\037' read -r ctx desc url; do
-    [[ -n $ctx ]] || continue
-    printf '## %b: %b\n%b\n' "$ctx" "$desc" "$url"
-    [[ $url =~ cloud\.rwx\.com/[^/]+/runs/([0-9a-z]+) ]] && ci_logs_rwx "${BASH_REMATCH[1]}"
-  done < <(gh api "repos/{owner}/{repo}/commits/$sha/status" \
-             --jq '.statuses[] | select(.state == "failure" or .state == "error") | [.context, .description // "", .target_url // ""] | @tsv' 2>/dev/null \
-           | tr '\t' '\037' || true)
-  while IFS=$'\037' read -r name title summary url; do
-    [[ -n $name ]] || continue
-    printf '## %b: %b\n%b\n%b\n' "$name" "$title" "$summary" "$url"
-    if [[ $url =~ /actions/runs/([0-9]+)/job/([0-9]+) ]]; then
-      echo "### failed steps (gh run view ${BASH_REMATCH[1]} --job ${BASH_REMATCH[2]} --log-failed)"
-      gh run view "${BASH_REMATCH[1]}" --job "${BASH_REMATCH[2]}" --log-failed 2>/dev/null | ci_tail || true
-    fi
-  done < <(gh api "repos/{owner}/{repo}/commits/$sha/check-runs" \
-             --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | [.name, .output.title // "", .output.summary // "", .details_url // ""] | @tsv' 2>/dev/null \
-           | tr '\t' '\037' || true)
-}
-
 # agent_rules <worktree> <branch>: what the agent may run beyond reading and
 # read-only git: settings.verify when it is plain words, and settings.implementAllow.
 agent_rules() {
@@ -713,130 +644,6 @@ agent_rules() {
   extra=$(cd "$1" && prc_get settings.implementAllow "$2" false) || die "sd config failed"
   if [[ $verify =~ ^[A-Za-z0-9_./:=@+-]+( [A-Za-z0-9_./:=@+-]+)*$ ]]; then echo "Bash($verify)"; fi
   while IFS= read -r rule; do [[ -z $rule ]] || echo "$rule"; done <<<"$extra"
-}
-
-ci_fix() {
-  local b=$branch wt remote state s sha failing last base task verify vout vrc logs prompt result outcome summary msg before agent_head allow=$HARNESS_CLAUDE_ALLOW
-  local -a rules
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  remote=$(repo_remote) || die "sd config failed"
-  git -C "$wt" fetch --quiet "$remote" || die "fetch from $remote failed"
-  state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-  [[ $(prc_val "$state" 'nul(pr)') == false ]] || die "no PR for $b"
-  s=$(prc_val "$state" 'coalesce(pr.state, "")')
-  [[ $s == OPEN ]] || die "PR #$(prc_val "$state" pr.number) is $(tr '[:upper:]' '[:lower:]' <<<"$s"); nothing to fix"
-  s=$(prc_val "$state" 'coalesce(ci.verdict, "none")')
-  sha=$(prc_val "$state" 'coalesce(ci.sha, "")')
-  case $s in
-    red) ;;
-    inconclusive) die "CI was cancelled, not red: rerun it (gh run rerun, or rwx retry), then wait" ;;
-    *) die "CI is $s on $b; nothing to fix" ;;
-  esac
-  [[ $(prc_val "$state" 'on(ci.for_head)') == true ]] \
-    || die "CI's red is for ${sha:0:7}, not HEAD: push if there is something to push, then wait for CI on HEAD"
-  (( $(prc_val "$state" 'n(push.ahead)') == 0 )) \
-    || die "$b has unpushed commits, which may be the fix already: sd act push, then wait for CI"
-  failing=$(prc_val "$state" 'sj(coalesce(ci.failing, []), ", ")')
-  last=$(git config --get "branch.$b.sd-ci-fix" || true)
-  if ! $force && [[ ${last%% *} == "$sha" && ${last#* } == flaky ]]; then
-    die "ci-fix already judged ${sha:0:7}'s red flaky and changed nothing; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks. --force hands it over again"
-  fi
-  question_gate "$b" ci-fix
-  step_session "$b" ci-fix
-  base=$(prc_val "$state" 'coalesce(sync.old_base, "")')
-  # With no base from sd state, the trusted one guidance_base finds (maybe none).
-  [[ -n $base ]] || base=$(guidance_base "$b") || die "can't find $b's base, to read its prompt guidance from"
-  task=$(git config --get "branch.$b.sd-task" || true)
-  s=$(agent_rules "$wt" "$b") || die "sd config failed"
-  rules=(); [[ -z $s ]] || mapfile -t rules <<<"$s"
-  verify=$(cd "$wt" && prc_get settings.verify "$b" false) || die "sd config failed"
-
-  if [[ -n $answer_text ]]; then
-    # The session has the logs and the agent's edits are in the worktree, so
-    # neither verify nor autofix runs first.
-    prompt=$(answer_prompt)
-  else
-    # Zero tokens first: verify, autofix, verify. A fix there is the whole step.
-    vout=$(mktemp)
-    verify_autofix "$wt" "$b" >"$vout" 2>&1 && vrc=0 || vrc=$?   # set -e: a failing verify is data here
-    if [[ -n $AUTOFIX_COMMIT ]]; then cat "$vout"; fi
-    if (( vrc == 0 )) && [[ -n $AUTOFIX_COMMIT ]]; then
-      rm -f "$vout"
-      git config "branch.$b.sd-ci-fix" "$sha autofix"
-      if $no_publish; then echo "autofix fixed what verify saw; not pushed (--no-publish): sd act push"; return; fi
-      hold_gate "$b" "pushing $b"
-      push_branch "$b" "$remote" || die "autofix's commit is kept in $wt, not pushed"
-      echo "autofix fixed what verify saw; CI reruns on the push"
-      return
-    fi
-
-    [[ -z $(git -C "$wt" status --porcelain) ]] \
-      || die "verify ($VERIFY_CMD) changed files in $wt (a formatter?); commit them, then sd act ci-fix"
-    logs=$(cd "$wt" && ci_logs "$sha")
-    prompt=$(cd "$wt" && step_guidance ciFixPrompt "$b" "$base" "$SD_LIB/prompts/ci-fix.md") || die "can't read the ci-fix guidance"
-    prompt+=$'\n\nTask: '"${task:-(none recorded)}"
-    prompt+=$'\n\nFailing checks on '"${sha:0:7}: $failing"
-    [[ -z $logs ]] || prompt+=$'\n\n'"$logs"
-    if [[ -z $VERIFY_CMD ]]; then
-      prompt+=$'\n\nNo local checks are configured (settings.verify), so only CI\'s logs say what failed.'
-    elif (( vrc == 0 )); then
-      prompt+=$'\n\nThe repo\'s checks ('"$VERIFY_CMD"$') pass locally, so the failure may be in CI\'s environment, or in what CI runs that the local checks don\'t.'
-    else
-      prompt+=$'\n\nThe repo\'s checks ('"$VERIFY_CMD"$') fail locally too:\n'"$(<"$vout")"
-    fi
-    rm -f "$vout"
-  fi
-  [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
-  if [[ $STEP_H == claude ]] && (( ${#rules[@]} )); then
-    allow+=$(printf ',%s' "${rules[@]}")
-    prompt+=$'\n\nBeyond reading files and read-only git, you may run only these (Claude Code permission rules); anything else is refused:\n'"$(printf '%s\n' "${rules[@]}")"
-  else
-    prompt+=$'\n\nYou can\'t run commands here beyond read-only git.'
-  fi
-  echo "sd act: $STEP_H ($STEP_MODE session $STEP_SID) is fixing CI on $b ($failing)…" >&2
-  before=$(git rev-parse "refs/heads/$b")
-  result=$(cd "$wt" && HARNESS_CLAUDE_ALLOW=$allow \
-             && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" "$prompt" "$CI_FIX_SCHEMA" "$STEP_CFG") \
-    || { hold_since "$b" "$base" "$before"; die "the $STEP_H ci-fix step failed or returned no usable result (session $STEP_SID)"; }
-  step_store "$b"
-  question_answered "$b"
-  hold_since "$b" "$base" "$before"
-  agent_head=$(git rev-parse "refs/heads/$b")
-
-  outcome=$(prc_val "$result" 'coalesce(outcome, "")')
-  summary=$(prc_val "$result" 'coalesce(summary, "")')
-  case $outcome in
-    fixed) ;;
-    flaky)
-      [[ -z $(git -C "$wt" status --porcelain) ]] || die "the agent says flaky but edited files; they are left uncommitted in $wt"
-      git config "branch.$b.sd-ci-fix" "$sha flaky"
-      echo "$b: the agent calls ${sha:0:7}'s red flaky, not the change's: $summary"
-      if [[ $agent_head != "$before" ]]; then echo "the agent committed anyway; kept, unpushed: look (git log $before..$b), then sd act push"
-      elif [[ -n $AUTOFIX_COMMIT ]]; then echo "autofix's commit $AUTOFIX_COMMIT is kept, unpushed: sd act push"
-      else echo "nothing committed; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks"; fi
-      return ;;
-    needs-input)
-      question_ask "$b" "$wt" ci-fix "$summary"
-      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer with $(answer_cmd "$b"), which goes on from its edits (if any) in $wt; or in its session (sd act attach $b), then commit or discard the edits, or with none, sd act ack --question; then sd act ci-fix" ;;
-    gave-up) die "the agent gave up on $b: $summary. Edits (if any) are left uncommitted in $wt" ;;
-    *) die "the agent returned outcome \"$outcome\"; edits (if any) are left uncommitted in $wt" ;;
-  esac
-  [[ -n $(git -C "$wt" status --porcelain) ]] || die "the agent says fixed but changed nothing (session $STEP_SID)"
-  msg=$(prc_line 'values {m: coalesce(commit_message, null)}
-    | values case when is(m, <string>) and grep("\\S", m) then m else "" end' "$result")
-  [[ -n $msg ]] || msg="Fix CI: ${failing%%,*}"
-  git -C "$wt" add -A && git -C "$wt" commit -q -m "$msg" || die "commit failed; the edits are left in $wt"
-  echo "$b: $summary"
-  git -C "$wt" log --format='  %h %s' "$before..refs/heads/$b"
-  hold_since "$b" "$base" "$agent_head"
-  verify_autofix "$wt" "$b" || die "verify failed ($VERIFY_CMD); the commit is kept in $wt, nothing pushed"
-  git config "branch.$b.sd-ci-fix" "$sha fixed"
-  if $no_publish; then echo "not pushed (--no-publish): sd act push when ready"; return; fi
-  hold_gate "$b" "pushing $b"
-  push_branch "$b" "$remote" || die "the fix is committed in $wt, not pushed"
-  echo "CI reruns on the push"
 }
 
 # ── CI config hold (#124) ────────────────────────────────────────────────────
@@ -1299,9 +1106,7 @@ case $verb in
   push) act_rs ;;
   verify) act_rs ;;
   autofix) act_rs ;;
-  # The agent steps that commit and verify after the agent: marked running
-  # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
-  ci-fix) running_during "$branch" ci-fix ci_fix ;;
+  ci-fix) act_rs ;;
   review) act_rs ;;
   describe) act_rs ;;
   ship) act_rs ;;

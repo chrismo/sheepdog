@@ -1,7 +1,7 @@
-// verify (A10) and autofix (A11), and implement's hook into them.
-// libexec/sd-act's verify_run, autofix_run and verify_autofix still do the
-// same for the bash agent steps: change both. One difference until #203 ports
-// those: there, a failed git status still reads as a clean tree.
+// verify (A10) and autofix (A11), and implement's and ci-fix's hook into
+// them. libexec/sd-act's verify_run, autofix_run and verify_autofix still do
+// the same for the bash agent steps: change both. One difference until #203
+// ports those: there, a failed git status still reads as a clean tree.
 
 use super::{cfg, die, plural};
 use crate::git::{git, git_out, worktree_for};
@@ -44,20 +44,46 @@ pub(super) fn status(wt: &str) -> String {
     g.stdout
 }
 
-fn print_tail(out: &str) {
-    let lines: Vec<&str> = out.split_terminator('\n').collect();
-    let n = lines.len();
-    if n > VERIFY_TAIL {
-        println!("… (last {VERIFY_TAIL} of {n} lines)");
+/// <text>'s last <n> lines, after a note when that cut some.
+pub(super) fn tail(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.split_terminator('\n').collect();
+    let mut out = match lines.len() {
+        all if all > n => format!("… (last {n} of {all} lines)\n"),
+        _ => String::new(),
+    };
+    for l in &lines[lines.len().saturating_sub(n)..] {
+        out += &format!("{l}\n");
     }
-    for l in &lines[lines.len().saturating_sub(VERIFY_TAIL)..] {
-        println!("{l}");
+    out
+}
+
+/// Where verify and autofix say what they did: stdout, or kept for a step
+/// that hands it on (ci-fix's prompt).
+pub(super) enum Report<'a> {
+    Print,
+    Keep(&'a mut String),
+}
+
+impl Report<'_> {
+    fn say(&mut self, s: &str) {
+        match self {
+            Report::Print => print!("{s}"),
+            Report::Keep(buf) => buf.push_str(s),
+        }
+    }
+
+    fn line(&mut self, l: &str) {
+        self.say(&format!("{l}\n"));
     }
 }
 
 /// settings.verify in <wt>: Ok(the command) when it passed, or empty when
 /// none is configured; Err(the command) when it failed, after printing why.
 pub(super) fn verify_run(wt: &str, b: &str) -> Result<String, String> {
+    verify_to(wt, b, &mut Report::Print)
+}
+
+fn verify_to(wt: &str, b: &str, r: &mut Report) -> Result<String, String> {
     let cmd = command("verify", b);
     if cmd.is_empty() {
         return Ok(cmd);
@@ -66,9 +92,9 @@ pub(super) fn verify_run(wt: &str, b: &str) -> Result<String, String> {
     let before = status(wt);
     let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
     if o.ok && status(wt) != before {
-        println!("verify changed files in {wt} (a formatter?); commit them and rerun");
+        r.line(&format!("verify changed files in {wt} (a formatter?); commit them and rerun"));
     } else if !o.ok {
-        print_tail(&o.stdout);
+        r.say(&tail(&o.stdout, VERIFY_TAIL));
     } else {
         return Ok(cmd);
     }
@@ -89,7 +115,7 @@ pub fn autofix(b: &str) {
         println!("no settings.autofix configured; nothing to run");
         return;
     }
-    if let Err(cmd) = autofix_run(&wt, b, false) {
+    if let Err(cmd) = autofix_run(&wt, b, false, &mut Report::Print) {
         die(format!("autofix failed ({cmd})"));
     }
 }
@@ -100,7 +126,7 @@ pub fn autofix(b: &str) {
 /// Err(the command) when it failed, after printing its output's tail; its
 /// changes are left uncommitted to look at, or with <revert> (the hook) put
 /// back, so the next step starts from the commit it knows.
-fn autofix_run(wt: &str, b: &str, revert: bool) -> Result<Option<String>, String> {
+fn autofix_run(wt: &str, b: &str, revert: bool, r: &mut Report) -> Result<Option<String>, String> {
     let cmd = command("autofix", b);
     if cmd.is_empty() {
         return Ok(None);
@@ -112,32 +138,32 @@ fn autofix_run(wt: &str, b: &str, revert: bool) -> Result<Option<String>, String
     let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
     let changed = status(wt).lines().count();
     if !o.ok {
-        print_tail(&o.stdout);
+        r.say(&tail(&o.stdout, VERIFY_TAIL));
         if changed > 0 && revert {
             for args in [&["reset", "-q", "--hard"][..], &["clean", "-qfd"]] {
                 eprint!("{}", git(wt, args).stderr);
             }
-            println!("autofix changed {} before failing; reverted", plural(changed, "file"));
+            r.line(&format!("autofix changed {} before failing; reverted", plural(changed, "file")));
         } else if changed > 0 {
-            println!("autofix changed {} in {wt} before failing; left uncommitted", plural(changed, "file"));
+            r.line(&format!("autofix changed {} in {wt} before failing; left uncommitted", plural(changed, "file")));
         }
         return Err(cmd);
     }
     if changed == 0 {
-        println!("autofix changed nothing ({cmd})");
+        r.line(&format!("autofix changed nothing ({cmd})"));
         return Ok(None);
     }
     for args in [&["add", "-A"][..], &["commit", "-q", "-m", &format!("autofix: {cmd}")]] {
         let g = git(wt, args);
         // The hooks' output: git sends theirs to stderr.
-        print!("{}", g.stdout);
+        r.say(&g.stdout);
         eprint!("{}", g.stderr);
         if !g.ok {
             die(format!("commit failed; autofix's changes are left in {wt}"));
         }
     }
     let sha = git_out(wt, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
-    println!("autofix committed {sha}: {} ({cmd})", plural(changed, "file"));
+    r.line(&format!("autofix committed {sha}: {} ({cmd})", plural(changed, "file")));
     Ok(Some(sha))
 }
 
@@ -145,11 +171,31 @@ fn autofix_run(wt: &str, b: &str, revert: bool) -> Result<Option<String>, String
 /// again (A11). The zero-token pass after a fix step. A verify that dirtied
 /// the tree is verify's own failure: no autofix. Err is the verify command.
 pub(super) fn verify_autofix(wt: &str, b: &str) -> Result<(), String> {
-    let Err(cmd) = verify_run(wt, b) else { return Ok(()) };
-    if !status(wt).is_empty() || !matches!(autofix_run(wt, b, true), Ok(Some(_))) {
-        return Err(cmd);
+    verify_autofix_to(wt, b, &mut Report::Print).0
+}
+
+/// verify_autofix, saying so to <r>, and autofix's commit if it made one.
+pub(super) fn verify_autofix_to(wt: &str, b: &str, r: &mut Report) -> (Result<(), String>, Option<String>) {
+    let Err(cmd) = verify_to(wt, b, r) else { return (Ok(()), None) };
+    if !status(wt).is_empty() {
+        return (Err(cmd), None);
     }
-    let cmd = verify_run(wt, b)?;
-    println!("verify passed after autofix ({cmd})");
-    Ok(())
+    let Ok(Some(sha)) = autofix_run(wt, b, true, r) else { return (Err(cmd), None) };
+    let verified = verify_to(wt, b, r);
+    if let Ok(cmd) = &verified {
+        r.line(&format!("verify passed after autofix ({cmd})"));
+    }
+    (verified.map(|_| ()), Some(sha))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_keeps_the_last_lines_and_says_when_it_cut() {
+        assert_eq!(tail("a\nb\nc\n", 3), "a\nb\nc\n");
+        assert_eq!(tail("a\nb\nc", 2), "… (last 2 of 3 lines)\nb\nc\n");
+        assert_eq!(tail("", 2), "");
+    }
 }
