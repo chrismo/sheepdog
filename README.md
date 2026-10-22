@@ -32,7 +32,11 @@ directory), writes post-merge and post-rewrite hooks into the checkout's git
 hooks directory that rebuild `sd` after a pull or a rebase (a hook already
 there that isn't sheepdog's is left alone, and the installer says so) and, on
 macOS, starts the watcher, which checks enrolled
-branches every five minutes by default. Re-run it to update both. Use
+branches every five minutes by default. Re-run it to update both.
+
+Upgrading from a checkout where `bin/sd` was still a bash script: run
+`./install.sh` once after the pull that brings this in. Before then nothing
+rebuilds `sd`, and the watcher's old build looks for verbs that are gone. Use
 `sd watch uninstall` to stop the background job, or `sd watch install` to
 start it again (with the same `$LOCAL_BIN`, if you changed it). On other platforms, only the CLI is linked; the background
 watcher requires macOS (launchd). Anything at `$LOCAL_BIN/sd` that isn't a

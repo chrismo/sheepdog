@@ -328,6 +328,22 @@ fn a_failed_rebuild_says_so_and_names_install_sh() {
 }
 
 #[test]
+fn a_hook_whose_checkout_is_gone_says_so_and_doesnt_fail_the_pull() {
+    let sd = sd();
+    assert_eq!(sd.run(&[]).status, 0);
+    // As when it was written from a worktree since deleted: the hook outlives
+    // the checkout it builds.
+    let hook = sd.tmp.join("post-merge");
+    fs::copy(sd.hook("post-merge"), &hook).unwrap();
+    fs::rename(sd.tmp.join("repo"), sd.tmp.join("moved")).unwrap();
+    fs::remove_file(sd.tmp.join("cargo-calls")).unwrap();
+    let r = sd.exec(&hook, &[], &["0"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["is gone"]);
+    assert!(!sd.tmp.join("cargo-calls").exists());
+}
+
+#[test]
 fn a_failed_build_writes_no_hooks() {
     let sd = sd();
     let r = sd.run_env(&[("CARGO_EXIT", "101")], &[]);

@@ -44,8 +44,10 @@ if hooks=$(git -C "$REPO_DIR" rev-parse --git-path hooks 2>/dev/null); then
       echo "! $hook isn't sheepdog's, so it's left alone: sd won't be rebuilt on $name" >&2
       continue
     fi
-    printf '#!/usr/bin/env bash\n%s\nunset CARGO_TARGET_DIR\n%q build --release --quiet --manifest-path %q \\\n  || { echo %q >&2; exit 1; }\n' \
-      "$mark" "$cargo_path" "$REPO_DIR/Cargo.toml" "sd: couldn't rebuild sd; run $REPO_DIR/install.sh" > "$hook"
+    # Worktrees share hooks, so this one can outlive the checkout it builds.
+    printf '#!/usr/bin/env bash\n%s\n[ -d %q ] || { echo %q >&2; exit 0; }\nunset CARGO_TARGET_DIR\n%q build --release --quiet --manifest-path %q \\\n  || { echo %q >&2; exit 1; }\n' \
+      "$mark" "$REPO_DIR" "sd: $REPO_DIR is gone, so sd isn't rebuilt; run install.sh in the checkout sd should run" \
+      "$cargo_path" "$REPO_DIR/Cargo.toml" "sd: couldn't rebuild sd; run $REPO_DIR/install.sh" > "$hook"
     chmod +x "$hook"
     echo "✓ Wrote $hook, which rebuilds sd"
   done
