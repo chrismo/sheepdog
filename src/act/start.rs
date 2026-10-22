@@ -9,9 +9,10 @@
 use super::bookkeeping::enroll_mark;
 use super::{die, Args};
 use crate::git::{common_dir, git, git_ok, git_out, main_worktree, rev, show_ref};
-use std::ffi::CString;
+use crate::proc::{self, executable};
 use std::io::stderr;
 use std::os::fd::AsFd;
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 
 /// The remote's default branch as fetched: <remote>/HEAD, else main or
@@ -44,17 +45,12 @@ fn destination(main: &str, b: &str) -> String {
 /// <c> with its stdout on sd's stderr: start's stdout is only the path.
 fn on_stderr(mut c: Command) -> std::io::Result<ExitStatus> {
     let err = stderr().as_fd().try_clone_to_owned()?;
-    c.stdout(Stdio::from(err)).stdin(Stdio::null()).status()
+    c.stdout(Stdio::from(err)).status()
 }
 
 /// The shell's $? for <st>, 1 when it couldn't run.
 fn code(st: std::io::Result<ExitStatus>) -> i32 {
-    st.map_or(1, |s| s.code().unwrap_or(1))
-}
-
-fn executable(p: &str) -> bool {
-    let Ok(c) = CString::new(p) else { return false };
-    unsafe { libc::access(c.as_ptr(), libc::X_OK) == 0 }
+    st.map_or(1, proc::code)
 }
 
 /// The repo's setup hook in the new worktree, as wt-new runs it:
@@ -62,7 +58,7 @@ fn executable(p: &str) -> bool {
 /// goes to stderr. false when it failed.
 fn start_hook(src: &str, dst: &str, b: &str) -> bool {
     let script = format!("{}/worktree-setup", common_dir().unwrap_or_default());
-    let mut c = if executable(&script) {
+    let mut c = if executable(Path::new(&script)) {
         eprintln!("sd act: running {script}");
         Command::new(&script)
     } else {
@@ -117,7 +113,7 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     }
     let src = git_out(".", &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| die("not inside a worktree"));
     let dst = destination(&main_worktree("."), b);
-    if std::path::Path::new(&dst).exists() {
+    if Path::new(&dst).exists() {
         die(format!("{dst} already exists"));
     }
     let f = git(".", &["fetch", "--quiet", "--prune", remote]);

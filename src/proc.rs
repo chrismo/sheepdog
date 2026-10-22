@@ -2,6 +2,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Once};
@@ -92,8 +93,14 @@ fn text(b: &Buf) -> String {
 }
 
 /// The shell's $?: a command killed by a signal is 128 + the signal.
-fn code(st: ExitStatus) -> i32 {
+pub fn code(st: ExitStatus) -> i32 {
     st.code().unwrap_or_else(|| 128 + st.signal().unwrap_or(0))
+}
+
+/// A regular file with an x bit: what command -v would run.
+pub fn executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 // In its own group, a Ctrl-C or a kill of sd doesn't reach timeout's command,
@@ -300,6 +307,23 @@ fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_is_a_file_with_an_x_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("sd-proc-x-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (x, plain) = (dir.join("x"), dir.join("plain"));
+        std::fs::write(&x, "").unwrap();
+        std::fs::write(&plain, "").unwrap();
+        std::fs::set_permissions(&x, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(executable(&x));
+        assert!(!executable(&plain));
+        assert!(!executable(&dir), "a directory is not a command");
+        assert!(!executable(&dir.join("missing")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn with_timeout_returns_stdout_stderr_and_status() {

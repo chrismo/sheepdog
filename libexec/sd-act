@@ -1857,9 +1857,9 @@ case $verb in
   forget) act_rs ;;
   unregister) act_rs ;;
   start) act_rs ;;
+  implement) act_rs ;;
   # The agent steps that commit and verify after the agent: marked running
   # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
-  implement) act_rs ;;
   address) running_during "$branch" address address ;;
   ack) act_rs ;;
   answer) answer ;;
