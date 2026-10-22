@@ -1,5 +1,4 @@
-// What to do next on a branch, from its sd state JSON. sd state runs it, and
-// sd state --next runs it on a record piped in.
+// What to do next on a branch, from its sd state JSON. sd state runs it.
 //
 // A step is {key, who, say, cmd}. who is who does it once it's automated:
 //   you    chrismo's judgment     agent  a model step
@@ -704,16 +703,4 @@ pub fn lines(steps: &Value, all: bool) -> String {
         let more = if ls.len() > 1 { format!("  (+{} more)", ls.len() - 1) } else { String::new() };
         format!("NEXT  {first}{more}\n")
     }
-}
-
-/// sd state --next <remote>: an sd state record on stdin, the steps out.
-pub fn run_stdin(remote: &str) -> Result<String, String> {
-    let mut input = String::new();
-    std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).map_err(|e| e.to_string())?;
-    let mut it = serde_json::Deserializer::from_str(&input).into_iter::<Value>();
-    let state = match (it.next(), it.next()) {
-        (Some(Ok(v)), None) => v,
-        _ => return Err("sd state JSON must be one record".into()),
-    };
-    Ok(crate::json::to_string(&steps(&state, remote)?) + "\n")
 }

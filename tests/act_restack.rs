@@ -39,13 +39,12 @@ fi
 
 /// The bats setup: origin.git, its clones repo (cwd) and other, file.txt
 /// (a..h) on main, and feat one commit past it (g→G), pushed and tracking
-/// origin/feat; the fake gh and the real sd state on PATH.
+/// origin/feat; the fake gh on PATH.
 fn sd() -> Sd {
     let mut sd = Sd::for_verb("act");
     sd.env = vec![("GH".to_string(), sd.path("gh"))];
     fs::create_dir(sd.tmp.join("gh")).unwrap();
     sd.fake("gh", GH);
-    sd.on_path("state");
     sd.origin(&["repo"]);
     sd.cd("repo");
     sd.write("file.txt", "a\nb\nc\nd\ne\nf\ng\nh\n");
@@ -287,7 +286,7 @@ fn parent_merged_but_the_pr_still_targets_it_sd_parent_kept_so_retarget_is_still
     assert_eq!(sd.rev("child^"), sd.rev("origin/main"));
     assert_eq!(sd.config("branch.child.sd-parent"), "A");
     assert_has(&r.output, &["PR #2 still targets A: sd act retarget"]);
-    let r = sd.exec(&sd.tmp.join("fakebin/sd-state"), &[], &["--json", "child"]);
+    let r = sd.exec(&sd.link("state"), &[], &["--json", "child"]);
     assert_eq!(jq(&["-r", r#"[.next[].key] | index("retarget") != null"#], &r.output), "true");
     assert_eq!(sd.run(&["retarget"]).status, 0);
     assert_eq!(sd.gh_calls().as_deref(), Some("pr edit 2 --base main"));

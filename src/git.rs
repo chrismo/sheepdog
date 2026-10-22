@@ -55,15 +55,15 @@ pub fn branch_in(dir: &str, b: &str) -> bool {
     git_ok(dir, &["rev-parse", "-q", "--verify", &format!("refs/heads/{b}")])
 }
 
-pub fn common_dir() -> Option<String> {
-    git_out(".", &["rev-parse", "--path-format=absolute", "--git-common-dir"])
+pub fn common_dir(dir: &str) -> Option<String> {
+    git_out(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
 }
 
 /// Mid-rebase, the branch being rebased (restack --resolve runs detached, #179).
-pub fn current_branch() -> Option<String> {
-    match git_out(".", &["branch", "--show-current"]) {
+pub fn current_branch(dir: &str) -> Option<String> {
+    match git_out(dir, &["branch", "--show-current"]) {
         Some(b) if !b.is_empty() => Some(b),
-        _ => rebase_head("."),
+        _ => rebase_head(dir),
     }
 }
 

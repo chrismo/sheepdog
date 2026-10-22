@@ -11,7 +11,7 @@
 // since #85: beside the main worktree, never beside a linked one.
 //
 // Real git (a bare origin, our clone at repo/, other/ for pushes that aren't
-// ours). The real sd state is on PATH. gh is a stub with no PRs. claude edits
+// ours). sd state is the real one, in-process. gh is a stub with no PRs. claude edits
 // through $FX/agent and prints $FX/result.json as structured output.
 
 mod common;
@@ -70,7 +70,6 @@ fn sd() -> Sd {
     }
     sd.fake("gh", GH);
     sd.fake("claude", CLAUDE);
-    sd.on_path("state");
     sd.agent("#!/usr/bin/env bash\necho c >> file.txt\n");
     sd.put("result.json", r#"{"outcome": "done", "commit_message": "Add c", "summary": "Added the third line."}"#);
 
@@ -1002,10 +1001,8 @@ fn implement_with_a_findings_record_sd_state_failing_is_a_failure_not_the_task_p
     let mut sd = sd();
     sd.started(TASK);
     sd.findings_at("HEAD", "1");
-    fs::create_dir(sd.tmp.join("broken")).unwrap();
-    sd.script(&sd.tmp.join("broken/sd-state"), "#!/usr/bin/env bash\nexit 1\n");
-    let path = format!("{}:{}:{}", sd.path("broken"), sd.path("fakebin"), std::env::var("PATH").unwrap_or_default());
-    let r = sd.run_env(&[("PATH", &path)], &["implement"]);
+    sd.verb_ok("config", &["set", "--global", "--json", "settings.botIgnoreBody", r#"["("]"#]);
+    let r = sd.run(&["implement"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["sd state failed"]);
     assert!(!sd.ran("claude.prompt"));

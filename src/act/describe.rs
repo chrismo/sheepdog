@@ -28,7 +28,7 @@ const DESCRIBE_SCHEMA: &str = r#"{"type": "object", "required": ["title", "body"
 /// Where the branch's description is stored, a / in its name made __; None
 /// outside a repo.
 pub fn file(b: &str) -> Option<String> {
-    git::common_dir().map(|dir| format!("{dir}/sheepdog/{}.describe.json", b.replace('/', "__")))
+    git::common_dir(".").map(|dir| format!("{dir}/sheepdog/{}.describe.json", b.replace('/', "__")))
 }
 
 /// The prompt's line on what the PR targets (sync.target, the base ship

@@ -3,21 +3,17 @@
 // sd-act through a link (tests/common). Moved from
 // libexec/sd-act-address.bats; each test keeps the bats test's title above it.
 //
-// Real git (a bare origin and a clone). Fakes on PATH: sd state (answers from
-// $FX/state.json), gh (logs each call as JSON to $FX/gh.log and answers the
-// nodes(ids:) lookup from $FX/nodes.json), claude and pi (run $FX/agent to
-// edit files, then print the canned result).
+// Real git (a bare origin and a clone). sd state answers from
+// $FX/states/feat.json (SHEEPDOG_STATE_FIXTURES). Fakes on PATH: gh (logs
+// each call as JSON to $FX/gh.log and answers the nodes(ids:) lookup from
+// $FX/nodes.json), claude and pi (run $FX/agent to edit files, then print the
+// canned result).
 
 mod common;
 
 use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs;
 use std::time::Instant;
-
-const SD_STATE: &str = r#"#!/usr/bin/env bash
-echo "$PWD ${@: -1}" >> "$FX/sd-state.calls"
-cat "$FX/state.json"
-"#;
 
 const GH: &str = r#"#!/usr/bin/env bash
 q="" fields=() filter=.
@@ -101,9 +97,12 @@ const AGENT_HANGS: &str = "#!/usr/bin/env bash\nsleep 30\n";
 /// answers with, and the agent that fixes T1.
 fn sd() -> Sd {
     let mut sd = Sd::for_verb("act");
-    sd.env = vec![("SHEEPDOG_STATE_DIR".into(), sd.path("state")), ("FX".into(), sd.path("fx"))];
-    fs::create_dir(sd.tmp.join("fx")).unwrap();
-    sd.fake("sd-state", SD_STATE);
+    sd.env = vec![
+        ("SHEEPDOG_STATE_DIR".into(), sd.path("state")),
+        ("FX".into(), sd.path("fx")),
+        ("SHEEPDOG_STATE_FIXTURES".into(), sd.path("fx/states")),
+    ];
+    fs::create_dir_all(sd.tmp.join("fx/states")).unwrap();
     sd.fake("gh", GH);
     sd.fake("claude", CLAUDE);
     sd.fake("pi", PI);
@@ -153,7 +152,7 @@ impl Sd {
         for e in edits {
             j = jq(&[e], &j);
         }
-        self.put("state.json", &j);
+        self.put("states/feat.json", &j);
     }
 
     /// state_fixture's T1 and T2 owed.

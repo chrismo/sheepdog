@@ -38,7 +38,7 @@ fn resumes(b: &str, q: &Value) -> Result<Resume, String> {
 /// <a>.answer is the answer; --force, --no-publish and --harness go to the
 /// step as given.
 pub fn answer(b: &str, remote: &str, a: &Args) {
-    let q = question_state(b, &rev(".", &format!("refs/heads/{b}")))
+    let q = question_state(".", b, &rev(".", &format!("refs/heads/{b}")))
         .unwrap_or_else(|()| die(format!("refs/sheepdog/{b}/question isn't a question record")))
         .unwrap_or_else(|| die(format!("no question to answer on {b}")));
     match resumes(b, &q).unwrap_or_else(|e| die(e)) {

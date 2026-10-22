@@ -1,7 +1,9 @@
 // The pass, refresh and vacuum (src/watch_help.txt): sd state every enrolled
 // branch, glyph it, notify per the policy, and keep each branch's state for
 // the next pass. sd state runs as sd-state from PATH, a process of its own,
-// so a hung one can be timed out (the suite puts a fake one there).
+// so a hung one can be timed out (the suite puts a fake one there): on
+// purpose not state::observe in-process, as sd act calls it, since the
+// watcher supervises its children with deadlines (#12).
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
