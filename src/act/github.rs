@@ -252,7 +252,8 @@ mod tests {
 
     #[test]
     fn ack_items_what_is_as_super_printed_it() {
-        // ci/fixtures/ack.json's ids over two of its items, and what ACK_Q made of them.
+        // What super 0.3.0 printed for bash's ack query (ACK_Q, retired with
+        // its fixture) over these items.
         let s = owed(&[
             json!({"id": "T1", "type": "thread", "kind": "bot", "last": "copilot", "mark": "!", "author": "copilot",
                    "url": "https://example/pr/7#t1", "excerpt": "Heading"}),

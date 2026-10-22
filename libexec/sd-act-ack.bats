@@ -112,6 +112,21 @@ handled() { git config --get-all branch.feat.sd-handled || true; }
   [[ "$output" == *"sd state failed"* ]]
 }
 
+@test "ack: sd state's warnings get through" {
+  state "$(item R1 review bot i)"
+  printf '#!/usr/bin/env bash\necho "warning: from sd state" >&2\ncat "$FX/state.json"\n' > "$TMP/fakebin/sd-state"
+  run "$SD_ACT" ack
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warning: from sd state"* ]]
+}
+
+@test "ack: an answer from sd state that isn't JSON says so" {
+  printf '#!/usr/bin/env bash\necho nope\n' > "$TMP/fakebin/sd-state"
+  run "$SD_ACT" ack
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"can't parse sd state's answer"* ]]
+}
+
 # ── the agent's question (#167) ──────────────────────────────────────────────
 
 question() { # a standing question record on feat
