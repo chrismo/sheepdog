@@ -3,6 +3,7 @@
 // after its own prelude (#202), so this repeats the prelude's checks for a
 // run that doesn't come through it.
 
+mod bookkeeping;
 mod commands;
 mod push;
 
@@ -206,6 +207,10 @@ pub fn run(argv: &[String]) -> ExitCode {
         "push" => push::push(&b, &remote, a.force),
         "verify" => commands::verify(&b),
         "autofix" => commands::autofix(&b),
+        "enroll" => bookkeeping::enroll(&b, &remote),
+        "unenroll" => bookkeeping::unenroll(&b),
+        "forget" => bookkeeping::forget(&b, a.remove),
+        "unregister" => bookkeeping::unregister(&a.branch, a.force),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
