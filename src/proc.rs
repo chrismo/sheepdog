@@ -132,7 +132,8 @@ pub fn timeout(secs: u64, mut c: Command, merged: bool) -> Out {
         }
     };
     let group = format!("-{}", child.id());
-    let kill = |sig: &str| Command::new("kill").args([sig, &group]).status();
+    // "--" so kill can't read the negative pid as an option.
+    let kill = |sig: &str| Command::new("kill").args([sig, "--", &group]).status();
     match status {
         // As $( ) does, wait for what it started to stop writing.
         Some(_) => {
