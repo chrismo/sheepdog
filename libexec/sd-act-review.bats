@@ -89,6 +89,24 @@ pin() { git rev-parse -q --verify "refs/sheepdog/feat/$1" || true; }
   [ -z "$(pin local)" ]
 }
 
+@test "the reviewer's stderr shows while it runs, not after it exits" {
+  cat > "$TMP/reviewer" <<'EOF'
+#!/usr/bin/env bash
+echo "reviewer: started" >&2
+for _ in {1..100}; do [[ -e $FX/go ]] && break; sleep 0.1; done
+echo '[]'
+EOF
+  "$SD_ACT" review >/dev/null 2>"$TMP/err" &
+  local pid=$! seen=false
+  for _ in {1..30}; do
+    grep -q "reviewer: started" "$TMP/err" && { seen=true; break; }
+    sleep 0.1
+  done
+  touch "$FX/go"
+  wait "$pid"
+  $seen
+}
+
 @test "reviewer output that isn't a JSON list is a failure" {
   echo 'looks fine to me' > "$FX/findings.json"
   run "$SD_ACT" review

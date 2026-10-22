@@ -103,8 +103,8 @@ pub fn show_ref(dir: &str, r: &str) -> bool {
 
 /// A review pin and the base it was taken against. sd state compares
 /// base..pin with the branch's current base..HEAD, so a restack (which moves
-/// the base) doesn't make a reviewed change look changed (#66). lib/sheepdog.sh's
-/// pin_write does the same for bash review: change both.
+/// the base) doesn't make a reviewed change look changed (#66). Kinds: local,
+/// bot, accepted (#66 Re-review policy).
 pub fn pin_write(dir: &str, b: &str, kind: &str, sha: &str, base: &str) -> Result<(), String> {
     if !["local", "bot", "accepted"].contains(&kind) {
         return Err(format!("unknown pin: {kind} (local, bot, accepted)"));
@@ -448,8 +448,6 @@ mod tests {
             }
         }
     }
-
-    // pin_write's are lib/sheepdog.bats's too, while the bash pin_write stays.
 
     // @test "pin_write records the pin and the base it was taken against"
     #[test]
