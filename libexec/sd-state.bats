@@ -1437,6 +1437,52 @@ ready_pr() {
   [ "$(field .ci.verdict)" = red ]
 }
 
+# check_run <id> <name> <conclusion|null> [workflow] [event]: a GitHub
+# Actions check run; a null conclusion is still in progress.
+check_run() {
+  local status=COMPLETED conclusion="\"$3\""
+  [ "$3" = null ] && status=IN_PROGRESS conclusion=null
+  printf '{__typename:"CheckRun",databaseId:%s,name:"%s",status:"%s",conclusion:%s,
+    checkSuite:{app:{slug:"github-actions"},workflowRun:{event:"%s",workflow:{name:"%s"}}}}' \
+    "$1" "$2" "$status" "$conclusion" "${5:-pull_request}" "${4:-pr}"
+}
+
+@test "ci: a newer run of the same check supersedes an older failure on the same SHA (#195)" {
+  git switch -qc feat && commit a.txt a && git push -q -u origin feat 2>/dev/null
+  git update-ref refs/sheepdog/feat/local HEAD
+  pr_fixture feat "$(checks "[$(check_run 20 title SUCCESS), $(check_run 10 title FAILURE), $(check_run 11 test SUCCESS)]")"
+  state
+  [ "$(field .ci.verdict)" = green ]
+  [ "$(field '.ci.failing | length')" = 0 ]
+  [[ "$(field '[.next[].key] | join(" ")')" != *ci-fix* ]]
+}
+
+@test "ci: a newer failure of the same check is red over an older pass (#195)" {
+  git switch -qc feat && commit a.txt a
+  pr_fixture feat "$(checks "[$(check_run 10 title SUCCESS), $(check_run 20 title FAILURE)]")"
+  state
+  [ "$(field .ci.verdict)" = red ]
+  [ "$(field '.ci.failing | join(",")')" = title ]
+}
+
+@test "ci: a replacement run still in progress is pending, not the old failure's red (#195)" {
+  git switch -qc feat && commit a.txt a
+  pr_fixture feat "$(checks "[$(check_run 10 title FAILURE), $(check_run 20 title null)]")"
+  state
+  [ "$(field .ci.verdict)" = pending ]
+  [ "$(field '.ci.pending | join(",")')" = title ]
+}
+
+@test "ci: same-named checks from another workflow or event are distinct checks (#195)" {
+  git switch -qc feat && commit a.txt a
+  pr_fixture feat "$(checks "[$(check_run 10 test FAILURE ci), $(check_run 20 test SUCCESS lint)]")"
+  state
+  [ "$(field .ci.verdict)" = red ]
+  pr_fixture feat "$(checks "[$(check_run 10 test FAILURE ci push), $(check_run 20 test SUCCESS ci pull_request)]")"
+  state
+  [ "$(field .ci.verdict)" = red ]
+}
+
 # Required checks (#123): read for a draft only, since undraft is the one
 # decision GitHub's merge state doesn't already gate on them.
 required_rules() { # required_rules <context>...: a ruleset requiring them

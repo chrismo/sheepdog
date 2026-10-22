@@ -17,11 +17,14 @@
 #             made here and whether the worktree has uncommitted changes;
 #             held: an agent step's unpushed change to CI config (sd act's
 #             hold), {sha, paths}, else null
-#   ci        checks on the PR head commit. A check that didn't start or
-#             wants approval (STARTUP_FAILURE, ACTION_REQUIRED) is blocked,
-#             chrismo's, not red. For a draft, also the base branch's
-#             required checks (rulesets and classic protection; matched by
-#             name, not app): one with no context on the head is missing,
+#   ci        checks on the PR head commit. Only each check's latest run counts
+#             (by app, workflow, event and name): a rerun or a new run on the
+#             same SHA, say from an edited title, supersedes the old one
+#             (#195). A check that didn't start or wants approval
+#             (STARTUP_FAILURE, ACTION_REQUIRED) is blocked, chrismo's, not
+#             red. For a draft, also the base branch's required checks
+#             (rulesets and classic protection; matched by name, not app):
+#             one with no context on the head is missing,
 #             and keeps the verdict pending, so undraft waits for it (#123).
 #             One that never runs on a draft (a workflow skipping drafts, or
 #             filtered to other branches, for a stacked draft) waits forever:
@@ -157,7 +160,8 @@ query($owner: String!, $repo: String!, $number: Int!, $commits: Boolean!) {
       allCommits: commits(last: 250) @include(if: $commits) { nodes { commit { oid } } }
       commits(last: 1) { nodes { commit { oid statusCheckRollup { state contexts(first: 100) { nodes {
         __typename
-        ... on CheckRun { name status conclusion }
+        ... on CheckRun { databaseId name status conclusion
+          checkSuite { app { slug } workflowRun { event workflow { name } } } }
         ... on StatusContext { context state }
       } } } } } }
       reviewThreads(first: 100) { nodes {
@@ -819,6 +823,12 @@ fn bot_pin(s, br): nul(s.r_bot) ? null : {...s.r_bot,
     waited: on(s.r_bot.status == "none") or s.bot_triggered is null or not s.gh_ok ? null
             : cast(s.now::time - s.bot_triggered::time, <int64>) / 1000000000}
 values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
+        -- StatusContexts arrive latest-only; CheckRuns don't (#195)
+        cr: coalesce([
+          unnest coalesce(pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes, [])
+          | values {name: coalesce(name, context, null), k: ci_class(this), id: coalesce(databaseId, 0),
+                    key: f"{__typename}/{coalesce(checkSuite.app.slug, "")}/{coalesce(checkSuite.workflowRun.workflow.name, "")}/{coalesce(checkSuite.workflowRun.event, "")}/{coalesce(name, context, "")}"}
+        ], []),
         g: {viewer, bots: coalesce([unnest bots | values unbot(this)], []),
             ign: coalesce([unnest ignore | values unbot(this)], []), ignore_body, handled}}
 | values {a, c, g,
@@ -832,8 +842,9 @@ values {a: this, c: coalesce(pr.commits.nodes[0].commit, null),
       | values x.id
     ], []),
     ctx: coalesce([
-      unnest coalesce(c.statusCheckRollup.contexts.nodes, [])
-      | values {name: coalesce(name, context, null), k: ci_class(this)}
+      unnest {all: cr, e: cr}
+      | where len(coalesce([unnest {e, x: all} | where x.key == e.key and x.id > e.id], [])) == 0
+      | values {name: e.name, k: e.k}
     ], []),
     hv: coalesce([
       unnest {g, r: coalesce(a.pr.reviews.nodes, [])}
