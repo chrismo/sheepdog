@@ -95,20 +95,25 @@ from chrismo's real config, glyphs and launchd job.
 
 This is a TDD repo: write a failing bats test first, then make it pass.
 
-**Lean on RWX for the full suite; don't run it locally.** Locally, run only the
-bats file you're changing during red-green. Send the full suite (and
-`ci/super-stress`) to RWX with `rwx run .rwx/tests.yml --wait`, which uploads
-local edits as a patch, no push needed (see CI below). Several sessions often
-work in parallel worktrees here, and a local full run takes every core.
-
-Offline, or to check the macOS-only `sd watch` plist tests that skip on RWX
-(`needs_plutil`), the local full run is (needs GNU `parallel`,
-`brew install parallel`; about 2 minutes on 10 cores):
+**The full suite runs on the PR's CI, not locally and not by `rwx run`.**
+Locally, run only the tests you're writing or changing during red-green,
+picked by name with `-f`, not whole files and never the suite:
 
 ```bash
-bats --jobs 10 lib/*.bats bin/*.bats libexec/*.bats ci/*.bats
-bats install.bats
+bats -f 'findings record with no usable round' libexec/sd-act-review.bats
 ```
+
+When the change is ready, commit and `sd act push`; the PR's run is the
+full-suite check (see CI below). Several sessions often work in parallel
+worktrees here, and a local full run takes every core.
+
+**Don't launch runs with `rwx run`.** Each one is a full paid run, and it
+doesn't stand in for the PR's run: a later commit changes the files, and RWX
+runs everything again. Over 2026-10-18 to -21, `rwx run` was 43 of the 56 full
+runs. Push when the work is ready for a full check, not after every commit.
+
+The macOS-only `sd watch` plist tests skip on RWX (`needs_plutil`). After
+changing the plist, run them locally: `bats -f install libexec/sd-watch.bats`.
 
 **Check which bash bats is using before trusting a green run.** `bats` is
 `#!/usr/bin/env bash`, so test bodies run under whichever bash is first on
@@ -125,7 +130,7 @@ PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
 intermittently on one construct, so `ci/super-stress` runs every named query
 (the `read -r -d '' NAME <<'EOF'` heredocs in `libexec/sd-*` and `lib/next.sh`'s
 `PRN_QUERY`) 200 times over `ci/fixtures/` and fails on a panic or a differing
-output. RWX runs it with the suite, so `rwx run` after touching a query
+output. RWX runs it with the suite, so the PR's run after touching a query
 covers it. SuperDB's edges are under "SuperDB notes" below.
 
 **Every script is `#!/usr/bin/env bash5`, `install.sh` included.** Test them
@@ -140,13 +145,16 @@ means the sandbox, so run it outside.
 ## CI (RWX)
 
 `.rwx/tests.yml` runs every suite on Ubuntu for PRs and pushes to `main`, through
-Captain (`.captain/config.yml`) via `ci/test`. Run it without pushing; `rwx run`
-sends local edits as a patch:
+Captain (`.captain/config.yml`) via `ci/test`. A push to a branch with an open
+PR starts a run; `sd state` reports its result. To read a run:
 
 ```bash
-rwx run .rwx/tests.yml --wait
+rwx runs list --branch <branch>
 rwx logs --task test <run-id>
 ```
+
+`rwx run` (a run from local edits, no push) is for chrismo to ask for; see
+"Don't launch runs with `rwx run`" above.
 
 One 16-CPU task, not Captain shards: `bats --jobs` balances tests across CPUs
 better than Captain balances 11 files across runners (37 s vs 77 s, 2026-10-14).
