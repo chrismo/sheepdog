@@ -308,6 +308,14 @@ fn global_file() -> String {
     })
 }
 
+/// Where sheepdog keeps its state: usage.sup, the watcher's glyphs and log.
+pub fn state_dir() -> String {
+    std::env::var("SHEEPDOG_STATE_DIR")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| format!("{}/.local/state/sheepdog", std::env::var("HOME").unwrap_or_default()))
+}
+
 fn branch_file(b: &str) -> Res<String> {
     let Some(dir) = git::common_dir() else { return err("not a git repository") };
     let name = b.replace('%', "%25").replace('/', "%2F");

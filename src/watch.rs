@@ -2,9 +2,11 @@
 // status, install and uninstall. The pass, refresh and vacuum are still
 // libexec/sd-watch's, which hands these to the binary (#201).
 
-use crate::config;
+use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path};
 use std::process::{Command, ExitCode, Stdio};
 
@@ -25,10 +27,6 @@ fn env_or(var: &str, default: impl FnOnce() -> String) -> String {
 
 fn home() -> String {
     std::env::var("HOME").unwrap_or_default()
-}
-
-fn state_dir() -> String {
-    env_or("SHEEPDOG_STATE_DIR", || format!("{}/.local/state/sheepdog", home()))
 }
 
 fn launch_agents() -> String {
@@ -196,8 +194,12 @@ fn install() -> ExitCode {
             die(format!("can't create {d}: {e}"));
         }
     }
+    // 0600 whatever the umask, as the bash's mktemp made it.
     let tmp = format!("{plist_file}.{}.tmp", std::process::id());
-    if let Err(e) = fs::write(&tmp, plist(&prog, &interval, &path, &format!("{state}/launchd.log"))) {
+    let text = plist(&prog, &interval, &path, &format!("{state}/launchd.log"));
+    let wrote = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp);
+    if let Err(e) = wrote.and_then(|mut f| f.write_all(text.as_bytes())) {
+        let _ = fs::remove_file(&tmp);
         die(format!("can't write {tmp}: {e}"));
     }
     if !Command::new("plutil").args(["-lint", "-s", &tmp]).status().is_ok_and(|s| s.success()) {
@@ -252,7 +254,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         },
         "install" => return install(),
         "uninstall" => return uninstall(),
-        "" | "refresh" | "vacuum" => die("the pass, refresh and vacuum are libexec/sd-watch's still"),
+        "" | "refresh" | "vacuum" => die("the pass, refresh and vacuum are still in bash: run them through bin/sd"),
         _ => die(format!("unknown command: {sub}")),
     }
     ExitCode::SUCCESS

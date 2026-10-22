@@ -1829,6 +1829,15 @@ old_labels_retired() {
   grep -q "bootstrap gui/$(id -u) $PLIST" "$PS_FIXTURES/launchctl"
 }
 
+@test "install: the plist is readable by its owner only, whatever the umask" {
+  needs_plutil
+  setup_launchd
+  umask 022
+  run "$SD_WATCH" install
+  [ "$status" -eq 0 ]
+  [[ "$(ls -l "$PLIST")" == "-rw-------"* ]]
+}
+
 @test "install: the job abandons its process group, so launchd spares a step that hasn't reached setsid (#12)" {
   needs_plutil
   setup_launchd
