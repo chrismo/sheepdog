@@ -26,9 +26,13 @@ pub fn spawn(c: &mut Command) -> Child {
 
 /// The command's output, stdin fed from <input> or else empty.
 pub fn output(c: &mut Command, input: Option<&[u8]>) -> Output {
-    c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    c.stdin(if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     let mut child = spawn(c);
     if let Some(i) = input {
         child.stdin.take().unwrap().write_all(i).unwrap();
@@ -156,7 +160,10 @@ impl Sd {
         let mut c = Command::new(program);
         let path = std::env::var("PATH").unwrap_or_default();
         c.current_dir(&self.cwd)
-            .env("PATH", format!("{}:{path}", self.tmp.join("fakebin").display()))
+            .env(
+                "PATH",
+                format!("{}:{path}", self.tmp.join("fakebin").display()),
+            )
             .env("HOME", self.tmp.join("home"))
             .env("GIT_CONFIG_GLOBAL", self.tmp.join("gitconfig-global"))
             .env("GIT_CONFIG_SYSTEM", "/dev/null")
@@ -212,7 +219,9 @@ impl Sd {
     /// git <args>'s stdout, chomped, or None when it fails.
     pub fn git_try(&self, args: &[&str]) -> Option<String> {
         let out = self.git_output(&[], None, args);
-        out.status.success().then(|| chomp(&String::from_utf8_lossy(&out.stdout)))
+        out.status
+            .success()
+            .then(|| chomp(&String::from_utf8_lossy(&out.stdout)))
     }
 
     /// git -C <dir> <args>, <dir> relative to the temp dir.
