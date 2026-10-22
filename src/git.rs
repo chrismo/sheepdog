@@ -267,9 +267,20 @@ pub fn made_here(dir: &str, range: &str) -> bool {
     people.lines().all(|p| p == me)
 }
 
-/// lib/sheepdog.sh's stacked_on: the branch <b> was made from when no one
-/// recorded it. Ok((name, base)), or Err(1) none, Err(2) a tie, Err(3)
-/// unclear, the names in the string.
+/// The branch <b> was made from when no one recorded it (a plain git branch
+/// from another's tip), found by the commits they share that aren't on
+/// <default>, local or remote. Ok((name, base)), base being where they
+/// forked. Err((1, "")): none; Err((2, names)): a tie; Err((3, names)): the
+/// ones found have commits of their own past the fork too, so git can't say
+/// which was made from which (a parent that moved on looks like a child).
+/// Git only, and bounded for sd state: candidates are local branches and
+/// their remote-tracking refs that hold <b>'s oldest commit past the default,
+/// two rev-lists and a merge-base each, plus one read of <b>'s reflog. A
+/// branch holding all of <b>'s commits is its child, not its parent, and so
+/// is one whose sd-parent names <b>, and one forked where <b>'s reflog has it
+/// arrive other than by being made, renamed, reset or fast-forwarded there (a
+/// child or a backup). At equal shared commits, one with none of its own
+/// beats one with some: a sibling shares the parent's commits too.
 pub fn stacked_on(dir: &str, b: &str, remote: &str, default: &str) -> Result<(String, String), (i32, String)> {
     let def = format!("refs/remotes/{remote}/{default}");
     if b == default {
@@ -356,6 +367,7 @@ pub fn stacked_on(dir: &str, b: &str, remote: &str, default: &str) -> Result<(St
     Ok((best, best_base))
 }
 
+/// Why stacked_on found <names> unclear (3), and the git config either way.
 pub fn stacked_unclear(b: &str, names: &str, default: &str) -> String {
     let name = if names.contains(' ') { "<name>" } else { names };
     format!(
@@ -477,8 +489,7 @@ mod tests {
         assert!(!show_ref(&r.dir, "refs/sheepdog/feat/nope"));
     }
 
-    // stacked_on's tests are lib/sheepdog.bats's, title for title, while the
-    // bash stacked_on stays.
+    // stacked_on's tests were lib/sheepdog.bats's, title for title.
 
     // @test "stacked_on: a branch made from another's tip names it and its tip"
     #[test]

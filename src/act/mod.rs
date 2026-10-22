@@ -7,12 +7,14 @@ mod address;
 mod attach;
 mod bookkeeping;
 mod commands;
+mod describe;
 mod github;
 mod hold;
 mod implement;
 mod push;
 mod restack;
 mod review;
+mod ship;
 mod start;
 mod step;
 
@@ -254,6 +256,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "start" => return ExitCode::from(u8::try_from(start::start(&b, &remote, &a)).unwrap_or(1)),
         "implement" => implement::implement(&b, &a),
         "address" => address::address(&b, &remote, &a),
+        "describe" => describe::describe(&b, &remote, &a),
+        "ship" => ship::ship(&b, &remote, &a),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }

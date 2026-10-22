@@ -439,21 +439,12 @@ verify_autofix() {
   echo "verify passed after autofix ($VERIFY_CMD)"
 }
 
-# no_base_why <branch> <state>: why sd state found no base: its errors, else a
-# parent that exists only here (parent.unpushed), which sd state reports as a
-# step, not an error (#105).
-no_base_why() {
-  local remote; remote=$(repo_remote) || remote=origin
-  prc_val "$2" "len(coalesce(errors, [])) > 0 ? sj(errors, \"; \")
-    : on(parent.unpushed) ? f\"parent {parent.name} isn't on $remote yet: ship it first (sd act ship {parent.name})\" : \"\""
-}
-
 # ── agent sessions ───────────────────────────────────────────────────────────
 
 # This section, the questions and guidance_base, agent_rules and the CI
-# config hold below are the bash agent steps' (ci-fix, describe, restack
-# --resolve). src/act/step.rs and src/act/hold.rs do the same for implement
-# and address: change both.
+# config hold below are the bash agent steps' (ci-fix, restack --resolve).
+# src/act/step.rs and src/act/hold.rs do the same for implement, address,
+# describe and ship: change both.
 
 # step_session <branch> <step>: the harness and session a step runs in: the
 # branch's session (branch.<b>.sd-session) resumed, else a new one. Sets
@@ -846,155 +837,6 @@ ci_fix() {
   hold_gate "$b" "pushing $b"
   push_branch "$b" "$remote" || die "the fix is committed in $wt, not pushed"
   echo "CI reruns on the push"
-}
-
-# ── describe ─────────────────────────────────────────────────────────────────
-
-# The describe step's prompt: guidance (settings.describePrompt, else
-# .sheepdog/describe.md in the base commit, else lib/prompts/describe.md), then
-# this contract.
-read -r -d '' DESCRIBE_CONTRACT <<'EOF' || true
-You are read-only here; look at the worktree when the diff needs context.
-EOF
-
-read -r -d '' DESCRIBE_SCHEMA <<'EOF' || true
-{"type": "object", "required": ["title", "body"],
- "properties": {"title": {"type": "string", "minLength": 1}, "body": {"type": "string"}}}
-EOF
-
-describe_file() { echo "$(cd "$(git rev-parse --git-common-dir)" && pwd)/sheepdog/${1//\//__}.describe.json"; }
-
-# describe_base <state>: the prompt's line on what the PR targets (sync.target,
-# the base ship sets), so the body doesn't describe a merged parent as pending
-# (#105). The description is stored with that target: a new one (a parent
-# merged under an unchanged HEAD) makes it stale. One stored before #105 has
-# none, so it is written again once.
-describe_base() {
-  local state=$1 target
-  target=$(prc_val "$state" sync.target)
-  if [[ $(prc_val "$state" 'coalesce(parent.merged, false)') == true ]]; then
-    echo "Base: $(prc_val "$state" parent.name) has merged into $target, so this PR targets $target; don't describe the parent as pending."
-  elif [[ $target != $(prc_val "$state" sync.default) ]]; then
-    echo "Base: this PR is stacked on $target; describe only this branch's change."
-  else
-    echo "Base: this PR targets $target."
-  fi
-}
-
-# describe_run <branch> <worktree> <state>: the describe step in the branch's
-# session (minted if none), read-only. Stores {head, target, title, body} where ship
-# finds it, and prints it.
-describe_run() {
-  local b=$1 wt=$2 state=$3 base head task commits diff result f guidance
-  base=$(prc_val "$state" 'coalesce(sync.old_base, "")')
-  [[ -n $base ]] || die "can't find $b's base: $(no_base_why "$b" "$state")"
-  head=$(git rev-parse "refs/heads/$b")
-  step_session "$b" describe
-  task=$(git config --get "branch.$b.sd-task" || true)
-  commits=$(git log --format='- %s' "$base..$head")
-  diff=$(git diff "$base" "$head")
-  local where; where=$(describe_base "$state")
-  guidance=$(cd "$wt" && step_guidance describePrompt "$b" "$base" "$SD_LIB/prompts/describe.md") \
-    || die "can't read the describe guidance"
-  echo "sd act: $STEP_H ($STEP_MODE session $STEP_SID) is describing $b…" >&2
-  result=$(cd "$wt" && HARNESS_CLAUDE_ALLOW=$HARNESS_READONLY_ALLOW && HARNESS_PI_TOOLS=read \
-             && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" \
-                  "$guidance"$'\n\n'"$DESCRIBE_CONTRACT"$'\n\nTask: '"${task:-(none recorded)}"$'\n\n'"$where"$'\n\nCommits ('"${base:0:7}..${head:0:7}"$'):\n'"$commits"$'\n\nDiff:\n'"$diff" \
-                  "$DESCRIBE_SCHEMA" "$STEP_CFG") \
-    || die "the $STEP_H describe step failed or returned no usable result (session $STEP_SID)"
-  [[ $(prc_val "$result" 'case when is(coalesce(title, null), <string>) then grep("\\S", title) else false end' 2>/dev/null) == true ]] \
-    || die "the $STEP_H describe step returned no title"
-  step_store "$b"
-  f=$(describe_file "$b")
-  mkdir -p "$(dirname "$f")"
-  prc_json 'values {head, target, title: r.title, body: coalesce(r.body, "")}' \
-    "{\"head\": \"$head\", \"target\": $(prc_json_string "$(prc_val "$state" sync.target)"), \"r\": $result}" > "$f"
-  cat "$f"
-}
-
-describe() {
-  local b=$branch wt state
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  attached_check "$b" "describing $b"
-  state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-  describe_run "$b" "$wt" "$state"
-}
-
-# ── ship ─────────────────────────────────────────────────────────────────────
-
-ship() {
-  local b=$branch wt remote state pr_state f head parent number url title body
-  local -a base_arg=()
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  if ! $force && [[ -n $(git config --get "branch.$b.sd-lock" || true) ]]; then
-    die "not shipping $b: taken over (branch.$b.sd-lock is set; --force to ship anyway)"
-  fi
-  remote=$(repo_remote) || die "sd config failed"
-  git -C "$wt" fetch --quiet --prune "$remote" || die "fetch from $remote failed"
-  hold_gate "$b" "shipping $b"
-  state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-  [[ $b != "$(prc_val "$state" sync.default)" ]] \
-    || die "not shipping $b: it's the default branch; start a branch (sd act start <branch> \"<task>\")"
-  pr_state=$(prc_val "$state" 'coalesce(pr.state, "none")')
-  case $pr_state in
-    none|OPEN) ;;
-    *) die "PR #$(prc_val "$state" pr.number) is $(tr '[:upper:]' '[:lower:]' <<<"$pr_state"); nothing to ship" ;;
-  esac
-  if [[ -z $(git config --get "branch.$b.sd-parent" || true) && $pr_state == none ]]; then
-    # A plain git branch from another's tip (#94) would open on the default branch.
-    (cd "$wt" && record_lineage "$b" "$state") || die "not shipping $b until its parent is recorded"
-    [[ -z $(git config --get "branch.$b.sd-parent" || true) ]] \
-      || state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-  fi
-  # sd state's parent: sd-parent, else the PR's base, else the default branch.
-  parent=$(prc_val "$state" parent.name)
-  if [[ $parent != "$(prc_val "$state" sync.default)" ]]; then
-    # Like RESTACK_GATE: a parent whose state is unknown or closed is nobody's
-    # to ship onto; a merged one means restack first, unless the branch is
-    # already on the target (a fast-forward or rebase merge), in which case
-    # the parent is the default branch from here on; an open parent must be
-    # on the remote before its child can be: ship the parent first.
-    local pstate
-    pstate=$(prc_val "$state" 'parent.merged is null ? "unknown" : on(parent.pr.state == "CLOSED") ? "closed"
-      : on(parent.merged) ? (on(sync.up_to_date) ? "merged-on-target" : "merged") : "open"') \
-      || die "can't parse sd state's answer"
-    case $pstate in
-      open) git -C "$wt" show-ref -q --verify "refs/remotes/$remote/$parent" \
-              || die "can't ship $b onto $parent: $(no_base_why "$b" "$state")" ;;
-      unknown) die "can't tell whether $parent merged: $(prc_val "$state" 'sj(coalesce(errors, []), "; ")')" ;;
-      closed) die "parent $parent (#$(prc_val "$state" parent.pr.number)) was closed without merging: decide what $b targets (git config branch.$b.sd-parent <branch>), then ship" ;;
-      merged) die "parent $parent has merged: sd act restack first, which lands $b on $(prc_val "$state" sync.target) and rewrites sd-parent" ;;
-      merged-on-target) parent_to_default "$b" "$state"; parent=$(prc_val "$state" sync.default) ;;
-      *) die "can't read the parent's state from sd state: $pstate" ;;
-    esac
-  fi
-  prc_line 'where not (coalesce(review.local.status, "none") in ["covered", "rewritten-same"])
-    | values "sd act: warning: the local review doesn'"'"'t cover HEAD (sd act review); the PR stays a draft until it does"' "$state" >&2
-  head=$(git rev-parse "refs/heads/$b")
-  f=$(describe_file "$b")
-  if [[ ! -f $f || $(prc_line 'values f"{head} {coalesce(target, "")}"' "$(<"$f")" 2>/dev/null) != "$head $(prc_val "$state" sync.target)" ]]; then
-    describe_run "$b" "$wt" "$state" >/dev/null
-    [[ $(git rev-parse "refs/heads/$b") == "$head" ]] \
-      || die "HEAD moved during the describe step (${head:0:7} → $(git rev-parse --short "refs/heads/$b")); nothing pushed. Look, then ship again"
-  fi
-  title=$(prc_line 'values title' "$(<"$f")") body=$(prc_line 'values body' "$(<"$f")")
-  push_branch "$b" "$remote" || exit 1
-  if [[ $pr_state == none ]]; then
-    url=$(gh pr create --draft --base "$parent" --head "$b" --title "$title" --body "$body") \
-      || die "gh pr create failed; $b is pushed. Fix the cause and ship again"
-    echo "opened a draft PR for $b on $parent: $url"
-    enroll_branch "$b"
-  else
-    number=$(prc_val "$state" pr.number)
-    [[ $(prc_val "$state" pr.base) == "$parent" ]] || base_arg=(--base "$parent")
-    gh pr edit "$number" --title "$title" --body "$body" "${base_arg[@]}" >/dev/null \
-      || die "gh pr edit failed for PR #$number; $b is pushed"
-    echo "shipped $b: PR #$number updated$( (( ${#base_arg[@]} )) && echo ", base now $parent")"
-  fi
 }
 
 # ── CI config hold (#124) ────────────────────────────────────────────────────
@@ -1441,68 +1283,6 @@ parent_to_default() {
   echo "sd-parent of $b is now $default"
 }
 
-# ── enroll ───────────────────────────────────────────────────────────────────
-
-# sd act enroll is src/act/bookkeeping.rs, which has its own copies of these.
-# They stay only for ship: change both, and #203's ship port deletes them.
-
-# record_lineage <branch> [<state>]: while the PR's base still names a stacked parent, store
-# it and the base pin; GitHub retargets the PR to the default branch on merge.
-# With no PR (gh answering) and no recorded parent, the branch it was made from
-# by a plain git branch, found by stacked_on. Exit 1 when git finds candidates
-# but can't pick one (a tie, or a parent that moved on), having said so.
-# <state> is the caller's sd state --json, so a second gh lookup can't disagree.
-record_lineage() {
-  local b=$1 state=${2:-} parent old_base def remote out rc=0
-  [[ -n $state ]] || state=$(sd-state --json "$b" 2>/dev/null) || return 0
-  read -r parent old_base < <(prc_line '
-    where coalesce(parent.source == "pr" and parent.name != sync.default, false)
-    | values f"{parent.name} {coalesce(sync.old_base, "")}"' "$state") || true
-  if [[ -z ${parent:-} ]]; then
-    # No PR and no recorded parent: maybe a plain git branch from another's tip (#94).
-    # threads.owed_bot is null when gh failed: then a PR may name the parent.
-    def=$(prc_line 'where pr is null and parent.source == "default" and threads.owed_bot is not null
-      | values sync.default' "$state") || def=
-    [[ -n $def ]] || return 0
-    remote=$(repo_remote) || return 0
-    out=$(stacked_on "$b" "$remote" "$def") || rc=$?
-    case $rc in
-      0) read -r parent old_base <<<"$out" ;;
-      2) echo "sd act: $b looks stacked on ${out// / or }: record one with git config branch.$b.sd-parent <name>" >&2
-         return 1 ;;
-      3) echo "sd act: $b $(stacked_unclear "$b" "$out" "$def")" >&2
-         return 1 ;;
-      *) return 0 ;;
-    esac
-  fi
-  git config "branch.$b.sd-parent" "$parent"
-  echo "parent: $parent"
-  if [[ -n $old_base ]]; then
-    git update-ref "refs/sheepdog/$b/base" "$old_base"
-    echo "base pinned at ${old_base:0:7}"
-  else
-    local why; why=$(no_base_why "$b" "$state")
-    echo "sd act: warning: no usable base for $b${why:+: $why}" >&2
-  fi
-}
-
-# enroll_mark <branch>: mark it for sd watch and register this repo.
-enroll_mark() {
-  local b=$1 main
-  git rev-parse -q --verify "refs/heads/$b" >/dev/null || die "no such branch: $b"
-  git config "branch.$b.sheepdog" true
-  main=$(main_worktree)
-  if ! grep -qxF "$main" <<<"$(git config --global --get-all sheepdog.repo || true)"; then
-    git config --global --add sheepdog.repo "$main"
-  fi
-  echo "enrolled $b"
-}
-
-enroll_branch() {
-  enroll_mark "$1"
-  record_lineage "$1" || true
-}
-
 lock_sweep "$branch"
 case $verb in
   enroll) act_rs ;;
@@ -1523,8 +1303,8 @@ case $verb in
   # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
   ci-fix) running_during "$branch" ci-fix ci_fix ;;
   review) act_rs ;;
-  describe) describe ;;
-  ship) ship ;;
+  describe) act_rs ;;
+  ship) act_rs ;;
   trigger) act_rs ;;
   attach) act_rs ;;
   *) die "unknown verb: $verb" ;;
