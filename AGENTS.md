@@ -109,7 +109,7 @@ Locally, run only the tests you're writing or changing during red-green,
 picked by name with `-f`, not whole files and never the suite:
 
 ```bash
-bats -f 'unknown verb fails' libexec/sd-act.bats
+bats -f 'sd-act: is a link' lib/config.bats
 cargo test --test act_review no_usable_round
 ```
 
