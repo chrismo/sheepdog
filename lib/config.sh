@@ -1,7 +1,6 @@
 # SuperDB queries and config reads for the bash verbs, which are all Rust now
-# (#203): ci/super-stress, lib/sheepdog.sh and tests/state.rs still source
-# it. Needs bash 5 and super 0.3.0. SuperDB's edges:
-# AGENTS.md, "SuperDB notes".
+# (#203): only ci/super-stress still sources it, and it retires in #204.
+# Needs bash 5 and super 0.3.0. SuperDB's edges: AGENTS.md, "SuperDB notes".
 #
 # Every function returns 1 on an error (message on stderr) and never exits:
 # callers run them as `x=$(prc_...) || die`, where errexit is off inside, so

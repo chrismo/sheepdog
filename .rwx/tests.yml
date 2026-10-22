@@ -71,8 +71,7 @@ tasks:
 
   # tests/config.rs runs the binary against temp git repos, hence git;
   # tests/next.rs applies jq edits to its state, as lib/next.bats did.
-  # tests/state.rs adds a fake gh (bash, jq), and runs lib/*.sh's proc_start
-  # (ps) and worktree_mark under bash5 to write what the bash steps write.
+  # tests/state.rs adds a fake gh (bash, jq).
   # The agent steps read the shipped prompts from lib/ at run time.
   - key: cargo-test
     use: [code, system-packages, rust]
@@ -82,7 +81,6 @@ tasks:
       - Cargo.lock
       - src/**
       - tests/**
-      - lib/*.sh
       - lib/prompts/**
       - lib/review-rules.md
 

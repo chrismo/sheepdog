@@ -171,8 +171,9 @@ pub fn main_worktree(dir: &str) -> String {
     parse_worktrees(&list).into_iter().next().map_or(String::new(), |w| w.path)
 }
 
-/// lib/sheepdog.sh's worktree_mark, byte for byte: sd act writes the mark a
-/// question records, and sd state compares it.
+/// A hash of what's uncommitted in <wt>, untracked files' contents included,
+/// made without writing objects or refreshing the index: sd act records it
+/// with a question, and sd state compares it.
 pub fn worktree_mark(wt: &str) -> Option<String> {
     let mut buf: Vec<u8> = Vec::new();
     let st = Command::new("git")
@@ -229,7 +230,7 @@ pub fn remote_default(dir: &str, remote: &str) -> String {
     }
 }
 
-/// lib/sheepdog.sh's gh_repo_of: host/owner/repo, the form GH_REPO takes,
+/// host/owner/repo, the form GH_REPO takes,
 /// from a remote's URL (scp-style, ssh://, https://); None for a local path
 /// or file:// URL.
 pub fn gh_repo_of(url: &str) -> Option<String> {
@@ -248,7 +249,7 @@ pub fn gh_repo_of(url: &str) -> Option<String> {
     scp.captures(u).map(|c| format!("{}/{}/{}", &c[2], &c[3], &c[4]))
 }
 
-/// lib/sheepdog.sh's gh_repo, for the caller to export as GH_REPO.
+/// gh_repo_of <remote>'s URL, for the caller to export as GH_REPO.
 pub fn gh_repo(dir: &str, remote: &str) -> Option<String> {
     gh_repo_of(&git_out(dir, &["remote", "get-url", remote])?)
 }
@@ -377,18 +378,18 @@ pub fn stacked_unclear(b: &str, names: &str, default: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Once;
 
-    /// A temp dir's repo as lib/sheepdog.bats's setup makes it: main with
+    /// A temp dir's repo as lib/sheepdog.bats's setup made it: main with
     /// one commit, and feat, checked out, one past it. git's global and system
     /// config are a test file and none, for every git these tests run.
-    struct Repo {
+    pub(crate) struct Repo {
         root: PathBuf,
-        dir: String,
+        pub(crate) dir: String,
     }
 
     impl Drop for Repo {
@@ -398,7 +399,7 @@ mod tests {
     }
 
     impl Repo {
-        fn new() -> Repo {
+        pub(crate) fn new() -> Repo {
             static ENV: Once = Once::new();
             static N: AtomicUsize = AtomicUsize::new(0);
             let base = std::env::temp_dir().join(format!("sd-git-test-{}", std::process::id()));
@@ -425,7 +426,7 @@ mod tests {
         }
 
         /// git <args> in the repo, which must succeed; its stdout, chomped.
-        fn git(&self, args: &[&str]) -> String {
+        pub(crate) fn git(&self, args: &[&str]) -> String {
             let o = git(&self.dir, args);
             assert!(o.ok, "git {args:?} failed: {}", o.stderr);
             strip_nl(o.stdout)
@@ -875,5 +876,31 @@ mod tests {
         assert_eq!(gh_repo(&r.dir, "origin").as_deref(), Some("github.com/upstream/r"));
         assert_eq!(gh_repo(&r.dir, "local"), None);
         assert_eq!(gh_repo(&r.dir, "nosuch"), None);
+    }
+
+    // @test "worktree_mark: an untracked file's contents change the mark"
+    #[test]
+    fn worktree_mark_an_untracked_files_contents_change_the_mark() {
+        let r = Repo::new();
+        let u = Path::new(&r.dir).join("u.txt");
+        fs::write(&u, "a\n").unwrap();
+        let m = worktree_mark(&r.dir).unwrap();
+        fs::write(&u, "b\n").unwrap();
+        assert_ne!(worktree_mark(&r.dir).unwrap(), m);
+    }
+
+    // @test "worktree_mark: marks a worktree with a nested repo and names git quotes, under pipefail"
+    #[test]
+    fn worktree_mark_marks_a_worktree_with_a_nested_repo_and_names_git_quotes() {
+        let r = Repo::new();
+        let sub = format!("{}/sub", r.dir);
+        r.git(&["init", "-q", &sub]);
+        r.git(&["-C", &sub, "commit", "-q", "--allow-empty", "-m", "s"]);
+        let q = Path::new(&r.dir).join("q\"t\tb\\x.txt");
+        fs::write(&q, "a").unwrap();
+        let m = worktree_mark(&r.dir).expect("a mark");
+        assert!(Regex::new("^[0-9a-f]{40}$").unwrap().is_match(&m), "{m}");
+        fs::write(&q, "b").unwrap();
+        assert_ne!(worktree_mark(&r.dir).unwrap(), m);
     }
 }

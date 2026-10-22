@@ -46,9 +46,8 @@ pub fn cfg(path: &str, b: &str) -> String {
     or_die(crate::config::get_text(path, b, false))
 }
 
-/// lib/sheepdog.sh's repo_remote: the remote sheepdog fetches, pushes and
-/// asks GitHub about: settings.remote, from the repo file inside a repo,
-/// else the global file.
+/// The remote sheepdog fetches, pushes and asks GitHub about:
+/// settings.remote, from the repo file inside a repo, else the global file.
 pub fn repo_remote() -> String {
     or_die(crate::config::get_global("settings.remote", false))
 }
