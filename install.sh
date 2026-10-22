@@ -6,11 +6,15 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# bin/sd links to target/release/sd, so the build goes there whatever the
+# environment says; the hooks below unset it too.
+unset CARGO_TARGET_DIR
+
 cargo=${CARGO:-cargo}
 cargo_path=$(command -v "$cargo") || { echo "! Cannot install sd: needs cargo to build it (https://rustup.rs)" >&2; exit 1; }
 "$cargo" build --release --quiet --manifest-path "$REPO_DIR/Cargo.toml" \
   || { echo "! Cannot install sd: cargo build failed" >&2; exit 1; }
-echo "✓ Built sd's Rust verbs"
+echo "✓ Built sd"
 
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
@@ -37,7 +41,7 @@ if hooks=$(git -C "$REPO_DIR" rev-parse --path-format=absolute --git-path hooks 
       echo "! $hook isn't sheepdog's, so it's left alone: sd won't be rebuilt on $name" >&2
       continue
     fi
-    printf '#!/usr/bin/env bash\n%s\n%q build --release --quiet --manifest-path %q \\\n  || { echo %q >&2; exit 1; }\n' \
+    printf '#!/usr/bin/env bash\n%s\nunset CARGO_TARGET_DIR\n%q build --release --quiet --manifest-path %q \\\n  || { echo %q >&2; exit 1; }\n' \
       "$mark" "$cargo_path" "$REPO_DIR/Cargo.toml" "sd: couldn't rebuild sd; run $REPO_DIR/install.sh" > "$hook"
     chmod +x "$hook"
     echo "✓ Wrote $hook, which rebuilds sd"

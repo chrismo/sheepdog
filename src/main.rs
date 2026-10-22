@@ -17,7 +17,7 @@ fn main() -> ExitCode {
     let mut rest: Vec<String> = args.collect();
     let verb = match name.strip_prefix("sd-") {
         Some(v) => v.to_string(),
-        None if rest.is_empty() => {
+        None if rest.first().is_none_or(String::is_empty) => {
             eprint!("{HELP}");
             return ExitCode::from(1);
         }

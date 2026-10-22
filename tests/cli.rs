@@ -41,6 +41,15 @@ fn no_verb_usage_on_stderr_nonzero() {
     assert_has(&r.stderr, &["Usage: sd <verb>"]);
 }
 
+#[test]
+fn an_empty_verb_is_no_verb_usage_on_stderr_nonzero() {
+    let sd = sd();
+    let r = sd.run_sep(&[""]);
+    assert_ne!(r.status, 0);
+    assert_eq!(r.output, "");
+    assert_has(&r.stderr, &["Usage: sd <verb>"]);
+}
+
 // @test "help, -h and --help: usage on stdout, zero"
 #[test]
 fn help_h_and_help_usage_on_stdout_zero() {

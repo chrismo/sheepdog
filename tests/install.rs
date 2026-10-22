@@ -297,6 +297,27 @@ fn the_hooks_run_the_cargo_install_sh_found_without_it_on_path() {
     assert!(sd.tmp.join("cargo-calls").exists());
 }
 
+/// A cargo that records the CARGO_TARGET_DIR it was run with.
+const CARGO_TARGET: &str = r#"#!/usr/bin/env bash
+printf '%s\n' "${CARGO_TARGET_DIR-unset}" >> "$CARGO_CALLS"
+"#;
+
+#[test]
+fn install_and_the_hooks_build_into_the_checkouts_target_whatever_cargo_target_dir_says() {
+    let mut sd = sd();
+    sd.fake("cargo", CARGO_TARGET);
+    let elsewhere = [("CARGO_TARGET_DIR", "/elsewhere")];
+    let r = sd.run_env(&elsewhere, &[]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.read("cargo-calls"), "unset");
+    fs::remove_file(sd.tmp.join("cargo-calls")).unwrap();
+    for h in HOOKS {
+        let r = sd.run_hook(&sd.hook(h), &elsewhere);
+        assert_eq!(r.status, 0, "{h}: {}", r.output);
+    }
+    assert_eq!(sd.read("cargo-calls"), "unset\nunset");
+}
+
 #[test]
 fn a_failed_rebuild_says_so_and_names_install_sh() {
     let mut sd = sd();
