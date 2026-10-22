@@ -33,7 +33,8 @@ setup() {
   run "$STRESS" -n 2
   [ "$status" -eq 0 ]
   [[ "${lines[-1]}" =~ ^super-stress:\ ([0-9]+)\ filters,\ 2\ runs\ each,\ 0\ failures$ ]] || false
-  (( BASH_REMATCH[1] >= 10 ))
+  # One per entry builtin_list adds; the list shrinks as each port deletes its queries.
+  [ "${BASH_REMATCH[1]}" -eq "$(grep -c '^  add ' "$STRESS")" ]
 }
 
 @test "a named filter: the query file over the fixture, the given number of times" {

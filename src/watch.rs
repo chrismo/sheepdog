@@ -5,6 +5,7 @@ mod pass;
 
 use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};
+use crate::proc::executable;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -109,11 +110,6 @@ fn job_path(home: &str, bindir: &str, cargo: Option<&str>) -> String {
 
 fn whole_seconds(s: &str) -> bool {
     s.starts_with(|c: char| ('1'..='9').contains(&c)) && s.chars().all(|c| c.is_ascii_digit())
-}
-
-fn executable(p: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 /// command -v <cmd>: <cmd> itself when it names a path, else the first

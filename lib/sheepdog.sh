@@ -2,8 +2,8 @@
 # and super 0.3.0.
 #
 # harness_run runs the harness adapter, src/harness.rs: the per-harness code,
-# apart from the tool-rule wording in implement_run (#79 Design record).
-# with_timeout is a shared helper.
+# apart from the tool-rule wording the bash agent steps still put in their
+# prompts (#79 Design record). with_timeout is a shared helper.
 
 SD_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/target/release/sd"
 
@@ -206,9 +206,10 @@ protected_hits() {
   done <<<"$2"
 }
 
-# The tools harness_run gives the agent, the only copy (src/harness.rs has
-# none), here for the steps that add to them. Claude may read and edit; the
-# pipeline commits, pushes and talks to GitHub.
+# The tools harness_run gives the agent, here for the steps that add to them;
+# src/harness.rs's CLAUDE_ALLOW and PI_TOOLS are the same lists for
+# implement: change both. Claude may read and edit; the pipeline commits,
+# pushes and talks to GitHub.
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
 # pi has no per-command bash rules, so no bash at all.
 HARNESS_PI_TOOLS="read,edit,write"

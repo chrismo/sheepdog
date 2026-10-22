@@ -7,9 +7,13 @@ mod attach;
 mod bookkeeping;
 mod commands;
 mod github;
+mod hold;
+mod implement;
 mod push;
 mod restack;
 mod review;
+mod start;
+mod step;
 
 use crate::git::{self, git, git_out};
 use crate::proc;
@@ -22,7 +26,7 @@ pub fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
-fn or_die(r: Result<String, Vec<String>>) -> String {
+fn or_die<T>(r: Result<T, Vec<String>>) -> T {
     r.unwrap_or_else(|lines| {
         for l in lines {
             eprintln!("sd config: {l}");
@@ -76,11 +80,13 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
             "--resolve" => a.resolve = true,
             "--no-implement" => a.no_implement = true,
             "--question" => a.question = true,
-            o @ ("--parent" | "--harness" | "--id") => {
+            // --answer is bash answer's, handing implement chrismo's answer.
+            o @ ("--parent" | "--harness" | "--id" | "--answer") => {
                 let v = it.next().ok_or(format!("{o} needs a value"))?.clone();
                 match o {
                     "--parent" => a.parent = v,
                     "--harness" => a.harness = v,
+                    "--answer" => a.answer = v,
                     _ => a.ids.push(v),
                 }
             }
@@ -112,7 +118,13 @@ impl Args {
             }
             (self.answer, self.branch) = (self.positionals[0].clone(), second);
         }
-        let one_verb = [(self.accept, "--accept", "review"), (self.remove, "--remove", "forget"), (self.question, "--question", "ack")];
+        let answering = !self.answer.is_empty() && verb != "answer";
+        let one_verb = [
+            (self.accept, "--accept", "review"),
+            (self.remove, "--remove", "forget"),
+            (self.question, "--question", "ack"),
+            (answering, "--answer", "implement"),
+        ];
         for (set, flag, only) in one_verb {
             if set && verb != only {
                 return Err(format!("{flag} is for sd act {only} only"));
@@ -237,6 +249,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "retarget" => restack::retarget(&b),
         "review" => review::review(&b, &remote, a.accept, a.force),
         "attach" => attach::attach(&b, &a.harness, a.force),
+        "start" => return ExitCode::from(u8::try_from(start::start(&b, &remote, &a)).unwrap_or(1)),
+        "implement" => implement::implement(&b, &a),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
@@ -313,6 +327,13 @@ mod tests {
         assert_eq!(parsed("answer", &[]), Err(usage.into()));
         assert_eq!(parsed("answer", &[" \t\n"]), Err(usage.into()));
         assert_eq!(parsed("answer", &["a", "b", "c"]), Err(usage.into()));
+    }
+
+    #[test]
+    fn answer_hands_implement_the_answer_and_no_other_verb() {
+        let a = parsed("implement", &["--answer", "-x, not y", "feat"]).unwrap();
+        assert_eq!((a.answer.as_str(), a.branch.as_str()), ("-x, not y", "feat"));
+        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement only".into()));
     }
 
     #[test]

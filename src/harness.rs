@@ -1,8 +1,9 @@
-// The harness adapter: the per-harness code, apart from the tool-rule wording
-// in implement_run (#79 Design record, rule 3): the headless steps, and the
-// TUI sd act attach opens. lib/sheepdog.sh's harness_run and harness_tally
-// call it through `sd harness`, which bin/sd doesn't list: it's for the bash
-// steps, not for people.
+// The harness adapter: the per-harness code (#79 Design record, rule 3): the
+// headless steps, the TUI sd act attach opens, and the tool-rule wording a
+// step's prompt needs; libexec/sd-act's bash steps still word theirs
+// themselves. lib/sheepdog.sh's harness_run, harness_tally and
+// harness_transcript call it through `sd harness`, which bin/sd doesn't list:
+// it's for the bash steps, not for people.
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
@@ -23,6 +24,23 @@ const CLAUDE_DENY: &str = "Bash(git commit *),Bash(git push *),Bash(gh *)";
 /// HARNESS_READONLY_ALLOW, which the bash describe still uses, and "read".
 pub const READONLY_ALLOW: &str = "Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)";
 pub const READONLY_PI_TOOLS: &str = "read";
+
+/// An editing step's tools: lib/sheepdog.sh's HARNESS_CLAUDE_ALLOW and
+/// HARNESS_PI_TOOLS, which the bash steps still use. Claude may read and
+/// edit; pi has no per-command bash rules, so no bash at all.
+pub const CLAUDE_ALLOW: &str = "Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)";
+pub const PI_TOOLS: &str = "read,edit,write";
+
+/// An editing step's claude tools with <rules> (Claude Code permission
+/// rules, agent_rules) added, and its prompt's word on what the agent may
+/// run. pi gets none of them.
+pub fn tool_rules(h: &str, rules: &[String]) -> (String, String) {
+    if h == "claude" && !rules.is_empty() {
+        let said = "Beyond reading files and read-only git, you may run only these (Claude Code permission rules); anything else is refused:";
+        return (format!("{CLAUDE_ALLOW},{}", rules.join(",")), format!("{said}\n{}", rules.join("\n")));
+    }
+    (CLAUDE_ALLOW.to_string(), "You can't run commands here beyond read-only git.".to_string())
+}
 
 /// A new session's id, as `uuidgen | tr 'A-F' 'a-f'` made it: a random
 /// (version 4) UUID, lowercase.
@@ -655,6 +673,17 @@ mod tests {
         assert!(drops("claude", &json!({})));
         assert!(!drops("claude", &json!({"useApiKey": true})));
         assert!(!drops("pi", &json!({})));
+    }
+
+    #[test]
+    fn tool_rules_add_claudes_rules_and_name_them_and_pi_gets_none() {
+        let rules = vec!["Bash(test -f file.txt)".to_string(), "WebFetch".to_string()];
+        let (allow, said) = tool_rules("claude", &rules);
+        assert_eq!(allow, format!("{CLAUDE_ALLOW},Bash(test -f file.txt),WebFetch"));
+        assert!(said.ends_with("anything else is refused:\nBash(test -f file.txt)\nWebFetch"), "{said}");
+        let none = (CLAUDE_ALLOW.to_string(), "You can't run commands here beyond read-only git.".to_string());
+        assert_eq!(tool_rules("pi", &rules), none);
+        assert_eq!(tool_rules("claude", &[]), none);
     }
 
     #[test]

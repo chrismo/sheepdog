@@ -1,4 +1,0 @@
-{"f": [{"file": "a.txt", "line": 1, "severity": "error", "body": "x", "id": "1", "open": true}, {"file": "a.txt", "line": 2, "severity": "nit", "body": "y", "id": "2", "open": false}, {"file": "a.txt", "line": 3, "severity": "warning", "body": "z", "action": "declined", "reply": "z is fine", "id": "3", "open": false}, {"body": "w", "id": "4", "open": true}, {"file": "b.txt", "line": 5, "severity": "error", "body": "v", "id": "5", "open": true}, {"file": "b.txt", "line": 6, "severity": "error", "body": "u", "id": "6", "open": true}],
- "r": {"outcome": "done", "commit_message": "Fix x", "summary": "did it",
-       "items": [{"id": "1", "action": "fixed", "reply": "X now"}, {"id": "4", "action": "declined", "reply": "w is right"}, {"id": "5", "action": "nope", "reply": "?"}, {"id": "2", "action": "fixed", "reply": "not open"}, "junk"]},
- "changed": true}

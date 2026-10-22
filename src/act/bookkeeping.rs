@@ -1,6 +1,6 @@
 // enroll, unenroll, forget and unregister: what sd watch and sd state keep
 // for a branch and a repo. libexec/sd-act's enroll_mark and record_lineage
-// still do the same for start and ship: change both.
+// still do the same for ship: change both.
 
 use super::{die, no_base_why, state_json};
 use crate::git::{self, git, git_input, git_ok, git_out, is_ancestor, main_worktree, rev, stacked_on, stacked_unclear, worktree_for};
@@ -41,13 +41,15 @@ fn short(sha: &str) -> &str {
 
 pub fn enroll(b: &str, remote: &str) {
     enroll_mark(b);
+    println!("enrolled {b}");
     let Ok(state) = state_json(".", b) else { return };
     if let Err(e) = record_lineage(b, &state, remote) {
         eprintln!("sd act: {e}");
     }
 }
 
-/// Mark <b> for sd watch and register this repo.
+/// Mark <b> for sd watch and register this repo; the caller says so (start
+/// on stderr, its stdout being only the path).
 pub fn enroll_mark(b: &str) {
     if !git::branch_exists(b) {
         die(format!("no such branch: {b}"));
@@ -58,7 +60,6 @@ pub fn enroll_mark(b: &str) {
     if !repos.lines().any(|r| r == main) {
         must(git(".", &["config", "--global", "--add", "sheepdog.repo", &main]));
     }
-    println!("enrolled {b}");
 }
 
 /// What sd state's record says to store as a branch's lineage.

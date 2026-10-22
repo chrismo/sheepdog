@@ -1,1 +1,0 @@
-{"head": "h1", "base": "b1", "round": 2, "findings": [{"file": "a.txt", "line": 1, "severity": "error", "body": "x"}, {"file": "a.txt", "line": 2, "severity": "nit", "body": "y"}, {"file": "a.txt", "line": 3, "severity": "warning", "body": "z", "action": "declined", "reply": "z is fine"}, {"body": "w"}]}
