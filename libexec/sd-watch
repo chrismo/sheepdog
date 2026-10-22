@@ -603,6 +603,7 @@ install_job() {
   <key>ProgramArguments</key><array><string>$(xml "$prog")</string><string>watch</string></array>
   <key>StartInterval</key><integer>$interval</integer>
   <key>RunAtLoad</key><true/>
+  <key>AbandonProcessGroup</key><true/>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>$(xml "$path")</string>
