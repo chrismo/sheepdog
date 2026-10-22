@@ -23,6 +23,7 @@ use std::time::Duration;
 
 const STUB: &str = r#"#!/usr/bin/env bash
 echo '{"type":"system","subtype":"init","session_id":"x"}' >&2
+echo $$ > "$FX/agent"
 echo "${ANTHROPIC_API_KEY-unset}" > "$FX/key"
 printf '%s\n' "$@" > "$FX/args"
 for m in "$(git rev-parse --path-format=absolute --git-common-dir)"/sheepdog/*.running; do
@@ -506,11 +507,35 @@ fn harness_run_an_interrupted_step_removes_its_marker_170() {
     assert!(sd.markers().is_empty());
 }
 
+// @test "with_timeout: a TERM or INT to it ends the command's process group, and it waits for that (#170)"
+// Now a TERM or INT to sd mid-step: the agent, still blocked on $FX/hold, is
+// gone once sd has exited.
+#[test]
+fn a_term_or_int_to_sd_ends_the_agents_process_group_and_it_waits_for_that_170() {
+    for sig in [libc::SIGTERM, libc::SIGINT] {
+        let sd = sd();
+        sd.fx("hold", "");
+        let mut c = sd.command(&sd.bin);
+        c.arg("run").args(STEP).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        let mut job = spawn(&mut c);
+        for _ in 0..100 {
+            if !sd.fx_read("agent").is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let agent: i32 = sd.fx_read("agent").trim().parse().unwrap();
+        unsafe { libc::kill(job.id() as i32, sig) };
+        let _ = job.wait();
+        assert_ne!(unsafe { libc::kill(agent, 0) }, 0, "agent {agent} outlived sd after signal {sig}");
+    }
+}
+
 // @test "running_hold: the marker lasts until running_release; harness_run in between leaves it alone (#170)"
 // The harness_run half; running::holding's is in tests/act_start.rs's and
 // tests/act_ci_fix.rs's "running marker lasts" tests.
 #[test]
-fn running_hold_the_marker_lasts_until_running_release_harness_run_in_between_leaves_it_alone_170() {
+fn a_step_run_inside_a_held_marker_leaves_it_alone_170() {
     let sd = sd();
     let me = std::process::id().to_string();
     let held = format!("{me} implement 2026-10-18T14:03:00Z {}", proc_start(&me));

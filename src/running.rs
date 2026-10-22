@@ -80,8 +80,8 @@ pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     during_at(&marker, b, step, f)
 }
 
-/// during, for a step whose commit and verify come after its harness step,
-/// as running_hold was: RUNNING_HELD=<b> is exported while <f> runs, so the
+/// during, for a step whose commit and verify come after its harness step:
+/// RUNNING_HELD=<b> is exported while <f> runs, so the
 /// step's harness step and children (verify) run under this marker. A step
 /// that dies takes its pid with it, and sd state clears the marker.
 pub fn holding<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
