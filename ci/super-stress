@@ -57,7 +57,6 @@ builtin_list() {
   local act=$ROOT/libexec/sd-act
   add sheepdog:FLAG_LINES "$(heredoc "$ROOT/lib/sheepdog.sh" FLAG_LINES)" "$FIX/state.json" line
   add sd-act:GATE "$(heredoc "$act" GATE)" "$FIX/state.json"
-  add sd-act:RETARGET_GATE "$(heredoc "$act" RETARGET_GATE)" "$FIX/state.json"
   add sd-act:RESTACK_GATE "$(heredoc "$act" RESTACK_GATE)" "$FIX/restack.json"
   add sd-act:KEEP_PARENT "$(heredoc "$act" KEEP_PARENT)" "$FIX/keep-parent.json" line
   add sd-act:RESTACK_GATE:replay "$(heredoc "$act" RESTACK_GATE)" "$FIX/restack-replay.json"

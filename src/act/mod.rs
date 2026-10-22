@@ -7,6 +7,7 @@ mod bookkeeping;
 mod commands;
 mod github;
 mod push;
+mod restack;
 
 use crate::git::{self, git, git_out};
 use crate::proc;
@@ -216,6 +217,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "unregister" => bookkeeping::unregister(&a.branch, a.force),
         "ack" => github::ack(&b, &a.ids, a.question),
         "trigger" => github::trigger(&b, &remote, a.force),
+        "restack" if !a.resolve => restack::restack(&b, &remote, a.force),
+        "retarget" => restack::retarget(&b),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
