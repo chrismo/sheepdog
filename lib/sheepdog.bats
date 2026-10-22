@@ -958,10 +958,12 @@ guidance_repo() {
   [ "$(gh_repo_of github.com:me/r)" = github.com/me/r ]
   [ "$(gh_repo_of https://github.com/me/r.git)" = github.com/me/r ]
   [ "$(gh_repo_of https://user@github.com/me/r/)" = github.com/me/r ]
+  [ "$(gh_repo_of ssh://git@github.com/me/r)" = github.com/me/r ]
   [ "$(gh_repo_of ssh://git@ghe.example.com:2222/org/r.git)" = ghe.example.com/org/r ]
   [ -z "$(gh_repo_of /tmp/origin.git)" ]
   [ -z "$(gh_repo_of ../up/origin.git)" ]
   [ -z "$(gh_repo_of file:///tmp/origin.git)" ]
+  [ -z "$(gh_repo_of file://host/up/origin.git)" ]
 }
 
 @test "gh_repo: exports GH_REPO from the remote's URL, so gh asks about the repo git pushes to" {

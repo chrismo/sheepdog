@@ -1050,12 +1050,14 @@ fn assemble(s: &Facts) -> Value {
 // ── observe ──────────────────────────────────────────────────────────────────
 
 fn cfg_text(path: &str, b: &str, as_json: bool) -> String {
-    config::get_text(path, b, as_json).unwrap_or_else(|lines| {
-        for l in lines {
-            eprintln!("sd config: {l}");
-        }
-        die("sd config failed")
-    })
+    config::get_text(path, b, as_json).unwrap_or_else(config_failed)
+}
+
+fn config_failed(lines: Vec<String>) -> String {
+    for l in lines {
+        eprintln!("sd config: {l}");
+    }
+    die("sd config failed")
 }
 
 /// A value prc_get printed, as the bash spliced it into JSON.
@@ -1750,7 +1752,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     if rev(".", &format!("refs/heads/{branch}")).is_empty() {
         die(format!("no such branch: {branch}"));
     }
-    let remote = cfg_text("settings.remote", &branch, false);
+    let remote = config::get_global("settings.remote", false).unwrap_or_else(config_failed);
     if let Some(r) = git::gh_repo(".", &remote) {
         std::env::set_var("GH_REPO", r);
     }

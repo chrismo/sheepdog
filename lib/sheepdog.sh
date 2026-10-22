@@ -60,7 +60,9 @@ repo_remote() { prc_get settings.remote "" true; }
 gh_repo_of() {
   local u=${1%/}
   u=${u%.git}
-  if [[ $u =~ ^[a-z+]+://([^@/]+@)?([^/:]+)(:[0-9]+)?/([^/]+)/([^/]+)$ ]]; then
+  if [[ $u == file:* ]]; then
+    return 0
+  elif [[ $u =~ ^[a-z+]+://([^@/]+@)?([^/:]+)(:[0-9]+)?/([^/]+)/([^/]+)$ ]]; then
     echo "${BASH_REMATCH[2]}/${BASH_REMATCH[4]}/${BASH_REMATCH[5]}"
   elif [[ $u =~ ^([^@/:]+@)?([^/:]+):([^/]+)/([^/]+)$ ]]; then
     echo "${BASH_REMATCH[2]}/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}"

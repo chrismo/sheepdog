@@ -214,6 +214,9 @@ pub fn remote_default(dir: &str, remote: &str) -> String {
 pub fn gh_repo_of(url: &str) -> Option<String> {
     static SCHEMED: OnceLock<Regex> = OnceLock::new();
     static SCP: OnceLock<Regex> = OnceLock::new();
+    if url.starts_with("file:") {
+        return None;
+    }
     let u = url.strip_suffix('/').unwrap_or(url);
     let u = u.strip_suffix(".git").unwrap_or(u);
     let schemed = SCHEMED.get_or_init(|| Regex::new(r"^[a-z+]+://([^@/]+@)?([^/:]+)(:[0-9]+)?/([^/]+)/([^/]+)$").unwrap());
@@ -791,6 +794,7 @@ mod tests {
         assert_eq!(of("git@github.com:me/r"), "github.com/me/r");
         assert_eq!(of("github.com:me/r"), "github.com/me/r");
         assert_eq!(of("ssh://git@github.com/me/r.git"), "github.com/me/r");
+        assert_eq!(of("ssh://git@github.com/me/r"), "github.com/me/r");
         assert_eq!(of("ssh://git@ghe.example.com:2222/org/r.git"), "ghe.example.com/org/r");
         assert_eq!(of("https://github.com/me/r.git"), "github.com/me/r");
         assert_eq!(of("https://github.com/me/r"), "github.com/me/r");
@@ -798,6 +802,7 @@ mod tests {
         assert_eq!(gh_repo_of("/tmp/origin.git"), None);
         assert_eq!(gh_repo_of("../up/origin.git"), None);
         assert_eq!(gh_repo_of("file:///tmp/origin.git"), None);
+        assert_eq!(gh_repo_of("file://host/up/origin.git"), None);
     }
 
     #[test]
