@@ -1085,7 +1085,14 @@ old_super() {
   write_global '{"settings":{"forkLimit":"lots"}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "$output" == *'settings.forkLimit: expected a number of 0 or more, got "lots"' ]]
+  [[ "$output" == *'settings.forkLimit: expected a whole number of 0 or more, got "lots"' ]]
+}
+
+@test "validate: a count refuses a fraction; seconds and the budgets take one" {
+  write_global '{"settings":{"reviewRounds":1.5,"interval":1.5,"stepBudget":2.5}}'
+  run "$SD_CONFIG" show
+  [ "$status" -eq 1 ]
+  [ "$output" = "sd config: $SHEEPDOG_CONFIG: settings.reviewRounds: expected a whole number of 0 or more, got 1.5" ]
 }
 
 @test "settings.botTimeout: seconds to wait for the review bot, 3600 by default" {

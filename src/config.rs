@@ -54,8 +54,9 @@ Notes:
   - set/unset write the current branch's file unless --global or --branch
   - init (no --global) writes empty blocks: a branch file holds only overrides
   - files are typed: an unknown key or a bad value is an error naming the
-    file and path; a number may be quoted ("1800") or have a fraction, and get
-    prints it as written; remote, interval, notify, vacuumAfter and
+    file and path; a number may be quoted ("1800", as set writes it without
+    --json); forkLimit, reviewRounds and rateLimitFloor are whole numbers;
+    get prints a value as written; remote, interval, notify, vacuumAfter and
     rateLimitFloor are global-file only
   - set values are strings; --json takes a number, list, object or null
   - step: the harness's block, with the step's block for it laid over it
@@ -88,7 +89,8 @@ fn defaults() -> Value {
 #[derive(Clone, Copy)]
 enum Ty {
     Str,
-    Uint,
+    Seconds,
+    Count,
     Float,
     Bool,
     List,
@@ -128,10 +130,10 @@ const STEP_BLOCKS: &[(&str, Ty)] = &[
 ];
 const FLAGS: &[(&str, Ty)] = &[("suppressions", Ty::List), ("skips", Ty::List), ("testFiles", Ty::List)];
 const SETTINGS: &[(&str, Ty)] = &[
-    ("stepTimeout", Ty::Uint), ("stepBudget", Ty::Float), ("branchBudget", Ty::Float),
-    ("forkLimit", Ty::Uint), ("reviewRounds", Ty::Uint), ("replyPrefix", Ty::Str),
+    ("stepTimeout", Ty::Seconds), ("stepBudget", Ty::Float), ("branchBudget", Ty::Float),
+    ("forkLimit", Ty::Count), ("reviewRounds", Ty::Count), ("replyPrefix", Ty::Str),
     ("verify", Ty::Str), ("autofix", Ty::Str), ("localReview", Ty::Str), ("botCommand", Ty::Str),
-    ("botTimeout", Ty::Uint),
+    ("botTimeout", Ty::Seconds),
     ("reviewPrompt", Ty::Str), ("implementPrompt", Ty::Str), ("reviewFixPrompt", Ty::Str),
     ("describePrompt", Ty::Str), ("addressPrompt", Ty::Str), ("resolvePrompt", Ty::Str),
     ("ciFixPrompt", Ty::Str),
@@ -141,8 +143,8 @@ const SETTINGS: &[(&str, Ty)] = &[
 ];
 // The watcher's settings: it reads no branch file.
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
-    ("remote", Ty::Str), ("interval", Ty::Uint), ("notify", Ty::Str),
-    ("vacuumAfter", Ty::Uint), ("rateLimitFloor", Ty::Uint),
+    ("remote", Ty::Str), ("interval", Ty::Seconds), ("notify", Ty::Str),
+    ("vacuumAfter", Ty::Seconds), ("rateLimitFloor", Ty::Count),
 ];
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
@@ -170,8 +172,13 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
     }
     let ok = match ty {
         Ty::Str => v.is_string(),
-        Ty::Uint => match v {
+        Ty::Seconds => match v {
             Value::Number(n) => n.as_f64().is_some_and(|f| f >= 0.0),
+            Value::String(s) => s.parse::<u64>().is_ok(),
+            _ => false,
+        },
+        Ty::Count => match v {
+            Value::Number(n) => n.is_u64(),
             Value::String(s) => s.parse::<u64>().is_ok(),
             _ => false,
         },
@@ -218,7 +225,8 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
 fn expected(ty: Ty) -> String {
     match ty {
         Ty::Str => "a string".into(),
-        Ty::Uint => "a number of 0 or more".into(),
+        Ty::Seconds => "a number of 0 or more".into(),
+        Ty::Count => "a whole number of 0 or more".into(),
         Ty::Float => "a number".into(),
         Ty::Bool => "true or false".into(),
         Ty::List => "a list of strings".into(),
@@ -762,11 +770,20 @@ mod tests {
     }
 
     #[test]
-    fn numbers_take_quoted_numbers_and_fractions_but_not_negatives() {
-        let ok = json!({"settings": {"stepTimeout": "1800", "forkLimit": 1.5, "stepBudget": "2.5"}});
+    fn counts_are_whole_and_seconds_and_budgets_take_fractions_but_none_negative() {
+        let ok = json!({"settings": {"stepTimeout": "1800", "botTimeout": 0.5, "forkLimit": 100000,
+                                     "stepBudget": "2.5", "branchBudget": 40.5}});
         assert!(probs(ok, Layer::Global).is_empty());
-        let bad = json!({"settings": {"stepTimeout": -1, "stepBudget": true}});
-        assert_eq!(probs(bad, Layer::Global).len(), 2);
+        let bad = json!({"settings": {"stepTimeout": -1, "forkLimit": 1.5, "reviewRounds": "2.5", "stepBudget": true}});
+        assert_eq!(
+            probs(bad, Layer::Global),
+            [
+                "settings.forkLimit: expected a whole number of 0 or more, got 1.5",
+                r#"settings.reviewRounds: expected a whole number of 0 or more, got "2.5""#,
+                "settings.stepBudget: expected a number, got true",
+                "settings.stepTimeout: expected a number of 0 or more, got -1",
+            ]
+        );
     }
 
     #[test]
