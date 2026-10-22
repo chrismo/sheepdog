@@ -23,8 +23,9 @@ printf '%s\n' "$*" >> "$WATCH_CALLS"
 exit "${WATCH_EXIT:-0}"
 "#;
 
-/// The bats setup: repo/install.sh (sd.bin) and the fixture repo/bin/sd, the
-/// fakes, and LOCAL_BIN, WATCH_CALLS and CARGO_CALLS exported.
+/// install.bats' setup on top of tests/common's (whose bin/sd-install link and
+/// config env go unused): repo/install.sh (sd.bin) and the fixture repo/bin/sd,
+/// the fakes, and LOCAL_BIN, WATCH_CALLS and CARGO_CALLS exported.
 fn sd() -> Sd {
     let mut sd = Sd::for_verb("install");
     fs::create_dir_all(sd.tmp.join("repo/bin")).unwrap();
