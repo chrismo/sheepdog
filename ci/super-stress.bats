@@ -18,6 +18,17 @@ setup() {
   [ "$output" = "#!/usr/bin/env bash5" ]
 }
 
+# The one construct that panicked (lib/config.sh). CI stopped running the
+# 200-run stress on 2026-10-21, so this guard stands in for it.
+@test "no query uses an unnest … into lateral subquery" {
+  local root=$BATS_TEST_DIRNAME/.. f files=()
+  for f in "$root"/lib/*.sh "$root"/libexec/sd-* "$root"/bin/sd; do
+    [[ $f == *.bats ]] || files+=("$f")
+  done
+  run grep -nE '^[^#]*\binto[[:space:]]*\(' "${files[@]}"
+  [ "$status" -eq 1 ] || { echo "$output"; false; }
+}
+
 @test "the built-in filters all run clean and the summary counts them" {
   run "$STRESS" -n 2
   [ "$status" -eq 0 ]
