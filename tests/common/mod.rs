@@ -214,6 +214,7 @@ impl Sd {
             "GIT_COMMON_DIR",
             "GIT_INDEX_FILE",
             "GH_REPO",
+            "SHEEPDOG_STATE_FIXTURES",
         ] {
             c.env_remove(v);
         }

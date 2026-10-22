@@ -1611,6 +1611,9 @@ pub fn run(argv: &[String]) -> ExitCode {
     if branch.is_empty() {
         branch = git::current_branch(".").unwrap_or_else(|| die("detached HEAD; name a branch"));
     }
+    if rev(".", &format!("refs/heads/{branch}")).is_empty() {
+        die(format!("no such branch: {branch}"));
+    }
     let remote = config::get_global("settings.remote", false).unwrap_or_else(|l| exit_with(&config_failed(l)));
     if let Some(r) = git::gh_repo(".", &remote) {
         std::env::set_var("GH_REPO", r);

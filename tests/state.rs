@@ -454,6 +454,15 @@ fn outside_a_git_repo_fails_with_a_message() {
     assert_has(&r.output, &["not a git repository"]);
 }
 
+#[test]
+fn no_such_branch_is_reported_before_a_broken_config() {
+    let sd = sd();
+    sd.write_global("[]");
+    let r = sd.run(&["nope"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(r.output, "sd state: no such branch: nope");
+}
+
 // @test "branch with no PR: pr is null and parent defaults to the default branch"
 #[test]
 fn branch_with_no_pr_pr_is_null_and_parent_defaults_to_the_default_branch() {

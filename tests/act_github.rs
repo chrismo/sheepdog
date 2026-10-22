@@ -507,4 +507,16 @@ esac
         assert_eq!(sd.pin("bot"), "");
         assert_ne!(sd.git_status(&["config", "--get", "branch.feat.sd-bot-triggered"]), 0);
     }
+
+    // @test "ack: sd state's warnings get through"
+    // Here, not in mod ack: the real sd state needs this suite's fake gh.
+    #[test]
+    fn ack_sd_states_warnings_get_through() {
+        let sd = sd();
+        fs::create_dir_all(sd.tmp.join("home/.local/state/sheepdog")).unwrap();
+        fs::write(sd.tmp.join("home/.local/state/sheepdog/usage.sup"), "{time:2026-10-16T20:33\n").unwrap();
+        let r = sd.run(&["ack"]);
+        assert_eq!(r.status, 0);
+        assert_has(&r.output, &["warning: 1 line(s) of", "aren't usage records"]);
+    }
 }
