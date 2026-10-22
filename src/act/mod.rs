@@ -3,6 +3,7 @@
 // after its own prelude (#202), so this repeats the prelude's checks for a
 // run that doesn't come through it.
 
+mod attach;
 mod bookkeeping;
 mod commands;
 mod github;
@@ -235,6 +236,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         "restack" if !a.resolve => restack::restack(&b, &remote, a.force),
         "retarget" => restack::retarget(&b),
         "review" => review::review(&b, &remote, a.accept, a.force),
+        "attach" => attach::attach(&b, &a.harness, a.force),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }

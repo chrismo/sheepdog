@@ -1,8 +1,8 @@
 // The harness adapter: the per-harness code, apart from the tool-rule wording
-// in implement_run (#79 Design record, rule 3). lib/sheepdog.sh's
-// harness_run, harness_tally and harness_transcript call it through
-// `sd harness`, which bin/sd doesn't list: it's for the bash steps, not for
-// people.
+// in implement_run (#79 Design record, rule 3): the headless steps, and the
+// TUI sd act attach opens. lib/sheepdog.sh's harness_run and harness_tally
+// call it through `sd harness`, which bin/sd doesn't list: it's for the bash
+// steps, not for people.
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
@@ -219,6 +219,42 @@ fn usd(v: &str) -> Option<f64> {
     v.parse::<f64>().ok().filter(|c| c.is_finite() && *c >= 0.0)
 }
 
+/// The TUI on <sid>, for sd act attach: resumed or new, with the harness
+/// block's model, effort, provider and args as its flags, the typed ones as
+/// run_step passes them, and args split on whitespace. claude runs without
+/// ANTHROPIC_API_KEY unless useApiKey, as run_step does (#68).
+pub fn tui(h: &str, sid: &str, resume: bool, block: &Value) -> Result<Command, String> {
+    let (mut c, typed): (Command, &[(&str, &str)]) = match h {
+        "claude" => {
+            let mut c = Command::new("claude");
+            c.args([if resume { "--resume" } else { "--session-id" }, sid]);
+            if !on(block, "useApiKey") {
+                c.env_remove("ANTHROPIC_API_KEY");
+            }
+            (c, &[("--model", "model"), ("--effort", "effort")])
+        }
+        "pi" => {
+            let mut c = Command::new("pi");
+            c.args(["--session-id", sid]);
+            (c, &[("--provider", "provider"), ("--model", "model"), ("--thinking", "effort")])
+        }
+        _ => return Err(format!("unknown harness: {h} (claude or pi)")),
+    };
+    for &(flag, k) in typed {
+        let v = t(block, k);
+        if !v.is_empty() {
+            c.args([flag, v.as_str()]);
+        }
+    }
+    c.args(t(block, "args").split_whitespace());
+    Ok(c)
+}
+
+/// The harness wrote a transcript for <sid>: the session began.
+pub fn session_exists(h: &str, sid: &str) -> bool {
+    transcript(h, sid).is_some()
+}
+
 /// claude's command for the step, before the typed flags and args.
 fn claude_command(s: &Step) -> Command {
     let sess = if s.mode == "resume" { "--resume" } else { "--session-id" };
@@ -399,25 +435,18 @@ fn tally_of(h: &str, text: &str) -> Value {
 fn usage_exit() -> ExitCode {
     eprintln!("usage: sd harness run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]");
     eprintln!("       sd harness tally <harness> <session-id>");
-    eprintln!("       sd harness transcript <harness> <session-id>");
     ExitCode::from(1)
 }
 
-/// sd harness: lib/sheepdog.sh's harness_run, harness_tally and
-/// harness_transcript. The step's name, its branch and the tool lists come in
-/// the environment, as the bash steps set them: HARNESS_STEP, HARNESS_BRANCH,
-/// HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS, the last two required.
+/// sd harness: lib/sheepdog.sh's harness_run and harness_tally. The step's
+/// name, its branch and the tool lists come in the environment, as the bash
+/// steps set them: HARNESS_STEP, HARNESS_BRANCH, HARNESS_CLAUDE_ALLOW and
+/// HARNESS_PI_TOOLS, the last two required.
 pub fn run(argv: &[String]) -> ExitCode {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     match a.as_slice() {
         ["tally", h, sid] => {
             println!("{}", json::to_string(&tally(h, sid)));
-            ExitCode::SUCCESS
-        }
-        ["transcript", h, sid] => {
-            if let Some(f) = transcript(h, sid) {
-                println!("{}", f.display());
-            }
             ExitCode::SUCCESS
         }
         ["run", h, sid, mode, timeout, prompt, schema, settings @ ..] if settings.len() <= 1 => {
@@ -590,6 +619,41 @@ mod tests {
 
         let keep = json!({"useApiKey": true});
         assert!(!claude_command(&step(&keep)).get_envs().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
+    }
+
+    fn argv_of(c: &Command) -> String {
+        c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ")
+    }
+
+    // Was libexec/sd-act's harness_flags: the typed flags in provider, model,
+    // effort order, then args split on whitespace.
+    #[test]
+    fn tui_flags_are_the_harness_blocks_typed_as_run_step_passes_them() {
+        let block = json!({"provider": "cf", "model": "opus", "effort": "high", "args": "--verbose \t--fast\n--x"});
+        let c = tui("claude", "sid", true, &block).unwrap();
+        assert_eq!(c.get_program(), "claude");
+        assert_eq!(argv_of(&c), "--resume sid --model opus --effort high --verbose --fast --x");
+        let c = tui("pi", "sid", true, &block).unwrap();
+        assert_eq!(c.get_program(), "pi");
+        assert_eq!(argv_of(&c), "--session-id sid --provider cf --model opus --thinking high --verbose --fast --x");
+    }
+
+    #[test]
+    fn tui_starts_a_new_session_by_id_and_leaves_out_what_the_block_doesnt_set() {
+        assert_eq!(argv_of(&tui("claude", "sid", false, &json!({})).unwrap()), "--session-id sid");
+        assert_eq!(argv_of(&tui("claude", "sid", false, &Value::Null).unwrap()), "--session-id sid");
+        assert_eq!(argv_of(&tui("pi", "sid", false, &json!({"model": "", "args": " "})).unwrap()), "--session-id sid");
+        assert_eq!(tui("codex", "sid", false, &json!({})).err().as_deref(), Some("unknown harness: codex (claude or pi)"));
+    }
+
+    #[test]
+    fn tui_claude_drops_the_api_key_unless_use_api_key_and_pi_keeps_it() {
+        let drops = |h: &str, block: &Value| {
+            tui(h, "sid", true, block).unwrap().get_envs().any(|(k, v)| k == "ANTHROPIC_API_KEY" && v.is_none())
+        };
+        assert!(drops("claude", &json!({})));
+        assert!(!drops("claude", &json!({"useApiKey": true})));
+        assert!(!drops("pi", &json!({})));
     }
 
     #[test]

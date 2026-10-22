@@ -915,7 +915,8 @@ answer_prompt() {
 # is done; a new one it asks is recorded anew.
 question_answered() { [[ -z $answer_text ]] || git update-ref -d "refs/sheepdog/$1/question"; }
 
-# ── attach: A9, takeover ─────────────────────────────────────────────────────
+# ── attach's lock (A9) ───────────────────────────────────────────────────────
+# attach itself is src/act/attach.rs; the bash agent steps still check its lock.
 
 # branch.<b>.sd-lock is "<pid>@<host> <time>": the attach holding the branch's
 # session open. Stale once that pid is gone from this host; a lock from
@@ -948,82 +949,6 @@ attached_check() {
   else
     die "not $2: attached ($lock). Exit that session, or --force"
   fi
-}
-
-# attach_release <branch>: drop the lock, if it is still the one attach took.
-attach_release() {
-  [[ $(git config --get "branch.$1.sd-lock" || true) == "$ATTACH_LOCK" ]] || return 0
-  git config --unset "branch.$1.sd-lock"
-}
-
-# harness_flags <harness> <branch>: the harness block's model, effort,
-# provider and args as the TUI's flags, the typed ones as harness_run
-# passes them. Printed one per line; args split on whitespace.
-harness_flags() {
-  local h=$1 b=$2 k v rc
-  for k in provider model effort args; do
-    v=$(prc_get "harnesses.$h.$k" "$b" false) || { rc=$?; (( rc == 3 )) || die "sd config failed"; continue; }
-    [[ -n $v ]] || continue
-    case $h:$k in
-      claude:model|pi:model) printf -- '--model\n%s\n' "$v" ;;
-      claude:effort) printf -- '--effort\n%s\n' "$v" ;;
-      pi:effort) printf -- '--thinking\n%s\n' "$v" ;;
-      pi:provider) printf -- '--provider\n%s\n' "$v" ;;
-      *:args) tr -s ' \t' '\n\n' <<<"$v" | sed '/^$/d' ;;
-    esac
-  done
-}
-
-# session_exists <harness> <id>: the harness wrote a transcript for the session.
-session_exists() { [[ -n $(harness_transcript "$1" "$2") ]]; }
-
-attach() {
-  local b=$branch wt lock stored_h h sid mode use_key rc=0
-  local -a cmd flags
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  lock=$(git config --get "branch.$b.sd-lock" || true)
-  if [[ -n $lock ]]; then
-    $force || die "$b is already attached ($lock); exit that session, or --force to take it over"
-    echo "sd act: taking over $b's lock ($lock)" >&2
-  fi
-  stored_h=$(git config --get "branch.$b.sd-harness" || true)
-  sid=$(git config --get "branch.$b.sd-session" || true)
-  h=${harness_opt:-$stored_h}
-  if [[ -z $h ]]; then h=$(prc_get harness "$b" false) || die "sd config failed"; fi
-  if [[ -n $sid ]]; then
-    [[ $h == "${stored_h:-claude}" ]] \
-      || die "branch.$b.sd-session belongs to ${stored_h:-claude}; unset it to start a $h session"
-    mode=resume
-  else
-    sid=$(uuidgen | tr 'A-F' 'a-f') mode=new
-  fi
-  case $h in
-    claude)
-      # Same rule as harness_run (#68): the claude.ai login unless useApiKey.
-      use_key=$(prc_get harnesses.claude.useApiKey "$b" false) || use_key=false
-      [[ $use_key == true ]] || cmd=(env -u ANTHROPIC_API_KEY)
-      if [[ $mode == resume ]]; then cmd+=(claude --resume "$sid"); else cmd+=(claude --session-id "$sid"); fi ;;
-    pi) cmd=(pi --session-id "$sid") ;;
-    *) die "unknown harness: $h (claude or pi)" ;;
-  esac
-  mapfile -t flags < <(harness_flags "$h" "$b")
-  ATTACH_LOCK="$$@$(hostname) $(date -u +%FT%TZ)"
-  git config "branch.$b.sd-lock" "$ATTACH_LOCK"
-  # The TUI gets Ctrl-C and a closed terminal before this shell does, and bash
-  # holds a signal until the foreground child exits; the no-op traps then let
-  # the session be recorded, and the EXIT trap releases the lock either way.
-  trap 'attach_release "$b"' EXIT
-  trap : INT TERM HUP
-  echo "sd act: attached to $b: $h ($mode session $sid) in $wt; agent steps wait until you exit" >&2
-  (cd "$wt" && "${cmd[@]}" "${flags[@]}") || rc=$?
-  if [[ $mode == resume ]] || session_exists "$h" "$sid"; then
-    git config "branch.$b.sd-session" "$sid"
-    git config "branch.$b.sd-harness" "$h"
-  else
-    echo "sd act: $h wrote no transcript for session $sid, so nothing is stored; attach again to start one" >&2
-  fi
-  exit "$rc"
 }
 
 # ── start: A0 ───────────────────────────────────────────────────────────────
@@ -2228,6 +2153,6 @@ case $verb in
   describe) describe ;;
   ship) ship ;;
   trigger) act_rs ;;
-  attach) attach ;;
+  attach) act_rs ;;
   *) die "unknown verb: $verb" ;;
 esac

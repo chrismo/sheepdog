@@ -232,10 +232,6 @@ harness_run() {
 # one JSON object; {} with no transcript. context is its last turn's tokens.
 harness_tally() { "$SD_BIN" harness tally "$@"; }
 
-# harness_transcript <harness> <session-id>: the file the harness keeps the
-# session's transcript in, if it wrote one.
-harness_transcript() { "$SD_BIN" harness transcript "$@"; }
-
 # main_worktree: the repo's main worktree, where sheepdog's shared files live
 # and the name usage.sup knows the repo by.
 main_worktree() { git worktree list --porcelain | sed -n '1s/^worktree //p'; }
