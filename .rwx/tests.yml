@@ -76,6 +76,7 @@ tasks:
   # The agent steps read the shipped prompts from lib/ at run time.
   # tests/act_{start,address,ci_fix}.rs run sd act answer and --help through
   # the bash libexec/sd-act, which needs super and the release build.
+  # The agent steps read the shipped prompts from lib/ at run time.
   - key: cargo-test
     use: [code, system-packages, rust, superdb, build]
     run: cargo test --locked
