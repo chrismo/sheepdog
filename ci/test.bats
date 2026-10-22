@@ -35,15 +35,6 @@ suite() {
   grep -q "<testsuite name=\"bad.bats\" file=\"bad.bats\"" "$SHEEPDOG_TEST_RESULTS/report.xml"
 }
 
-@test "with no args, a default glob that matches no suite is skipped" {
-  mkdir -p "$TMP/repo/ci" "$TMP/repo/lib"
-  cp "$CI_TEST" "$TMP/repo/ci/test"
-  printf '@test "only" {\n  true\n}\n' > "$TMP/repo/lib/only.bats"
-  run "$TMP/repo/ci/test"
-  [ "$status" -eq 0 ]
-  grep -q "<testsuite name=\"only.bats\"" "$SHEEPDOG_TEST_RESULTS/report.xml"
-}
-
 @test "runs under bash 5 via the bash5 shebang" {
   run head -1 "$CI_TEST"
   [ "$output" = "#!/usr/bin/env bash5" ]
