@@ -5,7 +5,7 @@
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
-use crate::git::{self, git, git_input, git_ok, git_out};
+use crate::git::{self, git, git_input, git_out};
 use crate::json;
 use crate::proc;
 use crate::val::{at, on, t, text};
@@ -639,9 +639,14 @@ impl Watch {
             for b in enrolled(&repo) {
                 if git::branch_in(&repo, &b) {
                     branches.push(b);
-                } else if git_ok(&repo, &["config", "--unset", &format!("branch.{b}.sheepdog")]) {
-                    lines.push_str(&format!("{name}\t{b}\t-\tunenrolled: no local branch\n"));
-                    self.log(&name, &b, "unenrolled: no local branch");
+                } else {
+                    let out = git(&repo, &["config", "--unset", &format!("branch.{b}.sheepdog")]);
+                    if out.ok {
+                        lines.push_str(&format!("{name}\t{b}\t-\tunenrolled: no local branch\n"));
+                        self.log(&name, &b, "unenrolled: no local branch");
+                    } else {
+                        eprint!("{}", out.stderr);
+                    }
                 }
             }
             lines.push_str(&self.report_gone(&repo, &name));
@@ -979,8 +984,12 @@ mod tests {
     fn local_time_is_dates_format() {
         let s = local_time();
         assert!(Regex::new(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$").unwrap().is_match(&s), "{s}");
-        // Local, not UTC: date's hour (an hour boundary between the two aside).
-        let hour = proc::run("date", &["+%H"], None, None).stdout;
-        assert_eq!(&s[11..13], hour.trim_end());
+        // Local, not UTC: date's hour, read either side of it so an hour
+        // boundary between them doesn't fail the test.
+        let hour = || proc::run("date", &["+%H"], None, None).stdout.trim_end().to_string();
+        let before = hour();
+        let s = local_time();
+        let after = hour();
+        assert!(s[11..13] == before || s[11..13] == after, "{s} vs {before}..{after}");
     }
 }
