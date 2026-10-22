@@ -26,9 +26,8 @@ build by are in `AGENTS.md`.
 ./install.sh        # builds sd, links it and installs its launchd watcher
 ```
 
-The installer builds the Rust half of `sd` (`cargo build --release`; sheepdog
-is moving from bash to Rust a verb at a time, #193; `sd` rebuilds it on its
-own when the source is newer, as after a pull), links `bin/sd` into
+The installer builds the Rust half of `sd` (`cargo build --release`; `sd`
+rebuilds it on its own when the source is newer, as after a pull), links `bin/sd` into
 `~/.local/bin` (`$LOCAL_BIN` to change the link directory) and, on macOS,
 starts the watcher, which checks enrolled
 branches every five minutes by default. Re-run it to update both. Use
