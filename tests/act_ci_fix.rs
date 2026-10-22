@@ -21,7 +21,6 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-
 const SD_STATE: &str = "#!/usr/bin/env bash\ncat \"$FX/state.json\"\n";
 
 const GH: &str = r#"#!/usr/bin/env bash

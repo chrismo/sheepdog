@@ -21,7 +21,6 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-
 const GH: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH/calls"
 echo '{"data":{"viewer":{"login":"me"},"repository":{"defaultBranchRef":{"name":"main"},"pullRequests":{"nodes":[]}}}}'

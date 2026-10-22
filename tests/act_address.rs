@@ -14,7 +14,6 @@ use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs;
 use std::time::Instant;
 
-
 const SD_STATE: &str = r#"#!/usr/bin/env bash
 echo "$PWD ${@: -1}" >> "$FX/sd-state.calls"
 cat "$FX/state.json"
