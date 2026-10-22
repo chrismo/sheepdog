@@ -1,6 +1,8 @@
 // restack (A2) without --resolve, and retarget (A4). libexec/sd-act still
 // runs restack --resolve, with its own RESTACK_GATE, KEEP_PARENT,
-// restack_by_tree and parent_to_default: change both.
+// restack_by_tree and parent_to_default: change both. One difference from
+// the bash: a failed git status in the worktree stops the restack, where the
+// bash read it as a clean tree.
 //
 // Field reads follow the SuperDB gates this replaced (src/val.rs): a missing
 // field reads as null, and an equality holds only between two present values.
