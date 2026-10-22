@@ -4,6 +4,7 @@
 // run that doesn't come through it.
 
 mod commands;
+mod push;
 
 use crate::git::{self, git, git_out};
 use crate::proc;
@@ -16,14 +17,25 @@ pub fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
-/// prc_get <path> <b> false, as `|| die "sd config failed"` read it.
-pub fn cfg(path: &str, b: &str) -> String {
-    crate::config::get_text(path, b, false).unwrap_or_else(|lines| {
+fn or_die(r: Result<String, Vec<String>>) -> String {
+    r.unwrap_or_else(|lines| {
         for l in lines {
             eprintln!("sd config: {l}");
         }
         die("sd config failed")
     })
+}
+
+/// prc_get <path> <b> false, as `|| die "sd config failed"` read it.
+pub fn cfg(path: &str, b: &str) -> String {
+    or_die(crate::config::get_text(path, b, false))
+}
+
+/// lib/sheepdog.sh's repo_remote: the remote sheepdog fetches, pushes and
+/// asks GitHub about: settings.remote, from the repo file inside a repo,
+/// else the global file.
+pub fn repo_remote() -> String {
+    or_die(crate::config::get_global("settings.remote", false))
 }
 
 /// The flags every verb shares, as the bash prelude parses them.
@@ -176,6 +188,11 @@ pub fn run(argv: &[String]) -> ExitCode {
     if !git::in_repo() {
         die("not a git repository");
     }
+    let remote = repo_remote();
+    // Unset, gh picks among the remotes, and in a fork's clone that's upstream.
+    if let Some(r) = git::gh_repo(".", &remote) {
+        std::env::set_var("GH_REPO", r);
+    }
     a.check(verb).unwrap_or_else(|e| die(e));
     let b = match a.branch.as_str() {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
@@ -186,6 +203,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     }
     lock_sweep(&b);
     match verb.as_str() {
+        "push" => push::push(&b, &remote, a.force),
         "verify" => commands::verify(&b),
         "autofix" => commands::autofix(&b),
         // The rest are still libexec/sd-act's.

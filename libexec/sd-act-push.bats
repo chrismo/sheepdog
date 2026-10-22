@@ -395,6 +395,19 @@ EOF
   [ "$(tracks feat)" = origin/feat ]
 }
 
+@test "upstream: can't be set: pushed anyway, with git's error and how to set it" {
+  inherit_main
+  commit two
+  touch .git/config.lock
+  run --separate-stderr "$SD_ACT" push
+  rm .git/config.lock
+  [ "$status" -eq 0 ]
+  [ "$output" = "pushed feat to origin (1 commit)" ]
+  [ "$(remote feat)" = "$(git rev-parse feat)" ]
+  [[ $stderr == *"could not lock config file"* ]]
+  [[ $stderr == *"warning: feat is pushed, but its upstream isn't origin/feat: git branch --set-upstream-to=origin/feat feat" ]]
+}
+
 @test "upstream: pushing a named branch from another worktree leaves that worktree's branch alone" {
   inherit_main
   commit two
