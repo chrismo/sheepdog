@@ -65,11 +65,18 @@ fn rwx_failed(out: &str) -> Vec<(String, String)> {
 }
 
 /// A fresh directory for task <i>'s logs: 0700 whatever the umask, as the
-/// bash's mktemp -d made it.
+/// bash's mktemp -d made it. A name already taken is someone else's, so it's
+/// skipped, never reused or removed.
 fn log_dir(i: usize) -> Option<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("sd-ci-fix-{}-{i}", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    fs::DirBuilder::new().mode(0o700).create(&dir).ok().map(|()| dir)
+    for n in 0..100 {
+        let dir = std::env::temp_dir().join(format!("sd-ci-fix-{}-{i}-{n}", std::process::id()));
+        match fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Some(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 /// The failed tasks' logs of RWX run <run>.
@@ -336,6 +343,19 @@ mod tests {
         let mode = fs::metadata(&dir).unwrap().permissions().mode();
         fs::remove_dir_all(&dir).unwrap();
         assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn log_dir_never_reuses_or_removes_a_path_someone_else_made() {
+        // Someone else's directory where log_dir's first choice would be.
+        let theirs = log_dir(998).unwrap();
+        fs::write(theirs.join("keep"), "x").unwrap();
+        let dir = log_dir(998).unwrap();
+        let kept = theirs.join("keep").exists();
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&theirs).unwrap();
+        assert_ne!(dir, theirs);
+        assert!(kept);
     }
 
     #[test]
