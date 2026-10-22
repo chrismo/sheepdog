@@ -121,7 +121,8 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
     let spent = usage::session_total(h, sid);
     let t0 = Instant::now();
     // No timeout: as long as a u32 of seconds runs, as perl's alarm 0 did.
-    let secs = if s.timeout == 0 { u64::from(u32::MAX) } else { s.timeout };
+    // A longer one is cut to that too: a later deadline overflows Instant.
+    let secs = if s.timeout == 0 { u64::from(u32::MAX) } else { s.timeout.min(u64::from(u32::MAX)) };
     let out = proc::timeout(secs, c, false);
     let result = match (out.ok, h) {
         (false, _) => Err(out.code),

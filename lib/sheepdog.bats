@@ -439,8 +439,8 @@ EOF
   rm "$FX/args"
   run --separate-stderr env -u HARNESS_CLAUDE_ALLOW HARNESS_PI_TOOLS=read "$SD_BIN" harness run claude sid1 new 30 "do it" '{}'
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"HARNESS_CLAUDE_ALLOW"* ]]
   [ ! -e "$FX/args" ]
+  [[ "$stderr" == *"HARNESS_CLAUDE_ALLOW"* ]]
 }
 
 # usage_last <expr>: <expr> over usage.sup's last record, printed raw.
