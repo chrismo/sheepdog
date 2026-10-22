@@ -79,11 +79,11 @@ fn start_hook(src: &str, dst: &str, b: &str) -> bool {
     rc == 0
 }
 
-/// git, its output on stderr; dies saying <what> failed.
+/// git, its output on stderr as git writes it (so in git's order); dies
+/// saying <what> failed.
 fn git_or_die(args: &[&str], what: &str) {
-    let o = git(".", args);
-    eprint!("{}{}", o.stdout, o.stderr);
-    if !o.ok {
+    let ok = Command::new("git").args(args).stdout(stderr()).status().is_ok_and(|s| s.success());
+    if !ok {
         die(format!("{what} failed"));
     }
 }
