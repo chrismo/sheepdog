@@ -1991,6 +1991,18 @@ write_cfg() {
   grep -q "fetch from nowhere failed" "$SHEEPDOG_STATE_DIR/last-pass"
 }
 
+@test "config: each repo's remote from its own repo file, never another's (#194)" {
+  "$SD_CONFIG" set --repo settings.remote nowhere
+  git clone -q "$TMP/origin.git" "$TMP/repo2" 2>/dev/null
+  git -C "$TMP/repo2" branch -q z && git -C "$TMP/repo2" config branch.z.sheepdog true
+  register "$TMP/repo2"
+  ps_fixture feat
+  ps_fixture z
+  pass
+  [ "$(grep -c "fetch from" "$SHEEPDOG_STATE_DIR/last-pass")" = 1 ]
+  grep -q "^repo	.*fetch from nowhere failed" "$SHEEPDOG_STATE_DIR/last-pass"
+}
+
 @test "config: install reads interval from the file" {
   needs_plutil
   setup_launchd

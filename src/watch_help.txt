@@ -101,6 +101,7 @@ Env:    SHEEPDOG_STATE_DIR (~/.local/state/sheepdog), STATUS_DIR (~/.claude/tab-
         SHEEPDOG_WATCH_TIMEOUT (120): seconds a fetch or sd state may take
 Config: read with lib/config.sh, no branch file (global file over
         built-in defaults): settings.notify, .interval, .remote, .vacuumAfter,
-        .rateLimitFloor.
+        .rateLimitFloor. .remote is read from inside each repo, so that
+        repo's file (sd config set --repo) can set it.
         notify — shell command, run with <title> <message> appended
         (default: a macOS notification)

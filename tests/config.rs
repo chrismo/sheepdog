@@ -56,6 +56,19 @@ impl Sd {
         fs::write(f, format!("{s}\n")).unwrap();
     }
 
+    /// Where sd config keeps the repo's settings, shared by every branch (#194).
+    fn repo_file(&self) -> PathBuf {
+        self.tmp.join("repo/.git/sheepdog.json")
+    }
+
+    fn rf(&self) -> String {
+        self.repo_file().display().to_string()
+    }
+
+    fn write_repo(&self, s: &str) {
+        fs::write(self.repo_file(), format!("{s}\n")).unwrap();
+    }
+
     /// feat rebasing onto main, stopped on a conflict (detached HEAD, as
     /// restack --resolve leaves it).
     fn rebase_stopped(&self) {
@@ -562,15 +575,16 @@ fn init_a_missing_branch_fails() {
 // ── files: where the layers live ────────────────────────────────────────────
 
 #[test]
-fn files_lists_the_global_and_branch_paths_marking_missing_ones() {
+fn files_lists_the_global_repo_and_branch_paths_marking_missing_ones() {
     let sd = Sd::new();
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
     assert_eq!(
         r.output,
         format!(
-            "global  {}  (missing)\nbranch  {}  (missing)",
+            "global  {}  (missing)\nrepo    {}  (missing)\nbranch  {}  (missing)",
             sd.cfg_s(),
+            sd.rf(),
             sd.bf("feat")
         )
     );
@@ -580,11 +594,17 @@ fn files_lists_the_global_and_branch_paths_marking_missing_ones() {
 fn files_existing_files_are_listed_without_a_mark() {
     let sd = Sd::new();
     sd.write_global("{}");
+    sd.write_repo("{}");
     sd.write_branch("feat", "{}");
     let r = sd.run(&["files"]);
     assert_eq!(
         r.output,
-        format!("global  {}\nbranch  {}", sd.cfg_s(), sd.bf("feat"))
+        format!(
+            "global  {}\nrepo    {}\nbranch  {}",
+            sd.cfg_s(),
+            sd.rf(),
+            sd.bf("feat")
+        )
     );
 }
 
@@ -593,7 +613,7 @@ fn files_a_named_branch_and_a_slash_in_its_name() {
     let sd = Sd::new();
     let r = sd.run(&["files", "topic/sub"]);
     assert_eq!(
-        r.line(2),
+        r.line(3),
         format!(
             "branch  {}/repo/.git/sheepdog/topic%2Fsub.json  (missing)",
             sd.tmp.display()
@@ -602,13 +622,14 @@ fn files_a_named_branch_and_a_slash_in_its_name() {
 }
 
 #[test]
-fn files_from_a_linked_worktree_the_branch_file_is_in_the_main_repo() {
+fn files_from_a_linked_worktree_the_repo_and_branch_files_are_in_the_main_repo() {
     let mut sd = Sd::new();
     let wt = sd.tmp.join("wt");
     sd.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "wt"]);
     sd.cd("wt");
     let r = sd.run(&["files"]);
-    assert_eq!(r.line(2), format!("branch  {}  (missing)", sd.bf("wt")));
+    assert_eq!(r.line(2), format!("repo    {}  (missing)", sd.rf()));
+    assert_eq!(r.line(3), format!("branch  {}  (missing)", sd.bf("wt")));
 }
 
 #[test]
@@ -617,11 +638,13 @@ fn files_detached_head_or_outside_a_repo_says_why_theres_no_branch_file() {
     sd.git(&["switch", "-q", "--detach"]);
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
-    assert_eq!(r.line(2), "branch  (none: detached HEAD)");
+    assert_eq!(r.line(2), format!("repo    {}  (missing)", sd.rf()));
+    assert_eq!(r.line(3), "branch  (none: detached HEAD)");
     sd.cd("");
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
-    assert_eq!(r.line(2), "branch  (none: not a git repository)");
+    assert_eq!(r.line(2), "repo    (none: not a git repository)");
+    assert_eq!(r.line(3), "branch  (none: not a git repository)");
 }
 
 #[test]
@@ -631,14 +654,23 @@ fn files_mid_rebase_the_branch_being_rebaseds_file() {
     sd.rebase_stopped();
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
-    assert_eq!(r.line(2), format!("branch  {}  (missing)", sd.bf("feat")));
+    assert_eq!(r.line(3), format!("branch  {}  (missing)", sd.bf("feat")));
 }
 
 #[test]
-fn files_no_branch_only_the_global_file() {
-    let sd = Sd::new();
+fn files_no_branch_the_global_and_repo_files() {
+    let mut sd = Sd::new();
     let r = sd.run(&["files", "--no-branch"]);
-    assert_eq!(r.output, format!("global  {}  (missing)", sd.cfg_s()));
+    assert_eq!(
+        r.output,
+        format!("global  {}  (missing)\nrepo    {}  (missing)", sd.cfg_s(), sd.rf())
+    );
+    sd.cd("");
+    let r = sd.run(&["files", "--no-branch"]);
+    assert_eq!(
+        r.output,
+        format!("global  {}  (missing)\nrepo    (none: not a git repository)", sd.cfg_s())
+    );
 }
 
 #[test]
@@ -1762,7 +1794,7 @@ fn validate_every_problem_is_listed_not_just_the_first() {
     assert_eq!(r.lines().len(), 3, "{}", r.output);
 }
 
-/// <key> is read from the global file and refused in a branch file.
+/// <key> is read from the global file and refused in a repo or branch file.
 fn global_file_only(key: &str, global: &str) {
     let sd = Sd::new();
     let path = format!("settings.{key}");
@@ -1779,12 +1811,20 @@ fn global_file_only(key: &str, global: &str) {
             sd.bf("feat")
         )
     );
+    fs::remove_file(sd.branch_file("feat")).unwrap();
+    sd.write_repo(&format!(r#"{{"settings":{{"{key}":5}}}}"#));
+    let r = sd.run(&["get", "--no-branch", &path]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: settings.{key}: global file only", sd.rf())
+    );
 }
 
 #[test]
-fn validate_remote_interval_and_notify_can_only_be_set_in_the_global_file() {
+fn validate_remote_is_refused_in_a_branch_file() {
     let sd = Sd::new();
-    sd.write_global(r#"{"settings":{"remote":"upstream","interval":60,"notify":"say"}}"#);
+    sd.write_global(r#"{"settings":{"remote":"upstream"}}"#);
     assert_eq!(sd.out(&["get", "settings.remote"]), "upstream");
     sd.write_branch("feat", r#"{"settings":{"remote":"fork"}}"#);
     let r = sd.run(&["get", "settings.remote"]);
@@ -1792,10 +1832,16 @@ fn validate_remote_interval_and_notify_can_only_be_set_in_the_global_file() {
     assert_eq!(
         r.output,
         format!(
-            "sd config: {}: settings.remote: global file only",
+            "sd config: {}: settings.remote: global or repo file only",
             sd.bf("feat")
         )
     );
+}
+
+#[test]
+fn validate_interval_and_notify_can_only_be_set_in_the_global_file() {
+    global_file_only("interval", r#"{"settings":{"interval":60}}"#);
+    global_file_only("notify", r#"{"settings":{"notify":"say"}}"#);
 }
 
 #[test]
@@ -1853,7 +1899,7 @@ fn validate_set_refuses_a_global_only_key_in_a_branch_file() {
     let r = sd.run(&["set", "settings.remote", "fork"]);
     assert_eq!(r.status, 1);
     assert!(
-        r.output.contains("settings.remote: global file only"),
+        r.output.contains("settings.remote: global or repo file only"),
         "{}",
         r.output
     );
@@ -1942,4 +1988,280 @@ fn step_args_come_from_the_files_like_any_other_field() {
         r#"{"steps":{"describe":{"claude":{"args":"--max-turns 3"}}}}"#,
     );
     assert_eq!(sd.get_field("describe", "args"), "--max-turns 3");
+}
+
+// ── repo: the layer between global and branch (#194) ────────────────────────
+
+#[test]
+fn repo_set_repo_writes_the_main_repos_sheepdog_json_and_every_branch_reads_it() {
+    let sd = Sd::new();
+    sd.git(&["branch", "other"]);
+    let r = sd.run(&["set", "--repo", "settings.verify", "make repo"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(
+        compact(&file_json(sd.repo_file())),
+        r#"{"settings":{"verify":"make repo"}}"#
+    );
+    assert!(!sd.branch_file("feat").exists());
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make repo");
+    assert_eq!(sd.out(&["get", "settings.verify", "other"]), "make repo");
+    sd.git(&["switch", "-q", "--detach"]);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make repo");
+}
+
+#[test]
+fn repo_a_linked_worktree_reads_and_writes_the_main_repos_file() {
+    let mut sd = Sd::new();
+    sd.write_repo(r#"{"settings":{"verify":"make repo"}}"#);
+    let wt = sd.tmp.join("wt");
+    sd.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "wt"]);
+    sd.cd("wt");
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make repo");
+    sd.ok(&["set", "--repo", "settings.autofix", "make fmt"]);
+    assert_eq!(
+        compact(&file_json(sd.repo_file())),
+        r#"{"settings":{"verify":"make repo","autofix":"make fmt"}}"#
+    );
+    assert!(!sd.tmp.join("repo/.git/worktrees/wt/sheepdog.json").exists());
+}
+
+#[test]
+fn repo_branch_over_repo_over_global_over_defaults() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"stepTimeout":100}}"#);
+    sd.write_repo(r#"{"settings":{"stepTimeout":200}}"#);
+    sd.write_branch("feat", r#"{"settings":{"stepTimeout":300}}"#);
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "300");
+    sd.ok(&["unset", "settings.stepTimeout"]);
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "200");
+    sd.ok(&["unset", "--repo", "settings.stepTimeout"]);
+    assert_eq!(compact(&file_json(sd.repo_file())), r#"{"settings":{}}"#);
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "100");
+    sd.ok(&["unset", "--global", "settings.stepTimeout"]);
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "1800");
+}
+
+#[test]
+fn repo_null_in_the_repo_file_clears_the_global_value_and_in_the_branch_file_the_repos() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"stepTimeout":100,"verify":"make g"}}"#);
+    sd.write_repo(r#"{"settings":{"stepTimeout":null,"verify":"make r"}}"#);
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "1800");
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make r");
+    sd.write_branch("feat", r#"{"settings":{"verify":null}}"#);
+    let r = sd.run(&["get", "settings.verify"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(r.output, "");
+}
+
+#[test]
+fn repo_show_merges_the_repo_file_between_global_and_branch() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"g","autofix":"g","botTimeout":1}}"#);
+    sd.write_repo(r#"{"settings":{"verify":"r","autofix":"r"}}"#);
+    sd.write_branch("feat", r#"{"settings":{"verify":"b"}}"#);
+    let v = json(&sd.ok(&["show"]));
+    assert_eq!(raw(&v["settings"]["verify"]), "b");
+    assert_eq!(raw(&v["settings"]["autofix"]), "r");
+    assert_eq!(raw(&v["settings"]["botTimeout"]), "1");
+}
+
+#[test]
+fn repo_the_harness_and_step_blocks_come_from_the_repo_file_too() {
+    let sd = Sd::new();
+    sd.write_global(GLOBAL);
+    sd.write_repo(
+        r#"{"steps":{"describe":{"claude":{"model":"from-repo"}},"review":{"harness":"pi"}}}"#,
+    );
+    assert_eq!(sd.get_field("describe", "model"), "from-repo");
+    assert_eq!(sd.get_field("describe", "effort"), "high");
+    assert_eq!(sd.get_field("review", "harness"), "pi");
+    sd.write_branch(
+        "feat",
+        r#"{"steps":{"describe":{"claude":{"model":"from-branch"}}}}"#,
+    );
+    assert_eq!(sd.get_field("describe", "model"), "from-branch");
+}
+
+#[test]
+fn repo_no_branch_still_reads_the_repo_file_inside_a_repo_and_only_the_global_outside() {
+    let mut sd = Sd::new();
+    sd.write_global(r#"{"settings":{"remote":"upstream","verify":"g"}}"#);
+    sd.write_repo(r#"{"settings":{"remote":"fork"}}"#);
+    sd.write_branch("feat", r#"{"settings":{"verify":"b"}}"#);
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.remote"]), "fork");
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.verify"]), "g");
+    let v = json(&sd.ok(&["show", "--no-branch"]));
+    assert_eq!(raw(&v["settings"]["remote"]), "fork");
+    sd.cd("");
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.remote"]), "upstream");
+    assert_eq!(sd.out(&["get", "settings.remote"]), "upstream");
+}
+
+#[test]
+fn repo_settings_never_leak_into_another_repository() {
+    let mut sd = Sd::new();
+    sd.write_repo(r#"{"settings":{"remote":"fork","verify":"make repo"}}"#);
+    sd.cd("");
+    sd.git(&["init", "-q", "two"]);
+    sd.cd("two");
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.remote"]), "origin");
+    assert_eq!(sd.out(&["get", "settings.remote"]), "origin");
+    assert_eq!(sd.run(&["get", "settings.verify"]).output, "");
+    sd.ok(&["set", "--repo", "settings.remote", "mine"]);
+    assert!(sd.tmp.join("two/.git/sheepdog.json").exists());
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.remote"]), "mine");
+    sd.cd("repo");
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.remote"]), "fork");
+}
+
+#[test]
+fn repo_remote_may_be_set_in_the_repo_file_and_beats_the_global_one() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"remote":"upstream"}}"#);
+    sd.ok(&["set", "--repo", "settings.remote", "fork"]);
+    assert_eq!(sd.out(&["get", "settings.remote"]), "fork");
+    let r = sd.run(&["set", "settings.remote", "x"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!(
+            "sd config: {}: settings.remote: global or repo file only",
+            sd.bf("feat")
+        )
+    );
+    assert!(!sd.branch_file("feat").exists());
+}
+
+#[test]
+fn repo_set_repo_refuses_a_global_only_key_and_leaves_the_file_alone() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"settings":{"verify":"make"}}"#);
+    for key in ["interval", "notify", "vacuumAfter", "rateLimitFloor"] {
+        let r = sd.run(&["set", "--repo", &format!("settings.{key}"), "60"]);
+        assert_eq!(r.status, 1, "{key}");
+        assert_eq!(
+            r.output,
+            format!("sd config: {}: settings.{key}: global file only", sd.rf())
+        );
+    }
+    assert_eq!(
+        compact(&file_json(sd.repo_file())),
+        r#"{"settings":{"verify":"make"}}"#
+    );
+}
+
+#[test]
+fn repo_the_repo_file_takes_everything_a_branch_file_takes() {
+    let sd = Sd::new();
+    let doc = r#"{"harness":"pi",
+      "harnesses":{"claude":{"model":"m","effort":"low","args":"","useApiKey":true},
+                   "pi":{"provider":"p","model":"m","effort":"off","args":""}},
+      "steps":{"address":{"harness":"claude","claude":{"effort":"max"},"pi":{}},
+               "ci-fix":{},"describe":{},"implement":{},"review":{}},
+      "settings":{"stepTimeout":60,"stepBudget":1,"branchBudget":2,"forkLimit":3,"reviewRounds":1,
+        "replyPrefix":"x","verify":"v","autofix":"a","localReview":"l","botCommand":"c","botTimeout":5,
+        "reviewPrompt":"p","implementPrompt":"p","reviewFixPrompt":"p","describePrompt":"p",
+        "addressPrompt":"p","resolvePrompt":"p","ciFixPrompt":"p","botLogin":["b"],"botIgnore":[],
+        "botIgnoreBody":[],"implementAllow":[],"protectedPaths":[],
+        "flags":{"suppressions":[],"skips":[],"testFiles":[]}}}"#;
+    sd.write_branch("feat", doc);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    fs::remove_file(sd.branch_file("feat")).unwrap();
+    sd.write_repo(doc);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.out(&["get", "settings.describePrompt"]), "p");
+    assert_eq!(sd.get_field("address", "effort"), "max");
+}
+
+#[test]
+fn repo_a_bad_value_or_unknown_key_in_the_repo_file_names_the_repo_file() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"harness":"claud","settings":{"verfy":"x"}}"#);
+    let r = sd.run(&["get", "--no-branch", "settings.verify"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!(
+            "sd config: {f}: harness: expected one of claude, pi, got \"claud\"\n\
+             sd config: {f}: settings.verfy: unknown key",
+            f = sd.rf()
+        )
+    );
+    fs::write(sd.repo_file(), "[]\n").unwrap();
+    let r = sd.run(&["step", "address"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: not a JSON object: {}", sd.rf()));
+}
+
+#[test]
+fn repo_set_and_unset_refuse_more_than_one_of_global_repo_and_branch() {
+    let sd = Sd::new();
+    for flags in [
+        &["--global", "--repo"][..],
+        &["--repo", "--branch", "feat"],
+        &["--global", "--branch", "feat"],
+        &["--global", "--repo", "--branch", "feat"],
+    ] {
+        for verb in ["set", "unset"] {
+            let mut args = vec![verb];
+            args.extend_from_slice(flags);
+            args.push("settings.verify");
+            if verb == "set" {
+                args.push("x");
+            }
+            let r = sd.run(&args);
+            assert_eq!(r.status, 1, "{args:?}");
+            assert_eq!(
+                r.output,
+                format!("sd config: {verb} takes at most one of --global, --repo and --branch")
+            );
+        }
+    }
+    assert!(!sd.cfg().exists());
+    assert!(!sd.repo_file().exists());
+    assert!(!sd.branch_file("feat").exists());
+}
+
+#[test]
+fn repo_set_repo_outside_a_repo_fails() {
+    let mut sd = Sd::new();
+    sd.cd("");
+    let r = sd.run(&["set", "--repo", "settings.verify", "x"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, "sd config: not a git repository");
+}
+
+#[test]
+fn repo_only_set_and_unset_take_repo() {
+    let sd = Sd::new();
+    for verb in ["get", "show", "files", "step", "init"] {
+        let r = sd.run(&[verb, "--repo", "x"]);
+        assert_eq!(r.status, 1, "{verb}");
+        assert_eq!(r.output, format!("sd config: {verb} doesn't take --repo"));
+    }
+}
+
+#[test]
+fn repo_help_documents_the_layer_its_path_and_precedence() {
+    let sd = Sd::new();
+    let help = sd.ok(&["--help"]);
+    assert!(help.contains("sd config set   [--global | --repo | --branch <b>]"), "{help}");
+    assert!(help.contains("sd config unset [--global | --repo | --branch <b>]"), "{help}");
+    let layer = |name: &str| {
+        help.lines()
+            .position(|l| l.starts_with(&format!("  {name} ")))
+            .unwrap_or_else(|| panic!("no {name} layer: {help}"))
+    };
+    assert!(layer("branch") < layer("repo"));
+    assert!(layer("repo") < layer("global"));
+    assert!(layer("global") < layer("defaults"));
+    assert!(
+        help.lines().nth(layer("repo")).unwrap().contains("<main repo>/.git/sheepdog.json"),
+        "{help}"
+    );
 }

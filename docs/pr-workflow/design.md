@@ -330,7 +330,7 @@ Each problem is one line naming the file and the dotted path:
 ```
 sd config: ~/.config/sheepdog/config.json: settings.verfy: unknown key
 sd config: ~/.config/sheepdog/config.json: settings.stepTimeout: cannot cast to uint64: 30m
-sd config: <git dir>/sheepdog/feat.json: settings.remote: global file only
+sd config: <git dir>/sheepdog/feat.json: settings.remote: global or repo file only
 ```
 
 - **What's allowed:** `harness` is `claude` or `pi`. `harnesses.claude` takes
