@@ -12,9 +12,7 @@
 //
 // Real git (a bare origin, our clone at repo/, other/ for pushes that aren't
 // ours). The real sd state is on PATH. gh is a stub with no PRs. claude edits
-// through $FX/agent and prints $FX/result.json as structured output. answer
-// is still libexec/sd-act's, so that runs the bash script, as the bats suite
-// did.
+// through $FX/agent and prints $FX/result.json as structured output.
 
 mod common;
 

@@ -6,8 +6,7 @@
 // Real git (a bare origin and a clone). Fakes on PATH: sd state (answers from
 // $FX/state.json), gh (logs each call as JSON to $FX/gh.log and answers the
 // nodes(ids:) lookup from $FX/nodes.json), claude and pi (run $FX/agent to
-// edit files, then print the canned result). --help and answer are still
-// libexec/sd-act's, so those run the bash script, as the bats suite did.
+// edit files, then print the canned result).
 
 mod common;
 

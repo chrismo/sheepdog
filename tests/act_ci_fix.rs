@@ -12,8 +12,7 @@
 // from $FX/checks.json, a job's failed log from $FX/gha.log; every call logged
 // to $FX/gh.calls), rwx (results from $FX/rwx-results.json, logs from
 // $FX/rwx.log), claude (runs $FX/agent to edit, prints $FX/result.json, keeps
-// its prompt in $FX/claude.prompt). --help and answer are still
-// libexec/sd-act's, so those run the bash script, as the bats suite did.
+// its prompt in $FX/claude.prompt).
 
 mod common;
 
