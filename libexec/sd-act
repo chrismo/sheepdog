@@ -498,7 +498,7 @@ values coalesce([unnest this | values {...this, reply: is(reply, <string>) and a
 EOF
 
 # A gate is a list of {hard}, {soft}, {warn} and {done} records (address,
-# restack) or one such record (trigger, retarget). gate_get <gate> <key>
+# restack) or one such record (retarget). gate_get <gate> <key>
 # prints that key's lines, in order.
 gate_get() {
   local q="unnest (kind(this) == \"array\" ? this : [this]) | where coalesce($2, null) is not null | values $2"
@@ -1773,60 +1773,6 @@ ship() {
   fi
 }
 
-# ── trigger ──────────────────────────────────────────────────────────────────
-
-read -r -d '' TRIGGER_GATE <<'EOF' || true
-values {s: this, why: sj(coalesce(errors, []), "; ")}
-| values case
-    when nul(s.pr) then {hard: f"no PR for {s.branch}{why != "" ? f": {why}" : ""}"}
-    when on(s.pr.state != "OPEN") then {hard: f"PR #{s.pr.number} is {lower(s.pr.state)}"}
-    when n(s.push.behind) > 0 and n(s.push.ahead) == 0 and on(s.push.remote_ours) and on(s.push.remote_made) and on(s.push.dirty)
-      then {hard: f"{s.branch} isn't on the remote at HEAD; the bot reviews what GitHub has: commit or remove the worktree's changes, then sd act push"}
-    when nul(s.push.remote_sha) or n(s.push.ahead) > 0 or on(s.push.diverged) or (n(s.push.behind) > 0 and on(s.push.remote_ours) and on(s.push.remote_made))
-      then {hard: f"{s.branch} isn't on the remote at HEAD; the bot reviews what GitHub has: sd act push first"}
-    when n(s.push.behind) > 0
-      then {hard: f"{s.branch} isn't on the remote at HEAD; the bot reviews what GitHub has: take its commits first (git merge --ff-only)"}
-    when on(s.review.bot.status == "covered") then {done: f"the bot was already triggered on {s.head[0:7]}"}
-    when not (coalesce(s.review.local.status, "") in ["covered", "rewritten-same"]
-              or coalesce(s.review.accepted.status, "") in ["covered", "rewritten-same"])
-      then {soft: "neither the local review nor an accept covers HEAD (sd act review)"}
-    else {} end
-EOF
-
-# The comment goes over REST, which answers with its created_at: the trigger
-# time by GitHub's clock, which sd state compares with the bot's replies
-# (also GitHub's clock), so a skewed laptop can't make a reply look older
-# than the trigger (#63). The repo comes from the PR's URL, not
-# {owner}/{repo}: gh's default repo may be a fork.
-trigger() {
-  local b=$branch state command gate line head base number url at
-  command=$(prc_get settings.botCommand "$b" false) || die "sd config failed"
-  [[ -n $command ]] || die "no settings.botCommand configured: the comment that makes the review bot run"
-  state=$(sd-state --json "$b") || die "sd state failed"
-  gate=$(prc_json "$TRIGGER_GATE" "$state") || die "can't parse sd state's answer"
-  line=$(gate_get "$gate" hard); [[ -z $line ]] || die "$line"
-  line=$(gate_get "$gate" done)
-  if [[ -n $line ]] && ! $force; then echo "$line (--force to trigger again)"; return; fi
-  line=$(gate_get "$gate" soft)
-  if [[ -n $line ]] && ! $force; then die "not triggering the bot on $b: $line (--force to trigger anyway)"; fi
-  head=$(git rev-parse "refs/heads/$b")
-  base=$(prc_val "$state" 'coalesce(sync.old_base, "")')
-  [[ -n $base ]] || die "can't find $b's base: $(no_base_why "$b" "$state")"
-  number=$(prc_val "$state" pr.number)
-  url=$(prc_val "$state" pr.url)
-  [[ $url =~ ^https://([^/]+)/([^/]+/[^/]+)/pull/[0-9]+$ ]] || die "can't tell PR #$number's repo from its URL: $url"
-  at=$(gh api "repos/${BASH_REMATCH[2]}/issues/$number/comments" --hostname "${BASH_REMATCH[1]}" \
-         -f body="$command" --jq '.created_at // ""') \
-    || die "posting the trigger comment failed; nothing pinned"
-  if [[ ! $at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
-    at=$(date -u +%FT%TZ)
-    echo "sd act: warning: GitHub's answer had no created_at; the trigger time is this machine's local clock" >&2
-  fi
-  pin_write "$b" bot "$head" "$base"
-  git config "branch.$b.sd-bot-triggered" "$at"
-  echo "triggered the review bot on PR #$number with \"$command\"; bot pinned at ${head:0:7}, waiting for its reply"
-}
-
 # ── CI config hold (#124) ────────────────────────────────────────────────────
 
 hold_say() { echo "the agent changed CI config (${1//$'\n'/, }): review, then sd act push"; }
@@ -2309,47 +2255,6 @@ retarget() {
   parent_to_default "$b" "$state"
 }
 
-# ── ack ──────────────────────────────────────────────────────────────────────
-
-# One line per picked item: id|why it can't be acked (empty if it can)|what it is.
-read -r -d '' ACK_Q <<'EOF' || true
-unnest {ids, it: s.threads.items}
-| where (len(ids) == 0 and it.mark == "i") or it.id in ids
-| values f"{it.id}|{it.type == "thread" ? "is a thread; resolve it on GitHub"
-                    : it.kind != "bot" ? f"is a human {it.type}; reply to it" : ""}|{it.type}  {coalesce(it.author, it.last, "")}  {coalesce(it.excerpt, "")}  {coalesce(it.url, "")}"
-EOF
-
-ack() {
-  local b=$branch state check out id why what ids_json="" sep="" q
-  local -a picked=() shown=() bad=()
-  local -A found=()
-  if $question; then
-    (( ! ${#ids[@]} )) || die "--question takes no --id"
-    if ! q=$(git cat-file blob "refs/sheepdog/$b/question" 2>/dev/null); then echo "no question to ack on $b"; return; fi
-    git update-ref -d "refs/sheepdog/$b/question"
-    echo "acked the agent's question on $b ($(prc_val "$q" 'coalesce(step, "?")' 2>/dev/null || echo '?'))"
-    return
-  fi
-  state=$(sd-state --json "$b") || die "sd state failed"
-  check=$(prc_line 'values nul(threads.owed_bot) ? f"can'"'"'t read the PR from GitHub: {sj(coalesce(errors, []), "; ")}" : "ok"' "$state") \
-    || die "can't parse sd state's answer"
-  [[ $check == ok ]] || die "$check"
-  for id in "${ids[@]}"; do ids_json+=$sep$(prc_json_string "$id") || exit 1; sep=,; done
-  out=$(prc_line "$ACK_Q" "{\"ids\": [$ids_json], \"s\": $state}") \
-    || die "can't parse sd state's answer"
-  while IFS='|' read -r id why what; do
-    [[ -n $id ]] || continue
-    found[$id]=1
-    if [[ -n $why ]]; then bad+=("$id $why"); else picked+=("$id"); shown+=("$what"); fi
-  done <<<"$out"
-  for id in "${ids[@]}"; do [[ -n ${found[$id]:-} ]] || bad+=("$id isn't owed on $b"); done
-  if (( ${#bad[@]} )); then printf 'sd act: %s\n' "${bad[@]}" >&2; exit 1; fi
-  if (( ! ${#picked[@]} )); then echo "nothing to ack on $b"; return; fi
-  for id in "${picked[@]}"; do git config --add "branch.$b.sd-handled" "$id"; done
-  echo "acked ${#picked[@]} on $b:"
-  printf '  %s\n' "${shown[@]}"
-}
-
 # ── enroll ───────────────────────────────────────────────────────────────────
 
 # sd act enroll is src/act/bookkeeping.rs, which has its own copies of these.
@@ -2424,7 +2329,7 @@ case $verb in
   # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
   implement) running_during "$branch" implement implement ;;
   address) running_during "$branch" address address ;;
-  ack) ack ;;
+  ack) act_rs ;;
   answer) answer ;;
   restack) restack ;;
   retarget) retarget ;;
@@ -2435,7 +2340,7 @@ case $verb in
   review) review ;;
   describe) describe ;;
   ship) ship ;;
-  trigger) trigger ;;
+  trigger) act_rs ;;
   attach) attach ;;
   *) die "unknown verb: $verb" ;;
 esac

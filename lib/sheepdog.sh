@@ -31,6 +31,8 @@ with_timeout() {
 # it was taken against. sd state compares base..pin with the branch's current
 # base..HEAD, so a restack (which moves the base) doesn't make a reviewed
 # change look changed. Kinds: local, bot, accepted (#66 Re-review policy).
+# src/git.rs's pin_write does the same for trigger; this one stays for
+# review (#203): change both.
 pin_write() {
   case $2 in local|bot|accepted) ;; *) echo "unknown pin: $2 (local, bot, accepted)" >&2; return 1 ;; esac
   git update-ref -m "pin $2" "refs/sheepdog/$1/$2" "$3" \

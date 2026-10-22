@@ -5,6 +5,7 @@
 
 mod bookkeeping;
 mod commands;
+mod github;
 mod push;
 
 use crate::git::{self, git, git_out};
@@ -211,6 +212,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "unenroll" => bookkeeping::unenroll(&b),
         "forget" => bookkeeping::forget(&b, a.remove),
         "unregister" => bookkeeping::unregister(&a.branch, a.force),
+        "ack" => github::ack(&b, &a.ids, a.question),
+        "trigger" => github::trigger(&b, &remote, a.force),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
