@@ -97,7 +97,8 @@ from chrismo's real config, glyphs and launchd job.
 
 This is a TDD repo: write a failing test first, then make it pass. A ported
 verb's acceptance tests are Rust, in `tests/<verb>.rs` (the built binary run
-through a link named `sd-<verb>`, #199); the bash verbs' are bats.
+through a link named `sd-<verb>`, by `tests/common`'s harness, #199); the bash
+verbs' are bats.
 
 **Build before bats.** The ported verbs' links point at the release binary, and
 lib/config.sh's `prc_get`, `prc_step` and `prn_next` run it, so every bats suite

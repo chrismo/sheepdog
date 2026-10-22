@@ -3,8 +3,9 @@
 bats_require_minimum_version 1.5.0
 
 # Test suite for lib/config.sh, which the bash verbs source: its prc_get /
-# prc_step wrappers around libexec/sd-config, its SuperDB queries, and the
-# pinned super they run. sd config's own tests are Rust: tests/config.rs.
+# prc_step wrappers around libexec/sd-config and prn_next around
+# libexec/sd-state, its SuperDB queries, and the pinned super they run. sd
+# config's and sd state's own tests are Rust: tests/config.rs, tests/state.rs.
 # Build first: cargo build --release.
 
 SD_CONFIG="$BATS_TEST_DIRNAME/../libexec/sd-config"
@@ -33,6 +34,11 @@ GLOBAL='{"harness":"claude",
 @test "is a link to the Rust binary, which runs as the verb it's named for" {
   [ "$(readlink "$SD_CONFIG")" = ../target/release/sd ]
   [ -x "$SD_CONFIG" ]
+}
+
+@test "sd-state: is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$LIBEXEC/sd-state")" = ../target/release/sd ]
+  [ -x "$LIBEXEC/sd-state" ]
 }
 
 # ── the super binary (lib/config.sh's queries): pinned asdf install, not the shim
