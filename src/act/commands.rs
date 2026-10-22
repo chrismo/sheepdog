@@ -1,5 +1,7 @@
 // verify (A10) and autofix (A11). libexec/sd-act's verify_run and
-// autofix_run still do the same for the bash agent steps: change both.
+// autofix_run still do the same for the bash agent steps: change both. One
+// difference until #203 ports those: there, a failed git status still reads
+// as a clean tree.
 
 use super::{cfg, die, plural};
 use crate::git::{git, git_out, worktree_for};
@@ -32,8 +34,14 @@ fn step_timeout(b: &str) -> u64 {
     }
 }
 
+// A failed status isn't a clean tree: it would pass verify and hide
+// autofix's changes.
 fn status(wt: &str) -> String {
-    git_out(wt, &["status", "--porcelain"]).unwrap_or_default()
+    let g = git(wt, &["status", "--porcelain"]);
+    if !g.ok {
+        die(format!("git status failed in {wt}: {}", g.stderr.trim()));
+    }
+    g.stdout
 }
 
 fn print_tail(out: &str) {

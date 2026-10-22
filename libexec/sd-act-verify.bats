@@ -89,6 +89,14 @@ verify_cmd() { "$SD_CONFIG" set --global settings.verify "$1"; }
   [[ "$output" == *"changed files"* ]]
 }
 
+@test "a git status that fails fails it, not a pass" {
+  verify_cmd "true"
+  printf 'not an index' > .git/index
+  run "$SD_ACT" verify
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git status failed"* ]]
+}
+
 @test "a list-valued verify is refused before anything runs" {
   run "$SD_CONFIG" set --global --json settings.verify '["true","false"]'
   [ "$status" -eq 1 ]

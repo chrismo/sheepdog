@@ -126,6 +126,15 @@ head_sha() { git rev-parse HEAD; }
   [[ "$output" == *"not checked out"* ]]
 }
 
+@test "a git status that fails stops it before the command runs" {
+  autofix_cmd "touch ran"
+  printf 'not an index' > .git/index
+  run "$SD_ACT" autofix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git status failed"* ]]
+  [ ! -e ran ]
+}
+
 @test "a list-valued autofix is refused before anything runs" {
   run "$SD_CONFIG" set --global --json settings.autofix '["true","false"]'
   [ "$status" -eq 1 ]
