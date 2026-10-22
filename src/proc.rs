@@ -144,6 +144,30 @@ fn pass_signals_on() {
     });
 }
 
+extern "C" fn ignored(_: i32) {}
+
+/// <c> in the foreground, on sd's terminal, for its status. From here on sd
+/// lets a HUP, INT or TERM go by: a TUI gets Ctrl-C and a closed terminal
+/// too, and sd carries on after it exits. A no-op handler, not SIG_IGN,
+/// which <c> would inherit.
+pub fn foreground(mut c: Command) -> i32 {
+    for sig in PASSED_ON {
+        unsafe {
+            if signal(sig, ignored as extern "C" fn(i32) as usize) == SIG_IGN {
+                signal(sig, SIG_IGN);
+            }
+        }
+    }
+    let prog = c.get_program().to_string_lossy().into_owned();
+    c.status().map_or_else(
+        |_| {
+            eprint!("{}", not_found(&prog).stderr);
+            127
+        },
+        code,
+    )
+}
+
 /// Where timeout's command's stderr goes: Out's stderr, Out's stdout, or
 /// straight to sd's, as it's written.
 #[derive(Clone, Copy, PartialEq)]
@@ -390,6 +414,18 @@ mod tests {
     fn with_timeout_on_a_missing_program_is_127() {
         let o = with_timeout(5, "no-such-program-sd", &[], None);
         assert_eq!((o.ok, o.code, o.timed_out), (false, 127, false));
+    }
+
+    // sd ignores INT once foreground starts; the command must not inherit that.
+    #[test]
+    fn foreground_is_the_commands_status_and_leaves_it_its_signals() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "kill -INT $$; exit 0"]);
+        assert_eq!(foreground(c), 130);
+        let mut c = Command::new("sh");
+        c.args(["-c", "exit 3"]);
+        assert_eq!(foreground(c), 3);
+        assert_eq!(foreground(Command::new("no-such-program-sd")), 127);
     }
 
     #[test]
