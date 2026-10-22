@@ -95,12 +95,14 @@ from chrismo's real config, glyphs and launchd job.
 
 ## Development
 
-This is a TDD repo: write a failing bats test first, then make it pass.
+This is a TDD repo: write a failing test first, then make it pass. A ported
+verb's acceptance tests are Rust, in `tests/<verb>.rs` (the built binary run
+through a link named `sd-<verb>`, #199); the bash verbs' are bats.
 
 **Build before bats.** The ported verbs' links point at the release binary, and
-lib/config.sh's `prc_get` and `prc_step` run it, so every suite needs
-`cargo build --release` after a change under `src/`. Rust unit tests:
-`cargo test`. The bats suites are the acceptance tests for both languages.
+lib/config.sh's `prc_get` and `prc_step` run it, so every bats suite needs
+`cargo build --release` after a change under `src/`. `cargo test` runs the
+Rust unit tests and `tests/`, against its own debug build.
 
 **The full suite runs on the PR's CI, not locally and not by `rwx run`.**
 Locally, run only the tests you're writing or changing during red-green,

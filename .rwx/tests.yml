@@ -40,7 +40,7 @@ tasks:
       rm -rf bats-core
       bats --version
 
-  # sd config needs exactly 0.3.0, and sd-config.bats skips its super tests
+  # lib/config.sh needs exactly 0.3.0, and lib/config.bats skips its super tests
   # unless a real binary is at the asdf install path.
   - key: superdb
     run: |
@@ -69,13 +69,15 @@ tasks:
       - Cargo.lock
       - src/**
 
+  # tests/config.rs runs the binary against temp git repos, hence git.
   - key: cargo-test
-    use: [code, rust]
+    use: [code, system-packages, rust]
     run: cargo test --locked
     filter:
       - Cargo.toml
       - Cargo.lock
       - src/**
+      - tests/**
 
   - key: test
     use: [code, system-packages, bats, superdb, captain, build]
