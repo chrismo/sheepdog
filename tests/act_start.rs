@@ -275,6 +275,18 @@ fn start_a_worktree_beside_the_main_one_on_a_new_branch_of_the_same_name_stdout_
     assert_eq!(sd.git_in("feat-x", &["branch", "--show-current"]), "feat-x");
 }
 
+// git worktree add's own output reaches stderr in git's order, as bash's
+// `git worktree add … >&2` streamed it: "Preparing worktree" before "HEAD is
+// now at".
+#[test]
+fn start_passes_git_worktree_adds_output_through_to_stderr_in_order() {
+    let sd = sd();
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x"]);
+    assert_eq!(r.status, 0);
+    let (prep, head) = (r.stderr.find("Preparing worktree"), r.stderr.find("HEAD is now at"));
+    assert!(prep.is_some() && head.is_some() && prep < head, "{}", r.stderr);
+}
+
 // @test "start: placed beside the main worktree, from a subdirectory too"
 #[test]
 fn start_placed_beside_the_main_worktree_from_a_subdirectory_too() {
