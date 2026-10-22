@@ -229,6 +229,23 @@ mod tests {
     }
 
     #[test]
+    fn with_timeout_kills_a_grandchild_that_ignores_term_after_the_leader_exits() {
+        let dir = std::env::temp_dir().join(format!("sd-proc-test-term-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let late = dir.join("late");
+        // The leader dies on TERM; the grandchild ignores it and holds the pipe.
+        let script = format!("(trap '' TERM; sleep 3; echo late > {}) & wait", late.display());
+        let start = Instant::now();
+        let o = with_timeout(1, "sh", &["-c", &script], None);
+        assert!(start.elapsed() < Duration::from_secs(3), "waited {:?}", start.elapsed());
+        assert_eq!((o.code, o.timed_out), (124, true));
+        std::thread::sleep(Duration::from_secs(4).saturating_sub(start.elapsed()));
+        assert!(!late.exists(), "the grandchild outlived the timeout");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn with_timeout_on_a_missing_program_is_127() {
         let o = with_timeout(5, "no-such-program-sd", &[], None);
         assert_eq!((o.ok, o.code, o.timed_out), (false, 127, false));
