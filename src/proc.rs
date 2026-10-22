@@ -109,7 +109,7 @@ const SIG_IGN: usize = 1;
 /// HUP, INT and TERM: the same numbers on macOS and Linux.
 const PASSED_ON: [i32; 3] = [1, 2, 15];
 
-/// How many timeouts are running, and the signal sd got while one was.
+/// How many deferring_signals are running, and the signal sd got while one was.
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
 static CAUGHT: AtomicI32 = AtomicI32::new(0);
 
@@ -151,15 +151,22 @@ fn pass_signals_on() {
 /// command printed till then. A HUP, INT or TERM to sd ends the group the
 /// same way, then sd.
 pub fn timeout(secs: u64, c: Command, merged: bool) -> Out {
+    deferring_signals(|| timeout_in_group(secs, c, merged, &|| CAUGHT.load(Ordering::SeqCst) != 0))
+}
+
+/// <f>, with a HUP, INT or TERM to sd held till it returns, then sd ends of
+/// it: a timeout inside ends its command at once, and <f> cleans up after it
+/// (the running marker).
+pub fn deferring_signals<T>(f: impl FnOnce() -> T) -> T {
     pass_signals_on();
     RUNNING.fetch_add(1, Ordering::SeqCst);
-    let o = timeout_in_group(secs, c, merged, &|| CAUGHT.load(Ordering::SeqCst) != 0);
+    let out = f();
     let last = RUNNING.fetch_sub(1, Ordering::SeqCst) == 1;
     let sig = CAUGHT.load(Ordering::SeqCst);
     if last && sig != 0 {
         die_of(sig);
     }
-    o
+    out
 }
 
 /// <stopped>: sd got a signal to pass on; the group ends as at the deadline,

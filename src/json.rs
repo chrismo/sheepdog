@@ -15,7 +15,7 @@ fn write(v: &Value, out: &mut String) {
         Value::Null => out.push_str("null"),
         Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         Value::Number(n) => out.push_str(&number(n)),
-        Value::String(s) => string(s, out),
+        Value::String(s) => string(s, out, true),
         Value::Array(a) => {
             out.push('[');
             for (i, e) in a.iter().enumerate() {
@@ -32,7 +32,7 @@ fn write(v: &Value, out: &mut String) {
                 if i > 0 {
                     out.push(',');
                 }
-                string(k, out);
+                string(k, out, true);
                 out.push(':');
                 write(e, out);
             }
@@ -61,7 +61,8 @@ pub fn float(f: f64) -> String {
     format!("{f}")
 }
 
-fn string(s: &str, out: &mut String) {
+/// <seps>: U+2028 and U+2029 escaped, as -j does and SUP doesn't.
+fn string(s: &str, out: &mut String, seps: bool) {
     out.push('"');
     for c in s.chars() {
         match c {
@@ -72,12 +73,39 @@ fn string(s: &str, out: &mut String) {
             '\t' => out.push_str("\\t"),
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
-            '\u{2028}' | '\u{2029}' => out.push_str(&format!("\\u{:04x}", c as u32)),
+            '\u{2028}' | '\u{2029}' if seps => out.push_str(&format!("\\u{:04x}", c as u32)),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }
     out.push('"');
+}
+
+// The same values as super prints them in SUP (usage.sup) and f-strings.
+
+pub fn sup_string(s: &str) -> String {
+    let mut out = String::new();
+    string(s, &mut out, false);
+    out
+}
+
+/// Go's strconv 'g' format, shortest digits: a float in an f-string.
+pub fn go_g(f: f64) -> String {
+    let e = format!("{f:e}");
+    let (m, x) = e.split_once('e').unwrap_or((&e, "0"));
+    let x: i32 = x.parse().unwrap_or(0);
+    if !(-4..6).contains(&x) {
+        return format!("{m}e{}{:02}", if x < 0 { '-' } else { '+' }, x.abs());
+    }
+    format!("{f}")
+}
+
+/// A float64 in SUP: a whole one that fits an int64 as "<int>.", else go_g.
+pub fn sup_float(f: f64) -> String {
+    if f.fract() == 0.0 && f.abs() < i64::MAX as f64 {
+        return format!("{}.", f as i64);
+    }
+    go_g(f)
 }
 
 #[cfg(test)]
@@ -101,5 +129,23 @@ mod tests {
     fn strings_escape_as_super_escapes_them() {
         let v: Value = serde_json::from_str(r#"{"d":"<&>é\u0001\t\"\\/\b\f\r\n\u001f  \u007f😀"}"#).unwrap();
         assert_eq!(to_string(&v), "{\"d\":\"<&>é\\u0001\\t\\\"\\\\/\\b\\f\\r\\n\\u001f\\u2028\\u2029\u{7f}😀\"}");
+    }
+
+    // Each expected value is super 0.3.0's, -f sup for a ::float64 and an
+    // f-string for go_g.
+    #[test]
+    fn floats_print_as_super_prints_them_in_sup_and_f_strings() {
+        let sup = [
+            (5.0, "5."), (0.0, "0."), (1234567.0, "1234567."), (-1234567.0, "-1234567."), (1e18, "1000000000000000000."),
+            (9.2233720368547e18, "9223372036854700032."), (1e19, "1e+19"), (1e20, "1e+20"), (1e21, "1e+21"),
+            (1e-7, "1e-07"), (1e-6, "1e-06"), (1e-5, "1e-05"), (0.0001, "0.0001"), (0.00012, "0.00012"), (0.1, "0.1"),
+            (123456.5, "123456.5"), (1234567.5, "1.2345675e+06"), (123456789012.5, "1.234567890125e+11"),
+            (0.30000000000000004, "0.30000000000000004"), (-2.5, "-2.5"), (1.5e300, "1.5e+300"),
+        ];
+        for (f, s) in sup {
+            assert_eq!(sup_float(f), s, "{f}");
+        }
+        assert_eq!([go_g(5.0), go_g(1234567.0), go_g(1e20), go_g(1e-7)], ["5", "1.234567e+06", "1e+20", "1e-07"]);
+        assert_eq!(sup_string("q\"\\\n\té\u{1}<>&\u{2028}\r\u{8}\u{c}\u{7f}"), "\"q\\\"\\\\\\n\\té\\u0001<>&\u{2028}\\r\\b\\f\u{7f}\"");
     }
 }

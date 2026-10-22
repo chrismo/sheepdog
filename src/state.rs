@@ -6,15 +6,16 @@ use crate::git::{
     commits_not_ours, count, git, git_ok, git_out, is_ancestor, made_here, main_worktree, patch_id, rev, show_ref, stacked_on,
     stacked_unclear, strip_nl, worktree_for, worktree_mark,
 };
+use crate::time::{epoch_ns, now_utc};
+use crate::usage::{self, sup_record};
 use crate::val::{at, n, on, sj, t, text, NULL};
-use crate::{config, git, json, next, proc};
+use crate::{config, git, json, next, proc, running};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::OnceLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const HELP: &str = include_str!("state_help.txt");
 
@@ -89,67 +90,11 @@ fn die(msg: impl std::fmt::Display) -> ! {
 
 // ── usage.sup: what the branch has spent (#121) ──────────────────────────────
 
-fn usage_file() -> String {
-    format!("{}/usage.sup", config::state_dir())
-}
-
-/// One usage record's fields: a flat SUP record of strings, numbers, times,
-/// bools and nulls, as harness_usage writes them. None when it doesn't parse.
-fn sup_record(line: &str) -> Option<HashMap<String, Value>> {
-    static TIME: OnceLock<Regex> = OnceLock::new();
-    let time = TIME.get_or_init(|| re(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"));
-    let body = line.strip_prefix('{')?.strip_suffix('}')?;
-    let mut out = HashMap::new();
-    let mut rest = body;
-    while !rest.is_empty() {
-        let (k, r) = rest.split_once(':')?;
-        let k = k.trim();
-        if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return None;
-        }
-        let r = r.trim_start();
-        let (v, r) = if r.starts_with('"') {
-            let mut de = serde_json::Deserializer::from_str(r).into_iter::<Value>();
-            let v = de.next()?.ok()?;
-            (v, &r[de.byte_offset()..])
-        } else {
-            let end = r.find(',').unwrap_or(r.len());
-            let tok = r[..end].trim();
-            let v = match tok {
-                "null" => Value::Null,
-                "true" => json!(true),
-                "false" => json!(false),
-                t if time.is_match(t) => json!(t),
-                t => {
-                    if let Ok(i) = t.parse::<i64>() {
-                        json!(i)
-                    } else {
-                        let f: f64 = t.strip_suffix('.').unwrap_or(t).parse().ok()?;
-                        if !t.chars().next().is_some_and(|c| c.is_ascii_digit() || c == '-' || c == '+' || c == '.') {
-                            return None;
-                        }
-                        json!(f)
-                    }
-                }
-            };
-            (v, &r[end..])
-        };
-        out.insert(k.to_string(), v);
-        let r = r.trim_start();
-        rest = match r.strip_prefix(',') {
-            Some(r) => r,
-            None if r.is_empty() => r,
-            None => return None,
-        };
-    }
-    Some(out)
-}
-
 /// This repo's <branch> cost so far, in USD, by usage.sup's cost_usd; 0 with
 /// no record. A line that isn't a whole record is skipped with a warning;
 /// one shaped like a record that still doesn't parse is an Err.
 fn branch_spend(b: &str) -> Result<Value, ()> {
-    let file = usage_file();
+    let file = usage::file();
     let text = match fs::read(&file) {
         Ok(t) if !t.is_empty() => String::from_utf8_lossy(&t).into_owned(),
         _ => return Ok(json!(0)),
@@ -163,12 +108,10 @@ fn branch_spend(b: &str) -> Result<Value, ()> {
 
 /// usage.sup's text summed for <repo>'s <b>, and how many lines aren't records.
 fn spend_in(text: &str, repo: &str, b: &str) -> (Result<Value, ()>, usize) {
-    static SHAPE: OnceLock<Regex> = OnceLock::new();
-    let shape = SHAPE.get_or_init(|| re(r"^\{time:.*\}$"));
     let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(text).split('\n').collect();
-    let skipped = lines.iter().filter(|l| !shape.is_match(l)).count();
+    let skipped = lines.iter().filter(|l| !usage::shaped(l)).count();
     let mut sum: Option<f64> = None;
-    for l in lines.iter().filter(|l| shape.is_match(l)) {
+    for l in lines.iter().filter(|l| usage::shaped(l)) {
         let Some(r) = sup_record(l) else { return (Err(()), skipped) };
         let field = |k: &str| r.get(k).and_then(Value::as_str);
         if field("repo") == Some(repo) && field("branch") == Some(b) {
@@ -178,45 +121,6 @@ fn spend_in(text: &str, repo: &str, b: &str) -> (Result<Value, ()>, usize) {
         }
     }
     (Ok(sum.map_or(json!(0), |s| json!(s))), skipped)
-}
-
-// ── the running marker (#170) ────────────────────────────────────────────────
-
-fn proc_start(pid: &str) -> String {
-    let o = Command::new("ps")
-        .args(["-o", "lstart=", "-p", pid])
-        .env("LC_ALL", "C")
-        .env("TZ", "UTC")
-        .stderr(Stdio::null())
-        .output();
-    o.map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().collect::<Vec<_>>().join(" "))
-        .unwrap_or_default()
-}
-
-/// The agent step running on <b>, {step, pid, since}, else null. A marker
-/// whose pid is gone, or now another process's, is removed.
-fn running_state(b: &str) -> Option<Value> {
-    let dir = git::common_dir()?;
-    let f = format!("{dir}/sheepdog/{}.running", b.replace('/', "__"));
-    let Ok(text) = fs::read_to_string(&f) else { return Some(Value::Null) };
-    if text.is_empty() {
-        return Some(Value::Null);
-    }
-    let line = text.lines().next().unwrap_or("");
-    let mut it = line.split_whitespace();
-    let (pid, step, since) = (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or(""));
-    let start = it.collect::<Vec<_>>().join(" ");
-    let live = !pid.is_empty()
-        && pid.chars().all(|c| c.is_ascii_digit())
-        && Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
-        && proc_start(pid) == start;
-    if live {
-        let pid: Value = serde_json::from_str(pid).unwrap_or(Value::Null);
-        Some(json!({"step": step, "pid": pid, "since": since}))
-    } else {
-        let _ = fs::remove_file(&f);
-        Some(Value::Null)
-    }
 }
 
 // ── records sd act keeps under refs/sheepdog/<b>/ ────────────────────────────
@@ -613,55 +517,6 @@ fn flags_json(base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> Result<Value
         out.push(json!({"kind": kind, "file": file, "line": raw(&line), "n": raw(&n), "text": text, "commits": commits}));
     }
     Ok(Value::Array(out))
-}
-
-// ── time ─────────────────────────────────────────────────────────────────────
-
-fn epoch_ns(t: &str) -> Option<i128> {
-    static T: OnceLock<Regex> = OnceLock::new();
-    let r = T.get_or_init(|| re(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|([+-])(\d{2}):(\d{2}))$"));
-    let c = r.captures(t)?;
-    let g = |i: usize| c.get(i).map_or(0i64, |m| m.as_str().parse().unwrap_or(0));
-    let (y, m, d) = (g(1), g(2), g(3));
-    // days from civil (Howard Hinnant)
-    let y2 = if m <= 2 { y - 1 } else { y };
-    let era = y2.div_euclid(400);
-    let yoe = y2 - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146097 + doe - 719468;
-    let mut secs = days * 86400 + g(4) * 3600 + g(5) * 60 + g(6);
-    if c.get(9).is_some() {
-        let off = g(10) * 3600 + g(11) * 60;
-        secs -= if &c[9] == "+" { off } else { -off };
-    }
-    let frac = c.get(7).map_or(0i128, |m| {
-        let digits = &m.as_str()[1..];
-        let padded = format!("{digits:0<9}");
-        padded[..9].parse().unwrap_or(0)
-    });
-    Some(i128::from(secs) * 1_000_000_000 + frac)
-}
-
-fn now_utc() -> (String, i128) {
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
-    let days = secs.div_euclid(86400);
-    let rem = secs.rem_euclid(86400);
-    // civil from days (Howard Hinnant)
-    let z = days + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    (
-        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60),
-        i128::from(secs) * 1_000_000_000,
-    )
 }
 
 // ── assemble ─────────────────────────────────────────────────────────────────
@@ -1139,7 +994,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
     let branch_budget = raw_json(&cfg_text("settings.branchBudget", branch, true));
     let mut errors: Vec<String> = Vec::new();
     let spend = branch_spend(branch).unwrap_or_else(|()| {
-        errors.push(format!("usage: can't read {}", usage_file()));
+        errors.push(format!("usage: can't read {}", usage::file()));
         Value::Null
     });
     let ignore_body = compile_all(&raw_json(&ignore_body_text))
@@ -1464,7 +1319,7 @@ fn observe(branch: &str, remote: &str) -> (Value, Value) {
         }
     }
 
-    let running = running_state(branch).unwrap_or_else(|| die("couldn't read the branch's running marker"));
+    let running = running::state(branch).unwrap_or_else(|| die("couldn't read the branch's running marker"));
     let handled: Vec<String> = git_out(".", &["config", "--get-all", &format!("branch.{branch}.sd-handled")])
         .map(|s| s.lines().map(str::to_string).collect())
         .unwrap_or_default();
@@ -1829,15 +1684,6 @@ mod tests {
         assert!(is_test("lib/x/a.bats", &g(&["lib/*.bats"])));
         assert!(is_test("a/x1.spec", &g(&["x[0-9].spec"])));
         assert!(!is_test("a/xa.spec", &g(&["x[!a-z].spec"])));
-    }
-
-    #[test]
-    fn epoch_ns_reads_utc_offsets_and_fractions() {
-        assert_eq!(epoch_ns("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(epoch_ns("2026-10-16T13:00:00Z").map(|n| n / 1_000_000_000), Some(1_792_155_600));
-        assert_eq!(epoch_ns("2026-10-16T15:00:00+02:00"), epoch_ns("2026-10-16T13:00:00Z"));
-        assert_eq!(epoch_ns("1970-01-01T00:00:01.5Z"), Some(1_500_000_000));
-        assert_eq!(epoch_ns("soon"), None);
     }
 
     #[test]
