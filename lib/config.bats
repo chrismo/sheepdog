@@ -136,7 +136,7 @@ old_super() {
   printf '#!/usr/bin/env bash\necho "$*" >> "%s/launchctl-calls"\n' "$TMP" > "$TMP/fakebin/launchctl"
   chmod +x "$TMP/fakebin/launchctl"
   local cmd
-  for cmd in "sd-state" "sd-act address" "sd-watch install"; do
+  for cmd in "sd-act address" "sd-watch install"; do
     HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" SHEEPDOG_WATCH_LAUNCH_AGENTS="$TMP/agents" \
       SHEEPDOG_STATE_DIR="$TMP/state" STATUS_DIR="$TMP/status" ASDF_SUPERDB_VERSION=0.2.0 \
       run "$LIBEXEC"/$cmd
