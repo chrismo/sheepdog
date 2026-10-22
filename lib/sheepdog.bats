@@ -930,3 +930,56 @@ guidance_repo() {
   run protected_hits "" ".github/workflows/test.yml"
   [ -z "$output" ]
 }
+
+# ── repo_remote, gh_repo: a fork's clone keeps to its own remote ────────────
+
+@test "repo_remote: settings.remote, the repo file's over the global one" {
+  run repo_remote
+  [ "$status" -eq 0 ]
+  [ "$output" = origin ]
+  echo '{"settings": {"remote": "mine"}}' > "$SHEEPDOG_CONFIG"
+  run repo_remote
+  [ "$output" = mine ]
+  "$BATS_TEST_DIRNAME/../libexec/sd-config" set --repo settings.remote fork
+  run repo_remote
+  [ "$status" -eq 0 ]
+  [ "$output" = fork ]
+}
+
+@test "repo_remote: git's remote.pushDefault plays no part" {
+  git config remote.pushDefault fork
+  run repo_remote
+  [ "$status" -eq 0 ]
+  [ "$output" = origin ]
+}
+
+@test "gh_repo_of: [host/]owner/repo from each URL form; nothing for a local path" {
+  [ "$(gh_repo_of git@github.com:me/r.git)" = github.com/me/r ]
+  [ "$(gh_repo_of github.com:me/r)" = github.com/me/r ]
+  [ "$(gh_repo_of https://github.com/me/r.git)" = github.com/me/r ]
+  [ "$(gh_repo_of https://user@github.com/me/r/)" = github.com/me/r ]
+  [ "$(gh_repo_of ssh://git@github.com/me/r)" = github.com/me/r ]
+  [ "$(gh_repo_of ssh://git@ghe.example.com:2222/org/r.git)" = ghe.example.com/org/r ]
+  [ -z "$(gh_repo_of /tmp/origin.git)" ]
+  [ -z "$(gh_repo_of ../up/origin.git)" ]
+  [ -z "$(gh_repo_of file:///tmp/origin.git)" ]
+  [ -z "$(gh_repo_of file://host/up/origin.git)" ]
+}
+
+@test "gh_repo: exports GH_REPO from the remote's URL, so gh asks about the repo git pushes to" {
+  git remote add origin https://github.com/upstream/r.git
+  git remote add fork git@github.com:me/r.git
+  gh_repo fork
+  [ "$GH_REPO" = github.com/me/r ]
+  run bash -c 'echo "$GH_REPO"'
+  [ "$output" = github.com/me/r ]
+}
+
+@test "gh_repo: a remote whose URL names no GitHub repo leaves GH_REPO alone" {
+  git remote add origin "$TMP/origin.git"
+  unset GH_REPO
+  gh_repo origin
+  [ -z "${GH_REPO+set}" ]
+  run gh_repo nosuch
+  [ "$status" -eq 0 ]
+}

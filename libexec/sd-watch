@@ -204,7 +204,7 @@ report_gone() {
       api="repos/{owner}/{repo}/pulls/$pr"
       [[ $url =~ ^https://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)$ ]] && api="repos/${BASH_REMATCH[1]}/pulls/${BASH_REMATCH[2]}"
       err=$(mktemp)
-      if ! pull=$(cd "$repo" && with_timeout "$TIMEOUT" gh api "$api" 2>"$err" </dev/null); then
+      if ! pull=$(cd "$repo" && r=$(repo_remote) && gh_repo "$r" && with_timeout "$TIMEOUT" gh api "$api" 2>"$err" </dev/null); then
         if ! grep -q 'HTTP 404' "$err"; then
           printf '%s\t%s\t⚠️\tbranch is gone; GitHub didn'"'"'t say what became of #%s\n' "$name" "$b" "$pr"
           rm -f "$err"
@@ -250,11 +250,11 @@ sweep_pins() {
     | git -C "$1" update-ref --stdin
 }
 
-# fetch <repo> <name>: fetch settings.remote, printing a pass line for a
-# failure. Returns 1 when the remote can't be read, so nothing should be checked.
+# fetch <repo> <name>: fetch repo_remote, printing a pass line for a failure.
+# Returns 1 when the remote can't be read, so nothing should be checked.
 fetch() {
   local remote err
-  if ! remote=$(cd "$1" && prc_get settings.remote "" true); then
+  if ! remote=$(cd "$1" && repo_remote); then
     printf '%s\t-\t⚠️\tsd config failed\n' "$2"
     return 1
   fi

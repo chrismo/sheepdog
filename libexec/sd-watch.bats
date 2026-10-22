@@ -481,6 +481,7 @@ gh_pull() {
   cat > "$TMP/fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$PS_FIXTURES/gh-calls"
+echo "${GH_REPO-unset}" >> "$PS_FIXTURES/gh-repo"
 [[ -f $PS_FIXTURES/gh-pull ]] || { echo "gh: API rate limit exceeded" >&2; exit 1; }
 cat "$PS_FIXTURES/gh-pull"
 SH
@@ -557,6 +558,19 @@ SH
   gh_pull '{"state": "closed", "merged": true}'
   pass
   [ "$(cat "$PS_FIXTURES/gh-calls")" = "api repos/up/stream/pulls/7" ]
+}
+
+@test "gone: a fork's clone asks GitHub about the repo file's settings.remote, not gh's pick among the remotes" {
+  git remote add fork git@github.com:me/fork.git
+  "$SD_CONFIG" set --repo settings.remote fork
+  export GIT_SSH_COMMAND=false   # the fork is never reached: no network
+  ps_fixture feat '.ci.verdict = "pending"'
+  pass
+  gone feat
+  gh_pull '{"state": "closed", "merged": true}'
+  pass
+  [ "$(cat "$PS_FIXTURES/gh-repo")" = github.com/me/fork ]
+  [ "$(notified)" = "repo feat|merged (#7); the local branch is already gone" ]
 }
 
 @test "gone: a PR that wasn't merged drops the state quietly" {

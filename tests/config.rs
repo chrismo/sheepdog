@@ -2265,3 +2265,10 @@ fn repo_help_documents_the_layer_its_path_and_precedence() {
         "{help}"
     );
 }
+
+#[test]
+fn help_says_gh_follows_settings_remote_and_how_a_forks_clone_sets_it() {
+    let sd = Sd::new();
+    let help = sd.ok(&["--help"]);
+    assert!(help.contains("(GH_REPO); a fork's clone keeps everything"), "{help}");
+}

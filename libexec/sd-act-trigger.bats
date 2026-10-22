@@ -26,6 +26,7 @@ setup() {
   mkdir -p "$GH" "$TMP/fakebin"
   cat > "$TMP/fakebin/gh" <<'EOF'
 #!/usr/bin/env bash
+echo "${GH_REPO-unset}" >> "$GH/gh_repo"
 q="" b="" fields=()
 for a; do
   [[ $a == branch=* ]] && b=${a#branch=}
@@ -88,6 +89,20 @@ pin() { git rev-parse -q --verify "refs/sheepdog/feat/$1" || true; }
   [ "$(pin bot-base)" = "$(git rev-parse origin/main)" ]
   [[ "$output" == *"triggered"* ]]
   [[ "$output" == *"waiting"* ]]
+}
+
+@test "trigger: a fork's clone asks GitHub about the repo file's settings.remote, not gh's pick among the remotes" {
+  # A GitHub URL served from $TMP/ssh: the fake ssh runs git's command there.
+  mkdir -p "$TMP/ssh/me" && git clone -q --bare "$TMP/origin.git" "$TMP/ssh/me/fork.git"
+  printf '#!/usr/bin/env bash\nc=${@: -1}\ncd %q && eval "git ${c#git-}"\n' "$TMP/ssh" > "$TMP/fakebin/ssh"
+  chmod +x "$TMP/fakebin/ssh"
+  export GIT_SSH_COMMAND="$TMP/fakebin/ssh"
+  git remote add fork git@github.com:me/fork.git
+  "$SD_CONFIG" set --repo settings.remote fork
+  git fetch -q fork
+  run "$SD_ACT" trigger
+  [ "$status" -eq 0 ]
+  [ "$(sort -u "$GH/gh_repo")" = github.com/me/fork ]
 }
 
 @test "trigger: records when the comment was posted, by GitHub's clock" {

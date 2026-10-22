@@ -42,7 +42,7 @@
 # Verbs:
 #   start     a worktree beside the main one, named after <name> with
 #             slashes as dashes, on the branch <name> (an existing local
-#             branch; else origin/<name>, tracked; else new, off the fetched
+#             branch; else <remote>/<name>, tracked; else new, off the fetched
 #             default branch or --parent). Runs the repo's setup hook
 #             there, as wt-new does: $GIT_COMMON_DIR/worktree-setup, else git
 #             config wt.setup. Records the task and parent, pins base at a new
@@ -241,7 +241,7 @@
 #   unregister      even with branches still enrolled (the watcher drops them)
 #
 # start options:
-#   --parent <b>    start from <b> (local, else origin/<b>) and stack on it
+#   --parent <b>    start from <b> (local, else <remote>/<b>) and stack on it
 #   --no-implement  stop after the setup; the task is then optional
 #
 # restack options:
@@ -313,6 +313,8 @@ done
 
 prc_super_init || exit 1
 git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+remote=$(repo_remote) || die "sd config failed"
+gh_repo "$remote"
 task_arg=""
 if [[ $verb == start ]]; then
   (( ${#positionals[@]} >= 1 && ${#positionals[@]} <= 2 )) \
@@ -526,7 +528,7 @@ address() {
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || die "$b isn't checked out in any worktree"
   [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   git -C "$wt" fetch --quiet "$remote" || die "fetch from $remote failed"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
 
@@ -790,7 +792,7 @@ verify_autofix() {
 # parent that exists only here (parent.unpushed), which sd state reports as a
 # step, not an error (#105).
 no_base_why() {
-  local remote; remote=$(prc_get settings.remote "$1" false) || remote=origin
+  local remote; remote=$(repo_remote) || remote=origin
   prc_val "$2" "len(coalesce(errors, [])) > 0 ? sj(errors, \"; \")
     : on(parent.unpushed) ? f\"parent {parent.name} isn't on $remote yet: ship it first (sd act ship {parent.name})\" : \"\""
 }
@@ -1152,7 +1154,7 @@ start() {
   # branch name would make directories, so it becomes a dash (#85).
   dst="$(dirname "$(main_worktree)")/${b//\//-}"
   [[ ! -e $dst ]] || die "$dst already exists"
-  remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   git fetch --quiet --prune "$remote" || die "fetch from $remote failed"
 
   if git show-ref -q --verify "refs/heads/$b"; then
@@ -1231,7 +1233,7 @@ EOF
 guidance_base() {
   local remote def ref
   git rev-parse -q --verify "refs/sheepdog/$1/base" && return
-  remote=$(prc_get settings.remote "$1" false) || return 1
+  remote=$(repo_remote) || return 1
   if def=$(start_default "$remote") && [[ $def != "$1" ]]; then
     for ref in "refs/remotes/$remote/$def" "refs/heads/$def"; do
       git show-ref -q --verify "$ref" && git merge-base "refs/heads/$1" "$ref" && return
@@ -1504,7 +1506,7 @@ ci_fix() {
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || die "$b isn't checked out in any worktree"
   [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   git -C "$wt" fetch --quiet "$remote" || die "fetch from $remote failed"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
   [[ $(prc_val "$state" 'nul(pr)') == false ]] || die "no PR for $b"
@@ -1707,7 +1709,7 @@ ship() {
   if ! $force && [[ -n $(git config --get "branch.$b.sd-lock" || true) ]]; then
     die "not shipping $b: taken over (branch.$b.sd-lock is set; --force to ship anyway)"
   fi
-  remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   git -C "$wt" fetch --quiet --prune "$remote" || die "fetch from $remote failed"
   hold_gate "$b" "shipping $b"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
@@ -1846,11 +1848,11 @@ hold_paths() {
   printf '%s\n' "${v#*$'\n'}"
 }
 
-# hold_read <branch> <doing>: hold_paths, with settings.remote read here
+# hold_read <branch> <doing>: hold_paths, with the remote read here
 # (outside $( ), where die exits) and an unreadable hold refused.
 hold_read() {
   local remote rc=0
-  remote=$(prc_get settings.remote "$1" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   HOLD_PATHS=$(hold_paths "$1" "$remote") || rc=$?
   (( rc != 2 )) || die "not $2: can't read branch.$1.sd-held, the CI config hold"
   return "$rc"
@@ -1870,7 +1872,7 @@ hold_after() {
   paths=$(protected_paths "$b" "$2") || die "sd config failed"
   hits=$(protected_hits "$paths" "$3")
   [[ -n $hits ]] || return 0
-  remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   rsha=$(git rev-parse -q --verify "refs/remotes/$remote/$b^{commit}" || true)
   if [[ -n $rsha ]] && git merge-base --is-ancestor "refs/heads/$b" "$rsha"; then
     die "the agent pushed CI config itself (${hits//$'\n'/, }): it is on $remote/$b unreviewed; review it now (git log -p $remote/$b -- ${hits//$'\n'/ })"
@@ -1996,7 +1998,7 @@ push() {
   if ! $force && [[ -n $(git config --get "branch.$branch.sd-lock" || true) ]]; then
     die "not pushing $branch: taken over (branch.$branch.sd-lock is set; --force to push anyway)"
   fi
-  remote=$(prc_get settings.remote "$branch" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   [[ $branch != "$(remote_default "$remote")" ]] \
     || die "not pushing $branch: it's the default branch; start a branch (sd act start <branch> \"<task>\")"
   push_branch "$branch" "$remote" || exit 1
@@ -2059,7 +2061,7 @@ restack() {
   wt=$(worktree_for "$b")
   [[ -n $wt ]] || die "$b isn't checked out in any worktree"
   [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  remote=$(prc_get settings.remote "$b" false) || die "sd config failed"
+  remote=$(repo_remote) || die "sd config failed"
   git -C "$wt" fetch --quiet --prune "$remote" || die "fetch from $remote failed"
   state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
   old_base=$(prc_val "$state" 'coalesce(sync.old_base, "")')
@@ -2382,7 +2384,7 @@ record_lineage() {
     def=$(prc_line 'where pr is null and parent.source == "default" and threads.owed_bot is not null
       | values sync.default' "$state") || def=
     [[ -n $def ]] || return 0
-    remote=$(prc_get settings.remote "$b" false) || return 0
+    remote=$(repo_remote) || return 0
     out=$(stacked_on "$b" "$remote" "$def") || rc=$?
     case $rc in
       0) read -r parent old_base <<<"$out" ;;

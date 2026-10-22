@@ -2,10 +2,12 @@
 // with no directory run here.
 
 use crate::proc::{self, Out};
+use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 pub fn git(dir: &str, args: &[&str]) -> Out {
     git_input(dir, args, None)
@@ -204,6 +206,30 @@ pub fn remote_default(dir: &str, remote: &str) -> String {
     } else {
         r
     }
+}
+
+/// lib/sheepdog.sh's gh_repo_of: host/owner/repo, the form GH_REPO takes,
+/// from a remote's URL (scp-style, ssh://, https://); None for a local path
+/// or file:// URL.
+pub fn gh_repo_of(url: &str) -> Option<String> {
+    static SCHEMED: OnceLock<Regex> = OnceLock::new();
+    static SCP: OnceLock<Regex> = OnceLock::new();
+    if url.starts_with("file:") {
+        return None;
+    }
+    let u = url.strip_suffix('/').unwrap_or(url);
+    let u = u.strip_suffix(".git").unwrap_or(u);
+    let schemed = SCHEMED.get_or_init(|| Regex::new(r"^[a-z+]+://([^@/]+@)?([^/:]+)(:[0-9]+)?/([^/]+)/([^/]+)$").unwrap());
+    let scp = SCP.get_or_init(|| Regex::new(r"^([^@/:]+@)?([^/:]+):([^/]+)/([^/]+)$").unwrap());
+    if let Some(c) = schemed.captures(u) {
+        return Some(format!("{}/{}/{}", &c[2], &c[4], &c[5]));
+    }
+    scp.captures(u).map(|c| format!("{}/{}/{}", &c[2], &c[3], &c[4]))
+}
+
+/// lib/sheepdog.sh's gh_repo, for the caller to export as GH_REPO.
+pub fn gh_repo(dir: &str, remote: &str) -> Option<String> {
+    gh_repo_of(&git_out(dir, &["remote", "get-url", remote])?)
 }
 
 /// How many commits of <sha> no reflog entry reaches.
@@ -758,5 +784,36 @@ mod tests {
         assert_eq!(worktree_for(&r.dir, "side"), "");
         assert_eq!(worktree_for(&r.dir, "main"), r.dir);
         assert_eq!(main_worktree(&wt), r.dir);
+    }
+
+    // @test "gh_repo_of: [host/]owner/repo from each URL form; nothing for a local path"
+    #[test]
+    fn gh_repo_of_host_owner_repo_from_each_url_form_nothing_for_a_local_path() {
+        let of = |u: &str| gh_repo_of(u).unwrap_or_default();
+        assert_eq!(of("git@github.com:me/r.git"), "github.com/me/r");
+        assert_eq!(of("git@github.com:me/r"), "github.com/me/r");
+        assert_eq!(of("github.com:me/r"), "github.com/me/r");
+        assert_eq!(of("ssh://git@github.com/me/r.git"), "github.com/me/r");
+        assert_eq!(of("ssh://git@github.com/me/r"), "github.com/me/r");
+        assert_eq!(of("ssh://git@ghe.example.com:2222/org/r.git"), "ghe.example.com/org/r");
+        assert_eq!(of("https://github.com/me/r.git"), "github.com/me/r");
+        assert_eq!(of("https://github.com/me/r"), "github.com/me/r");
+        assert_eq!(of("https://user@github.com/me/r/"), "github.com/me/r");
+        assert_eq!(gh_repo_of("/tmp/origin.git"), None);
+        assert_eq!(gh_repo_of("../up/origin.git"), None);
+        assert_eq!(gh_repo_of("file:///tmp/origin.git"), None);
+        assert_eq!(gh_repo_of("file://host/up/origin.git"), None);
+    }
+
+    #[test]
+    fn gh_repo_the_github_repo_a_remotes_url_names_none_for_a_local_path_or_no_such_remote() {
+        let r = Repo::new();
+        r.git(&["remote", "add", "origin", "https://github.com/upstream/r.git"]);
+        r.git(&["remote", "add", "fork", "git@github.com:me/r.git"]);
+        r.git(&["remote", "add", "local", "/tmp/origin.git"]);
+        assert_eq!(gh_repo(&r.dir, "fork").as_deref(), Some("github.com/me/r"));
+        assert_eq!(gh_repo(&r.dir, "origin").as_deref(), Some("github.com/upstream/r"));
+        assert_eq!(gh_repo(&r.dir, "local"), None);
+        assert_eq!(gh_repo(&r.dir, "nosuch"), None);
     }
 }
