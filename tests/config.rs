@@ -2135,6 +2135,17 @@ fn repo_remote_may_be_set_in_the_repo_file_and_beats_the_global_one() {
     assert!(!sd.branch_file("feat").exists());
 }
 
+// Was lib/sheepdog.bats: "repo_remote: git's remote.pushDefault plays no part"
+// sd act's repo_remote is get --no-branch settings.remote.
+#[test]
+fn repo_remote_gits_remote_pushdefault_plays_no_part() {
+    let sd = Sd::new();
+    sd.git(&["config", "remote.pushDefault", "fork"]);
+    let r = sd.run(&["get", "--no-branch", "settings.remote"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(r.output, "origin");
+}
+
 #[test]
 fn repo_set_repo_refuses_a_global_only_key_and_leaves_the_file_alone() {
     let sd = Sd::new();

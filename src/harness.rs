@@ -1,8 +1,8 @@
 // The harness adapter: the per-harness code (#79 Design record, rule 3): the
 // headless steps, the TUI sd act attach opens, and the tool-rule wording a
-// step's prompt needs. lib/sheepdog.sh's harness_run and harness_tally call
-// it through `sd harness`, which bin/sd doesn't list: only lib/sheepdog.bats
-// runs them now that no bash step is left (#203).
+// step's prompt needs. `sd harness` runs a step or tallies a session from the
+// command line; bin/sd doesn't list it: tests/harness.rs drives run_step
+// through it (#203).
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
@@ -50,7 +50,7 @@ pub fn new_session() -> String {
     format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
 }
 
-/// One headless agent step: harness_run's arguments.
+/// One headless agent step: run_step's arguments.
 pub struct Step<'a> {
     pub harness: &'a str,
     pub session: &'a str,
@@ -454,10 +454,9 @@ fn usage_exit() -> ExitCode {
     ExitCode::from(1)
 }
 
-/// sd harness: lib/sheepdog.sh's harness_run and harness_tally. The step's
-/// name, its branch and the tool lists come in the environment, as the bash
-/// steps set them: HARNESS_STEP, HARNESS_BRANCH, HARNESS_CLAUDE_ALLOW and
-/// HARNESS_PI_TOOLS, the last two required.
+/// sd harness: run_step and tally. The step's name, its branch and the tool
+/// lists come in the environment: HARNESS_STEP, HARNESS_BRANCH,
+/// HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS, the last two required.
 pub fn run(argv: &[String]) -> ExitCode {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     match a.as_slice() {
@@ -478,7 +477,7 @@ pub fn run(argv: &[String]) -> ExitCode {
             let env = |k: &str| std::env::var(k).unwrap_or_default();
             let (name, branch) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"));
             let (Ok(claude_allow), Ok(pi_tools)) = (std::env::var("HARNESS_CLAUDE_ALLOW"), std::env::var("HARNESS_PI_TOOLS")) else {
-                eprintln!("sd harness: HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS must be set (lib/sheepdog.sh's)");
+                eprintln!("sd harness: HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS must be set");
                 return ExitCode::from(1);
             };
             let step = Step {

@@ -1,8 +1,6 @@
 // The running marker (#170): while an agent step runs on a branch, the
 // branch's file says so, one line: "<pid> <step> <start time> <the pid's
-// proc_start>". sd state reads it. lib/sheepdog.sh's running_hold, which
-// only lib/sheepdog.bats runs now, writes the same marker with its own
-// $BASHPID, and exports RUNNING_HELD=<branch> as holding does.
+// proc_start>". sd state reads it.
 
 use crate::val::t;
 use crate::{git, proc, time};
@@ -71,7 +69,7 @@ fn free(marker: &str, b: &str) -> bool {
 }
 
 /// <f> under <b>'s marker, naming <step>; None, and <f> not run, when another
-/// live step holds it. A marker running_hold keeps (RUNNING_HELD) is left
+/// live step holds it. A marker holding keeps (RUNNING_HELD) is left
 /// alone. A HUP, INT or TERM ends <f>'s agent at once (proc::timeout), but
 /// the marker is removed before sd dies of it.
 pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
@@ -82,8 +80,8 @@ pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     during_at(&marker, b, step, f)
 }
 
-/// during, for a step whose commit and verify come after its harness step,
-/// as running_hold was: RUNNING_HELD=<b> is exported while <f> runs, so the
+/// during, for a step whose commit and verify come after its harness step:
+/// RUNNING_HELD=<b> is exported while <f> runs, so the
 /// step's harness step and children (verify) run under this marker. A step
 /// that dies takes its pid with it, and sd state clears the marker.
 pub fn holding<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
@@ -171,8 +169,37 @@ mod tests {
         assert!(during_at(path(&f), "b-live", "implement", || ()).is_some());
     }
 
+    // Was lib/sheepdog.bats: "running_state: a live marker as JSON; none, or a dead pid's, is null, and the dead one is removed (#170)"
     #[test]
-    fn a_marker_running_hold_keeps_is_left_alone() {
+    fn state_a_live_marker_as_json_none_or_a_dead_pids_is_null_and_the_dead_one_is_removed_170() {
+        let f = marker("state");
+        assert!(state_at(path(&f)).is_null());
+        let me = std::process::id().to_string();
+        fs::write(&f, format!("{me} implement 2026-10-18T14:03:00Z {}\n", proc_start(&me))).unwrap();
+        assert_eq!(
+            state_at(path(&f)),
+            json!({"step": "implement", "pid": std::process::id(), "since": "2026-10-18T14:03:00Z"})
+        );
+        let mut dead = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        dead.wait().unwrap();
+        fs::write(&f, format!("{} review 2026-10-18T14:03:00Z {}\n", dead.id(), proc_start(&me))).unwrap();
+        assert!(state_at(path(&f)).is_null());
+        assert!(!f.exists());
+    }
+
+    // Was lib/sheepdog.bats: "running_state: a live pid that started at another time is a reused one: null, and the marker removed (#170)"
+    #[test]
+    fn state_a_live_pid_that_started_at_another_time_is_a_reused_one_null_and_the_marker_removed_170() {
+        let f = marker("reused");
+        let me = std::process::id().to_string();
+        assert!(!proc_start(&me).is_empty());
+        fs::write(&f, format!("{me} implement 2026-10-18T14:03:00Z Thu Jan 1 00:00:00 1970\n")).unwrap();
+        assert!(state_at(path(&f)).is_null());
+        assert!(!f.exists());
+    }
+
+    #[test]
+    fn a_marker_holding_keeps_is_left_alone() {
         let f = marker("kept");
         std::env::set_var("RUNNING_HELD", "b-kept");
         let ran = during_at(path(&f), "b-kept", "implement", || f.exists());

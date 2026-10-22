@@ -16,22 +16,29 @@ const PROTECTED_FILE: &str = ".sheepdog/protected-paths";
 /// the file is itself protected: an agent emptying it would unprotect every
 /// branch after it merges.
 fn protected_paths(b: &str, base: &str) -> Vec<String> {
-    let mut paths: Vec<String> = match crate::config::get_text("settings.protectedPaths", b, false) {
-        Ok(set) => return set.lines().filter(|p| !p.is_empty()).map(str::to_string).collect(),
+    let set = match crate::config::get_text("settings.protectedPaths", b, false) {
+        Ok(set) => Some(set),
         Err(lines) if !lines.is_empty() => {
             for l in lines {
                 eprintln!("sd config: {l}");
             }
             die("sd config failed")
         }
-        Err(_) => {
-            let spec = format!("{base}:{PROTECTED_FILE}");
-            if !base.is_empty() && git_out(".", &["cat-file", "-t", &spec]).is_some_and(|t| t == "blob") {
-                file_paths(&git(".", &["cat-file", "blob", &spec]).stdout)
-            } else {
-                PROTECTED_DEFAULT.iter().map(|p| p.to_string()).collect()
-            }
-        }
+        Err(_) => None,
+    };
+    paths_in(".", set.as_deref(), base)
+}
+
+/// protected_paths in the repo at <dir>, given the setting's lines if set.
+fn paths_in(dir: &str, set: Option<&str>, base: &str) -> Vec<String> {
+    if let Some(set) = set {
+        return set.lines().filter(|p| !p.is_empty()).map(str::to_string).collect();
+    }
+    let spec = format!("{base}:{PROTECTED_FILE}");
+    let mut paths: Vec<String> = if !base.is_empty() && git_out(dir, &["cat-file", "-t", &spec]).is_some_and(|t| t == "blob") {
+        file_paths(&git(dir, &["cat-file", "blob", &spec]).stdout)
+    } else {
+        PROTECTED_DEFAULT.iter().map(|p| p.to_string()).collect()
     };
     paths.push(PROTECTED_FILE.to_string());
     paths
@@ -149,9 +156,56 @@ fn refusal(doing: &str, paths: &[String], then: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::tests::Repo;
 
     fn strings(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// <p> := <text> in the repo, committed.
+    fn commit(r: &Repo, p: &str, text: &str) {
+        let f = std::path::Path::new(&r.dir).join(p);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, text).unwrap();
+        r.git(&["add", p]);
+        r.git(&["commit", "-qm", p]);
+    }
+
+    // Was lib/sheepdog.bats: "protected_paths: the default list, with no setting and no .sheepdog/protected-paths; the list's file is protected too"
+    #[test]
+    fn protected_paths_the_default_list_with_no_setting_and_no_file_the_lists_file_is_protected_too() {
+        let r = Repo::new();
+        assert_eq!(
+            paths_in(&r.dir, None, "HEAD"),
+            strings(&[
+                ".github/workflows/", ".github/actions/", ".rwx/", ".captain/", ".circleci/", ".gitlab-ci.yml", ".buildkite/",
+                ".sheepdog/protected-paths"
+            ])
+        );
+    }
+
+    // Was lib/sheepdog.bats: "protected_paths: .sheepdog/protected-paths in the base commit, comments and blanks dropped; the branch's own copy ignored; the file itself always protected"
+    #[test]
+    fn protected_paths_the_file_in_the_base_commit_the_branchs_own_copy_ignored_the_file_itself_always_protected() {
+        let r = Repo::new();
+        commit(&r, ".sheepdog/protected-paths", "# ours\n.github/\n\n  deploy/pipeline.yml  # the deploy\n");
+        let base = r.git(&["rev-parse", "HEAD"]);
+        commit(&r, ".sheepdog/protected-paths", "nothing\n");
+        assert_eq!(paths_in(&r.dir, None, &base), strings(&[".github/", "deploy/pipeline.yml", ".sheepdog/protected-paths"]));
+        commit(&r, ".sheepdog/protected-paths", "# none\n");
+        assert_eq!(paths_in(&r.dir, None, "HEAD"), strings(&[".sheepdog/protected-paths"]));
+        // No base: the default list.
+        assert_eq!(paths_in(&r.dir, None, ""), paths_in(&r.dir, None, "HEAD~3"));
+    }
+
+    // Was lib/sheepdog.bats: "protected_paths: settings.protectedPaths wins, and an empty list protects nothing"
+    // The setting as config::get_text reads a list: one per line.
+    #[test]
+    fn protected_paths_settings_protectedpaths_wins_and_an_empty_list_protects_nothing() {
+        let r = Repo::new();
+        commit(&r, ".sheepdog/protected-paths", ".github/\n");
+        assert_eq!(paths_in(&r.dir, Some("ci/\nMakefile"), "HEAD"), strings(&["ci/", "Makefile"]));
+        assert!(paths_in(&r.dir, Some(""), "HEAD").is_empty());
     }
 
     // Was lib/sheepdog.bats: "protected_hits: a path covers itself and what's under it, trailing / or not"

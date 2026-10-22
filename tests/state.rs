@@ -11,10 +11,10 @@
 // names one. Discovery costs 1, a fetch 2, both with $GH_FAKE_REMAINING left.
 // GH_FAKE_GONE=<n>: a fetch of #n finds no such PR.
 //
-// sd state reads the running marker and a question's worktree mark that the
-// bash steps write, so those two fixtures run lib/sheepdog.sh's own
-// proc_start and worktree_mark. The libexec/sd-state link's test is in
-// lib/config.bats, beside the sd-config link's.
+// sd state reads the running marker and a question's worktree mark that sd
+// act writes, so those two fixtures write them with sd act's own
+// running::proc_start and git::worktree_mark. The libexec/sd-state link's
+// test is in lib/config.bats, beside the sd-config link's.
 
 mod common;
 
@@ -22,6 +22,7 @@ use common::{assert_has, assert_lacks, assert_match, chomp, jq, output, spawn, R
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Once;
 
 const GH: &str = r##"#!/usr/bin/env bash
 echo "${GH_REPO-unset}" >> "$GH_FIXTURES/gh_repo"
@@ -200,15 +201,18 @@ impl Sd {
         self.git(&["update-ref", r, &blob]);
     }
 
-    /// lib/sheepdog.sh's <function> <args>, as the bash steps run it.
-    fn lib(&self, args: &[&str]) -> String {
-        let mut c = self.command(Path::new("bash5"));
-        c.args(["-c", r#"source "$1/config.sh" && source "$1/sheepdog.sh" && shift && "$@""#, "_"])
-            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/lib"))
-            .args(args);
-        let out = output(&mut c, None);
-        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
-        chomp(&String::from_utf8_lossy(&out.stdout))
+    /// The cwd's git::worktree_mark. Its git runs with this process's
+    /// environment, not Sd::command's, so git's config is cleared here too.
+    fn worktree_mark(&self) -> String {
+        static ENV: Once = Once::new();
+        ENV.call_once(|| {
+            std::env::set_var("GIT_CONFIG_GLOBAL", "/dev/null");
+            std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+            for v in ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"] {
+                std::env::remove_var(v);
+            }
+        });
+        sheepdog::git::worktree_mark(&self.cwd.to_string_lossy()).expect("a worktree mark")
     }
 
     /// "$SD_CONFIG" <args>
@@ -337,10 +341,10 @@ impl Sd {
         ));
     }
 
-    /// The marker harness_run keeps while a step runs: "<pid> <step> <since> <proc_start>".
+    /// The marker an agent step keeps while it runs: "<pid> <step> <since> <proc_start>".
     fn running(&self, pid: u32, step: &str) {
         fs::create_dir_all(self.cwd.join(".git/sheepdog")).unwrap();
-        let start = self.lib(&["proc_start", &pid.to_string()]);
+        let start = sheepdog::running::proc_start(&pid.to_string());
         self.write(".git/sheepdog/feat.running", &format!("{pid} {step} 2026-10-18T14:03:00Z {start}\n"));
     }
 }
@@ -2574,7 +2578,7 @@ fn question_stands_at_head_with_the_worktree_the_step_left_nexts_question_step_1
             &sd.git(&["rev-parse", "HEAD"]),
             "--arg",
             "m",
-            &sd.lib(&["worktree_mark", "."]),
+            &sd.worktree_mark(),
             r#"{head: $h, step: "ci-fix", mark: $m, text: "which test?\nrevert it, or keep it"}"#,
         ],
         "",

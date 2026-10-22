@@ -1304,8 +1304,8 @@ fn config_a_list_valued_verify_is_refused_before_the_agent_runs() {
 }
 
 // @test "harness_run: settings that are not a JSON object stop the step"
-// lib/sheepdog.sh's harness_run is `sd harness run` with its tool lists in
-// the environment; this runs that directly, as sd-harness.
+// harness_run is `sd harness run` with its tool lists in the environment;
+// this runs that directly, as sd-harness (tests/harness.rs has the rest).
 #[test]
 fn harness_run_settings_that_are_not_a_json_object_stop_the_step() {
     let sd = sd();

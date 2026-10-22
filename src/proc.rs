@@ -120,8 +120,8 @@ pub fn private_dir(name: &str) -> Option<PathBuf> {
 }
 
 // In its own group, a Ctrl-C or a kill of sd doesn't reach timeout's command,
-// so as lib/sheepdog.sh's with_timeout does, a HUP, INT or TERM is passed on
-// to the group, and waited for, before it ends sd too (#170). libc's, which
+// so, as the bash with_timeout did, a HUP, INT or TERM is passed on to the
+// group, and waited for, before it ends sd too (#170). libc's, which
 // std links already: no crate.
 extern "C" {
     fn signal(sig: i32, handler: usize) -> usize;
