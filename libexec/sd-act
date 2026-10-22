@@ -315,11 +315,10 @@ prc_super_init || exit 1
 git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
 remote=$(repo_remote) || die "sd config failed"
 gh_repo "$remote"
-task_arg=""
 if [[ $verb == start ]]; then
   (( ${#positionals[@]} >= 1 && ${#positionals[@]} <= 2 )) \
     || die "usage: sd act start [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]"
-  branch=${positionals[0]} task_arg=${positionals[1]:-}
+  branch=${positionals[0]}
 fi
 if [[ $verb == answer ]]; then
   (( ${#positionals[@]} >= 1 && ${#positionals[@]} <= 2 )) && [[ ${positionals[0]} =~ [^[:space:]] ]] \
@@ -799,6 +798,11 @@ no_base_why() {
 
 # ── agent sessions ───────────────────────────────────────────────────────────
 
+# This section, the questions and guidance_base, agent_rules and the CI
+# config hold below are the bash agent steps' (address, ci-fix, describe,
+# restack --resolve). src/act/step.rs and src/act/hold.rs do the same for
+# implement: change both.
+
 # step_session <branch> <step>: the harness and session a step runs in: the
 # branch's session (branch.<b>.sd-session) resumed, else a new one. Sets
 # STEP_CFG, STEP_H, STEP_SID, STEP_MODE, STEP_TIMEOUT. Refuses while the
@@ -888,14 +892,18 @@ question_gate() {
 # would otherwise refuse. The rest of the step (commit, verify, push, replies)
 # runs as usual, under the running marker. Only a question that still stands.
 answer() {
-  local b=$branch q step
+  local b=$branch q step flags=()
   q=$(question_state "$b" "$(git rev-parse "refs/heads/$b")") || die "refs/sheepdog/$b/question isn't a question record"
   [[ -n $q ]] || die "no question to answer on $b"
   step=$(prc_val "$q" step)
   [[ $(prc_val "$q" at_head) == true ]] \
     || die "the $step agent's question on $b no longer stands: HEAD or the worktree changed since it asked (sd act ack --question drops it)"
   case $step in
-    implement|review-fix) running_during "$b" implement implement ;;
+    # implement is Rust (src/act/implement.rs): --answer hands it the answer.
+    implement|review-fix)
+      if $force; then flags+=(--force); fi
+      if [[ -n $harness_opt ]]; then flags+=(--harness "$harness_opt"); fi
+      exec "$SD_LIB/../target/release/sd" act implement --answer "$answer_text" "${flags[@]}" "$b" ;;
     address) running_during "$b" address address ;;
     ci-fix) running_during "$b" ci-fix ci_fix ;;
     *) die "can't answer a $step question" ;;
@@ -951,13 +959,11 @@ attached_check() {
   fi
 }
 
-# ── start: A0 ───────────────────────────────────────────────────────────────
+# ── guidance base ────────────────────────────────────────────────────────────
 
-# Duplicates agent-rig's wt-new (#14), hook locations and branch resolution
-# included, so a repo set up for new_wt needs nothing more. Placement differs
-# (#85): beside the main worktree, not beside the current one.
-
-# start_default <remote>
+# start_default <remote>: the default branch as fetched, for guidance_base.
+# src/act/start.rs's start_default does the same for start and implement:
+# change both.
 start_default() {
   local head br
   head=$(git symbolic-ref -q --short "refs/remotes/$1/HEAD" 2>/dev/null) && { echo "${head#"$1"/}"; return; }
@@ -968,111 +974,6 @@ start_default() {
   done
   return 1
 }
-
-# start_point <remote> <branch>
-start_point() {
-  if git show-ref -q --verify "refs/remotes/$1/$2"; then echo "refs/remotes/$1/$2"
-  elif git show-ref -q --verify "refs/heads/$2"; then echo "refs/heads/$2"
-  else return 1
-  fi
-}
-
-# start_hook <src> <dst> <branch>: all output on stderr; stdout is start's path.
-start_hook() {
-  local src=$1 dst=$2 b=$3 script cmd rc=0
-  script="$(cd "$(git rev-parse --git-common-dir)" && pwd)/worktree-setup"
-  if [[ -x $script ]]; then
-    echo "sd act: running $script" >&2
-    (cd "$dst" && WT_SRC=$src WT_DST=$dst WT_BRANCH=$b "$script") >&2 || rc=$?
-  else
-    cmd=$(git config --get wt.setup || true)
-    [[ -n $cmd ]] || return 0
-    echo "sd act: running wt.setup: $cmd" >&2
-    (cd "$dst" && WT_SRC=$src WT_DST=$dst WT_BRANCH=$b sh -c "$cmd") >&2 || rc=$?
-  fi
-  (( rc == 0 )) || echo "sd act: the setup hook failed (exit $rc); the worktree is kept at $dst" >&2
-  return $rc
-}
-
-start() {
-  local b=$branch remote src dst from="" base="" default rc=0
-  git check-ref-format --branch "$b" >/dev/null 2>&1 || die "not a valid branch name: $b"
-  $no_implement || [[ -n $task_arg ]] || die "no task: sd act start $b \"<task>\" (or --no-implement)"
-  src=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a worktree"
-  # Beside the main worktree, whichever worktree this runs from, so a stack
-  # built with cd "$(sd act start ...)" stays in one place; a slash in the
-  # branch name would make directories, so it becomes a dash (#85).
-  dst="$(dirname "$(main_worktree)")/${b//\//-}"
-  [[ ! -e $dst ]] || die "$dst already exists"
-  remote=$(repo_remote) || die "sd config failed"
-  git fetch --quiet --prune "$remote" || die "fetch from $remote failed"
-
-  if git show-ref -q --verify "refs/heads/$b"; then
-    git worktree add "$dst" "$b" >&2 || die "git worktree add failed"
-  elif git show-ref -q --verify "refs/remotes/$remote/$b"; then
-    echo "sd act: tracking $remote/$b" >&2
-    git worktree add --track -b "$b" "$dst" "$remote/$b" >&2 || die "git worktree add failed"
-  else
-    if [[ -n $parent_opt ]]; then
-      if git show-ref -q --verify "refs/heads/$parent_opt"; then from=refs/heads/$parent_opt
-      else from=$(start_point "$remote" "$parent_opt") || die "no such parent branch: $parent_opt"
-      fi
-    else
-      default=$(start_default "$remote") || die "can't tell the default branch (no $remote/HEAD, main or master)"
-      from=$(start_point "$remote" "$default") || die "no $remote/$default or $default to start from"
-    fi
-    base=$(git rev-parse "$from^{commit}")
-    echo "sd act: branching $b off ${from#refs/*/} (${base:0:7})" >&2
-    # From the SHA, not the ref: a remote-tracking start point would become the upstream.
-    git worktree add -b "$b" "$dst" "$base" >&2 || die "git worktree add failed"
-  fi
-
-  if [[ -n $task_arg ]]; then git config "branch.$b.sd-task" "$task_arg"; fi
-  if [[ -n $parent_opt ]]; then git config "branch.$b.sd-parent" "$parent_opt"; fi
-  if [[ -n $base ]]; then git update-ref -m "sd act start" "refs/sheepdog/$b/base" "$base"; fi
-  enroll_mark "$b" >&2
-
-  if ! start_hook "$src" "$dst" "$b"; then
-    rc=1
-    $no_implement || echo "sd act: fix it, then: sd act implement $b" >&2
-  elif ! $no_implement; then
-    (running_during "$b" implement implement_run "$b" "$dst") >&2 || rc=$?
-  fi
-  echo "$dst"
-  return $rc
-}
-
-# ── implement: J0 ────────────────────────────────────────────────────────────
-
-# The implement step's prompt: guidance (settings.implementPrompt, else
-# .sheepdog/implement.md in the base commit, else lib/prompts/implement.md),
-# then this contract, which the pipeline relies on. A fix round swaps in the
-# review-fix guidance and contract.
-read -r -d '' IMPLEMENT_CONTRACT <<'EOF' || true
-Edit files, but do not commit, push, or run gh: the pipeline commits your edits
-with your commit_message, runs the repo's checks, and opens the PR later.
-
-Return outcome "done" when the task is implemented, with a one-line
-commit_message; "needs-input" when you need a decision from the task's author
-(put the question in summary and leave your edits in place); or "gave-up" when
-you can't make sense of it (say why in summary).
-EOF
-
-read -r -d '' REVIEW_FIX_CONTRACT <<'EOF' || true
-For each finding below, pick exactly one action:
-- fixed:    you changed code to address it
-- declined: you judge it wrong, or it needs no change; say why
-- ask:      it needs a decision from the branch's owner; say what the question is
-
-Edit files, but do not commit, push, or run gh: the pipeline commits your edits
-with your commit_message and runs the repo's checks. Return one item per
-finding id (the number in brackets), with your reason or question as its
-reply (for fixed, what you changed, or ""); a one-line commit_message if you changed anything (else null); and
-outcome "done", "needs-input" (anything you marked ask: your edits are left
-uncommitted for the owner) or "gave-up" (you can't make sense of them; say why
-in summary). What you decline goes to the next review round, or to the owner
-when you decline them all.
-EOF
 
 # guidance_base <branch>: the commit a step reads repo guidance (.sheepdog/,
 # relative prompt paths) from, which the branch's agent can't rewrite: the
@@ -1090,186 +991,6 @@ guidance_base() {
     done
   fi
   return 0
-}
-
-read -r -d '' IMPLEMENT_SCHEMA <<'EOF' || true
-{"type": "object", "required": ["outcome", "commit_message", "summary"],
- "properties": {"outcome": {"enum": ["done", "needs-input", "gave-up"]},
-                "commit_message": {"type": ["string", "null"]},
-                "summary": {"type": "string"}}}
-EOF
-
-# A fix round's schema: one item per finding id, in the vocabulary #133 gives
-# every source's findings.
-read -r -d '' REVIEW_FIX_SCHEMA <<'EOF' || true
-{"type": "object", "required": ["outcome", "commit_message", "summary", "items"],
- "properties": {
-   "outcome": {"enum": ["done", "needs-input", "gave-up"]},
-   "commit_message": {"type": ["string", "null"]},
-   "summary": {"type": "string"},
-   "items": {"type": "array", "items": {"type": "object", "required": ["id", "action", "reply"],
-     "properties": {"id": {"type": "string"},
-                    "action": {"enum": ["fixed", "declined", "ask"]},
-                    "reply": {"type": "string"}}}}}}
-EOF
-
-# The findings record's findings, each with its id (its place in the list)
-# and open: it blocks and the agent hasn't declined it, so a fix round hands
-# it over.
-read -r -d '' NUMBERED_Q <<'EOF' || true
-values coalesce([
-  unnest coalesce(findings, [])
-  | count {r: this, j}
-  | values {...r, id: f"{j}",
-            open: coalesce(r.severity, "") != "nit" and coalesce(r.action, "") != "declined"}
-], [])
-EOF
-
-# The agent's answers on the numbered findings: {f, r: result, changed}. An
-# open finding takes its item's action and reply; no answer, a decline or ask
-# with no reply text, or fixed with nothing changed is ask, so chrismo sees
-# it. A fix needs no reply text: the commit shows it.
-read -r -d '' ANSWERS_Q <<'EOF' || true
-values {f, ctx: {changed, items: kind(coalesce(r.items, null)) == "array" ? r.items : []}}
-| values coalesce([
-    unnest {ctx, f}
-    | values {f, changed: ctx.changed,
-              a: f.open ? coalesce(coalesce([unnest {f, i: ctx.items} | where i.id == f.id | values i], [])[0], {}) : null}
-    | values {f, changed, a, act: coalesce(a.action, ""), rep: coalesce(a.reply, null)}
-    | values {f, changed, a, act, rep: is(rep, <string>) ? rep : ""}
-    | values a is null ? f : {...f, ...(case
-        when not (act in ["fixed", "declined", "ask"]) then {action: "ask", reply: "(the agent did not answer this one)"}
-        when act == "fixed" and not changed then {action: "ask", reply: f"(said fixed but changed nothing): {rep}"}
-        when act == "fixed" then {action: act, reply: rep}
-        when not grep("\\S", rep) then {action: "ask", reply: "(the agent gave no reply text)"}
-        else {action: act, reply: rep} end)}
-  ], [])
-EOF
-
-# The answers, as printed: one line per finding the round handed over.
-read -r -d '' ANSWERS_REPORT <<'EOF' || true
-fn pad(s, n): len(s) >= n ? s : s || "         "[0:n-len(s)]
-unnest this | where open
-| values f"  {pad(action, 9)} [{id}] {coalesce(file, "?")}:{coalesce(line, "?")} {reply}"
-EOF
-
-# implement_run <branch> <worktree>
-implement_run() {
-  local b=$1 wt=$2 task verify before agent_head prompt result outcome summary msg extra rule rec state gbase guidance listed="" allow=$HARNESS_CLAUDE_ALLOW
-  local numbered answered asks changed=false schema=$IMPLEMENT_SCHEMA
-  local -a rules=()
-  [[ -n $answer_text || -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  task=$(git config --get "branch.$b.sd-task" || true)
-  before=$(git rev-parse "refs/heads/$b")
-  # A fix round: sd act review's open findings, when they're about HEAD. The
-  # task goes along as context.
-  rec=$(git cat-file blob "refs/sheepdog/$b/findings" 2>/dev/null || true)
-  # sd state decides whether they're about HEAD, so NEXT and this agree.
-  if [[ -n $rec ]]; then
-    state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-  fi
-  if [[ -n $rec && $(prc_line 'values on(review.findings.at_head)' "$state") == true ]]; then
-    numbered=$(prc_json "$NUMBERED_Q" "$rec") \
-      && listed=$(prc_line 'unnest this | where open
-        | values f"- [{id}] {coalesce(file, "?")}:{coalesce(line, "?")} ({coalesce(severity, "?")}) {coalesce(body, "")}"' "$numbered") \
-      || die "couldn't read the review findings on $b"
-  fi
-  [[ -n $task || -n $listed ]] || die "no task recorded for $b: git config branch.$b.sd-task \"<task>\""
-  local qstep=implement
-  [[ -z $listed ]] || qstep=review-fix
-  question_gate "$b" "$qstep"
-  verify=$(cd "$wt" && prc_get settings.verify "$b" false) || die "sd config failed"
-  extra=$(cd "$wt" && prc_get settings.implementAllow "$b" false) || die "sd config failed"
-  # A rule's * is a wildcard, so only plain words become an exact rule.
-  if [[ $verify =~ ^[A-Za-z0-9_./:=@+-]+( [A-Za-z0-9_./:=@+-]+)*$ ]]; then
-    rules+=("Bash($verify)")
-  elif [[ -n $verify && -z $extra ]]; then
-    echo "sd act: warning: verify ($verify) isn't plain words, so the agent may not run it; allow what it may run in settings.implementAllow" >&2
-  fi
-  while IFS= read -r rule; do [[ -z $rule ]] || rules+=("$rule"); done <<<"$extra"
-  step_session "$b" implement
-  gbase=$(guidance_base "$b") || die "can't find $b's base, to read its prompt guidance from"
-  if [[ -n $listed ]]; then
-    guidance=$(step_guidance reviewFixPrompt "$b" "$gbase" "$SD_LIB/prompts/review-fix.md") || die "can't read the review-fix guidance"
-    prompt="$guidance"$'\n\n'"$REVIEW_FIX_CONTRACT"$'\n\nFindings:\n'"$listed"$'\n\nThe task this branch was made for, for context:\n'"${task:-(none recorded)}"
-    schema=$REVIEW_FIX_SCHEMA
-  else
-    guidance=$(step_guidance implementPrompt "$b" "$gbase" "$SD_LIB/prompts/implement.md") || die "can't read the implement guidance"
-    prompt="$guidance"$'\n\n'"$IMPLEMENT_CONTRACT"$'\n\nTask:\n'"$task"
-  fi
-  [[ -z $answer_text ]] || prompt=$(answer_prompt)
-  [[ -z $verify ]] || prompt+=$'\n\nThe repo\'s checks, which the pipeline runs after you: '"$verify"
-  if [[ $STEP_H == claude ]] && (( ${#rules[@]} )); then
-    allow+=$(printf ',%s' "${rules[@]}")
-    prompt+=$'\n\nBeyond reading files and read-only git, you may run only these (Claude Code permission rules); anything else is refused:\n'"$(printf '%s\n' "${rules[@]}")"
-  else
-    prompt+=$'\n\nYou can\'t run commands here beyond read-only git.'
-  fi
-  echo "sd act: $STEP_H ($STEP_MODE session $STEP_SID) is implementing $b…" >&2
-  result=$(cd "$wt" && HARNESS_CLAUDE_ALLOW=$allow \
-             && harness_run "$STEP_H" "$STEP_SID" "$STEP_MODE" "$STEP_TIMEOUT" "$prompt" "$schema" "$STEP_CFG") \
-    || { hold_since "$b" "$gbase" "$before"; die "the $STEP_H implement step failed or returned no usable result (session $STEP_SID)"; }
-  step_store "$b"
-  question_answered "$b"
-  hold_since "$b" "$gbase" "$before"
-  agent_head=$(git rev-parse "refs/heads/$b")
-
-  outcome=$(prc_val "$result" 'coalesce(outcome, "")')
-  summary=$(prc_val "$result" 'coalesce(summary, "")')
-  case $outcome in
-    done|needs-input) ;;
-    gave-up) die "the agent gave up on $b: $summary. Edits (if any) are left uncommitted in $wt" ;;
-    *) die "the agent returned outcome \"$outcome\"; edits (if any) are left uncommitted in $wt" ;;
-  esac
-  if [[ -n $(git -C "$wt" status --porcelain) || $(git rev-parse "refs/heads/$b") != "$before" ]]; then changed=true; fi
-  # A fix round's answers: any ask goes to chrismo, as needs-input does.
-  if [[ -n $listed ]]; then
-    answered=$(prc_json "$ANSWERS_Q" "{\"f\": $numbered, \"r\": $result, \"changed\": $changed}") \
-      && asks=$(prc_line 'unnest this | where open and coalesce(action, "") == "ask"
-        | values f"  [{id}] {coalesce(file, "?")}:{coalesce(line, "?")} {reply}"' "$answered") \
-      || die "couldn't read the agent's answers to the findings (session $STEP_SID)"
-    [[ -z $asks ]] || outcome=needs-input summary+=$'\n'"$asks"
-  fi
-  if [[ $outcome == needs-input ]]; then
-    question_ask "$b" "$wt" "$qstep" "$summary"
-    # implement refuses a dirty worktree, so with edits left an answer in the
-    # session itself is chrismo's to commit; sd act answer goes on from them.
-    if [[ -n $(git -C "$wt" status --porcelain) ]]; then
-      die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"). Its edits are left uncommitted in $wt: answer with $(answer_cmd "$b"), which goes on from them; or in its session (sd act attach $b) and commit what you keep; or discard them and run sd act implement again"
-    fi
-    die "the agent needs input on $b: $summary"$'\n'"$(question_say "$b"): answer with $(answer_cmd "$b"); or answer in its session (sd act attach $b), then sd act ack --question and sd act implement"
-  fi
-  if [[ -n $(git -C "$wt" status --porcelain) ]]; then
-    msg=$(prc_line 'values {m: coalesce(commit_message, null)}
-      | values case when is(m, <string>) and grep("\\S", m) then m else "" end' "$result")
-    if [[ -z $msg && -n $listed ]]; then msg="Fix the local review findings"; fi
-    [[ -n $msg ]] || msg=$(head -1 <<<"$task")
-    git -C "$wt" add -A && git -C "$wt" commit -q -m "$msg" || die "commit failed; the edits are left in $wt"
-  elif ! $changed; then
-    [[ -n $listed ]] || die "the agent says done but changed nothing (session $STEP_SID)"
-  fi
-  if [[ -n $listed ]]; then
-    rec=$(prc_json 'values {...r, findings: coalesce([unnest f | drop open], [])}' "{\"r\": $rec, \"f\": $answered}") \
-      && git update-ref -m "review findings answered" "refs/sheepdog/$b/findings" "$(git hash-object -w --stdin <<<"$rec")" \
-      || die "couldn't record the agent's answers to the findings"
-  fi
-  if ! $changed; then
-    echo "$b: the agent declined the review findings: $summary"
-    prc_line "$ANSWERS_REPORT" "$answered"
-    return 0
-  fi
-  echo "$b: $summary"
-  [[ -z $listed ]] || prc_line "$ANSWERS_REPORT" "$answered"
-  git -C "$wt" log --format='  %h %s' "$before..refs/heads/$b"
-  hold_since "$b" "$gbase" "$agent_head"
-  verify_autofix "$wt" "$b" || die "verify failed ($VERIFY_CMD); the commit is kept in $wt"
-}
-
-implement() {
-  local wt
-  wt=$(worktree_for "$branch")
-  [[ -n $wt ]] || die "$branch isn't checked out in any worktree"
-  implement_run "$branch" "$wt"
 }
 
 # ── ci-fix: J2 ───────────────────────────────────────────────────────────────
@@ -2070,8 +1791,7 @@ parent_to_default() {
 # ── enroll ───────────────────────────────────────────────────────────────────
 
 # sd act enroll is src/act/bookkeeping.rs, which has its own copies of these.
-# They stay only for start and ship: change both, and #203's ship port deletes
-# them.
+# They stay only for ship: change both, and #203's ship port deletes them.
 
 # record_lineage <branch> [<state>]: while the PR's base still names a stacked parent, store
 # it and the base pin; GitHub retargets the PR to the default branch on merge.
@@ -2136,10 +1856,10 @@ case $verb in
   unenroll) act_rs ;;
   forget) act_rs ;;
   unregister) act_rs ;;
-  start) start ;;
+  start) act_rs ;;
   # The agent steps that commit and verify after the agent: marked running
   # for all of it, so NEXT doesn't hand the worktree on mid-step (#170).
-  implement) running_during "$branch" implement implement ;;
+  implement) act_rs ;;
   address) running_during "$branch" address address ;;
   ack) act_rs ;;
   answer) answer ;;

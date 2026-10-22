@@ -1,7 +1,7 @@
-// verify (A10) and autofix (A11). libexec/sd-act's verify_run and
-// autofix_run still do the same for the bash agent steps: change both. One
-// difference until #203 ports those: there, a failed git status still reads
-// as a clean tree.
+// verify (A10) and autofix (A11), and implement's hook into them.
+// libexec/sd-act's verify_run, autofix_run and verify_autofix still do the
+// same for the bash agent steps: change both. One difference until #203 ports
+// those: there, a failed git status still reads as a clean tree.
 
 use super::{cfg, die, plural};
 use crate::git::{git, git_out, worktree_for};
@@ -85,30 +85,50 @@ pub fn verify(b: &str) {
 
 pub fn autofix(b: &str) {
     let wt = worktree(b);
-    let cmd = command("autofix", b);
-    if cmd.is_empty() {
+    if command("autofix", b).is_empty() {
         println!("no settings.autofix configured; nothing to run");
         return;
     }
-    if !status(&wt).is_empty() {
+    if let Err(cmd) = autofix_run(&wt, b, false) {
+        die(format!("autofix failed ({cmd})"));
+    }
+}
+
+/// settings.autofix in <wt>, from a clean tree, and a commit of what it
+/// changed: Ok(Some(its short sha)) when it committed, else Ok(None), as when
+/// none is configured.
+/// Err(the command) when it failed, after printing its output's tail; its
+/// changes are left uncommitted to look at, or with <revert> (the hook) put
+/// back, so the next step starts from the commit it knows.
+fn autofix_run(wt: &str, b: &str, revert: bool) -> Result<Option<String>, String> {
+    let cmd = command("autofix", b);
+    if cmd.is_empty() {
+        return Ok(None);
+    }
+    if !status(wt).is_empty() {
         die(format!("{wt} has uncommitted changes; autofix needs a clean tree to commit from"));
     }
     let secs = step_timeout(b);
-    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(&wt));
-    let changed = status(&wt).lines().count();
+    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
+    let changed = status(wt).lines().count();
     if !o.ok {
         print_tail(&o.stdout);
-        if changed > 0 {
+        if changed > 0 && revert {
+            for args in [&["reset", "-q", "--hard"][..], &["clean", "-qfd"]] {
+                eprint!("{}", git(wt, args).stderr);
+            }
+            println!("autofix changed {} before failing; reverted", plural(changed, "file"));
+        } else if changed > 0 {
             println!("autofix changed {} in {wt} before failing; left uncommitted", plural(changed, "file"));
         }
-        die(format!("autofix failed ({cmd})"));
+        return Err(cmd);
     }
     if changed == 0 {
         println!("autofix changed nothing ({cmd})");
-        return;
+        return Ok(None);
     }
     for args in [&["add", "-A"][..], &["commit", "-q", "-m", &format!("autofix: {cmd}")]] {
-        let g = git(&wt, args);
+        let g = git(wt, args);
         // The hooks' output: git sends theirs to stderr.
         print!("{}", g.stdout);
         eprint!("{}", g.stderr);
@@ -116,6 +136,20 @@ pub fn autofix(b: &str) {
             die(format!("commit failed; autofix's changes are left in {wt}"));
         }
     }
-    let sha = git_out(&wt, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
+    let sha = git_out(wt, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
     println!("autofix committed {sha}: {} ({cmd})", plural(changed, "file"));
+    Ok(Some(sha))
+}
+
+/// verify; when it fails, autofix, and when that committed something, verify
+/// again (A11). The zero-token pass after a fix step. A verify that dirtied
+/// the tree is verify's own failure: no autofix. Err is the verify command.
+pub(super) fn verify_autofix(wt: &str, b: &str) -> Result<(), String> {
+    let Err(cmd) = verify_run(wt, b) else { return Ok(()) };
+    if !status(wt).is_empty() || !matches!(autofix_run(wt, b, true), Ok(Some(_))) {
+        return Err(cmd);
+    }
+    let cmd = verify_run(wt, b)?;
+    println!("verify passed after autofix ({cmd})");
+    Ok(())
 }

@@ -140,7 +140,7 @@ fn blob_record(r: &str) -> Option<Result<Value, ()>> {
 
 /// An agent step's question for chrismo (#167): {step, sha, text, at_head};
 /// None with no record, Err for one that isn't one.
-fn question_state(b: &str, head: &str) -> Result<Option<Value>, ()> {
+pub(crate) fn question_state(b: &str, head: &str) -> Result<Option<Value>, ()> {
     let Some(rec) = blob_record(&format!("refs/sheepdog/{b}/question")) else { return Ok(None) };
     let rec = rec?;
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
