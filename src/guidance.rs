@@ -147,14 +147,14 @@ mod tests {
         }
     }
 
-    // Was lib/sheepdog.bats: "step_guidance: empty setting, no convention file: the shipped default"
+    // Mirrors the bash copy's lib/sheepdog.bats test "step_guidance: empty setting, no convention file: the shipped default"
     #[test]
     fn empty_setting_no_convention_file_the_shipped_default() {
         let r = Repo::new();
         assert_eq!(r.guidance("reviewPrompt", "", "HEAD"), Ok("shipped".to_string()));
     }
 
-    // Was lib/sheepdog.bats: "step_guidance: empty setting: .sheepdog/<name>.md in the base commit, kebab-cased"
+    // Mirrors the bash copy's lib/sheepdog.bats test "step_guidance: empty setting: .sheepdog/<name>.md in the base commit, kebab-cased"
     #[test]
     fn empty_setting_the_convention_file_in_the_base_commit_kebab_cased() {
         let r = Repo::new();
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(r.guidance("reviewFixPrompt", "", &base), Ok("repo review-fix".to_string()));
     }
 
-    // Was lib/sheepdog.bats: "step_guidance: a set path wins over the convention file"
+    // Mirrors the bash copy's lib/sheepdog.bats test "step_guidance: a set path wins over the convention file"
     #[test]
     fn a_set_path_wins_over_the_convention_file() {
         let r = Repo::new();
@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(r.guidance("reviewPrompt", ".sheepdog/mine.md", "HEAD"), Ok("named".to_string()));
     }
 
-    // Was lib/sheepdog.bats: "step_guidance: no trusted base: the convention is skipped, a relative path refused"
+    // Mirrors the bash copy's lib/sheepdog.bats test "step_guidance: no trusted base: the convention is skipped, a relative path refused"
     #[test]
     fn no_trusted_base_the_convention_is_skipped_a_relative_path_refused() {
         let r = Repo::new();

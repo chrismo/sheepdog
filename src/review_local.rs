@@ -25,7 +25,6 @@ use crate::harness::{self, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::val::t;
 use crate::{config, json};
 use regex::Regex;
-use serde_json::Value;
 use std::process::ExitCode;
 
 const SCHEMA: &str = r#"{"type": "object", "required": ["findings"],
@@ -113,12 +112,10 @@ pub fn run(_argv: &[String]) -> ExitCode {
     let Ok(results) = harness::run_step(&step) else {
         die(format!("the {h} review failed or returned no usable result"))
     };
-    let findings: Vec<&Value> = results.iter().filter_map(|r| r.get("findings")).filter(|f| f.is_array()).collect();
-    if findings.is_empty() {
-        die(format!("the {h} review returned no findings list"));
-    }
-    for f in findings {
-        println!("{}", json::to_string(f));
-    }
+    // One list, as the contract says: the last, if the harness gave several.
+    let Some(findings) = results.iter().filter_map(|r| r.get("findings")).filter(|f| f.is_array()).next_back() else {
+        die(format!("the {h} review returned no findings list"))
+    };
+    println!("{}", json::to_string(findings));
     ExitCode::SUCCESS
 }
