@@ -1850,6 +1850,38 @@ old_labels_retired() {
   [[ "$(plutil -extract EnvironmentVariables.PATH raw "$PLIST")" == "$TMP/local-bin:$HOME/.local/bin:/"* ]]
 }
 
+@test "install: cargo's directory ends the job's PATH, so sd can rebuild itself after a pull (#193)" {
+  needs_plutil
+  setup_launchd
+  mkdir -p "$TMP/cargo-bin"
+  printf '#!/bin/sh\n' > "$TMP/cargo-bin/cargo"
+  chmod +x "$TMP/cargo-bin/cargo"
+  PATH="$TMP/cargo-bin:$PATH" run "$SD_WATCH" install
+  [ "$status" -eq 0 ]
+  [[ "$(plutil -extract EnvironmentVariables.PATH raw "$PLIST")" == "$HOME/.local/bin:"*":$TMP/cargo-bin" ]]
+}
+
+@test "install: cargo in a directory already on the job's PATH isn't added again" {
+  needs_plutil
+  setup_launchd
+  mkdir -p "$TMP/local-bin"
+  ln -s "$BATS_TEST_DIRNAME/../bin/sd" "$TMP/local-bin/sd"
+  printf '#!/bin/sh\n' > "$TMP/local-bin/cargo"
+  chmod +x "$TMP/local-bin/cargo"
+  CARGO="$TMP/local-bin/cargo" LOCAL_BIN="$TMP/local-bin" run "$SD_WATCH" install
+  [ "$status" -eq 0 ]
+  [ "$(plutil -extract EnvironmentVariables.PATH raw "$PLIST" | tr : '\n' | grep -c "^$TMP/local-bin$")" = 1 ]
+}
+
+@test "install: no cargo warns that the watcher can't rebuild sd, and still installs" {
+  needs_plutil
+  setup_launchd
+  CARGO="$TMP/no-such-cargo" run "$SD_WATCH" install
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no cargo"*"can't rebuild"* ]]
+  plutil -lint "$PLIST"
+}
+
 @test "install: a relative LOCAL_BIN is made absolute, since launchd runs jobs from /" {
   needs_plutil
   setup_launchd

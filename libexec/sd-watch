@@ -574,7 +574,7 @@ plist_path() { echo "$LAUNCH_AGENTS/$LABEL.plist"; }
 xml() { local v=${1//&/\&amp;}; v=${v//</\&lt;}; printf '%s' "${v//>/\&gt;}"; }
 
 install_job() {
-  local plist bindir path prog interval tmp
+  local plist bindir path prog interval tmp cargo
   plist=$(plist_path)
   bindir=${LOCAL_BIN:-$HOME/.local/bin}
   # launchd runs the job from /, so a relative LOCAL_BIN is resolved here.
@@ -583,6 +583,12 @@ install_job() {
   # ~/.local/bin stays on PATH: bash5 and claude are linked there.
   path="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
   [[ $bindir == "$HOME/.local/bin" ]] || path="$bindir:$path"
+  # sd rebuilds its Rust half after a pull (bin/sd), and the job has to find cargo.
+  if cargo=$(command -v "${CARGO:-cargo}"); then
+    [[ ":$path:" == *":${cargo%/*}:"* ]] || path+=":${cargo%/*}"
+  else
+    echo "sd watch: no cargo on PATH, so the watcher can't rebuild sd after a pull; run ./install.sh by hand" >&2
+  fi
   [[ -x $prog ]] || prog=$(realpath "$(dirname "$(realpath "$0")")/../bin/sd")
   interval=$(prc_get settings.interval "" true) || { echo "sd watch: sd config failed" >&2; exit 1; }
   [[ $interval =~ ^[1-9][0-9]*$ ]] || { echo "sd watch: settings.interval must be whole seconds: $interval" >&2; exit 1; }
