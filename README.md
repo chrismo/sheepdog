@@ -43,9 +43,8 @@ Upgrading from a checkout where `bin/sd` was still a bash script: run
 `./install.sh` once after the pull that brings this in. Before then nothing
 rebuilds `sd`, and the watcher's old build looks for verbs that are gone.
 
-Needs on `PATH`: `bash5` (a link to bash 5+; the commands are
-`#!/usr/bin/env bash5`), `cargo` to build (https://rustup.rs), `git`, `gh`,
-and `jq`. `claude` and/or `pi` for the agent steps.
+Needs on `PATH`: `cargo` to build (https://rustup.rs), `git` and `gh`.
+`claude` and/or `pi` for the agent steps. The tests also need `jq`.
 
 ## Agent credentials
 
@@ -98,5 +97,7 @@ A custom local reviewer (`settings.localReview`) keeps the contract that
 
 ## Tests
 
-[bats](https://github.com/bats-core/bats-core). See `AGENTS.md` for how to run
-them and the bash-version caveat.
+`cargo test`: unit tests in `src/`, and acceptance tests in `tests/*.rs` that
+run the built `sd` against temp git repos with fake `gh`, `claude` and `pi`.
+They need `git`, `jq` and `bash` on `PATH`. CI (RWX, `.rwx/tests.yml`) runs
+them on every PR; see `AGENTS.md` for running a few locally.

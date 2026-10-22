@@ -22,45 +22,26 @@ tasks:
       repository: https://github.com/chrismo/sheepdog.git
       ref: ${{ init.commit-sha }}
 
-  # Scripts run `#!/usr/bin/env bash5`; Ubuntu's bash 5.2 is new enough.
-  # uuid-runtime provides uuidgen; procps, ps (proc_start).
+  # src/running.rs runs ps (procps). The tests run git, jq, and fixtures in
+  # bash and sh; act_restack's resolve agent runs perl, which perl-base has.
   - key: system-packages
     run: |
       sudo apt-get update
-      sudo apt-get install -y git jq parallel procps uuid-runtime
+      sudo apt-get install -y git jq procps
       sudo apt-get clean
-      sudo ln -sfn /bin/bash /usr/local/bin/bash5
-      bash5 --version | head -1
 
-  # Pinned to what dev runs; apt's bats is 1.10.
-  - key: bats
-    run: |
-      git clone --depth 1 --branch v1.13.0 https://github.com/bats-core/bats-core.git
-      sudo ./bats-core/install.sh /usr/local
-      rm -rf bats-core
-      bats --version
-
-  - key: captain
-    call: rwx/install-captain 1.2.0
-
-  # bin/sd links to target/release/sd (#193, #204).
   - key: rust
     call: rust-lang/install 1.1.1
     with:
       rust-version: 1.90.0
 
-  - key: build
-    use: [code, rust]
-    run: cargo build --release --locked
-    filter:
-      - Cargo.toml
-      - Cargo.lock
-      - src/**
-
+  # The one test task: cargo test builds its own debug sd and runs src/'s unit
+  # tests and tests/*.rs against it.
   # tests/config.rs runs the binary against temp git repos, hence git;
-  # tests/next.rs applies jq edits to its state, as lib/next.bats did.
-  # tests/state.rs adds a fake gh (bash, jq).
-  # The agent steps read the shipped prompts from lib/ at run time.
+  # tests/next.rs applies jq edits to its state; tests/state.rs adds a fake gh
+  # (bash, jq). The agent steps read the shipped prompts and review rules from
+  # lib/ at run time; tests/install.rs copies install.sh; tests/links.rs reads
+  # the bin/sd link.
   - key: cargo-test
     use: [code, system-packages, rust]
     run: cargo test --locked
@@ -73,19 +54,3 @@ tasks:
       - lib/review-rules.md
       - bin/sd
       - install.sh
-
-  - key: test
-    use: [code, system-packages, bats, captain, build]
-    runner:
-      cpus: 16
-    run: |
-      git config --global user.name ci
-      git config --global user.email ci@example.com
-      git config --global init.defaultBranch main
-      captain run sheepdog
-    filter:
-      - "!docs/**"
-      - "!README.md"
-    outputs:
-      test-results:
-        - path: test-results/captain-results.json
