@@ -1751,6 +1751,9 @@ pub fn run(argv: &[String]) -> ExitCode {
         die(format!("no such branch: {branch}"));
     }
     let remote = cfg_text("settings.remote", &branch, false);
+    if let Some(r) = git::gh_repo(".", &remote) {
+        std::env::set_var("GH_REPO", r);
+    }
     let (state, steps) = observe(&branch, &remote);
     if as_json {
         println!("{}", json::to_string(&state));

@@ -174,6 +174,7 @@ impl Sd {
             "GIT_WORK_TREE",
             "GIT_COMMON_DIR",
             "GIT_INDEX_FILE",
+            "GH_REPO",
         ] {
             c.env_remove(v);
         }

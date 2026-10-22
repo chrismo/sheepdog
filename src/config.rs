@@ -63,6 +63,9 @@ Notes:
     numbers; get prints a value as written; remote is global or repo file
     only; interval, notify, vacuumAfter and rateLimitFloor are global-file
     only; a repo file takes everything else a branch file does
+  - settings.remote is the remote sheepdog fetches and pushes, and gh is
+    pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
+    on the fork with sd config set --repo settings.remote fork
   - set values are strings; --json takes a number, list, object or null
   - step: the harness's block, with the step's block for it laid over it
 "#;

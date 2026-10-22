@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const GH: &str = r##"#!/usr/bin/env bash
+echo "${GH_REPO-unset}" >> "$GH_FIXTURES/gh_repo"
 if [[ -n ${GH_FAKE_FAIL:-} ]]; then echo "$GH_FAKE_FAIL" >&2; exit 1; fi
 # REST: the base branch's rulesets and classic protection, from
 # $GH_FIXTURES/rules.json and branch.json (default: none, unprotected).
@@ -175,6 +176,15 @@ impl Sd {
         let r = self.run_env(env, &[&["--json"], args].concat());
         assert_eq!(r.status, 0, "{}", r.output);
         r
+    }
+
+    /// The GH_REPO values gh ran with, each once (`sort -u`).
+    fn gh_repos(&self) -> String {
+        let s = fs::read_to_string(self.gh("gh_repo")).unwrap_or_default();
+        let mut v: Vec<&str> = s.lines().collect();
+        v.sort();
+        v.dedup();
+        v.join("\n")
     }
 
     /// The gh calls since the last look, space-separated; forgets them.
@@ -474,6 +484,30 @@ fn branch_with_no_pr_pr_is_null_and_parent_defaults_to_the_default_branch() {
     assert_eq!(r.field(".pr"), "null");
     assert_eq!(r.field(".parent.name"), "main");
     assert_eq!(r.field(".parent.source"), "default");
+}
+
+// @test "a fork's clone: GitHub is asked about the repo file's settings.remote, not gh's pick among the remotes"
+#[test]
+fn a_forks_clone_github_is_asked_about_the_repo_files_settings_remote_not_ghs_pick_among_the_remotes() {
+    let sd = sd();
+    sd.git(&["remote", "add", "fork", "git@github.com:me/fork.git"]);
+    sd.sd_config(&["set", "--repo", "settings.remote", "fork"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("a.txt", "a");
+    // the fork is never reached: no network
+    let r = sd.state_env(&[("GIT_SSH_COMMAND", "false")], &[]);
+    assert_eq!(sd.gh_repos(), "github.com/me/fork");
+    assert_eq!(r.field(r#"[.next[] | select(.key == "push") | .say][0]"#), "push: not on fork yet");
+}
+
+// @test "a remote at a local path: GH_REPO is left as it was"
+#[test]
+fn a_remote_at_a_local_path_gh_repo_is_left_as_it_was() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("a.txt", "a");
+    sd.state(&[]);
+    assert_eq!(sd.gh_repos(), "unset");
 }
 
 // @test "task: the recorded sd-task, else null; NEXT implements a branch with nothing ahead (#143)"
