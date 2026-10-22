@@ -140,9 +140,8 @@ PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
 intermittently on that one construct, and a test in `ci/super-stress.bats`
 fails if any script uses it. CI no longer stress-tests queries (2026-10-21:
 the Rust port is retiring SuperDB). `ci/super-stress` still runs every named
-query (the `read -r -d '' NAME <<'EOF'` heredocs in the bash `libexec/sd-*`
-and `lib/sheepdog.sh`) 200 times over `ci/fixtures/` for anyone who wants
-it locally. SuperDB's edges are under "SuperDB notes" below.
+query (the `read -r -d '' NAME <<'EOF'` heredocs in the bash `libexec/sd-*`)
+200 times over `ci/fixtures/` for anyone who wants it locally. SuperDB's edges are under "SuperDB notes" below.
 
 **Every script is `#!/usr/bin/env bash5`, `install.sh` included.** Test them
 by running them, not sourcing, so the shebang picks the bash. agent-rig's

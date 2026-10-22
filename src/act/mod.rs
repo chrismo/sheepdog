@@ -8,6 +8,7 @@ mod commands;
 mod github;
 mod push;
 mod restack;
+mod review;
 
 use crate::git::{self, git, git_out};
 use crate::proc;
@@ -152,6 +153,20 @@ pub fn lock_sweep(b: &str) {
     }
 }
 
+/// An agent step on an attached branch is refused; --force runs it anyway.
+/// libexec/sd-act's attached_check does the same for the bash agent steps:
+/// change both.
+pub fn attached_check(b: &str, doing: &str, force: bool) {
+    let lock = git_out(".", &["config", "--get", &format!("branch.{b}.sd-lock")]).unwrap_or_default();
+    if lock.is_empty() {
+        return;
+    }
+    if !force {
+        die(format!("not {doing}: attached ({lock}). Exit that session, or --force"));
+    }
+    eprintln!("sd act: warning: {b} is attached ({lock}); running anyway");
+}
+
 pub fn plural(n: usize, word: &str) -> String {
     if n == 1 {
         format!("1 {word}")
@@ -219,6 +234,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         "trigger" => github::trigger(&b, &remote, a.force),
         "restack" if !a.resolve => restack::restack(&b, &remote, a.force),
         "retarget" => restack::retarget(&b),
+        "review" => review::review(&b, &remote, a.accept, a.force),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }

@@ -797,82 +797,6 @@ no_base_why() {
     : on(parent.unpushed) ? f\"parent {parent.name} isn't on $remote yet: ship it first (sd act ship {parent.name})\" : \"\""
 }
 
-# ── review ───────────────────────────────────────────────────────────────────
-
-review() {
-  local b=$branch wt state base head task timeout reviewer findings n blocking round rec prev flagged triggered
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b isn't checked out in any worktree"
-  [[ -z $(git -C "$wt" status --porcelain) ]] || die "$wt has uncommitted changes"
-  attached_check "$b" "reviewing $b"
-  state=$(cd "$wt" && sd-state --json "$b") || die "sd state failed"
-  base=$(prc_val "$state" 'coalesce(sync.old_base, "")')
-  [[ -n $base ]] || die "can't find $b's base: $(no_base_why "$b" "$state")"
-  head=$(git rev-parse "refs/heads/$b")
-  if $accept; then
-    pin_write "$b" accepted "$head" "$base"
-    triggered=$(git config --get "branch.$b.sd-bot-triggered" || true)
-    if [[ -n $triggered ]]; then
-      git config "branch.$b.sd-accepted-after" "$triggered"
-    else
-      git config --unset "branch.$b.sd-accepted-after" || true
-    fi
-    git update-ref -d "refs/sheepdog/$b/findings"
-    echo "accepted: $b at ${head:0:7} against ${base:0:7}; pinned accepted"
-    return
-  fi
-  verify_run "$wt" "$b" || die "verify failed ($VERIFY_CMD); not reviewing"
-  timeout=$(prc_get settings.stepTimeout "$b" false) || die "sd config failed"
-  [[ $timeout =~ ^[1-9][0-9]*$ ]] || die "settings.stepTimeout must be whole seconds: $timeout"
-  reviewer=$(prc_get settings.localReview "$b" false) || die "sd config failed"
-  if [[ -z $reviewer ]]; then
-    reviewer="$(dirname "$(realpath "$0")")/sd-review-local"
-    # The default reviewer's harness_run has its own stepTimeout, which must
-    # fire first: it kills the harness and shows its stderr. This one can't
-    # reach the harness (with_timeout puts it in its own process group), so
-    # firing first would leave it running, still spending tokens.
-    timeout=$((timeout + 30))
-  fi
-  task=$(git config --get "branch.$b.sd-task" || true)
-  findings=$(cd "$wt" && SHEEPDOG_BASE=$base SHEEPDOG_HEAD=$head SHEEPDOG_TASK=$task \
-               with_timeout "$timeout" sh -c "$reviewer" </dev/null) \
-    || die "the reviewer failed ($reviewer); nothing pinned"
-  n=$(prc_line 'where kind(this) == "array" | values len(this)' "$findings" 2>/dev/null) && [[ -n $n ]] \
-    || die "the reviewer printed no JSON list ($reviewer)"
-  blocking=$(prc_line 'values len(coalesce([unnest this | where coalesce(severity, "") != "nit"], []))' "$findings") \
-    && [[ $blocking =~ ^[0-9]+$ ]] || die "couldn't count the findings that block ($reviewer); nothing pinned"
-  # sd state's flags (#125): information, whatever the verdict.
-  flagged=$(prc_val "$state" 'len(coalesce(flags, []))')
-  if (( flagged > 0 )); then
-    echo "sd act: $flagged flagged for chrismo in ${base:0:7}..${head:0:7} (not a gate):" >&2
-    flag_lines "$state" >&2
-  fi
-  if (( blocking == 0 )); then
-    pin_write "$b" local "$head" "$base"
-    git update-ref -d "refs/sheepdog/$b/findings"
-    if (( n == 0 )); then
-      echo "clean: $b at ${head:0:7} reviewed against ${base:0:7}; pinned local"
-    else
-      echo "clean: $b at ${head:0:7} reviewed against ${base:0:7}; pinned local ($(plural "$n" nit))"
-      printf '%s\n' "$findings"
-    fi
-  else
-    prev=$(git cat-file blob "refs/sheepdog/$b/findings" 2>/dev/null || true)
-    round=$(prc_line 'values coalesce(round, 0)' "${prev:-null}" 2>/dev/null || true)
-    [[ $round =~ ^[0-9]+$ ]] || round=0
-    # The same HEAD (or the same change rebased, as sd state judged it) reviewed
-    # again isn't a new round. Its findings replace the earlier ones and their
-    # answers, which were about a list this one needn't repeat.
-    [[ $(prc_val "$state" 'on(review.findings.at_head)') == true ]] || round=$(( round + 1 ))
-    rec=$(prc_json 'values {head: h, base: b, round: r, findings: f}' \
-            "{\"h\": \"$head\", \"b\": \"$base\", \"r\": $round, \"f\": $findings}") \
-      && git update-ref -m "review round $round" "refs/sheepdog/$b/findings" "$(git hash-object -w --stdin <<<"$rec")" \
-      || die "couldn't record the findings"
-    echo "sd act: $(plural "$n" finding) on $b, $blocking blocking (review round $round); nothing pinned" >&2
-    printf '%s\n' "$findings"
-  fi
-}
-
 # ── agent sessions ───────────────────────────────────────────────────────────
 
 # step_session <branch> <step>: the harness and session a step runs in: the
@@ -1013,7 +937,8 @@ lock_sweep() {
 }
 
 # attached_check <branch> <doing>: an agent step on an attached branch is
-# refused; --force runs it anyway.
+# refused; --force runs it anyway. src/act/mod.rs's attached_check does the
+# same for review: change both.
 attached_check() {
   local lock
   lock=$(git config --get "branch.$1.sd-lock" || true)
@@ -2299,7 +2224,7 @@ case $verb in
   verify) act_rs ;;
   autofix) act_rs ;;
   ci-fix) running_during "$branch" ci-fix ci_fix ;;
-  review) review ;;
+  review) act_rs ;;
   describe) describe ;;
   ship) ship ;;
   trigger) act_rs ;;

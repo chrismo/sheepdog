@@ -3,7 +3,7 @@
 #
 # harness_run runs the harness adapter, src/harness.rs: the per-harness code,
 # apart from the tool-rule wording in implement_run (#79 Design record).
-# with_timeout and pin_write are shared helpers.
+# with_timeout is a shared helper.
 
 SD_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/target/release/sd"
 
@@ -25,18 +25,6 @@ with_timeout() {
     waitpid $pid, 0;
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
   ' "$@"
-}
-
-# pin_write <branch> <kind> <sha> <base>: record a review pin and the base
-# it was taken against. sd state compares base..pin with the branch's current
-# base..HEAD, so a restack (which moves the base) doesn't make a reviewed
-# change look changed. Kinds: local, bot, accepted (#66 Re-review policy).
-# src/git.rs's pin_write does the same for trigger; this one stays for
-# review (#203): change both.
-pin_write() {
-  case $2 in local|bot|accepted) ;; *) echo "unknown pin: $2 (local, bot, accepted)" >&2; return 1 ;; esac
-  git update-ref -m "pin $2" "refs/sheepdog/$1/$2" "$3" \
-    && git update-ref -m "pin $2 base" "refs/sheepdog/$1/$2-base" "$4"
 }
 
 # remote_default <remote>: the default branch without asking GitHub: what the
@@ -177,15 +165,6 @@ step_guidance() {
     git -C "$top" cat-file blob "$3:$path"
   fi
 }
-
-# flag_lines <state-json>: one line per sd state flag (#125), for sd state
-# --long and sd act review: kind, file:line (and the lines removed, for a
-# test-edit), the line, the commits.
-read -r -d '' FLAG_LINES <<'EOF' || true
-unnest coalesce(flags, [])
-| values f"  ⚑  {kind}  {file}:{line}{kind == "test-edit" ? f" (-{n})" : ""}  {regexp_replace(text, "^\\s+", "")}  {sj(coalesce([unnest commits | values this[0:7]], []), ",")}"
-EOF
-flag_lines() { prc_line "$FLAG_LINES" "$1"; }
 
 # CI config: an agent step's commit that touches one of these isn't pushed
 # until chrismo has looked (#124). A path covers itself and what's under it.

@@ -11,8 +11,8 @@
 # the output of the first.
 #
 # With no arguments, the built-in list: every `read -r -d '' NAME <<'EOF'`
-# query in libexec/sd-act and lib/sheepdog.sh, each over
-# its ci/fixtures/*.json input; the field picks
+# query in libexec/sd-act, each over its ci/fixtures/*.json
+# input; the field picks
 # (prc_val) and one-line queries use nothing these don't. Mode json (default)
 # runs the query through prc_json, line through prc_line. One line per
 # filter, then "super-stress: <filters> filters, <runs> runs each, <failures>
@@ -55,7 +55,6 @@ add() { entries+=("$1"$'\t'"$2"$'\t'"$3"$'\t'"${4:-json}"); } # <name> <query-fi
 
 builtin_list() {
   local act=$ROOT/libexec/sd-act
-  add sheepdog:FLAG_LINES "$(heredoc "$ROOT/lib/sheepdog.sh" FLAG_LINES)" "$FIX/state.json" line
   add sd-act:GATE "$(heredoc "$act" GATE)" "$FIX/state.json"
   add sd-act:RESTACK_GATE "$(heredoc "$act" RESTACK_GATE)" "$FIX/restack.json"
   add sd-act:KEEP_PARENT "$(heredoc "$act" KEEP_PARENT)" "$FIX/keep-parent.json" line

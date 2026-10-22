@@ -1549,8 +1549,19 @@ fn long_lines(s: &Value) -> String {
             out.push_str(&format!("     {l}\n"));
         }
     }
+    out.push_str(&flag_lines(s));
+    if !at(s, "flags_error").is_null() {
+        out.push_str(&format!("  ⚑  check failed: {}\n", t(s, "flags_error")));
+    }
+    out
+}
+
+/// One line per flag (#125), for --long and sd act review: kind, file:line
+/// (and the lines removed, for a test-edit), the line, the commits.
+pub fn flag_lines(s: &Value) -> String {
     static LEAD: OnceLock<Regex> = OnceLock::new();
     let lead = LEAD.get_or_init(|| re(r"^[\t\n\x0C\r ]+"));
+    let mut out = String::new();
     for f in arr(at(s, "flags")) {
         let kind = t(f, "kind");
         let removed = if kind == "test-edit" { format!(" (-{})", t(f, "n")) } else { String::new() };
@@ -1562,9 +1573,6 @@ fn long_lines(s: &Value) -> String {
             lead.replace(&t(f, "text"), ""),
             commits.join(",")
         ));
-    }
-    if !at(s, "flags_error").is_null() {
-        out.push_str(&format!("  ⚑  check failed: {}\n", t(s, "flags_error")));
     }
     out
 }
@@ -1691,5 +1699,19 @@ mod tests {
         assert_eq!(excerpt(&json!("<!-- x\ny -->\n\n## <b>Title</b>  \nmore")), "Title");
         assert_eq!(excerpt(&json!("\u{a0}keep")), "\u{a0}keep");
         assert_eq!(excerpt(&Value::Null), "");
+    }
+
+    #[test]
+    fn flag_lines_one_per_flag_the_text_unindented_the_commits_short() {
+        let s = json!({"flags": [
+            {"kind": "suppression", "file": "a.sh", "line": 2, "n": 1, "text": "  # shellcheck disable=SC2086",
+             "commits": ["0123456789abcdef", "fedcba9876543210"]},
+            {"kind": "test-edit", "file": "a.bats", "line": 7, "n": 3, "text": "\t[ x ]", "commits": []},
+        ]});
+        assert_eq!(
+            flag_lines(&s),
+            "  ⚑  suppression  a.sh:2  # shellcheck disable=SC2086  0123456,fedcba9\n  ⚑  test-edit  a.bats:7 (-3)  [ x ]  \n"
+        );
+        assert_eq!(flag_lines(&json!({"flags_error": "boom"})), "");
     }
 }

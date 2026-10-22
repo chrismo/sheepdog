@@ -25,7 +25,7 @@ fn command(name: &str, b: &str) -> String {
     c
 }
 
-fn step_timeout(b: &str) -> u64 {
+pub(super) fn step_timeout(b: &str) -> u64 {
     let t = cfg("settings.stepTimeout", b);
     let whole = !t.starts_with('0') && t.bytes().all(|c| c.is_ascii_digit());
     match t.parse() {
@@ -36,7 +36,7 @@ fn step_timeout(b: &str) -> u64 {
 
 // A failed status isn't a clean tree: it would pass verify and hide
 // autofix's changes.
-fn status(wt: &str) -> String {
+pub(super) fn status(wt: &str) -> String {
     let g = git(wt, &["status", "--porcelain"]);
     if !g.ok {
         die(format!("git status failed in {wt}: {}", g.stderr.trim()));
@@ -55,25 +55,32 @@ fn print_tail(out: &str) {
     }
 }
 
-pub fn verify(b: &str) {
-    let wt = worktree(b);
+/// settings.verify in <wt>: Ok(the command) when it passed, or empty when
+/// none is configured; Err(the command) when it failed, after printing why.
+pub(super) fn verify_run(wt: &str, b: &str) -> Result<String, String> {
     let cmd = command("verify", b);
     if cmd.is_empty() {
-        println!("no settings.verify configured; nothing to run");
-        return;
+        return Ok(cmd);
     }
     let secs = step_timeout(b);
-    let before = status(&wt);
-    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(&wt));
-    if o.ok && status(&wt) != before {
+    let before = status(wt);
+    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
+    if o.ok && status(wt) != before {
         println!("verify changed files in {wt} (a formatter?); commit them and rerun");
     } else if !o.ok {
         print_tail(&o.stdout);
     } else {
-        println!("verify passed ({cmd})");
-        return;
+        return Ok(cmd);
     }
-    die(format!("verify failed ({cmd})"))
+    Err(cmd)
+}
+
+pub fn verify(b: &str) {
+    match verify_run(&worktree(b), b) {
+        Ok(cmd) if cmd.is_empty() => println!("no settings.verify configured; nothing to run"),
+        Ok(cmd) => println!("verify passed ({cmd})"),
+        Err(cmd) => die(format!("verify failed ({cmd})")),
+    }
 }
 
 pub fn autofix(b: &str) {

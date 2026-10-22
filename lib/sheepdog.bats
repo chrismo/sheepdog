@@ -274,26 +274,6 @@ stack_setup() {
   [ "$output" = "par $(git rev-parse par)" ]
 }
 
-@test "pin_write records the pin and the base it was taken against" {
-  pin_write feat local HEAD main
-  [ "$(git rev-parse refs/sheepdog/feat/local)" = "$(git rev-parse HEAD)" ]
-  [ "$(git rev-parse refs/sheepdog/feat/local-base)" = "$(git rev-parse main)" ]
-}
-
-@test "pin_write overwrites both refs, so a stale base never outlives its pin" {
-  pin_write feat bot HEAD main
-  git commit -q --allow-empty -m two
-  pin_write feat bot HEAD HEAD~1
-  [ "$(git rev-parse refs/sheepdog/feat/bot)" = "$(git rev-parse HEAD)" ]
-  [ "$(git rev-parse refs/sheepdog/feat/bot-base)" = "$(git rev-parse HEAD~1)" ]
-}
-
-@test "pin_write refuses a pin kind it doesn't know" {
-  run pin_write feat nope HEAD main
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"unknown pin"* ]]
-}
-
 # ── worktree_mark: the worktree's uncommitted state (#167) ──────────────────
 
 @test "worktree_mark: an untracked file's contents change the mark" {
