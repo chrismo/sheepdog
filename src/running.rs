@@ -69,7 +69,7 @@ fn free(marker: &str, b: &str) -> bool {
 }
 
 /// <f> under <b>'s marker, naming <step>; None, and <f> not run, when another
-/// live step holds it. A marker running_hold keeps (RUNNING_HELD) is left
+/// live step holds it. A marker holding keeps (RUNNING_HELD) is left
 /// alone. A HUP, INT or TERM ends <f>'s agent at once (proc::timeout), but
 /// the marker is removed before sd dies of it.
 pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_running_hold_keeps_is_left_alone() {
+    fn a_marker_holding_keeps_is_left_alone() {
         let f = marker("kept");
         std::env::set_var("RUNNING_HELD", "b-kept");
         let ran = during_at(path(&f), "b-kept", "implement", || f.exists());

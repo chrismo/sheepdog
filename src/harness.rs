@@ -50,7 +50,7 @@ pub fn new_session() -> String {
     format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
 }
 
-/// One headless agent step: harness_run's arguments.
+/// One headless agent step: run_step's arguments.
 pub struct Step<'a> {
     pub harness: &'a str,
     pub session: &'a str,
