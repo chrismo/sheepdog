@@ -1,5 +1,5 @@
-# Shared by sd act and sd review-local. Source it after lib/config.sh;
-# needs bash 5 and super 0.3.0.
+# Shared by sd act's bash verbs. Source it after lib/config.sh; needs bash 5
+# and super 0.3.0.
 #
 # harness_run runs the harness adapter, src/harness.rs: the per-harness code,
 # apart from the tool-rule wording in implement_run (#79 Design record).
@@ -151,7 +151,8 @@ made_here() {
 # absolute one from disk. A named file that is missing is an error, never the
 # default. An empty <base> means none can be trusted: no .sheepdog/ lookup,
 # and a relative path is refused. Every configurable step prompt goes through
-# here.
+# here or through its Rust copy, src/guidance.rs (sd review-local's); this one
+# goes when sd act's agent steps are ported (#203).
 step_guidance() {
   local path top conv
   path=$(prc_get "settings.$1" "$2" false) || return 1
@@ -232,8 +233,9 @@ protected_hits() {
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
 # pi has no per-command bash rules, so no bash at all.
 HARNESS_PI_TOOLS="read,edit,write"
-# Read-only steps (review, describe) set HARNESS_CLAUDE_ALLOW to this and
-# HARNESS_PI_TOOLS to "read" before calling harness_run.
+# Read-only steps (describe) set HARNESS_CLAUDE_ALLOW to this and
+# HARNESS_PI_TOOLS to "read" before calling harness_run. sd review-local's is
+# src/harness.rs's READONLY_ALLOW, the same list.
 HARNESS_READONLY_ALLOW="Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)"
 
 # harness_run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]

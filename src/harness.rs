@@ -10,6 +10,7 @@ use crate::{config, json, proc, running, time, usage};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
@@ -17,6 +18,22 @@ use std::time::Instant;
 // Denied whatever the caller's tool lists allow: the pipeline commits, pushes
 // and talks to GitHub.
 const CLAUDE_DENY: &str = "Bash(git commit *),Bash(git push *),Bash(gh *)";
+
+/// A read-only step's tools (review, describe): lib/sheepdog.sh's
+/// HARNESS_READONLY_ALLOW, which the bash describe still uses, and "read".
+pub const READONLY_ALLOW: &str = "Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)";
+pub const READONLY_PI_TOOLS: &str = "read";
+
+/// A new session's id, as `uuidgen | tr 'A-F' 'a-f'` made it: a random
+/// (version 4) UUID, lowercase.
+pub fn new_session() -> String {
+    let mut b = [0u8; 16];
+    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).expect("/dev/urandom reads");
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[..8], &h[8..12], &h[12..16], &h[16..20], &h[20..])
+}
 
 /// One headless agent step: harness_run's arguments.
 pub struct Step<'a> {
@@ -573,6 +590,14 @@ mod tests {
 
         let keep = json!({"useApiKey": true});
         assert!(!claude_command(&step(&keep)).get_envs().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn new_session_is_a_lowercase_v4_uuid_and_new_each_time() {
+        let re = Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$").unwrap();
+        let (a, b) = (new_session(), new_session());
+        assert!(re.is_match(&a), "{a}");
+        assert_ne!(a, b);
     }
 
     #[test]

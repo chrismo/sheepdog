@@ -58,9 +58,9 @@ EOF
   export SHEEPDOG_BASE=$BASE SHEEPDOG_HEAD=$HEAD_SHA SHEEPDOG_TASK="add a third line"
 }
 
-@test "runs under bash 5 via the bash5 shebang" {
-  run head -1 "$REVIEW"
-  [ "$output" = "#!/usr/bin/env bash5" ]
+@test "is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$REVIEW")" = ../target/release/sd ]
+  [ -x "$REVIEW" ]
 }
 
 @test "without SHEEPDOG_BASE and SHEEPDOG_HEAD: fails and says so" {
