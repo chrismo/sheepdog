@@ -45,11 +45,11 @@ fn status(wt: &str) -> String {
 }
 
 fn print_tail(out: &str) {
-    let n = out.matches('\n').count();
+    let lines: Vec<&str> = out.split_terminator('\n').collect();
+    let n = lines.len();
     if n > VERIFY_TAIL {
         println!("… (last {VERIFY_TAIL} of {n} lines)");
     }
-    let lines: Vec<&str> = out.split_terminator('\n').collect();
     for l in &lines[lines.len().saturating_sub(VERIFY_TAIL)..] {
         println!("{l}");
     }

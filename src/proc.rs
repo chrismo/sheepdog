@@ -153,7 +153,7 @@ fn pass_signals_on() {
 pub fn timeout(secs: u64, c: Command, merged: bool) -> Out {
     pass_signals_on();
     RUNNING.fetch_add(1, Ordering::SeqCst);
-    let o = timeout_in_group(secs, c, merged);
+    let o = timeout_in_group(secs, c, merged, &|| CAUGHT.load(Ordering::SeqCst) != 0);
     let last = RUNNING.fetch_sub(1, Ordering::SeqCst) == 1;
     let sig = CAUGHT.load(Ordering::SeqCst);
     if last && sig != 0 {
@@ -162,7 +162,9 @@ pub fn timeout(secs: u64, c: Command, merged: bool) -> Out {
     o
 }
 
-fn timeout_in_group(secs: u64, mut c: Command, merged: bool) -> Out {
+/// <stopped>: sd got a signal to pass on; the group ends as at the deadline,
+/// but it's the command's status, not a timeout.
+fn timeout_in_group(secs: u64, mut c: Command, merged: bool, stopped: &dyn Fn() -> bool) -> Out {
     let prog = c.get_program().to_string_lossy().into_owned();
     c.stdin(Stdio::null()).process_group(0);
     let child = if merged {
@@ -189,15 +191,21 @@ fn timeout_in_group(secs: u64, mut c: Command, merged: bool) -> Out {
     let deadline = Instant::now() + Duration::from_secs(secs);
     let finished = |rs: &[JoinHandle<()>]| rs.iter().all(JoinHandle::is_finished);
     let mut status = None;
-    let signalled = || CAUGHT.load(Ordering::SeqCst) != 0;
-    while Instant::now() < deadline && !signalled() {
+    // Reaped before the signal's looked at: a command that's done is done.
+    let timed_out = loop {
         status = status.or_else(|| child.try_wait().ok().flatten());
         if status.is_some() && finished(&readers) {
-            break;
+            break false;
+        }
+        if stopped() {
+            break false;
+        }
+        if Instant::now() >= deadline {
+            break status.is_none();
         }
         std::thread::sleep(Duration::from_millis(20));
-    }
-    if status.is_some() && finished(&readers) && !signalled() {
+    };
+    if status.is_some() && finished(&readers) {
         for h in readers {
             let _ = h.join();
         }
@@ -219,13 +227,16 @@ fn timeout_in_group(secs: u64, mut c: Command, merged: bool) -> Out {
             let _ = kill("-KILL");
             let _ = child.wait();
         }
+        if !timed_out {
+            status = status.or_else(|| child.try_wait().ok().flatten());
+        }
     }
     let mut o = Out {
-        ok: status.is_some_and(|s| s.success()),
-        code: status.map_or(124, code),
+        ok: !timed_out && status.is_some_and(|s| s.success()),
+        code: if timed_out { 124 } else { status.map_or(124, code) },
         stdout: text(&out),
         stderr: err.as_ref().map(text).unwrap_or_default(),
-        timed_out: status.is_none(),
+        timed_out,
     };
     if o.timed_out {
         let to = if merged { &mut o.stdout } else { &mut o.stderr };
@@ -315,6 +326,20 @@ mod tests {
         // The command itself finished in time: its status, not a timeout.
         assert_eq!((o.ok, o.code, o.timed_out), (true, 0, false));
         assert_eq!(o.stdout, "hi\n");
+    }
+
+    #[test]
+    fn a_signal_to_sd_ends_the_group_and_isnt_a_timeout() {
+        let start = Instant::now();
+        let stop = || start.elapsed() > Duration::from_millis(300);
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo hi; sleep 30"]);
+        let o = timeout_in_group(20, c, false, &stop);
+        assert!(start.elapsed() < Duration::from_secs(10), "waited {:?}", start.elapsed());
+        assert!(!o.timed_out);
+        assert_eq!(o.code, 143);
+        assert_eq!(o.stdout, "hi\n");
+        assert_eq!(o.stderr, "");
     }
 
     #[test]
