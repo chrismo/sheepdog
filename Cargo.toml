@@ -9,5 +9,6 @@ name = "sd"
 path = "src/main.rs"
 
 [dependencies]
+regex = "1"
 # preserve_order keeps a config file's keys where the user put them on set.
 serde_json = { version = "1", features = ["preserve_order"] }

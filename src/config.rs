@@ -399,6 +399,16 @@ fn get(path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
     })
 }
 
+/// prc_get for the verbs ported to Rust: what `sd config get` prints, less
+/// the last newline, or the lines it would print to stderr (none when unset).
+pub fn get_text(path: &str, b: &str, as_json: bool) -> Result<String, Vec<String>> {
+    match get(path, b, false, as_json) {
+        Ok(out) => Ok(out.strip_suffix('\n').unwrap_or(&out).to_string()),
+        Err(Fail::Unset) => Err(vec![]),
+        Err(Fail::Error(lines)) => Err(lines),
+    }
+}
+
 fn show(b: &str, no_branch: bool) -> Res<String> {
     let all = with_defaults(&files(b, no_branch)?);
     Ok(serde_json::to_string_pretty(&all).expect("a Value serializes") + "\n")

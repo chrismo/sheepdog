@@ -35,7 +35,7 @@
 # Glyphs: ❌ needs chrismo   ⚠️ state unknown   🔧 work for later   ⏳ waiting (CI, review)
 #         ✅ ready to merge  🏁 merged          🚫 closed           🤖 an agent step running
 #
-# Notified, once per lib/next.sh step entered (again only after it clears):
+# Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
 #   ci-red ci-blocked conflict human foreign parent-closed restack-undone: ❌ the
 #     PR is stuck or wrong
 #     until chrismo, or an agent chrismo starts, deals with it

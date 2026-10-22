@@ -69,7 +69,8 @@ tasks:
       - Cargo.lock
       - src/**
 
-  # tests/config.rs runs the binary against temp git repos, hence git.
+  # tests/config.rs runs the binary against temp git repos, hence git;
+  # tests/next.rs applies jq edits to its state, as lib/next.bats did.
   - key: cargo-test
     use: [code, system-packages, rust]
     run: cargo test --locked
