@@ -123,39 +123,39 @@ pub fn timeout(secs: u64, mut c: Command, merged: bool) -> Out {
     let (err, err_h) = child.stderr.take().map(drain).unzip();
     let readers: Vec<JoinHandle<()>> = std::iter::once(out_h).chain(err_h).collect();
 
+    // As $( ) does, wait for what it started to stop writing too, but only
+    // till the deadline: a grandchild holding the pipe doesn't hold us.
     let deadline = Instant::now() + Duration::from_secs(secs);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break Some(st),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            _ => break None,
+    let finished = |rs: &[JoinHandle<()>]| rs.iter().all(JoinHandle::is_finished);
+    let mut status = None;
+    while Instant::now() < deadline {
+        status = status.or_else(|| child.try_wait().ok().flatten());
+        if status.is_some() && finished(&readers) {
+            break;
         }
-    };
-    let group = format!("-{}", child.id());
-    // "--" so kill can't read the negative pid as an option.
-    let kill = |sig: &str| Command::new("kill").args([sig, "--", &group]).status();
-    match status {
-        // As $( ) does, wait for what it started to stop writing.
-        Some(_) => {
-            for h in readers {
-                let _ = h.join();
-            }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if status.is_some() && finished(&readers) {
+        for h in readers {
+            let _ = h.join();
         }
+    } else {
         // The bash with_timeout didn't wait at all; this waits a second for
-        // the group to stop, then KILLs it if the command ignored TERM.
-        None => {
-            let _ = kill("-TERM");
-            let grace = Instant::now() + Duration::from_secs(1);
-            let mut exited = || matches!(child.try_wait(), Ok(Some(_)));
-            while !(exited() && readers.iter().all(JoinHandle::is_finished)) && Instant::now() < grace {
-                std::thread::sleep(Duration::from_millis(10));
-            }
-            // The leader exiting doesn't mean the group is gone: a grandchild
-            // that ignored TERM still holds the pipes.
-            if !(exited() && readers.iter().all(JoinHandle::is_finished)) {
-                let _ = kill("-KILL");
-                let _ = child.wait();
-            }
+        // the group to stop, then KILLs it if anything in it ignored TERM.
+        // The leader exiting doesn't mean the group is gone: a grandchild
+        // that ignored TERM still holds the pipes.
+        let group = format!("-{}", child.id());
+        // "--" so kill can't read the negative pid as an option.
+        let kill = |sig: &str| Command::new("kill").args([sig, "--", &group]).status();
+        let _ = kill("-TERM");
+        let grace = Instant::now() + Duration::from_secs(1);
+        let mut exited = || matches!(child.try_wait(), Ok(Some(_)));
+        while !(exited() && finished(&readers)) && Instant::now() < grace {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if !(exited() && finished(&readers)) {
+            let _ = kill("-KILL");
+            let _ = child.wait();
         }
     }
     let mut o = Out {
@@ -243,6 +243,16 @@ mod tests {
         std::thread::sleep(Duration::from_secs(4).saturating_sub(start.elapsed()));
         assert!(!late.exists(), "the grandchild outlived the timeout");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_timeout_doesnt_wait_past_the_deadline_on_a_grandchild_holding_the_pipe() {
+        let start = Instant::now();
+        let o = with_timeout(1, "sh", &["-c", "echo hi; sleep 30 & exit 0"], None);
+        assert!(start.elapsed() < Duration::from_secs(5), "waited {:?}", start.elapsed());
+        // The command itself finished in time: its status, not a timeout.
+        assert_eq!((o.ok, o.code, o.timed_out), (true, 0, false));
+        assert_eq!(o.stdout, "hi\n");
     }
 
     #[test]
