@@ -116,9 +116,12 @@ fn over_ours(b: &str, remote: &str, rsha: &str, ahead: i64, behind: i64) -> Resu
 }
 
 fn track(b: &str, remote: &str) {
-    let tracked = git(".", &["config", &format!("branch.{b}.remote"), remote]).ok
-        && git(".", &["config", &format!("branch.{b}.merge"), &format!("refs/heads/{b}")]).ok;
-    if !tracked {
+    let set = |key: String, val: &str| {
+        let o = git(".", &["config", &key, val]);
+        eprint!("{}", o.stderr);
+        o.ok
+    };
+    if !(set(format!("branch.{b}.remote"), remote) && set(format!("branch.{b}.merge"), &format!("refs/heads/{b}"))) {
         eprintln!("sd act: warning: {b} is pushed, but its upstream isn't {remote}/{b}: git branch --set-upstream-to={remote}/{b} {b}");
     }
 }
