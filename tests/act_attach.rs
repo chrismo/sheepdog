@@ -275,8 +275,8 @@ fn attach_the_harness_blocks_model_effort_and_args_become_the_tuis_flags() {
     let r = sd.run(&["attach"]);
     assert_eq!(r.status, 0);
     assert_eq!(
-        sd.fx_read("claude.args").replace('\n', " "),
-        format!("--resume {SID} --model opus --effort high --verbose --fast")
+        fs::read_to_string(sd.tmp.join("fx/claude.args")).unwrap().replace('\n', " "),
+        format!("--resume {SID} --model opus --effort high --verbose --fast ")
     );
 }
 
@@ -313,8 +313,8 @@ fn attach_pis_flags_provider_model_thinking() {
     let r = sd.run(&["attach"]);
     assert_eq!(r.status, 0);
     assert_eq!(
-        sd.fx_read("pi.args").replace('\n', " "),
-        format!("--session-id {SID} --provider cf --model haiku --thinking low")
+        fs::read_to_string(sd.tmp.join("fx/pi.args")).unwrap().replace('\n', " "),
+        format!("--session-id {SID} --provider cf --model haiku --thinking low ")
     );
 }
 

@@ -193,7 +193,7 @@ echo '[]'
         std::thread::sleep(Duration::from_millis(100));
     }
     fs::write(sd.tmp.join("fx/go"), "").unwrap();
-    job.wait().unwrap();
+    assert!(job.wait().unwrap().success());
     assert!(seen, "the reviewer's stderr didn't show while it ran");
 }
 
