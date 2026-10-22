@@ -110,7 +110,8 @@ Locally, run only the tests you're writing or changing during red-green,
 picked by name with `-f`, not whole files and never the suite:
 
 ```bash
-bats -f 'findings record with no usable round' libexec/sd-act-review.bats
+bats -f 'unknown verb fails' libexec/sd-act.bats
+cargo test --test act_review no_usable_round
 ```
 
 When the change is ready, commit and `sd act push`; the PR's run is the
