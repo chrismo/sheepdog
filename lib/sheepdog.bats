@@ -431,6 +431,18 @@ EOF
   [ ! -e "$FX/args" ]
 }
 
+@test "harness_run: the tool lists are lib/sheepdog.sh's; sd harness run without them doesn't run the step" {
+  harness_stubs
+  HARNESS_CLAUDE_ALLOW="Read,Grep" run harness_run claude sid1 new 30 "do it" '{}'
+  [ "$status" -eq 0 ]
+  grep -qx 'Read,Grep' "$FX/args"
+  rm "$FX/args"
+  run --separate-stderr env -u HARNESS_CLAUDE_ALLOW HARNESS_PI_TOOLS=read "$SD_BIN" harness run claude sid1 new 30 "do it" '{}'
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"HARNESS_CLAUDE_ALLOW"* ]]
+  [ ! -e "$FX/args" ]
+}
+
 # usage_last <expr>: <expr> over usage.sup's last record, printed raw.
 usage_last() { prc_super -i sup -f line -c "$PRC_FNS"$'\n'"tail 1 | values $1" "$SHEEPDOG_STATE_DIR/usage.sup"; }
 usage_count() { prc_super -i sup -f line -c 'count()' "$SHEEPDOG_STATE_DIR/usage.sup"; }

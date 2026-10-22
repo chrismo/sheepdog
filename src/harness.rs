@@ -14,14 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
-// Claude may read and edit; the pipeline commits, pushes and talks to GitHub.
-// lib/sheepdog.sh keeps HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS too, while
-// its steps extend them.
-pub const CLAUDE_ALLOW: &str =
-    "Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)";
+// Denied whatever the caller's tool lists allow: the pipeline commits, pushes
+// and talks to GitHub.
 const CLAUDE_DENY: &str = "Bash(git commit *),Bash(git push *),Bash(gh *)";
-// pi has no per-command bash rules, so no bash at all.
-pub const PI_TOOLS: &str = "read,edit,write";
 
 /// One headless agent step: harness_run's arguments.
 pub struct Step<'a> {
@@ -361,10 +356,9 @@ fn usage_exit() -> ExitCode {
 }
 
 /// sd harness: lib/sheepdog.sh's harness_run, harness_tally and
-/// harness_transcript. The step's
-/// name, its branch and the tool lists come in the environment, as the bash
-/// steps set them: HARNESS_STEP, HARNESS_BRANCH, HARNESS_CLAUDE_ALLOW and
-/// HARNESS_PI_TOOLS.
+/// harness_transcript. The step's name, its branch and the tool lists come in
+/// the environment, as the bash steps set them: HARNESS_STEP, HARNESS_BRANCH,
+/// HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS, the last two required.
 pub fn run(argv: &[String]) -> ExitCode {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     match a.as_slice() {
@@ -390,8 +384,10 @@ pub fn run(argv: &[String]) -> ExitCode {
             };
             let env = |k: &str| std::env::var(k).unwrap_or_default();
             let (name, branch) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"));
-            let or = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
-            let (claude_allow, pi_tools) = (or("HARNESS_CLAUDE_ALLOW", CLAUDE_ALLOW), or("HARNESS_PI_TOOLS", PI_TOOLS));
+            let (Ok(claude_allow), Ok(pi_tools)) = (std::env::var("HARNESS_CLAUDE_ALLOW"), std::env::var("HARNESS_PI_TOOLS")) else {
+                eprintln!("sd harness: HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS must be set (lib/sheepdog.sh's)");
+                return ExitCode::from(1);
+            };
             let step = Step {
                 harness: h,
                 session: sid,

@@ -5,7 +5,7 @@
 # apart from the tool-rule wording in implement_run (#79 Design record).
 # with_timeout and pin_write are shared helpers.
 
-SD_RS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/target/release/sd"
+SD_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/target/release/sd"
 
 # with_timeout <seconds> <cmd...>: kills the command's whole process group
 # when time runs out (its children would otherwise hold our output pipe open).
@@ -224,9 +224,9 @@ protected_hits() {
   done <<<"$2"
 }
 
-# The tools harness_run gives the agent, src/harness.rs's defaults, here for
-# the steps that add to them. Claude may read and edit; the pipeline commits,
-# pushes and talks to GitHub.
+# The tools harness_run gives the agent, the only copy (src/harness.rs has
+# none), here for the steps that add to them. Claude may read and edit; the
+# pipeline commits, pushes and talks to GitHub.
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
 # pi has no per-command bash rules, so no bash at all.
 HARNESS_PI_TOOLS="read,edit,write"
@@ -242,16 +242,16 @@ HARNESS_READONLY_ALLOW="Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git
 # usage record and the running marker.
 harness_run() {
   HARNESS_STEP=${HARNESS_STEP:-} HARNESS_BRANCH=${HARNESS_BRANCH:-} HARNESS_CLAUDE_ALLOW=$HARNESS_CLAUDE_ALLOW \
-    HARNESS_PI_TOOLS=$HARNESS_PI_TOOLS "$SD_RS" harness run "$@"
+    HARNESS_PI_TOOLS=$HARNESS_PI_TOOLS "$SD_BIN" harness run "$@"
 }
 
 # harness_tally <harness> <session-id>: what the session's transcript says, as
 # one JSON object; {} with no transcript. context is its last turn's tokens.
-harness_tally() { "$SD_RS" harness tally "$@"; }
+harness_tally() { "$SD_BIN" harness tally "$@"; }
 
 # harness_transcript <harness> <session-id>: the file the harness keeps the
 # session's transcript in, if it wrote one.
-harness_transcript() { "$SD_RS" harness transcript "$@"; }
+harness_transcript() { "$SD_BIN" harness transcript "$@"; }
 
 # main_worktree: the repo's main worktree, where sheepdog's shared files live
 # and the name usage.sup knows the repo by.
