@@ -89,6 +89,14 @@ verify_cmd() { "$SD_CONFIG" set --global settings.verify "$1"; }
   [[ "$output" == *"changed files"* ]]
 }
 
+@test "a git status that fails fails it, not a pass" {
+  verify_cmd "true"
+  printf 'not an index' > .git/index
+  run "$SD_ACT" verify
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git status failed"* ]]
+}
+
 @test "a list-valued verify is refused before anything runs" {
   run "$SD_CONFIG" set --global --json settings.verify '["true","false"]'
   [ "$status" -eq 1 ]
@@ -111,4 +119,22 @@ verify_cmd() { "$SD_CONFIG" set --global settings.verify "$1"; }
   run "$SD_ACT" verify
   [ "$status" -ne 0 ]
   [[ "$output" == *"timed out"* ]]
+}
+
+@test "a TERM or INT to it ends the command, and it waits for that (#170)" {
+  local sig job i
+  for sig in TERM INT; do
+    rm -f "$TMP/cmd"
+    verify_cmd "echo \$\$ > '$TMP/cmd.tmp' && mv '$TMP/cmd.tmp' '$TMP/cmd' && exec sleep 30"
+    # Job control, so the job doesn't start with INT ignored.
+    set -m
+    "$SD_ACT" verify &
+    job=$!
+    set +m
+    for i in $(seq 100); do [ -s "$TMP/cmd" ] && break; sleep 0.1; done
+    kill -"$sig" "$job"
+    wait "$job" || true
+    run kill -0 "$(cat "$TMP/cmd")"
+    [ "$status" -ne 0 ]
+  done
 }

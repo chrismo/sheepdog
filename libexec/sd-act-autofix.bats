@@ -126,6 +126,15 @@ head_sha() { git rev-parse HEAD; }
   [[ "$output" == *"not checked out"* ]]
 }
 
+@test "a git status that fails stops it before the command runs" {
+  autofix_cmd "touch ran"
+  printf 'not an index' > .git/index
+  run "$SD_ACT" autofix
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git status failed"* ]]
+  [ ! -e ran ]
+}
+
 @test "a list-valued autofix is refused before anything runs" {
   run "$SD_CONFIG" set --global --json settings.autofix '["true","false"]'
   [ "$status" -eq 1 ]
@@ -149,6 +158,17 @@ head_sha() { git rev-parse HEAD; }
   run "$SD_ACT" autofix
   [ "$status" -ne 0 ]
   [[ "$output" == *"timed out"* ]]
+}
+
+@test "the commit's hooks are heard: a pre-commit hook's output passes through" {
+  autofix_cmd "echo d >> file.txt"
+  printf '#!/bin/sh\necho hook-out\necho hook-err >&2\n' > .git/hooks/pre-commit
+  chmod +x .git/hooks/pre-commit
+  run "$SD_ACT" autofix
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hook-out"* ]]
+  [[ "$output" == *"hook-err"* ]]
+  [[ "$output" == *"autofix committed"* ]]
 }
 
 @test "--help lists autofix" {

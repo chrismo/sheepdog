@@ -286,6 +286,10 @@ usage() { help >&2; exit 1; }
 (( $# )) || usage
 verb=$1; shift
 if [[ $verb == -h || $verb == --help ]]; then help; exit 0; fi
+# The verbs ported to Rust (#202) get the arguments as given, after the
+# checks below.
+act_args=("$@")
+act_rs() { exec "$SD_LIB/../target/release/sd" act "$verb" "${act_args[@]}"; }
 
 force=false accept=false remove=false no_publish=false resolve=false no_implement=false question=false harness_opt="" parent_opt="" branch="" answer_text=""
 ids=() positionals=()
@@ -728,17 +732,6 @@ verify_run() {
   return $rc
 }
 
-verify() {
-  local b=$branch wt rc=0
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b is not checked out in any worktree"
-  verify_run "$wt" "$b" || rc=$?
-  if (( rc != 0 )); then die "verify failed ($VERIFY_CMD)"
-  elif [[ -z $VERIFY_CMD ]]; then echo "no settings.verify configured; nothing to run"
-  else echo "verify passed ($VERIFY_CMD)"
-  fi
-}
-
 # ── autofix: A11 ─────────────────────────────────────────────────────────────
 
 # autofix_run <worktree> <branch> [revert]: settings.autofix in the worktree
@@ -791,14 +784,6 @@ verify_autofix() {
   [[ -n $AUTOFIX_COMMIT ]] || return 1
   verify_run "$1" "$2" || return 1
   echo "verify passed after autofix ($VERIFY_CMD)"
-}
-
-autofix() {
-  local b=$branch wt
-  wt=$(worktree_for "$b")
-  [[ -n $wt ]] || die "$b is not checked out in any worktree"
-  autofix_run "$wt" "$b" || die "autofix failed ($AUTOFIX_CMD)"
-  [[ -n $AUTOFIX_CMD ]] || echo "no settings.autofix configured; nothing to run"
 }
 
 # no_base_why <branch> <state>: why sd state found no base: its errors, else a
@@ -2520,8 +2505,8 @@ case $verb in
   restack) restack ;;
   retarget) retarget ;;
   push) push ;;
-  verify) verify ;;
-  autofix) autofix ;;
+  verify) act_rs ;;
+  autofix) act_rs ;;
   ci-fix) running_during "$branch" ci-fix ci_fix ;;
   review) review ;;
   describe) describe ;;
