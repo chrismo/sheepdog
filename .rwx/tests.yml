@@ -73,6 +73,7 @@ tasks:
   # tests/next.rs applies jq edits to its state, as lib/next.bats did.
   # tests/state.rs adds a fake gh (bash, jq), and runs lib/*.sh's proc_start
   # (ps) and worktree_mark under bash5 to write what the bash steps write.
+  # The agent steps read the shipped prompts from lib/ at run time.
   - key: cargo-test
     use: [code, system-packages, rust]
     run: cargo test --locked
@@ -82,6 +83,8 @@ tasks:
       - src/**
       - tests/**
       - lib/*.sh
+      - lib/prompts/**
+      - lib/review-rules.md
 
   - key: test
     use: [code, system-packages, bats, superdb, captain, build]

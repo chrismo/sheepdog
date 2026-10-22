@@ -57,3 +57,8 @@ setup() {
   run "$SD_ACT" --help
   [[ "$output" == *"Usage"* ]]
 }
+
+@test "--help lists attach" {
+  run "$SD_ACT" --help
+  [[ "$output" =~ sd\ act\ attach\  ]]
+}
