@@ -1944,9 +1944,13 @@ push_ref() {
 # -U0: an upstream edit next to the branch's lines must not read as a change.
 patch_id() { git diff -U0 "$1" "$2" | git patch-id --stable | cut -d' ' -f1; }
 
-# Over {remote, resolve, replay: old_base..HEAD, newest first, s: the sd state JSON}.
+# Plain restack is src/act/restack.rs (#202). This one, restack --resolve,
+# keeps its own RESTACK_GATE, KEEP_PARENT, restack_by_tree and
+# parent_to_default until #203 ports it: change both.
+
+# Over {remote, replay: old_base..HEAD, newest first, s: the sd state JSON}.
 read -r -d '' RESTACK_GATE <<'EOF' || true
-values {remote, resolve, s, onto: f"{remote}/{s.sync.target}",
+values {remote, s, onto: f"{remote}/{s.sync.target}",
         why: len(coalesce(s.errors, [])) > 0 ? sj(s.errors, "; ")
              : on(s.parent.unpushed) ? f"parent {s.parent.name} isn't on {remote} yet: ship it first (sd act ship {s.parent.name})" : "",
         from_parent: coalesce([unnest {p: coalesce(s.parent.pr.commits, []), r: replay} | where r in p | values r], [])}
@@ -1964,8 +1968,6 @@ values {remote, resolve, s, onto: f"{remote}/{s.sync.target}",
     : nul(s.sync.conflict) ? {hard: f"can't tell whether restacking {s.branch} would conflict: {why}"}
     : on(s.sync.by_tree) and on(s.sync.conflict)
       ? {hard: f"restacking {s.branch} onto {onto} by tree would conflict; --resolve can't resolve a tree restack. By hand: git switch {s.branch} && git reset --hard {onto} && git diff --binary {s.sync.old_base[0:12]} {s.head[0:12]} | git apply -3, resolve and commit, then git update-ref refs/sheepdog/{s.branch}/base {onto} (the old head stays at {s.head[0:12]})"}
-    : on(s.sync.conflict) and not resolve
-      ? {hard: f"restacking {s.branch} onto {onto} would conflict; resolve it by hand: git rebase --onto {onto} {s.sync.old_base[0:12]} {s.branch}, then git update-ref refs/sheepdog/{s.branch}/base $(git merge-base {onto} {s.branch}); or let the agent: sd act restack --resolve"}
     : null,
     on(s.session.locked) ? {soft: f"taken over (branch.{s.branch}.sd-lock is set)"} : null
   ]
@@ -2000,7 +2002,7 @@ restack() {
     replay=$(git rev-list --topo-order "$old_base..refs/heads/$b" | prc_strings) || die "can't list $old_base..$b"
   fi
 
-  gate=$(prc_json "$RESTACK_GATE" "{\"remote\": $(prc_json_string "$remote"), \"resolve\": $resolve, \"replay\": $replay, \"s\": $state}") \
+  gate=$(prc_json "$RESTACK_GATE" "{\"remote\": $(prc_json_string "$remote"), \"replay\": $replay, \"s\": $state}") \
     || die "can't parse sd state's answer"
   line=$(gate_get "$gate" hard | head -1)
   [[ -z $line ]] || die "$line"
@@ -2018,11 +2020,6 @@ restack() {
     restack_by_tree "$wt" "$b" "$old_base" "$old_head" "$new_base" "$remote/$target"
     via=" by tree"
   elif ! git -C "$wt" rebase --quiet --onto "$new_base" "$old_base" "$b" >/dev/null 2>&1; then
-    if ! $resolve; then
-      restack_rollback "$wt" "$b" "$old_head"
-      die "the rebase onto $remote/$target stopped on a conflict partway through; rolled back to ${old_head:0:7}." \
-          "Resolve it by hand: git rebase --onto ${new_base:0:12} ${old_base:0:12} $b, then git update-ref refs/sheepdog/$b/base ${new_base:0:12}; or let the agent: sd act restack --resolve"
-    fi
     # Marked running across every stop and continue, not only each agent run (#170).
     running_during "$b" resolve resolve_conflicts "$b" "$wt" "$old_base" "$old_head" "$remote/$target" || exit 1
     resolved=true
@@ -2220,41 +2217,6 @@ parent_to_default() {
   echo "sd-parent of $b is now $default"
 }
 
-# ── retarget ─────────────────────────────────────────────────────────────────
-
-read -r -d '' RETARGET_GATE <<'EOF' || true
-values {s: this, why: sj(coalesce(errors, []), "; ")}
-| values case
-    when nul(s.pr) then {hard: f"no PR for {s.branch}{why != "" ? f": {why}" : ""}"}
-    when on(s.pr.state != "OPEN") then {hard: f"PR #{s.pr.number} is {lower(s.pr.state)}"}
-    when on(s.parent.name == s.sync.default) and on(s.pr.base == s.sync.default)
-      then {done: f"PR #{s.pr.number} already targets {s.sync.default}"}
-    when on(s.parent.pr.state == "CLOSED")
-      then {hard: f"{s.parent.name}'s PR #{s.parent.pr.number} was closed without merging; decide what {s.branch} targets"}
-    when nul(s.parent.merged) then {hard: f"can't tell whether {s.parent.name} merged: {why}"}
-    when on(s.parent.merged == false) then {hard: f"{s.parent.name} hasn't merged; PR #{s.pr.number} stays on it"}
-    when on(s.pr.base == s.sync.default) then {done: f"PR #{s.pr.number} already targets {s.sync.default} (GitHub retargeted it)"}
-    else {edit: f"{s.pr.number}"} end
-EOF
-
-retarget() {
-  local b=$branch state gate line default number
-  state=$(sd-state --json "$b") || die "sd state failed"
-  gate=$(prc_json "$RETARGET_GATE" "$state") || die "can't parse sd state's answer"
-  line=$(gate_get "$gate" hard)
-  [[ -z $line ]] || die "$line"
-  default=$(prc_val "$state" sync.default)
-  line=$(gate_get "$gate" done)
-  if [[ -n $line ]]; then
-    echo "$line"
-  else
-    number=$(gate_get "$gate" edit)
-    gh pr edit "$number" --base "$default" >/dev/null || die "gh pr edit --base $default failed for PR #$number"
-    echo "PR #$number now targets $default (was $(prc_val "$state" pr.base))"
-  fi
-  parent_to_default "$b" "$state"
-}
-
 # ── enroll ───────────────────────────────────────────────────────────────────
 
 # sd act enroll is src/act/bookkeeping.rs, which has its own copies of these.
@@ -2331,8 +2293,8 @@ case $verb in
   address) running_during "$branch" address address ;;
   ack) act_rs ;;
   answer) answer ;;
-  restack) restack ;;
-  retarget) retarget ;;
+  restack) if $resolve; then restack; else act_rs; fi ;;
+  retarget) act_rs ;;
   push) act_rs ;;
   verify) act_rs ;;
   autofix) act_rs ;;
