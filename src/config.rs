@@ -55,9 +55,9 @@ Notes:
   - init (no --global) writes empty blocks: a branch file holds only overrides
   - files are typed: an unknown key or a bad value is an error naming the
     file and path; a number may be quoted ("1800", as set writes it without
-    --json); forkLimit, reviewRounds and rateLimitFloor are whole numbers;
-    get prints a value as written; remote, interval, notify, vacuumAfter and
-    rateLimitFloor are global-file only
+    --json); forkLimit, reviewRounds, interval and rateLimitFloor are whole
+    numbers; get prints a value as written; remote, interval, notify,
+    vacuumAfter and rateLimitFloor are global-file only
   - set values are strings; --json takes a number, list, object or null
   - step: the harness's block, with the step's block for it laid over it
 "#;
@@ -89,9 +89,8 @@ fn defaults() -> Value {
 #[derive(Clone, Copy)]
 enum Ty {
     Str,
-    Seconds,
-    Count,
-    Float,
+    Num,
+    Whole,
     Bool,
     List,
     Enum(&'static [&'static str]),
@@ -130,10 +129,10 @@ const STEP_BLOCKS: &[(&str, Ty)] = &[
 ];
 const FLAGS: &[(&str, Ty)] = &[("suppressions", Ty::List), ("skips", Ty::List), ("testFiles", Ty::List)];
 const SETTINGS: &[(&str, Ty)] = &[
-    ("stepTimeout", Ty::Seconds), ("stepBudget", Ty::Float), ("branchBudget", Ty::Float),
-    ("forkLimit", Ty::Count), ("reviewRounds", Ty::Count), ("replyPrefix", Ty::Str),
+    ("stepTimeout", Ty::Num), ("stepBudget", Ty::Num), ("branchBudget", Ty::Num),
+    ("forkLimit", Ty::Whole), ("reviewRounds", Ty::Whole), ("replyPrefix", Ty::Str),
     ("verify", Ty::Str), ("autofix", Ty::Str), ("localReview", Ty::Str), ("botCommand", Ty::Str),
-    ("botTimeout", Ty::Seconds),
+    ("botTimeout", Ty::Num),
     ("reviewPrompt", Ty::Str), ("implementPrompt", Ty::Str), ("reviewFixPrompt", Ty::Str),
     ("describePrompt", Ty::Str), ("addressPrompt", Ty::Str), ("resolvePrompt", Ty::Str),
     ("ciFixPrompt", Ty::Str),
@@ -143,8 +142,8 @@ const SETTINGS: &[(&str, Ty)] = &[
 ];
 // The watcher's settings: it reads no branch file.
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
-    ("remote", Ty::Str), ("interval", Ty::Seconds), ("notify", Ty::Str),
-    ("vacuumAfter", Ty::Seconds), ("rateLimitFloor", Ty::Count),
+    ("remote", Ty::Str), ("interval", Ty::Whole), ("notify", Ty::Str),
+    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
 ];
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
@@ -172,19 +171,14 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
     }
     let ok = match ty {
         Ty::Str => v.is_string(),
-        Ty::Seconds => match v {
+        Ty::Num => match v {
             Value::Number(n) => n.as_f64().is_some_and(|f| f >= 0.0),
-            Value::String(s) => s.parse::<u64>().is_ok(),
+            Value::String(s) => s.parse::<f64>().is_ok_and(|f| f.is_finite() && f >= 0.0),
             _ => false,
         },
-        Ty::Count => match v {
+        Ty::Whole => match v {
             Value::Number(n) => n.is_u64(),
             Value::String(s) => s.parse::<u64>().is_ok(),
-            _ => false,
-        },
-        Ty::Float => match v {
-            Value::Number(_) => true,
-            Value::String(s) => s.parse::<f64>().is_ok_and(f64::is_finite),
             _ => false,
         },
         Ty::Bool => v.is_boolean(),
@@ -225,9 +219,8 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
 fn expected(ty: Ty) -> String {
     match ty {
         Ty::Str => "a string".into(),
-        Ty::Seconds => "a number of 0 or more".into(),
-        Ty::Count => "a whole number of 0 or more".into(),
-        Ty::Float => "a number".into(),
+        Ty::Num => "a number of 0 or more".into(),
+        Ty::Whole => "a whole number of 0 or more".into(),
         Ty::Bool => "true or false".into(),
         Ty::List => "a list of strings".into(),
         Ty::Enum(syms) => format!("one of {}", syms.join(", ")),
@@ -770,17 +763,19 @@ mod tests {
     }
 
     #[test]
-    fn counts_are_whole_and_seconds_and_budgets_take_fractions_but_none_negative() {
-        let ok = json!({"settings": {"stepTimeout": "1800", "botTimeout": 0.5, "forkLimit": 100000,
-                                     "stepBudget": "2.5", "branchBudget": 40.5}});
+    fn whole_settings_refuse_fractions_others_take_them_quoted_or_not_and_none_negative() {
+        let ok = json!({"settings": {"stepTimeout": "1800", "botTimeout": "0.5", "vacuumAfter": 0.5,
+                                     "forkLimit": "100000", "stepBudget": "2.5", "branchBudget": 40.5}});
         assert!(probs(ok, Layer::Global).is_empty());
-        let bad = json!({"settings": {"stepTimeout": -1, "forkLimit": 1.5, "reviewRounds": "2.5", "stepBudget": true}});
+        let bad = json!({"settings": {"stepTimeout": -1, "interval": 1.5, "reviewRounds": "2.5",
+                                      "stepBudget": true, "branchBudget": -5}});
         assert_eq!(
             probs(bad, Layer::Global),
             [
-                "settings.forkLimit: expected a whole number of 0 or more, got 1.5",
+                "settings.branchBudget: expected a number of 0 or more, got -5",
+                "settings.interval: expected a whole number of 0 or more, got 1.5",
                 r#"settings.reviewRounds: expected a whole number of 0 or more, got "2.5""#,
-                "settings.stepBudget: expected a number, got true",
+                "settings.stepBudget: expected a number of 0 or more, got true",
                 "settings.stepTimeout: expected a number of 0 or more, got -1",
             ]
         );

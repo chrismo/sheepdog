@@ -1072,7 +1072,7 @@ old_super() {
   write_global '{"settings":{"stepBudget":"abc"}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "$output" == *'settings.stepBudget: expected a number, got "abc"' ]]
+  [[ "$output" == *'settings.stepBudget: expected a number of 0 or more, got "abc"' ]]
 }
 
 @test "settings.branchBudget (USD, 25) and forkLimit (tokens, 100000): defaults, per branch, typed (#121)" {
@@ -1088,11 +1088,18 @@ old_super() {
   [[ "$output" == *'settings.forkLimit: expected a whole number of 0 or more, got "lots"' ]]
 }
 
-@test "validate: a count refuses a fraction; seconds and the budgets take one" {
+@test "validate: counts and interval refuse a fraction; other seconds and the budgets take one" {
   write_global '{"settings":{"reviewRounds":1.5,"interval":1.5,"stepBudget":2.5}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [ "$output" = "sd config: $SHEEPDOG_CONFIG: settings.reviewRounds: expected a whole number of 0 or more, got 1.5" ]
+  [ "${lines[0]}" = "sd config: $SHEEPDOG_CONFIG: settings.interval: expected a whole number of 0 or more, got 1.5" ]
+  [ "${lines[1]}" = "sd config: $SHEEPDOG_CONFIG: settings.reviewRounds: expected a whole number of 0 or more, got 1.5" ]
+  [ "${#lines[@]}" -eq 2 ]
+  write_global '{}'
+  run "$SD_CONFIG" set --global settings.botTimeout 0.5
+  [ "$status" -eq 0 ]
+  run "$SD_CONFIG" set --global --json settings.stepBudget -1
+  [ "$status" -eq 1 ]
 }
 
 @test "settings.botTimeout: seconds to wait for the review bot, 3600 by default" {
