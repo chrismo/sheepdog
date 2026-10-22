@@ -28,9 +28,9 @@ fn blocking(findings: &[Value]) -> usize {
     findings.iter().filter(|f| at(f, "severity").as_str() != Some("nit")).count()
 }
 
-/// <prev>'s round plus one; none when it has no usable round. A review of
-/// the same HEAD (or the same change rebased, as sd state judged it) isn't a
-/// new round.
+/// <prev>'s round plus one, counting from 0 when <prev> has no usable round.
+/// A review of the same HEAD (or the same change rebased, as sd state judged
+/// it) isn't a new round.
 fn round(prev: &str, at_head: bool) -> u64 {
     let last = one_value(prev).and_then(|r| at(&r, "round").as_u64()).unwrap_or(0);
     if at_head {
@@ -95,7 +95,7 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     let mut c = Command::new("sh");
     c.args(["-c", &reviewer]).current_dir(&wt);
     c.env("SHEEPDOG_BASE", &base).env("SHEEPDOG_HEAD", &head).env("SHEEPDOG_TASK", &task);
-    let o = proc::timeout(secs, c, false);
+    let o = proc::timeout_passing_stderr(secs, c);
     eprint!("{}", o.stderr);
     if !o.ok {
         die(format!("the reviewer failed ({reviewer}); nothing pinned"));

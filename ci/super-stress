@@ -11,12 +11,11 @@
 # the output of the first.
 #
 # With no arguments, the built-in list: every `read -r -d '' NAME <<'EOF'`
-# query in libexec/sd-act, each over its ci/fixtures/*.json
-# input; the field picks
-# (prc_val) and one-line queries use nothing these don't. Mode json (default)
-# runs the query through prc_json, line through prc_line. One line per
-# filter, then "super-stress: <filters> filters, <runs> runs each, <failures>
-# failures"; exit 1 on any failure.
+# query in libexec/sd-act, each over its ci/fixtures/*.json input; the
+# field picks (prc_val) and one-line queries use nothing these don't. Mode
+# json (default) runs the query through prc_json, line through prc_line. One
+# line per filter, then "super-stress: <filters> filters, <runs> runs each,
+# <failures> failures"; exit 1 on any failure.
 
 set -uo pipefail
 

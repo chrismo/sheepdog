@@ -144,6 +144,15 @@ fn pass_signals_on() {
     });
 }
 
+/// Where timeout's command's stderr goes: Out's stderr, Out's stdout, or
+/// straight to sd's, as it's written.
+#[derive(Clone, Copy, PartialEq)]
+enum Stderr {
+    Piped,
+    Merged,
+    Passed,
+}
+
 /// <c> in its own process group, stdin from /dev/null. At the deadline the
 /// whole group gets TERM (an agent's subprocesses too), KILL a second later
 /// if the command is still running, and it's Out's timed_out: status 124,
@@ -151,7 +160,18 @@ fn pass_signals_on() {
 /// command printed till then. A HUP, INT or TERM to sd ends the group the
 /// same way, then sd.
 pub fn timeout(secs: u64, c: Command, merged: bool) -> Out {
-    deferring_signals(|| timeout_in_group(secs, c, merged, &|| CAUGHT.load(Ordering::SeqCst) != 0))
+    in_group(secs, c, if merged { Stderr::Merged } else { Stderr::Piped })
+}
+
+/// timeout with the command's stderr written to sd's as it comes, as bash's
+/// with_timeout left it: a long step's progress shows while it runs. Out's
+/// stderr has only the "timed out" line.
+pub fn timeout_passing_stderr(secs: u64, c: Command) -> Out {
+    in_group(secs, c, Stderr::Passed)
+}
+
+fn in_group(secs: u64, c: Command, stderr: Stderr) -> Out {
+    deferring_signals(|| timeout_in_group(secs, c, stderr, &|| CAUGHT.load(Ordering::SeqCst) != 0))
 }
 
 /// <f>, with a HUP, INT or TERM to sd held till it returns, then sd ends of
@@ -171,16 +191,17 @@ pub fn deferring_signals<T>(f: impl FnOnce() -> T) -> T {
 
 /// <stopped>: sd got a signal to pass on; the group ends as at the deadline,
 /// but it's the command's status, not a timeout.
-fn timeout_in_group(secs: u64, mut c: Command, merged: bool, stopped: &dyn Fn() -> bool) -> Out {
+fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn() -> bool) -> Out {
     let prog = c.get_program().to_string_lossy().into_owned();
     c.stdin(Stdio::null()).process_group(0);
-    let child = if merged {
+    let child = if stderr == Stderr::Merged {
         let pipe = std::io::pipe().and_then(|(r, w)| Ok((r, w.try_clone()?, w)));
         let Ok((r, w1, w2)) = pipe else { return not_found(&prog) };
         c.stdout(w1).stderr(w2);
         c.spawn().map(|ch| (ch, Some(r)))
     } else {
-        c.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let err = if stderr == Stderr::Passed { Stdio::inherit() } else { Stdio::piped() };
+        c.stdout(Stdio::piped()).stderr(err);
         c.spawn().map(|ch| (ch, None))
     };
     // The command's copies of the merged pipe's write ends close with it.
@@ -246,7 +267,7 @@ fn timeout_in_group(secs: u64, mut c: Command, merged: bool, stopped: &dyn Fn() 
         timed_out,
     };
     if o.timed_out {
-        let to = if merged { &mut o.stdout } else { &mut o.stderr };
+        let to = if stderr == Stderr::Merged { &mut o.stdout } else { &mut o.stderr };
         to.push_str(&format!("timed out after {secs}s\n"));
     }
     o
@@ -341,12 +362,28 @@ mod tests {
         let stop = || start.elapsed() > Duration::from_millis(300);
         let mut c = Command::new("sh");
         c.args(["-c", "echo hi; sleep 30"]);
-        let o = timeout_in_group(20, c, false, &stop);
+        let o = timeout_in_group(20, c, Stderr::Piped, &stop);
         assert!(start.elapsed() < Duration::from_secs(10), "waited {:?}", start.elapsed());
         assert!(!o.timed_out);
         assert_eq!(o.code, 143);
         assert_eq!(o.stdout, "hi\n");
         assert_eq!(o.stderr, "");
+    }
+
+    #[test]
+    fn timeout_passing_stderr_leaves_it_to_sds_and_keeps_stdout() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo out; echo err >&2; exit 3"]);
+        let o = timeout_passing_stderr(5, c);
+        assert_eq!((o.ok, o.code, o.timed_out), (false, 3, false));
+        assert_eq!(o.stdout, "out\n");
+        assert_eq!(o.stderr, "");
+        let mut c = Command::new("sh");
+        c.args(["-c", "echo early; sleep 30"]);
+        let o = timeout_passing_stderr(1, c);
+        assert_eq!((o.code, o.timed_out), (124, true));
+        assert_eq!(o.stdout, "early\n");
+        assert_eq!(o.stderr, "timed out after 1s\n");
     }
 
     #[test]
