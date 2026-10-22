@@ -1,6 +1,5 @@
 // enroll, unenroll, forget and unregister: what sd watch and sd state keep
-// for a branch and a repo. libexec/sd-act's enroll_mark and record_lineage
-// still do the same for ship: change both.
+// for a branch and a repo.
 
 use super::{die, no_base_why, state_json};
 use crate::git::{self, git, git_input, git_ok, git_out, is_ancestor, main_worktree, rev, stacked_on, stacked_unclear, worktree_for};
@@ -196,9 +195,8 @@ pub fn forget(b: &str, remove: bool) {
     unenroll(b);
     let pins = must(git(".", &["for-each-ref", "--format=delete %(refname)", &format!("refs/sheepdog/{b}/")])).stdout;
     must(git_input(".", &["update-ref", "--stdin"], Some(pins.as_bytes())));
-    // libexec/sd-act's describe_file
-    if let Some(dir) = git::common_dir() {
-        let _ = std::fs::remove_file(format!("{dir}/sheepdog/{}.describe.json", b.replace('/', "__")));
+    if let Some(f) = super::describe::file(b) {
+        let _ = std::fs::remove_file(f);
     }
     println!("forgot {b}");
 }

@@ -213,10 +213,6 @@ protected_hits() {
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
 # pi has no per-command bash rules, so no bash at all.
 HARNESS_PI_TOOLS="read,edit,write"
-# Read-only steps (describe) set HARNESS_CLAUDE_ALLOW to this and
-# HARNESS_PI_TOOLS to "read" before calling harness_run. sd review-local's is
-# src/harness.rs's READONLY_ALLOW, the same list.
-HARNESS_READONLY_ALLOW="Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)"
 
 # harness_run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]
 # Runs one headless agent step in $PWD; prints the step's JSON result.
@@ -310,70 +306,4 @@ running_state() {
     rm -f "$f"
     echo null
   fi
-}
-
-# stacked_on <branch> <remote> <default>: the branch <branch> was made from when
-# no one recorded it (a plain git branch from another's tip), found by the
-# commits they share that aren't on <default>, local or remote. Prints
-# "<name> <base>", base being where they forked. Exit 1: none; 2: a tie, the
-# names printed; 3: the ones found have commits of their own past the fork
-# too, so git can't say which was made from which (a parent that moved on looks
-# like a child), the names printed. Git only, and bounded for sd state:
-# candidates are local branches and their remote-tracking refs that hold
-# <branch>'s oldest commit past the default, two rev-lists and a merge-base
-# each, plus one read of <branch>'s reflog. A branch holding all of <branch>'s
-# commits is its child, not its parent, and so is one whose sd-parent names
-# <branch>, and one forked where <branch>'s reflog has it arrive other than by
-# being made, renamed, reset or fast-forwarded there (a child or a backup). At
-# equal shared commits, one with none of its own beats one with some: a
-# sibling shares the parent's commits too.
-stacked_on() {
-  local b=$1 remote=$2 def="refs/remotes/$2/$3" oldest total ref name own theirs shared score fork sha msg
-  local best="" best_base="" best_score=0 best_theirs=0
-  local -A local_branch=() tie=() reached=()
-  local -a not=("^$def")
-  [[ $b != "$3" ]] || return 1
-  if git show-ref -q --verify "refs/heads/$3"; then not+=("^refs/heads/$3"); fi
-  oldest=$(git rev-list --topo-order --reverse "refs/heads/$b" "${not[@]}" 2>/dev/null) || return 1
-  oldest=${oldest%%$'\n'*}
-  [[ -n $oldest ]] || return 1
-  total=$(git rev-list --count "refs/heads/$b" "${not[@]}")
-  while read -r name; do local_branch[$name]=1; done < <(git for-each-ref --format='%(refname:short)' refs/heads)
-  while read -r sha msg; do
-    case $msg in
-      "branch: Created from "* | "Branch: renamed "* | "reset: moving to "* | "branch: Reset to "* | *": Fast-forward") ;;
-      *) reached[$sha]=1 ;;
-    esac
-  done < <(git reflog show --format='%H %gs' "refs/heads/$b" -- 2>/dev/null)
-  while read -r ref; do
-    name=${ref#refs/heads/}; name=${name#refs/remotes/"$remote"/}
-    [[ $name != "$b" && $name != "$3" && -n ${local_branch[$name]:-} ]] || continue
-    own=$(git rev-list --count "refs/heads/$b" "${not[@]}" "^$ref")
-    (( own > 0 )) || continue
-    [[ $(git config --get "branch.$name.sd-parent") != "$b" ]] || continue
-    theirs=$(git rev-list --count "$ref" "${not[@]}" "^refs/heads/$b")
-    fork=$(git merge-base "refs/heads/$b" "$ref")
-    [[ -z ${reached[$fork]:-} ]] || continue
-    shared=$(( total - own ))
-    score=$(( shared * 2 + (theirs == 0) ))
-    if (( score > best_score )); then
-      best=$name best_base=$fork best_score=$score best_theirs=$theirs tie=()
-    elif (( score == best_score )) && [[ $name != "$best" ]]; then
-      tie[$name]=1
-    fi
-  done < <(git for-each-ref --contains "$oldest" --format='%(refname)' refs/heads "refs/remotes/$remote")
-  [[ -n $best ]] || return 1
-  if (( best_theirs > 0 || ${#tie[@]} )); then
-    printf '%s\n' "$best" "${!tie[@]}" | sort | paste -sd' ' -
-    (( best_theirs == 0 )) && return 2 || return 3
-  fi
-  echo "$best $best_base"
-}
-
-# stacked_unclear <branch> <names> <default>: why stacked_on exited 3, and the
-# git config either way.
-stacked_unclear() {
-  local name=$2
-  [[ $name != *" "* ]] || name="<name>"
-  echo "shares commits with ${2// / or }, and each has its own since, so git can't tell which, if either, was made from the other: git config branch.$1.sd-parent $name if $1 was, or git config branch.$1.sd-parent $3 if not"
 }

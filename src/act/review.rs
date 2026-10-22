@@ -20,7 +20,7 @@ fn must(o: proc::Out) {
     }
 }
 
-fn short(s: &str) -> &str {
+pub(super) fn short(s: &str) -> &str {
     s.get(..7).unwrap_or(s)
 }
 

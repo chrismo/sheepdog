@@ -20,8 +20,7 @@ use std::time::Instant;
 // and talks to GitHub.
 const CLAUDE_DENY: &str = "Bash(git commit *),Bash(git push *),Bash(gh *)";
 
-/// A read-only step's tools (review, describe): lib/sheepdog.sh's
-/// HARNESS_READONLY_ALLOW, which the bash describe still uses, and "read".
+/// A read-only step's tools (review, describe), and pi's "read".
 pub const READONLY_ALLOW: &str = "Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)";
 pub const READONLY_PI_TOOLS: &str = "read";
 

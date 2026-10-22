@@ -121,7 +121,7 @@ fn onto_default(s: &Value) -> Option<String> {
     eq(s, "sync.target", "sync.default").then(|| t(s, "sync.default"))
 }
 
-fn parent_to_default(b: &str, s: &Value) {
+pub(super) fn parent_to_default(b: &str, s: &Value) {
     let Some(default) = onto_default(s) else { return };
     let key = format!("branch.{b}.sd-parent");
     if git_out(".", &["config", "--get", &key]).unwrap_or_default().is_empty() {
@@ -140,7 +140,7 @@ fn must(o: proc::Out) {
     }
 }
 
-fn state(dir: &str, b: &str) -> Value {
+pub(super) fn state(dir: &str, b: &str) -> Value {
     state_json(dir, b).unwrap_or_else(|e| {
         eprint!("{e}");
         die("sd state failed")
