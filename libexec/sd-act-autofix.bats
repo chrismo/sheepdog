@@ -2,10 +2,10 @@
 
 bats_require_minimum_version 1.5.0
 
-# Test suite for `sd act autofix` (A11) as bash still runs it: --help, and
-# implement, which runs autofix when verify fails, then verifies again
+# Test suite for `sd act autofix` (A11) as the agent steps run it: --help,
+# and implement, which runs autofix when verify fails, then verifies again
 # (address hooks in the same way, through the same function). The verb
-# itself is Rust, tested in tests/act_commands.rs (#202).
+# itself is tested in tests/act_commands.rs (#202).
 #
 # Real git; autofix commands are shell one-liners. gh is a stub that fails;
 # claude is a stub whose edit $FX/agent makes, for the implement hook.

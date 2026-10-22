@@ -1,5 +1,6 @@
-# SuperDB queries and config reads for the bash verbs. Sourced by sd act;
-# needs bash 5 and super 0.3.0. SuperDB's edges:
+# SuperDB queries and config reads for the bash verbs, which are all Rust now
+# (#203): ci/super-stress, lib/sheepdog.sh and tests/state.rs still source
+# it. Needs bash 5 and super 0.3.0. SuperDB's edges:
 # AGENTS.md, "SuperDB notes".
 #
 # Every function returns 1 on an error (message on stderr) and never exits:

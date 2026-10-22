@@ -1,8 +1,8 @@
 // The running marker (#170): while an agent step runs on a branch, the
 // branch's file says so, one line: "<pid> <step> <start time> <the pid's
-// proc_start>". sd state reads it. lib/sheepdog.sh's running_hold writes the
-// same marker for bash sd act's steps, with its own $BASHPID, and exports
-// RUNNING_HELD=<branch> so the steps it runs leave it alone.
+// proc_start>". sd state reads it. lib/sheepdog.sh's running_hold, which
+// only lib/sheepdog.bats runs now, writes the same marker with its own
+// $BASHPID, and exports RUNNING_HELD=<branch> as holding does.
 
 use crate::val::t;
 use crate::{git, proc, time};

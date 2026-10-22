@@ -1,7 +1,5 @@
 // verify (A10) and autofix (A11), and implement's and ci-fix's hook into
-// them. libexec/sd-act's verify_run, autofix_run and verify_autofix still do
-// the same for the bash agent steps: change both. One difference until #203
-// ports those: there, a failed git status still reads as a clean tree.
+// them.
 
 use super::{cfg, die, plural};
 use crate::git::{git, git_out, worktree_for};

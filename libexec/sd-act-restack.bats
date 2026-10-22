@@ -2,12 +2,11 @@
 
 bats_require_minimum_version 1.5.0
 
-# Test suite for `sd act restack --resolve` (J1), which is still bash, and
-# --help: move a branch onto its parent (or the default branch once the parent
-# merged) with `rebase --onto`, an agent resolving the conflicts, check that
-# its own change came through unchanged, and move refs/sheepdog/<b>/base.
-# Never pushes. Plain restack and retarget are Rust, tested in
-# tests/act_restack.rs (#202).
+# Test suite for `sd act restack --resolve` (J1) and --help: move a branch
+# onto its parent (or the default branch once the parent merged) with
+# `rebase --onto`, an agent resolving the conflicts, and move
+# refs/sheepdog/<b>/base. Never pushes. Plain restack and retarget are
+# tested in tests/act_restack.rs (#202).
 #
 # Real git (a bare origin, our clone, and $TMP/other for other people's
 # pushes) and the real sd state. Fake gh: answers from $GH/<branch>.json, else

@@ -1,9 +1,8 @@
-// sd act: the verbs that change a branch's PR. libexec/sd-act still serves
-// --help and the verbs not ported yet, and forwards the ported ones here
-// after its own prelude (#202), so this repeats the prelude's checks for a
-// run that doesn't come through it.
+// sd act: the verbs that change a branch's PR (src/act_help.txt).
+// libexec/sd-act links here.
 
 mod address;
+mod answer;
 mod attach;
 mod bookkeeping;
 mod ci_fix;
@@ -13,6 +12,7 @@ mod github;
 mod hold;
 mod implement;
 mod push;
+mod resolve;
 mod restack;
 mod review;
 mod ship;
@@ -24,6 +24,8 @@ use crate::proc;
 use crate::val::{at, on, sj, t};
 use serde_json::Value;
 use std::process::ExitCode;
+
+const HELP: &str = include_str!("../act_help.txt");
 
 pub fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("sd act: {msg}");
@@ -51,7 +53,7 @@ pub fn repo_remote() -> String {
     or_die(crate::config::get_global("settings.remote", false))
 }
 
-/// The flags every verb shares, as the bash prelude parses them.
+/// The flags every verb shares.
 #[derive(Debug, Default, PartialEq)]
 pub struct Args {
     pub force: bool,
@@ -84,13 +86,11 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
             "--resolve" => a.resolve = true,
             "--no-implement" => a.no_implement = true,
             "--question" => a.question = true,
-            // --answer is bash answer's, handing the step it resumes chrismo's answer.
-            o @ ("--parent" | "--harness" | "--id" | "--answer") => {
+            o @ ("--parent" | "--harness" | "--id") => {
                 let v = it.next().ok_or(format!("{o} needs a value"))?.clone();
                 match o {
                     "--parent" => a.parent = v,
                     "--harness" => a.harness = v,
-                    "--answer" => a.answer = v,
                     _ => a.ids.push(v),
                 }
             }
@@ -105,7 +105,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
 }
 
 impl Args {
-    /// The prelude's checks once it knows it's in a repo: start's and answer's
+    /// The checks once it's known to be in a repo: start's and answer's
     /// positionals, and the flags that are one verb's.
     pub fn check(&mut self, verb: &str) -> Result<(), String> {
         let n = self.positionals.len();
@@ -122,20 +122,10 @@ impl Args {
             }
             (self.answer, self.branch) = (self.positionals[0].clone(), second);
         }
-        let one_verb: [(bool, &str, &[&str]); 4] = [
-            (self.accept, "--accept", &["review"]),
-            (self.remove, "--remove", &["forget"]),
-            (self.question, "--question", &["ack"]),
-            (!self.answer.is_empty() && verb != "answer", "--answer", &["implement", "address", "ci-fix"]),
-        ];
+        let one_verb = [(self.accept, "--accept", "review"), (self.remove, "--remove", "forget"), (self.question, "--question", "ack")];
         for (set, flag, only) in one_verb {
-            if set && !only.contains(&verb) {
-                let verbs = match only.split_last() {
-                    Some((last, [])) => last.to_string(),
-                    Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
-                    None => String::new(),
-                };
-                return Err(format!("{flag} is for sd act {verbs} only"));
+            if set && verb != only {
+                return Err(format!("{flag} is for sd act {only} only"));
             }
         }
         Ok(())
@@ -175,8 +165,6 @@ pub fn lock_sweep(b: &str) {
 }
 
 /// An agent step on an attached branch is refused; --force runs it anyway.
-/// libexec/sd-act's attached_check does the same for the bash agent steps:
-/// change both.
 pub fn attached_check(b: &str, doing: &str, force: bool) {
     let lock = git_out(".", &["config", "--get", &format!("branch.{b}.sd-lock")]).unwrap_or_default();
     if lock.is_empty() {
@@ -196,8 +184,8 @@ pub fn plural(n: usize, word: &str) -> String {
     }
 }
 
-/// sd state --json <b>, run in <dir> as sd-state from PATH, as the bash ran
-/// it: the suites put a fake one there. Err is what it said on stderr; on
+/// sd state --json <b>, run in <dir> as sd-state from PATH: the suites put a
+/// fake one there. Err is what it said on stderr; on
 /// success its stderr (warnings) passes through.
 pub fn state_json(dir: &str, b: &str) -> Result<Value, String> {
     let o = proc::run("sd-state", &["--json", b], Some(dir), None);
@@ -224,7 +212,14 @@ pub fn no_base_why(state: &Value, remote: &str) -> String {
 }
 
 pub fn run(argv: &[String]) -> ExitCode {
-    let Some((verb, rest)) = argv.split_first() else { die("no verb (sd act --help lists them)") };
+    let Some((verb, rest)) = argv.split_first() else {
+        eprint!("{HELP}");
+        return ExitCode::from(1);
+    };
+    if verb == "-h" || verb == "--help" {
+        print!("{HELP}");
+        return ExitCode::SUCCESS;
+    }
     let mut a = parse(rest).unwrap_or_else(|e| die(e));
     if !git::in_repo() {
         die("not a git repository");
@@ -253,7 +248,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "unregister" => bookkeeping::unregister(&a.branch, a.force),
         "ack" => github::ack(&b, &a.ids, a.question),
         "trigger" => github::trigger(&b, &remote, a.force),
-        "restack" if !a.resolve => restack::restack(&b, &remote, a.force),
+        "answer" => answer::answer(&b, &remote, &a),
+        "restack" => restack::restack(&b, &remote, &a),
         "retarget" => restack::retarget(&b),
         "review" => review::review(&b, &remote, a.accept, a.force),
         "attach" => attach::attach(&b, &a.harness, a.force),
@@ -263,7 +259,6 @@ pub fn run(argv: &[String]) -> ExitCode {
         "describe" => describe::describe(&b, &remote, &a),
         "ship" => ship::ship(&b, &remote, &a),
         "ci-fix" => ci_fix::ci_fix(&b, &remote, &a),
-        // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
     ExitCode::SUCCESS
@@ -342,13 +337,9 @@ mod tests {
     }
 
     #[test]
-    fn answer_hands_implement_address_and_ci_fix_the_answer_and_no_other_verb() {
-        let a = parsed("implement", &["--answer", "-x, not y", "feat"]).unwrap();
-        assert_eq!((a.answer.as_str(), a.branch.as_str()), ("-x, not y", "feat"));
-        assert_eq!(parsed("address", &["--answer", "bar"]).unwrap().answer, "bar");
-        let a = parsed("ci-fix", &["--answer", "yes", "feat"]).unwrap();
-        assert_eq!((a.answer.as_str(), a.branch.as_str()), ("yes", "feat"));
-        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement, address or ci-fix only".into()));
+    fn the_answer_is_answers_own_positional_not_a_flag() {
+        assert_eq!(parse(&argv(&["--answer", "yes"])), Err("unknown option: --answer".into()));
+        assert_eq!(parsed("implement", &["yes"]).unwrap().answer, "");
     }
 
     #[test]

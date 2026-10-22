@@ -1,7 +1,5 @@
 // The CI config hold (#124): an agent step's commit that touches a protected
-// path isn't pushed until chrismo has looked. libexec/sd-act's hold_* and
-// lib/sheepdog.sh's protected_paths still do the same for restack --resolve:
-// change both.
+// path isn't pushed until chrismo has looked.
 
 use super::{die, repo_remote};
 use crate::git::{git, git_out, is_ancestor, rev};
@@ -95,7 +93,7 @@ fn hold_paths(b: &str, remote: &str, doing: &str) -> Option<Vec<String>> {
 /// on the remote-tracking ref was pushed during the step, by the agent (the
 /// deny on git push is no guarantee either): a hold would only be cleared as
 /// published, unseen, so that fails loudly instead.
-fn hold_after(b: &str, base: &str, files: &[String]) {
+pub(super) fn hold_after(b: &str, base: &str, files: &[String]) {
     let hits = protected_hits(&protected_paths(b, base), files);
     if hits.is_empty() {
         return;

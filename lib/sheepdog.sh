@@ -1,9 +1,8 @@
-# Shared by sd act's bash verbs. Source it after lib/config.sh; needs bash 5
-# and super 0.3.0.
+# What sd act's bash verbs shared. No verb sources it since the last of them
+# went to Rust (#203); lib/sheepdog.bats still tests what's left, and both go
+# together. Source it after lib/config.sh; needs bash 5 and super 0.3.0.
 #
-# harness_run runs the harness adapter, src/harness.rs: the per-harness code,
-# apart from the tool-rule wording the bash agent steps still put in their
-# prompts (#79 Design record). with_timeout is a shared helper.
+# harness_run runs the harness adapter, src/harness.rs (#79 Design record).
 
 SD_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/target/release/sd"
 
@@ -25,21 +24,6 @@ with_timeout() {
     waitpid $pid, 0;
     exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
   ' "$@"
-}
-
-# remote_default <remote>: the default branch without asking GitHub: what the
-# remote says its HEAD is, else refs/remotes/<remote>/HEAD, else main. sd act
-# push reads it, and so does sd state when GitHub can't answer, so the two
-# agree on what the default branch is (#159).
-remote_default() {
-  local ref
-  ref=$(with_timeout 10 git ls-remote --symref "$1" HEAD 2>/dev/null \
-          | sed -n 's|^ref: refs/heads/\(.*\)	HEAD$|\1|p') || true
-  if [[ -z $ref ]]; then
-    ref=$(git symbolic-ref -q --short "refs/remotes/$1/HEAD" 2>/dev/null || true)
-    ref=${ref#"$1"/}
-  fi
-  echo "${ref:-main}"
 }
 
 # repo_remote: the remote sheepdog fetches, pushes and asks GitHub about:
@@ -71,17 +55,6 @@ gh_repo() {
   if [[ -n $repo ]]; then export GH_REPO=$repo; fi
 }
 
-# commits_not_ours <reflog> <sha>: how many commits of <sha> no reflog entry reaches.
-commits_not_ours() {
-  sed -n 's/^./^&/p' <<<"$1" | git rev-list --count --stdin "$2"
-}
-
-# worktree_for <branch>: the worktree that has refs/heads/<branch> checked out, if any.
-worktree_for() {
-  git worktree list --porcelain \
-    | awk -v ref="refs/heads/$1" '/^worktree / { wt = substr($0, 10) } $0 == "branch " ref { print wt; exit }'
-}
-
 # worktree_mark <worktree>: a hash of what's uncommitted there, staged or not,
 # untracked files' contents included; writes nothing (no objects, no index
 # refresh). The same mark: nothing in the worktree changed. Only regular
@@ -100,37 +73,6 @@ worktree_mark() {
     | git -C "$1" hash-object --stdin
 }
 
-# An agent step's standing question (#167): refs/sheepdog/<b>/question, a
-# blob {head, step, mark, text}: what the step (implement, review-fix,
-# address, ci-fix) asked chrismo, at the HEAD and worktree_mark it left. It
-# stands while both are unchanged, until sd act ack --question drops it.
-# question_state <branch> <head>: the record as sd state shows it, {step, sha,
-# text, at_head}; nothing with no record, status 1 for one that isn't one.
-question_state() {
-  local b=$1 rec h m wt mark at=false
-  rec=$(git cat-file blob "refs/sheepdog/$b/question" 2>/dev/null) || return 0
-  rec=$(prc_json 'where kind(this) == "record" and is(head, <string>) and is(step, <string>)
-                    and is(mark, <string>) and is(text, <string>)' "$rec" 2>/dev/null) && [[ -n $rec ]] || return 1
-  read -r h m < <(prc_line 'values f"{head} {mark}"' "$rec")
-  if [[ $h == "$2" ]] && wt=$(worktree_for "$b") && [[ -n $wt ]] && mark=$(worktree_mark "$wt") && [[ $mark == "$m" ]]; then
-    at=true
-  fi
-  prc_json "values {step, sha: head, text, at_head: $at}" "$rec"
-}
-
-# made_here <range>: every commit in <range> was authored and committed by
-# this repo's user. A commit, amend, cherry-pick or rebase here sets the
-# committer (a fast-forward merge, pull or rebase onto the remote keeps the
-# original one); the author survives a rebase, so a colleague's commit that a
-# restack replayed is still theirs. Only commits made here may be dropped by
-# a force-push (#86). No user.email: nothing is.
-made_here() {
-  local me people
-  me=$(git config user.email) && [[ -n $me ]] || return 1
-  people=$(git log --format='%ae%n%ce' "$1") || return 1
-  [[ -z $(grep -vxF "$me" <<<"$people") ]]
-}
-
 # step_guidance <setting> <branch> <base> <default-file>: the guidance part of a
 # step's prompt: the file settings.<setting> names; else .sheepdog/<name>.md
 # in the <base> commit, <name> being the setting without "Prompt", kebab-cased
@@ -138,9 +80,7 @@ made_here() {
 # read from the <base> commit, which the branch's agent can't rewrite; an
 # absolute one from disk. A named file that is missing is an error, never the
 # default. An empty <base> means none can be trusted: no .sheepdog/ lookup,
-# and a relative path is refused. Every configurable step prompt goes through
-# here or through its Rust copy, src/guidance.rs (sd review-local's); this one
-# goes when sd act's agent steps are ported (#203).
+# and a relative path is refused. src/guidance.rs is the copy sd runs.
 step_guidance() {
   local path top conv
   path=$(prc_get "settings.$1" "$2" false) || return 1
@@ -206,10 +146,9 @@ protected_hits() {
   done <<<"$2"
 }
 
-# The tools harness_run gives the agent, here for the steps that add to them;
-# src/harness.rs's CLAUDE_ALLOW and PI_TOOLS are the same lists for
-# implement: change both. Claude may read and edit; the pipeline commits,
-# pushes and talks to GitHub.
+# The tools harness_run gives the agent: src/harness.rs's CLAUDE_ALLOW and
+# PI_TOOLS. Claude may read and edit; the pipeline commits, pushes and talks
+# to GitHub.
 HARNESS_CLAUDE_ALLOW="Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)"
 # pi has no per-command bash rules, so no bash at all.
 HARNESS_PI_TOOLS="read,edit,write"
@@ -228,10 +167,6 @@ harness_run() {
 # harness_tally <harness> <session-id>: what the session's transcript says, as
 # one JSON object; {} with no transcript. context is its last turn's tokens.
 harness_tally() { "$SD_BIN" harness tally "$@"; }
-
-# main_worktree: the repo's main worktree, where sheepdog's shared files live
-# and the name usage.sup knows the repo by.
-main_worktree() { git worktree list --porcelain | sed -n '1s/^worktree //p'; }
 
 # running_file <branch>: the marker kept while an agent step runs on
 # <branch>, one line: "<pid> <step> <start time> <the pid's proc_start>".
@@ -278,18 +213,6 @@ running_free() {
   [[ $pid != "$BASHPID" ]] || return 0
   echo "$step is running on $1 (pid $pid, since $since): not starting another agent step" >&2
   return 1
-}
-
-# running_during <branch> <step> <cmd...>: <cmd> with running_hold's marker,
-# or under the one this process or its parent already holds for <branch>.
-# Under set -e a failing <cmd> exits before the release (see running_hold).
-running_during() {
-  local rc
-  [[ ${RUNNING_HELD:-} != "$1" ]] || { "${@:3}"; return; }
-  running_hold "$1" "$2" || return 1
-  "${@:3}"; rc=$?
-  running_release "$1"
-  return "$rc"
 }
 
 # running_state <branch>: the agent step running on <branch>, as JSON

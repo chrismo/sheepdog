@@ -20,7 +20,6 @@ use crate::val::{at, n, on, sj, t, text};
 use regex::Regex;
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::DirBuilderExt;
 use std::path::PathBuf;
 
 const CI_FIX_SCHEMA: &str = r#"{"type": "object", "required": ["outcome", "commit_message", "summary"],
@@ -64,27 +63,12 @@ fn rwx_failed(out: &str) -> Vec<(String, String)> {
     failed(&results, "Tasks", "Status.Result", &["failed"]).iter().map(task).filter(|(_, id)| !id.is_empty()).collect()
 }
 
-/// A fresh directory for task <i>'s logs: 0700 whatever the umask, as the
-/// bash's mktemp -d made it. A name already taken is someone else's, so it's
-/// skipped, never reused or removed.
-fn log_dir(i: usize) -> Option<PathBuf> {
-    for n in 0..100 {
-        let dir = std::env::temp_dir().join(format!("sd-ci-fix-{}-{i}-{n}", std::process::id()));
-        match fs::DirBuilder::new().mode(0o700).create(&dir) {
-            Ok(()) => return Some(dir),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(_) => return None,
-        }
-    }
-    None
-}
-
 /// The failed tasks' logs of RWX run <run>.
 fn rwx_logs(run: &str) -> String {
     let mut logs = String::new();
     let results = proc::run("rwx", &["results", run, "--json"], None, None);
     for (i, (key, id)) in rwx_failed(&results.stdout).iter().enumerate() {
-        let Some(dir) = log_dir(i) else { continue };
+        let Some(dir) = proc::private_dir(&format!("sd-ci-fix-{i}")) else { continue };
         if proc::run("rwx", &["logs", id, "--output", &dir.to_string_lossy()], None, None).ok {
             let mut files: Vec<PathBuf> = fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
             files.retain(|f| f.is_file() && f.extension().is_some_and(|x| x == "log"));
@@ -335,28 +319,6 @@ pub fn ci_fix(b: &str, remote: &str, a: &Args) {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn log_dir_is_private_whatever_the_umask() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = log_dir(999).unwrap();
-        let mode = fs::metadata(&dir).unwrap().permissions().mode();
-        fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(mode & 0o777, 0o700);
-    }
-
-    #[test]
-    fn log_dir_never_reuses_or_removes_a_path_someone_else_made() {
-        // Someone else's directory where log_dir's first choice would be.
-        let theirs = log_dir(998).unwrap();
-        fs::write(theirs.join("keep"), "x").unwrap();
-        let dir = log_dir(998).unwrap();
-        let kept = theirs.join("keep").exists();
-        fs::remove_dir_all(&dir).unwrap();
-        fs::remove_dir_all(&theirs).unwrap();
-        assert_ne!(dir, theirs);
-        assert!(kept);
-    }
 
     #[test]
     fn judged_flaky_only_for_a_flaky_record_on_the_same_sha() {

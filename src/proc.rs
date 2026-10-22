@@ -2,7 +2,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Once};
@@ -101,6 +101,22 @@ pub fn code(st: ExitStatus) -> i32 {
 pub fn executable(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+/// A fresh directory <name>-<pid>-<n> in the temp dir: 0700 whatever the
+/// umask, as mktemp -d makes it. A name already taken is someone else's, so
+/// it's skipped, never reused or removed.
+pub fn private_dir(name: &str) -> Option<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    for n in 0..100 {
+        let dir = std::env::temp_dir().join(format!("{name}-{}-{n}", std::process::id()));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Some(dir),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 // In its own group, a Ctrl-C or a kill of sd doesn't reach timeout's command,
@@ -307,6 +323,27 @@ fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_dir_is_private_whatever_the_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = private_dir("sd-proc-private").unwrap();
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    #[test]
+    fn private_dir_never_reuses_or_removes_a_path_someone_else_made() {
+        let theirs = private_dir("sd-proc-theirs").unwrap();
+        std::fs::write(theirs.join("keep"), "x").unwrap();
+        let dir = private_dir("sd-proc-theirs").unwrap();
+        let kept = theirs.join("keep").exists();
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&theirs).unwrap();
+        assert_ne!(dir, theirs);
+        assert!(kept);
+    }
 
     #[test]
     fn executable_is_a_file_with_an_x_bit() {

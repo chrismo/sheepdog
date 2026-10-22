@@ -1,6 +1,6 @@
 // The guidance part of an agent step's prompt, and the shipped prompts it
-// falls back to. lib/sheepdog.sh's step_guidance is the bash copy, for the
-// steps still in bash.
+// falls back to. lib/sheepdog.sh's step_guidance is the bash copy, which
+// only lib/sheepdog.bats runs now.
 
 use crate::config;
 use crate::git::{git, git_out, strip_nl};

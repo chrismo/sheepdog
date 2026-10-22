@@ -1,0 +1,272 @@
+sd act - verbs that change a branch's PR.
+
+Usage:
+  sd act start    [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]
+  sd act implement [--harness <h>] [<branch>]
+  sd act enroll   [<branch>]
+  sd act unenroll [<branch>]
+  sd act forget   [--remove] [<branch>]
+  sd act unregister [--force] [<path>]
+  sd act address  [--force] [--no-publish] [--harness <h>] [<branch>]
+  sd act ack      [--id <id>]... [--question] [<branch>]
+  sd act answer   [--force] <text> [<branch>]
+  sd act restack  [--force] [--resolve] [<branch>]
+  sd act retarget [<branch>]
+  sd act push     [--force] [<branch>]
+  sd act verify   [<branch>]
+  sd act autofix  [<branch>]
+  sd act ci-fix   [--force] [--no-publish] [--harness <h>] [<branch>]
+  sd act review   [--accept] [<branch>]
+  sd act describe [<branch>]
+  sd act ship     [--force] [<branch>]
+  sd act trigger  [--force] [<branch>]
+  sd act attach   [--force] [--harness <h>] [<branch>]
+
+Examples:
+  cd "$(sd act start fix-login "Fix the login redirect")"   worktree, then the agent builds it
+  sd act start --no-implement --parent fix-login fix-login-tests
+  sd act enroll                      sd watch starts tracking this branch
+  sd act address --no-publish        the agent fixes locally; nothing pushed or posted
+  sd act address --harness pi
+  sd act ack                         after reading sd state --long: the i items are done
+  sd act ack --question              after answering the agent's question in its session
+  sd act answer "revert the test"    answer it headless; the step that asked goes on
+  sd act restack && sd act push      catch up with the parent, then publish
+  sd act restack --resolve           the same, with the agent resolving conflicts
+  sd act review                      verify, then the local reviewer; clean pins local
+  sd act ship                        describe, push, open a draft PR, enroll
+  sd act attach                      open the branch's session yourself; agent steps wait
+
+Verbs:
+  start     a worktree beside the main one, named after <name> with
+            slashes as dashes, on the branch <name> (an existing local
+            branch; else <remote>/<name>, tracked; else new, off the fetched
+            default branch or --parent). Runs the repo's setup hook
+            there, as wt-new does: $GIT_COMMON_DIR/worktree-setup, else git
+            config wt.setup. Records the task and parent, pins base at a new
+            branch's start point, enrolls; then implement unless
+            --no-implement. stdout is only the worktree's path. Spends
+            tokens unless --no-implement
+  implement the agent works the recorded task (J0) in the branch's session;
+            the pipeline commits its edits, then runs verify. Claude may run
+            only read-only git, the verify command when it's plain words (no
+            globs, pipes or quotes), and settings.implementAllow's rules; pi
+            runs nothing. "needs-input" prints the agent's question and
+            leaves the edits uncommitted, for chrismo to answer in the
+            session (sd act attach). Review findings recorded on HEAD (sd
+            act review) go into the prompt, each answered on its own (see
+            review). Spends tokens
+  enroll    mark the branch for sd watch, and register this repo; for a
+            stacked PR, store its parent and base before a merge erases them
+            (or warn that git can't find the base, and how to pin it);
+            with no PR and no sd-parent, store the branch it was made from by
+            a plain git branch (#94), or say why git can't pick one (a tie,
+            or a parent that moved on) and store nothing
+  unenroll  clear the mark
+  forget    the branch is done (merged, abandoned): unenroll it and delete
+            its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
+            and its stored description. --remove, once its PR merged: also
+            remove its worktree and delete the branch, which ends sd state's
+            merged step (#153). Refuses, changing nothing, unless the PR
+            merged with the branch's tip in it, and when the worktree has
+            uncommitted or untracked changes or is attached. The main
+            worktree is never removed: it is switched to the default branch.
+            Ignored files (.env, build output) go with a removed worktree;
+            it names them
+  unregister  take this repo (or <path>, e.g. one that's gone) off the
+            watcher's list; refuses while any branch is still enrolled
+  address   hand owed bot feedback to an agent, then commit, verify, push,
+            reply and resolve; items the agent marks "ask" are left for
+            chrismo. Replies are posted with /commands and @mentions
+            defanged. The agent may run what implement's may. Spends tokens
+  ack       mark owed bot review bodies and comments read, with no reply:
+            every i item, or only the --id ones (ids from sd state --json).
+            --question instead drops only the agent's standing question
+            (below): chrismo has answered it, so NEXT offers the step that
+            asked again
+  answer    chrismo's answer to the agent's standing question (below), with
+            no TUI: the step that asked (implement or its review-fix round,
+            address, ci-fix) resumes the branch's session with <text> as its
+            prompt, goes on from the edits it left, and finishes as that
+            step does (commit, verify, push, replies), under the running
+            marker. The question is dropped once the agent has run; a new
+            needs-input records a new one. Refuses with no question, one
+            that no longer stands, or an address question with no bot item
+            left for the agent. Spends tokens
+  restack   rebase --onto the parent (the default branch once the parent
+            merged), check the branch's own change came through unchanged,
+            else roll back; never pushes. When the old base isn't an
+            ancestor but HEAD fully holds the merged parent (sync.by_tree),
+            it goes by tree merge instead: one commit, committed by
+            whoever runs it. Once the branch lands on the
+            default branch, sd-parent is rewritten to it, unless the PR
+            still targets the parent (retarget does that) or can't be
+            read. A conflict is
+            refused, or with --resolve handed to the agent (J1): it edits
+            the conflicting files in the branch's session, the pipeline
+            adds and continues, up to 3 stops, printing the agent's summary
+            of each; an agent that finds the replayed commit already on the
+            target rolls it back as a wrong base. A resolved rebase skips the
+            unchanged-change check (a resolution changes the diff), so its
+            result is unreviewed: verify runs, and sd state's NEXT says
+            when to review it
+  retarget  after the parent merged: point the PR at the default branch
+            (gh pr edit --base; GitHub usually did it already when the
+            parent's branch was deleted) and rewrite sd-parent to it
+  push      publish: a plain push for new commits; rewritten history, or a
+            pushed commit reset away, is force-pushed with a lease, only
+            over a remote head of our own.
+            Never over commits this copy has never had, --force or not.
+            A reset-away drop is refused when a dropped commit wasn't
+            authored and committed here (take it back with merge
+            --ff-only), or when the worktree has uncommitted or untracked
+            changes (a soft or mixed reset: commit or remove them first).
+            Releases a CI config hold: chrismo pushing is the approval.
+            Refuses the default branch (#159)
+  verify   run settings.verify in the branch's worktree, zero tokens. Pass:
+            one line. Fail: nonzero, the output trimmed to its last 40 lines
+            for the fix step. A command that changes the tree fails too.
+            Gates local review and everything after it
+  autofix   run settings.autofix (formatters, lint --fix) in the branch's
+            worktree, zero tokens, and commit what it changed ("autofix:
+            <command>"). Nothing to commit: says so. A failing command is
+            nonzero with its output's tail, its changes left uncommitted.
+            implement and address run it when verify fails, then verify
+            again (A11), and ci-fix runs it first
+  ci-fix    CI is red on HEAD: verify and autofix first (zero tokens; a
+            fix there is pushed as is), else hand the agent the failing
+            checks, their logs (commit statuses and check runs over REST;
+            rwx results/logs for RWX, gh run view --log-failed for GitHub
+            Actions) and the local verify output, in the branch's session
+            (J2). The pipeline commits its fix, verifies, pushes. "flaky"
+            (the agent blames CI's environment) commits nothing and is
+            recorded against the red SHA, so the same red isn't handed
+            over again: rerun CI instead. Refuses on an old head or with
+            unpushed commits (push first) and on cancelled CI (rerun it).
+            Spends tokens
+  review    verify, then the local reviewer (settings.localReview, default
+            libexec/sd-review-local) over the branch's own change, base..HEAD.
+            Clean, or only nits: pin local at HEAD. Errors or warnings:
+            printed as JSON and recorded (refs/sheepdog/<b>/findings: head,
+            base, round, findings; implement adds each finding's id, action
+            and reply), nothing pinned; each such review of a changed HEAD
+            is the next round, until a pin clears the record. A failed
+            reviewer is never clean. sd state shows the record and NEXT
+            follows it: findings about HEAD (the same change, even rebased)
+            go to the agent (review-fix: sd act implement, its prompt
+            carrying the ones it hasn't declined) below
+            settings.reviewRounds. The agent answers each: fixed, declined
+            (with why) or ask. Any ask goes to chrismo as needs-input does,
+            nothing committed; otherwise its fixes are committed and the
+            next round is due, or with every finding declined, chrismo
+            decides (review-decide), as at the cap; findings on an older
+            head get a new review. sd state's flags (suppressions, skips,
+            edited tests) are printed on stderr for chrismo, whatever the
+            verdict; never a gate. Not stored with the record or the pin:
+            sd state recomputes them from base..HEAD on every call, so they
+            outlive stderr and never go stale. Spends tokens.
+            --accept: pin accepted at HEAD instead, reviewing nothing (HEAD
+            is reviewed enough), record the bot trigger it followed
+            (branch.<b>.sd-accepted-after), and drop the findings. It
+            stands in for the local review, not the bot's: the bot is still
+            triggered on HEAD, and only an accept made after that trigger
+            ends a silent bot's wait (#181)
+  describe  the agent writes the PR title and body (J6) from the task, the
+            commits and the diff, read-only, in the branch's session; stored
+            for HEAD and the PR's target. Spends tokens
+  ship      describe unless one for HEAD and the target is stored, check
+            HEAD didn't move, push, then open a draft PR on the parent
+            (sd-parent, else the PR's base, else with no PR the branch it
+            was made from, stored as enroll does, else the default branch)
+            and enroll; with a PR already open, fix up its title, body and
+            base instead. Warns when the local review doesn't cover HEAD;
+            the draft stays a draft until it does. Refuses the default
+            branch (#159), when git can't
+            pick the branch it was made from, and while the parent isn't on
+            the remote, has merged (restack first), was closed, or can't be
+            looked up; a merged parent with the branch already on the
+            default branch ships onto it and rewrites sd-parent. Spends
+            tokens unless a description for HEAD and the target is stored
+  trigger   post settings.botCommand on the PR so the review bot runs, and
+            pin bot at HEAD, recording when (sd state then waits on the
+            bot's reply); nothing when already pinned there. HEAD must
+            be on the remote (the bot reviews what GitHub has); neither
+            the local review nor an accept covering HEAD is a soft refusal
+  attach    takeover (A9): hold branch.<b>.sd-lock, open the branch's
+            session interactively in its worktree (claude --resume, or pi
+            --session-id; a new session when none is stored, kept once the
+            harness wrote its transcript), with the harness block's model,
+            effort, provider and args, and for claude without
+            ANTHROPIC_API_KEY unless useApiKey; release the lock when the session
+            exits, Ctrl-C included. While the lock is held, agent steps
+            (implement, address, restack --resolve, review, describe) and
+            the verbs that publish refuse to run; verify and the rest of
+            sd state's mechanics go on. A lock whose process is gone from
+            this host is stale, and every sd act verb clears it first
+
+CI config hold (#124): when the commit of an agent step that edits
+(implement and its review-fix rounds, address, ci-fix, restack --resolve)
+touches a protected path, the branch is held: address, ci-fix and ship
+don't push it, --force or not, and sd state's NEXT is chrismo's: review,
+then sd act push, which releases it. A later agent commit there holds it
+again. Protected paths: settings.protectedPaths; else
+.sheepdog/protected-paths in the base commit (one per line, # comments);
+else .github/workflows/ .github/actions/ .rwx/ .captain/ .circleci/
+.gitlab-ci.yml .buildkite/; unless the setting is set,
+.sheepdog/protected-paths itself too. Each covers itself and what's under it.
+
+Questions (#167): when implement, a review-fix round, address or ci-fix
+needs chrismo (outcome needs-input, or an item marked ask), the question is
+recorded on HEAD, with a hash of the worktree's uncommitted state
+(refs/sheepdog/<b>/question). While both are unchanged it stands: sd state's
+NEXT shows it as chrismo's question step in place of the step that asked,
+and that step refuses to run again. sd act answer carries chrismo's answer
+to it (#178); a commit, an edit, or sd act ack --question ends it too, the
+override the refusal names, as --force also lifts the step's other gates.
+An edit that ends it is chrismo's to commit: NEXT says so (dirty) in place
+of the agent steps that refuse a dirty worktree.
+
+--force:
+  address         run even if the branch is unpushed, diverged or taken over
+  restack, push, ship   run even if taken over
+  implement, review, describe   the same
+  attach          take over a lock another attach still holds
+  ci-fix          run again on a red the agent already called flaky
+  implement, address, ci-fix   run though the agent's question stands
+  trigger         even when neither the local review nor an accept covers
+                  HEAD, or the bot is already pinned at HEAD (trigger it
+                  again)
+  unregister      even with branches still enrolled (the watcher drops them)
+
+start options:
+  --parent <b>    start from <b> (local, else <remote>/<b>) and stack on it
+  --no-implement  stop after the setup; the task is then optional
+
+restack options:
+  --resolve       on a conflict, run the agent instead of refusing. Spends tokens
+
+address options:
+  --no-publish    stop after the local commit (the agent still runs: tokens);
+                  also ci-fix
+  --harness <h>   claude (default) or pi; remembered for the branch (also
+                  start, implement)
+
+Config (sd config show):
+  settings  remote, verify, autofix, stepTimeout, stepBudget, forkLimit (a
+            session with more context starts over), replyPrefix, botLogin, implementAllow,
+            protectedPaths,
+            <step>Prompt for implement, reviewFix, review, describe, address,
+            resolve, ciFix (a file; else .sheepdog/<step>.md in the base
+            commit, kebab-cased, else the shipped lib/prompts/<step>.md)
+  harness   model, effort, provider (pi), args
+
+State (git config): branch.<b>.sheepdog, .sd-task, .sd-parent, .sd-session,
+.sd-harness, .sd-handled, .sd-lock ("<pid>@<host> <time>" while attached),
+.sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
+.sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
+.sd-accepted-after (the .sd-bot-triggered that review --accept followed),
+.sd-held (the CI config hold: the commit, then the paths, one per line);
+sheepdog.repo (global) lists the enrolled repos.
+
+<branch> defaults to the current one. A verb prints what it did, not what to
+run next: sd state's NEXT is the one place the order lives.

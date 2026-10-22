@@ -1,15 +1,16 @@
-// restack (A2) without --resolve, and retarget (A4). libexec/sd-act still
-// runs restack --resolve, with its own RESTACK_GATE, KEEP_PARENT,
-// restack_by_tree and parent_to_default: change both. One difference from
-// the bash: a failed git status in the worktree stops the restack, where the
-// bash read it as a clean tree.
+// restack (A2), its --resolve (J1) in resolve.rs, and retarget (A4). One
+// difference from the bash: a failed git status in the worktree stops the
+// restack, where the bash read it as a clean tree.
 //
 // Field reads follow the SuperDB gates this replaced (src/val.rs): a missing
 // field reads as null, and an equality holds only between two present values.
 
-use super::{die, no_base_why, plural, state_json};
+use super::commands::verify_run;
+use super::hold::hold_after;
+use super::resolve::{resolve_conflicts, Rebase};
+use super::{die, no_base_why, plural, state_json, Args};
 use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for};
-use crate::proc;
+use crate::{proc, running};
 use crate::val::{at, sj, t};
 use serde_json::Value;
 use std::process::Command;
@@ -38,9 +39,10 @@ fn is(s: &Value, p: &str, lit: &str) -> bool {
     at(s, p).as_str() == Some(lit)
 }
 
-/// RESTACK_GATE without --resolve. <replay> is old_base..HEAD, newest first,
-/// listed only when the parent merged and the branch is behind.
-fn restack_gate(s: &Value, remote: &str, replay: &[String]) -> Gate {
+/// RESTACK_GATE. <replay> is old_base..HEAD, newest first, listed only when
+/// the parent merged and the branch is behind. A predicted conflict is
+/// refused, unless <resolve> hands it to the agent.
+fn restack_gate(s: &Value, remote: &str, replay: &[String], resolve: bool) -> Gate {
     let on = |p: &str| crate::val::on(s, p);
     let nul = |p: &str| at(s, p).is_null();
     let (b, parent) = (t(s, "branch"), t(s, "parent.name"));
@@ -86,7 +88,7 @@ fn restack_gate(s: &Value, remote: &str, replay: &[String]) -> Gate {
              resolve and commit, then git update-ref refs/sheepdog/{b}/base {onto} (the old head stays at {head})"
         ));
     }
-    if on("sync.conflict") {
+    if on("sync.conflict") && !resolve {
         return Gate::Hard(format!(
             "restacking {b} onto {onto} would conflict; resolve it by hand: git rebase --onto {onto} {old_base} {b}, \
              then git update-ref refs/sheepdog/{b}/base $(git merge-base {onto} {b}); or let the agent: sd act restack --resolve"
@@ -147,7 +149,7 @@ pub(super) fn state(dir: &str, b: &str) -> Value {
     })
 }
 
-pub fn restack(b: &str, remote: &str, force: bool) {
+pub fn restack(b: &str, remote: &str, a: &Args) {
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         die(format!("{b} isn't checked out in any worktree"));
@@ -172,13 +174,13 @@ pub fn restack(b: &str, remote: &str, force: bool) {
             .unwrap_or_else(|| die(format!("can't list {old_base}..{b}")));
         replay = list.lines().map(str::to_string).collect();
     }
-    match restack_gate(&s, remote, &replay) {
+    match restack_gate(&s, remote, &replay, a.resolve) {
         Gate::Hard(why) => die(why),
         Gate::Done(line) => {
             println!("{line}");
             return;
         }
-        Gate::Soft(why) if !force => {
+        Gate::Soft(why) if !a.force => {
             eprintln!("sd act: not restacking {b}:\n  - {why}\n(--force to run anyway)");
             std::process::exit(1)
         }
@@ -194,22 +196,40 @@ pub fn restack(b: &str, remote: &str, force: bool) {
     let old_head = rev(".", &format!("refs/heads/{b}"));
     let before = patch_id(".", &old_base, &old_head);
     let by_tree = crate::val::on(&s, "sync.by_tree");
+    let mut resolved = false;
     if by_tree {
         restack_by_tree(&wt, b, &old_base, &old_head, &new_base, &onto);
     } else if !git(&wt, &["rebase", "--quiet", "--onto", &new_base, &old_base, b]).ok {
-        rollback(&wt, b, &old_head);
-        die(format!(
-            "the rebase onto {onto} stopped on a conflict partway through; rolled back to {}. \
-             Resolve it by hand: git rebase --onto {} {} {b}, then git update-ref refs/sheepdog/{b}/base {}; \
-             or let the agent: sd act restack --resolve",
-            short(&old_head, 7),
-            short(&new_base, 12),
-            short(&old_base, 12),
-            short(&new_base, 12)
-        ));
+        if !a.resolve {
+            rollback(&wt, b, &old_head);
+            die(format!(
+                "the rebase onto {onto} stopped on a conflict partway through; rolled back to {}. \
+                 Resolve it by hand: git rebase --onto {} {} {b}, then git update-ref refs/sheepdog/{b}/base {}; \
+                 or let the agent: sd act restack --resolve",
+                short(&old_head, 7),
+                short(&new_base, 12),
+                short(&old_base, 12),
+                short(&new_base, 12)
+            ));
+        }
+        let r = Rebase { b, wt: &wt, old_base: &old_base, old_head: &old_head, onto: &onto };
+        // Marked running across every stop and continue, not only each agent run (#170).
+        let run = || resolve_conflicts(&r, &a.harness, a.force).inspect_err(|_| rollback(&wt, b, &old_head));
+        match running::holding(b, "resolve", run) {
+            None => {
+                rollback(&wt, b, &old_head);
+                std::process::exit(1)
+            }
+            Some(Err(why)) => die(why),
+            // Before anything below can die: the resolution is on the branch now.
+            Some(Ok(touched)) => hold_after(b, &old_base, &touched),
+        }
+        resolved = true;
     }
     let new_head = rev(".", &format!("refs/heads/{b}"));
-    if patch_id(".", &new_base, &new_head) != before {
+    // A resolution changes the branch's diff by definition, so the check only
+    // applies to a clean rebase; a resolved one goes through verify and review.
+    if !resolved && patch_id(".", &new_base, &new_head) != before {
         must(git(&wt, &["reset", "--quiet", "--hard", &old_head]));
         die(format!(
             "{b}'s change came out different on {onto} (part of it may be there already); rolled back to {}. \
@@ -236,6 +256,15 @@ pub fn restack(b: &str, remote: &str, force: bool) {
     match keep_parent(&s) {
         Some(line) => println!("{line}"),
         None => parent_to_default(b, &s),
+    }
+    if resolved {
+        println!("conflicts resolved by the agent, so {b}'s change is unreviewed");
+        if let Err(cmd) = verify_run(&wt, b) {
+            die(format!(
+                "verify failed ({cmd}) on the resolved branch; it is kept at {}, unpushed. Fix, then sd act verify",
+                short(&new_head, 7)
+            ));
+        }
     }
 }
 
@@ -357,70 +386,80 @@ mod tests {
 
     #[test]
     fn restack_gate_goes_when_behind_with_a_base_and_no_conflict() {
-        assert_eq!(restack_gate(&behind(), "origin", &[]), Gate::Go);
+        assert_eq!(restack_gate(&behind(), "origin", &[], false), Gate::Go);
     }
 
     #[test]
     fn restack_gate_is_done_when_up_to_date() {
         let s = with(behind(), "sync.up_to_date", json!(true));
-        assert_eq!(restack_gate(&s, "origin", &[]), Gate::Done("child is already on origin/main".into()));
+        assert_eq!(restack_gate(&s, "origin", &[], false), Gate::Done("child is already on origin/main".into()));
     }
 
     #[test]
     fn restack_gate_refuses_a_parent_closed_without_merging_unless_its_the_default() {
         let s = with(behind(), "parent.pr.state", json!("CLOSED"));
-        assert_eq!(hard(restack_gate(&s, "origin", &[])), "A's PR #1 was closed without merging; decide what child targets");
+        assert_eq!(hard(restack_gate(&s, "origin", &[], false)), "A's PR #1 was closed without merging; decide what child targets");
         let s = with(with(s, "parent.name", json!("main")), "sync.up_to_date", json!(true));
-        assert!(matches!(restack_gate(&s, "origin", &[]), Gate::Done(_)));
+        assert!(matches!(restack_gate(&s, "origin", &[], false), Gate::Done(_)));
     }
 
     #[test]
     fn restack_gate_refuses_an_unknown_merge_with_sd_states_reason() {
         let s = with(with(behind(), "parent.merged", Value::Null), "errors", json!(["gh (A): boom"]));
-        assert_eq!(hard(restack_gate(&s, "origin", &[])), "can't tell whether A merged: gh (A): boom");
+        assert_eq!(hard(restack_gate(&s, "origin", &[], false)), "can't tell whether A merged: gh (A): boom");
     }
 
     #[test]
     fn restack_gate_refuses_no_base_with_the_step_for_an_unpushed_parent() {
         let s = with(with(behind(), "sync.old_base", Value::Null), "parent.unpushed", json!(true));
-        assert_eq!(hard(restack_gate(&s, "up", &[])), "can't restack child: parent A isn't on up yet: ship it first (sd act ship A)");
+        assert_eq!(hard(restack_gate(&s, "up", &[], false)), "can't restack child: parent A isn't on up yet: ship it first (sd act ship A)");
         let s = with(behind(), "sync.up_to_date", Value::Null);
-        assert_eq!(hard(restack_gate(&s, "origin", &[])), "can't restack child: ");
+        assert_eq!(hard(restack_gate(&s, "origin", &[], false)), "can't restack child: ");
     }
 
     #[test]
     fn restack_gate_refuses_replaying_a_merged_parents_commits_newest_first() {
         let replay = ["cccc".to_string(), "a2a2a2a2a2a2a2a2".to_string(), "a1a1a1a1a1a1a1a1".to_string()];
         assert_eq!(
-            hard(restack_gate(&behind(), "origin", &replay)),
+            hard(restack_gate(&behind(), "origin", &replay, false)),
             "wrong base: this would replay 2 of #1's commits onto origin/main; if the stack is linear, rebase past them by hand: \
              git rebase --onto origin/main a2a2a2a2a2a2 child && git update-ref refs/sheepdog/child/base origin/main"
         );
         // A tree restack leaves the parent's commits out by itself.
         let s = with(behind(), "sync.by_tree", json!(true));
-        assert_eq!(restack_gate(&s, "origin", &replay), Gate::Go);
+        assert_eq!(restack_gate(&s, "origin", &replay, false), Gate::Go);
     }
 
     #[test]
     fn restack_gate_refuses_a_conflict_and_says_how_by_hand() {
         let s = with(behind(), "sync.conflict", json!(true));
         assert_eq!(
-            hard(restack_gate(&s, "origin", &[])),
+            hard(restack_gate(&s, "origin", &[], false)),
             "restacking child onto origin/main would conflict; resolve it by hand: git rebase --onto origin/main bbbbbbbbbbbb child, \
              then git update-ref refs/sheepdog/child/base $(git merge-base origin/main child); or let the agent: sd act restack --resolve"
         );
         let s = with(s, "sync.by_tree", json!(true));
-        assert!(hard(restack_gate(&s, "origin", &[])).starts_with("restacking child onto origin/main by tree would conflict; --resolve can't"));
+        assert!(hard(restack_gate(&s, "origin", &[], false)).starts_with("restacking child onto origin/main by tree would conflict; --resolve can't"));
         let s = with(behind(), "sync.conflict", Value::Null);
-        assert_eq!(hard(restack_gate(&s, "origin", &[])), "can't tell whether restacking child would conflict: ");
+        assert_eq!(hard(restack_gate(&s, "origin", &[], false)), "can't tell whether restacking child would conflict: ");
+    }
+
+    #[test]
+    fn restack_gate_with_resolve_hands_a_conflict_to_the_agent_but_not_a_tree_restacks() {
+        let s = with(behind(), "sync.conflict", json!(true));
+        assert_eq!(restack_gate(&s, "origin", &[], true), Gate::Go);
+        let s = with(with(s, "session.locked", json!(true)), "sync.by_tree", json!(true));
+        assert!(hard(restack_gate(&s, "origin", &[], true)).contains("--resolve can't resolve a tree restack"));
+        let s = with(behind(), "sync.conflict", Value::Null);
+        assert!(matches!(restack_gate(&s, "origin", &[], true), Gate::Hard(_)));
     }
 
     #[test]
     fn restack_gate_is_soft_when_taken_over_and_hard_refusals_come_first() {
         let s = with(behind(), "session.locked", json!(true));
-        assert_eq!(restack_gate(&s, "origin", &[]), Gate::Soft("taken over (branch.child.sd-lock is set)".into()));
+        assert_eq!(restack_gate(&s, "origin", &[], false), Gate::Soft("taken over (branch.child.sd-lock is set)".into()));
         let s = with(s, "sync.conflict", json!(true));
-        assert!(matches!(restack_gate(&s, "origin", &[]), Gate::Hard(_)));
+        assert!(matches!(restack_gate(&s, "origin", &[], false), Gate::Hard(_)));
     }
 
     #[test]
