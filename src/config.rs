@@ -452,7 +452,12 @@ pub fn get_text_in(dir: &str, path: &str, b: &str, as_json: bool) -> Result<Stri
 
 /// get_text with no branch file. Inside a repo, its repo file is still read.
 pub fn get_global(path: &str, as_json: bool) -> Result<String, Vec<String>> {
-    get_line(".", path, "", true, as_json)
+    get_global_in(".", path, as_json)
+}
+
+/// get_global as seen from <dir>: <dir>'s repo file, not the cwd's.
+pub fn get_global_in(dir: &str, path: &str, as_json: bool) -> Result<String, Vec<String>> {
+    get_line(dir, path, "", true, as_json)
 }
 
 fn get_line(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Result<String, Vec<String>> {
@@ -918,6 +923,12 @@ mod tests {
         assert_eq!(get_global("settings.notify", true), Ok(r#""say""#.into()));
         assert_eq!(get_global("settings.vacuumAfter", false), Ok("604800".into()));
         assert_eq!(get_global("settings.nope", false), Err(vec![]));
+        // get_global_in reads <dir>'s repo file, not the cwd's.
+        let repo = dir.join("repo");
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&dir).output().unwrap().status.success());
+        git(&["init", "-q", repo.to_str().unwrap()]);
+        fs::write(repo.join(".git/sheepdog.json"), r#"{"settings": {"remote": "fork"}}"#).unwrap();
+        assert_eq!(get_global_in(repo.to_str().unwrap(), "settings.remote", false), Ok("fork".into()));
         fs::write(&file, "[]").unwrap();
         assert_eq!(get_global("settings.interval", false), Err(vec![format!("not a JSON object: {}", file.display())]));
         let _ = fs::remove_dir_all(&dir);
