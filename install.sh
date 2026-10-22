@@ -33,7 +33,10 @@ fi
 # The hooks run the cargo found above, so a git with another PATH (a GUI
 # client, a job) still finds it.
 mark="# sheepdog's install.sh wrote this hook, and rewrites it on a re-run."
-if hooks=$(git -C "$REPO_DIR" rev-parse --path-format=absolute --git-path hooks 2>/dev/null); then
+# --git-path is relative to REPO_DIR unless it's elsewhere (a worktree's);
+# --path-format=absolute would say so itself, but only from git 2.31.
+if hooks=$(git -C "$REPO_DIR" rev-parse --git-path hooks 2>/dev/null); then
+  [[ $hooks == /* ]] || hooks=$REPO_DIR/$hooks
   mkdir -p "$hooks"
   for name in post-merge post-rewrite; do
     hook="$hooks/$name"
