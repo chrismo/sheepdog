@@ -5,6 +5,7 @@
 
 mod bookkeeping;
 mod commands;
+mod github;
 mod push;
 
 use crate::git::{self, git, git_out};
@@ -159,13 +160,15 @@ pub fn plural(n: usize, word: &str) -> String {
 }
 
 /// sd state --json <b>, run in <dir> as sd-state from PATH, as the bash ran
-/// it: the suites put a fake one there. Err is what it said on stderr.
+/// it: the suites put a fake one there. Err is what it said on stderr; on
+/// success its stderr (warnings) passes through.
 pub fn state_json(dir: &str, b: &str) -> Result<Value, String> {
     let o = proc::run("sd-state", &["--json", b], Some(dir), None);
     if !o.ok {
         return Err(o.stderr);
     }
-    serde_json::from_str(&o.stdout).map_err(|e| format!("sd state --json {b}: {e}\n"))
+    eprint!("{}", o.stderr);
+    serde_json::from_str(&o.stdout).map_err(|e| format!("sd act: can't parse sd state's answer: {e}\n"))
 }
 
 /// Why sd state found no base: its errors, else a parent that exists only
@@ -211,6 +214,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "unenroll" => bookkeeping::unenroll(&b),
         "forget" => bookkeeping::forget(&b, a.remove),
         "unregister" => bookkeeping::unregister(&a.branch, a.force),
+        "ack" => github::ack(&b, &a.ids, a.question),
+        "trigger" => github::trigger(&b, &remote, a.force),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }

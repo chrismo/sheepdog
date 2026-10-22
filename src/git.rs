@@ -101,6 +101,23 @@ pub fn show_ref(dir: &str, r: &str) -> bool {
     git_ok(dir, &["show-ref", "-q", "--verify", r])
 }
 
+/// A review pin and the base it was taken against. sd state compares
+/// base..pin with the branch's current base..HEAD, so a restack (which moves
+/// the base) doesn't make a reviewed change look changed (#66). lib/sheepdog.sh's
+/// pin_write does the same for bash review: change both.
+pub fn pin_write(dir: &str, b: &str, kind: &str, sha: &str, base: &str) -> Result<(), String> {
+    if !["local", "bot", "accepted"].contains(&kind) {
+        return Err(format!("unknown pin: {kind} (local, bot, accepted)"));
+    }
+    for (suffix, msg, to) in [("", "", sha), ("-base", " base", base)] {
+        let o = git(dir, &["update-ref", "-m", &format!("pin {kind}{msg}"), &format!("refs/sheepdog/{b}/{kind}{suffix}"), to]);
+        if !o.ok {
+            return Err(strip_nl(o.stderr));
+        }
+    }
+    Ok(())
+}
+
 /// One entry of git worktree list --porcelain. branch is the branch checked
 /// out there; a detached worktree paused mid-rebase has the one being rebased
 /// and rebasing set, which worktrees fills in and parse_worktrees doesn't.
@@ -430,6 +447,36 @@ mod tests {
                 Err(e) => e,
             }
         }
+    }
+
+    // pin_write's are lib/sheepdog.bats's too, while the bash pin_write stays.
+
+    // @test "pin_write records the pin and the base it was taken against"
+    #[test]
+    fn pin_write_records_the_pin_and_the_base_it_was_taken_against() {
+        let r = Repo::new();
+        pin_write(&r.dir, "feat", "local", "HEAD", "main").unwrap();
+        assert_eq!(r.sha("refs/sheepdog/feat/local"), r.sha("HEAD"));
+        assert_eq!(r.sha("refs/sheepdog/feat/local-base"), r.sha("main"));
+    }
+
+    // @test "pin_write overwrites both refs, so a stale base never outlives its pin"
+    #[test]
+    fn pin_write_overwrites_both_refs_so_a_stale_base_never_outlives_its_pin() {
+        let r = Repo::new();
+        pin_write(&r.dir, "feat", "bot", "HEAD", "main").unwrap();
+        r.c("feat", "two");
+        pin_write(&r.dir, "feat", "bot", "HEAD", "HEAD~1").unwrap();
+        assert_eq!(r.sha("refs/sheepdog/feat/bot"), r.sha("HEAD"));
+        assert_eq!(r.sha("refs/sheepdog/feat/bot-base"), r.sha("HEAD~1"));
+    }
+
+    // @test "pin_write refuses a pin kind it doesn't know"
+    #[test]
+    fn pin_write_refuses_a_pin_kind_it_doesnt_know() {
+        let r = Repo::new();
+        assert_eq!(pin_write(&r.dir, "feat", "nope", "HEAD", "main"), Err("unknown pin: nope (local, bot, accepted)".into()));
+        assert!(!show_ref(&r.dir, "refs/sheepdog/feat/nope"));
     }
 
     // stacked_on's tests are lib/sheepdog.bats's, title for title, while the
