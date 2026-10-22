@@ -17,7 +17,7 @@ Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | stat
              last pass. Exits non-zero when the branch couldn't be checked.
   glyph      [<path>] the glyph for the worktree holding <path> (default .),
              if it's still on the branch the last check saw; for a shell
-             prompt or tab title (fast: no super, no GitHub)
+             prompt or tab title (fast: no GitHub)
   vacuum     a pass that unenrolls every stale branch now, without waiting
              for vacuumAfter, even when it is 0, so an open PR's branch that
              no worktree holds goes too: prints each one unenrolled and its

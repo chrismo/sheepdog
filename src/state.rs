@@ -915,7 +915,7 @@ fn config_failed(lines: Vec<String>) -> String {
     die("sd config failed")
 }
 
-/// A value prc_get printed, as the bash spliced it into JSON.
+/// A value `sd config get` printed.
 fn raw_json(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|_| json!(text))
 }
@@ -1588,7 +1588,7 @@ pub fn run(argv: &[String]) -> ExitCode {
                 print!("{HELP}");
                 return ExitCode::SUCCESS;
             }
-            // lib/config.sh's prn_next: an sd state record on stdin, its steps out.
+            // An sd state record on stdin, its steps out.
             "--next" => {
                 let remote = args.next().map_or("", String::as_str);
                 return match next::run_stdin(remote) {

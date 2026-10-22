@@ -1,8 +1,8 @@
 // Black-box tests of sd config (#199): the built binary, run as sd-config
 // through a link, in a temp git repo with SHEEPDOG_CONFIG in a temp dir.
 // Built-in defaults, the global XDG file and the branch file, merged; `step`
-// is what one pipeline step runs with, `get` reads any dotted path.
-// lib/config.sh's tests, and the super it pins, stay in bats: lib/config.bats.
+// is what one pipeline step runs with, `get` reads any dotted path. The
+// libexec/sd-config link's test is in tests/links.rs, beside the other verbs'.
 
 mod common;
 

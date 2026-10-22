@@ -14,7 +14,7 @@
 // sd state reads the running marker and a question's worktree mark that sd
 // act writes, so those two fixtures write them with sd act's own
 // running::proc_start and git::worktree_mark. The libexec/sd-state link's
-// test is in lib/config.bats, beside the sd-config link's.
+// test is in tests/links.rs, beside the other verbs'.
 
 mod common;
 

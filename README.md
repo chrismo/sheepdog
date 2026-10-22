@@ -13,7 +13,6 @@ One command, `sd`, with a verb (`sd help` lists them):
 | `sd act`     | Start a branch, then take its next step (address, push…)  |
 | `sd watch`   | Periodic pass over your branches; optional launchd job    |
 | `sd config`  | Show and validate settings                                |
-| `sd migrate` | Move a pr-tend install's state to sheepdog's names        |
 
 Design notes, consumed into issues and kept for now:
 [`docs/pr-workflow/design.md`](docs/pr-workflow/design.md). Decisions are
@@ -22,8 +21,6 @@ recorded in the Decision issues on the
 build by are in `AGENTS.md`.
 
 ## Install
-
-Upgrading from pr-tend? [Migrate its state first](#coming-from-pr-tend).
 
 ```bash
 ./install.sh        # builds sd, links it and installs its launchd watcher
@@ -42,7 +39,7 @@ symlink blocks installation before any links or jobs are changed.
 
 Needs on `PATH`: `bash5` (a link to bash 5+; the commands are
 `#!/usr/bin/env bash5`), `cargo` to build (https://rustup.rs), `git`, `gh`,
-`jq`, and SuperDB `super` **0.3.0** exactly. `claude` and/or `pi` for the agent steps.
+and `jq`. `claude` and/or `pi` for the agent steps.
 
 ## Agent credentials
 
@@ -89,24 +86,9 @@ A custom local reviewer (`settings.localReview`) keeps the contract in
   whose it is.
 - `sd watch glyph [<path>]` prints the glyph for the worktree holding `<path>`
   (default `.`) while it's still on the branch checked, from
-  `$SHEEPDOG_STATE_DIR/glyphs`. It is exact by path and fast (no super, no
-  GitHub), for a shell prompt or a tab title.
-- The launchd job is labelled `com.sheepdog.watch`. `sd watch install` and
-  `uninstall` also retire its earlier labels, `com.agent-rig.pr-watch` and
-  `com.pr-tend.pr-watch`.
-
-## Coming from pr-tend
-
-sheepdog was pr-tend until 2026-10-15: `pr-act push` is now `sd act push`, and
-its state moved to new names (`refs/sheepdog/`, `~/.config/sheepdog/`, git
-config `sheepdog.*`, `SHEEPDOG_*` env vars). On a machine that ran pr-tend,
-migrate its state before installing:
-
-```bash
-./bin/sd migrate --dry-run   # what it would move, and anything it can't
-./bin/sd migrate
-./install.sh
-```
+  `$SHEEPDOG_STATE_DIR/glyphs`. It is exact by path and fast (no GitHub), for
+  a shell prompt or a tab title.
+- The launchd job is labelled `com.sheepdog.watch`.
 
 ## Tests
 
