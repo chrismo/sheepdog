@@ -1,0 +1,136 @@
+sd state - where a branch's PR stands.
+
+Usage: sd state [--json | --long] [<branch>]
+
+Reports, for <branch> (default: the current one):
+  task      the recorded task (branch.<b>.sd-task), else null
+  pr        the branch's PR (an open one wins over closed/merged)
+  parent    sd-parent config, else the PR base, else the default branch;
+            whether it exists here and on the remote (a parent only here
+            has to ship first);
+            a merged parent retargets sync to the default branch
+  sync      ahead of / behind the parent? would `rebase --onto` conflict?
+  push      local vs remote branch; whether the remote SHA is ours (reflog),
+            and for a remote ahead of a reset: whether those commits were
+            made here and whether the worktree has uncommitted changes;
+            held: an agent step's unpushed change to CI config (sd act's
+            hold), {sha, paths}, else null
+  ci        checks on the PR head commit. Only each check's latest run counts
+            (by app, workflow, event and name): a rerun or a new run on the
+            same SHA, say from an edited title, supersedes the old one
+            (#195). A check that didn't start or wants approval
+            (STARTUP_FAILURE, ACTION_REQUIRED) is blocked, chrismo's, not
+            red. For a draft, also the base branch's required checks
+            (rulesets and classic protection; matched by name, not app):
+            one with no context on the head is missing,
+            and keeps the verdict pending, so undraft waits for it (#123).
+            One that never runs on a draft (a workflow skipping drafts, or
+            filtered to other branches, for a stacked draft) waits forever:
+            no timeout, since nothing here says how long it has been
+            missing; the wait step says to undraft by hand instead.
+            A non-draft doesn't need them: GitHub's merge state counts them
+  review    coverage of HEAD by refs/sheepdog/<branch>/{local,bot,accepted};
+            a pin's <kind>-base ref is the base it was taken against, so a
+            restack doesn't make a reviewed change look changed
+            review.findings: sd act review's open findings
+            (refs/sheepdog/<b>/findings), counting those that block, and
+            whether they're about HEAD (the same commit, or the same change
+            rebased)
+            review.bot also has triggered (when sd act trigger posted, by
+            GitHub's clock), replied (a bot has posted since; null with no
+            trigger time or when gh fails) and waited (seconds since)
+            review.accepted also has after (the bot's triggered when sd act
+            review --accept pinned it; null with no trigger then, or for a
+            pin made by hand)
+  question  an agent step's needs-input (refs/sheepdog/<b>/question, see
+            sd act ack): {step, sha, text, at_head}; at_head while HEAD and
+            the worktree's uncommitted state are what the step left, and
+            then NEXT's question step replaces the step that asked (#167)
+  flags     for chrismo, never a gate (#125): in the net diff old_base..HEAD
+            (the whole branch, whoever wrote it), added lines matching
+            settings.flags.suppressions, added skips (settings.flags.skips)
+            in test files, and each hunk of changed or deleted lines in a
+            test file the base had, or a test file renamed out of the test
+            files (test-edit); with the commit that added
+            the line (blame), or for a test-edit the commits that touched
+            the file. Test files: settings.flags.testFiles, globs on the
+            file's name, a whole path when one has a /, or a directory
+            anywhere when it ends in /. null without a base, or when the
+            check fails or can't run (an invalid pattern, an unreadable
+            diff, a tree base that isn't HEAD's ancestor); then
+            flags_error says why, kept out of errors so NEXT ignores it
+  threads   what's owed, marked ! (blocks: unresolved threads, reviews
+            requesting changes) or i (to read: bot review bodies and PR
+            comments not yet marked handled)
+  bot       the review bot's trigger comment (settings.botCommand), if any,
+            and timeout (settings.botTimeout)
+  session   pipeline enrollment, harness, session id, takeover lock;
+            running: the agent step running on the branch, {step, pid,
+            since}, from its running marker (lib/sheepdog.sh's
+            running_file), else null. While it runs,
+            NEXT is only to wait for it (#170)
+  spend     usd: what the branch's agent steps have cost in this repo, by
+            the usage record (usage.sup, harness_usage); budget:
+            settings.branchBudget (USD, 25; 0 is none). Past it, NEXT hands
+            the agent's steps to chrismo (#121)
+  fresh     false when GitHub's PR / parent-PR head differs from the local
+            remote-tracking ref, i.e. sync and push answers need a fetch;
+            or, when NEXT's first step would be ready alone (#169), an
+            agent step, open-pr or bot-trigger (#182), when the remote's
+            base branch (by ls-remote; with no PR, sync.target) does
+  stored    what sheepdog keeps for the branch: handled ids, refs/sheepdog/<b>/*
+  rate_limit  GitHub's GraphQL quota: cost (this run's calls, summed),
+            remaining and reset_at (the last call's; null when none
+            answered), limited (a call was refused for the rate limit)
+  next      what to do, in order: {key, who, say, cmd} (src/next.rs)
+
+Output:
+  default   the one-liner (led by the PR's url, not the branch), then NEXT:
+            the first step and how many follow
+  --long    the one-liner, every step, then a line per owed item
+            (mark, type, author, excerpt, url), per open review finding
+            (r, severity, file:line, body) and per flag (⚑, kind,
+            file:line, the line, commits)
+  --json    everything
+
+Never fetches, and writes only the PR numbers it finds (branch.<b>.sd-pr,
+the parent's too), when they change, and removes a running marker whose
+pid is gone. That makes it a .git/config writer:
+while it holds config.lock, another git config write fails. Remote refs
+are as fresh as the last fetch, except the PR's base (or, with no PR, the
+target) when NEXT's first step is ready alone, an agent step, open-pr or
+bot-trigger: one git ls-remote of it, 10 s at most, and no check on a
+failure (#169, #182).
+One gh GraphQL call per PR (the branch's,
+and a non-default parent's), by its stored number; a discovery by branch
+comes first for a PR not yet known, and is the only call for a branch with
+none. A stored PR that merged stays the branch's PR, even once a newer one
+is open from the same branch: the branch is done (#122). Only a local
+branch stores a number, so a parent that isn't one, or a fresh clone, gets
+discovery's pick (an open PR first); git config --unset branch.<b>.sd-pr
+makes sd state look again. A draft adds two REST calls, for its base
+branch's required checks. A gh failure is
+recorded in .errors and the git facts are still reported.
+
+Config: read with sd config (branch file over global file over
+built-in defaults), under settings: remote (origin), botLogin (bots that
+post as users, counted as bots; a [bot] suffix is optional), botIgnore (bots
+whose posts are never owed, e.g. github-actions preview links), botIgnoreBody
+(regexes: bot reviews and PR comments whose body matches are never owed).
+Either also keeps a bot's post from counting as the review bot's reply
+after sd act trigger: any other bot's post does, so a CI or preview bot
+that comments after a push belongs in one of them. So a botIgnoreBody
+pattern must not match the review bot's own verdict (a clean "No issues
+found" included), or that verdict never ends the wait. A reply is a new
+review or comment: a bot that edits one sticky comment in place isn't seen,
+and runs into bot-silent. Nor is the commit checked: a slow reply to an earlier
+trigger that lands after a later one counts as the later one's reply.
+botTimeout (seconds, 3600): how long to wait on that reply before
+bot-silent. flags: {suppressions, skips} (RE2 regexes over a line's text)
+and testFiles (globs); a list set in a file replaces that list's default,
+and [] turns it off.
+State: branch.<name>.pr-{parent,tend,harness,session,lock}, branch.<name>.sd-pr
+(the PR's number, written here), branch.<name>.sd-handled
+(multi-valued: node ids of bot reviews/comments already dealt with),
+branch.<name>.sd-bot-triggered (when sd act trigger posted its comment),
+branch.<name>.sd-accepted-after (the sd-bot-triggered sd act review --accept followed).

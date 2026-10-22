@@ -144,9 +144,9 @@ field() { jq -r "$@" <<<"$output"; }
   [[ "$output" == *"not a git repository"* ]]
 }
 
-@test "runs under bash 5 via the bash5 shebang" {
-  run head -1 "$SD_STATE"
-  [ "$output" = "#!/usr/bin/env bash5" ]
+@test "is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$SD_STATE")" = ../target/release/sd ]
+  [ -x "$SD_STATE" ]
 }
 
 @test "branch with no PR: pr is null and parent defaults to the default branch" {

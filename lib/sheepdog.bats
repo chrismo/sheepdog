@@ -474,9 +474,8 @@ claude_out() { echo '{"type": "result", "is_error": false, "structured_output": 
   claude_out 1.5
   run harness_run claude sid1 resume 30 "more" '{}'
   [ "$(usage_last 'f"{cost_usd}|{total_cost_usd}"')" = "0.75|1.5" ]
-  # The branch's spend is the steps', not the totals' (2.625).
-  run branch_spend feat
-  [ "$output" = 1.625 ]
+  # The branch's spend is the steps', not the totals' (2.625): sd state sums cost_usd (src/state.rs).
+  [ "$(prc_super -i sup -f line -c 'where branch == "feat" | aggregate s:=sum(cost_usd) | values s' "$SHEEPDOG_STATE_DIR/usage.sup")" = 1.625 ]
 }
 
 @test "harness_run: a session's total that went down isn't a running total; the step is charged all of it (#150)" {
@@ -724,41 +723,6 @@ EOF
   run harness_run claude sid1 new 30 "do it" '{}'
   [ "$status" -eq 0 ]
   [ "$(usage_last context)" = 10 ]
-}
-
-@test "branch_spend: this repo's branch's cost_usd summed over usage.sup; 0 with none" {
-  run branch_spend feat
-  [ "$status" -eq 0 ]
-  [ "$output" = 0 ]
-  mkdir -p "$SHEEPDOG_STATE_DIR"
-  cat > "$SHEEPDOG_STATE_DIR/usage.sup" <<EOF
-{time:2026-10-16T20:33:06Z,repo:"$TMP/repo",branch:"feat",step:"review",harness:"claude",session:"a",mode:"new",status:0,cost_usd:1.25,input:1}
-{time:2026-10-16T20:34:06Z,repo:"$TMP/repo",branch:"other",step:"review",harness:"claude",session:"b",mode:"new",status:0,cost_usd:4.,input:1}
-{time:2026-10-16T20:35:06Z,repo:"/elsewhere",branch:"feat",step:"review",harness:"claude",session:"c",mode:"new",status:0,cost_usd:8.,input:1}
-{time:2026-10-16T20:36:06Z,repo:"$TMP/repo",branch:"feat",step:"implement",harness:"pi",session:"d",mode:"new",status:0,cost_usd:null,input:null}
-{time:2026-10-16T20:37:06Z,repo:"$TMP/repo",branch:"feat",step:"implement",harness:"claude",session:"a",mode:"resume",status:1,cost_usd:0.5,input:1}
-EOF
-  run branch_spend feat
-  [ "$status" -eq 0 ]
-  [ "$output" = 1.75 ]
-}
-
-@test "branch_spend: a line that isn't a whole record (a cut-off append, a stray edit) is skipped, with a warning" {
-  mkdir -p "$SHEEPDOG_STATE_DIR"
-  cat > "$SHEEPDOG_STATE_DIR/usage.sup" <<EOF
-{time:2026-10-16T20:33:06Z,repo:"$TMP/repo",branch:"feat",step:"review",harness:"claude",session:"a",mode:"new",status:0,cost_usd:1.25}
-not sup {
-{time:2026-10-16T20:34:06Z,repo:"$TMP/repo",branch:"fe
-{time:2026-10-16T20:35:06Z,repo:"$TMP/repo",branch:"feat",step:"review",harness:"claude",session:"a",mode:"new",status:0,cost_usd:0.5}
-EOF
-  run --separate-stderr branch_spend feat
-  [ "$status" -eq 0 ]
-  [ "$output" = 1.75 ]
-  [[ "$stderr" == *"2 line(s) of $SHEEPDOG_STATE_DIR/usage.sup aren't usage records; their cost isn't counted"* ]]
-  # Shaped like a record but not one: the file can't be read.
-  echo '{time:soon}' >> "$SHEEPDOG_STATE_DIR/usage.sup"
-  run branch_spend feat
-  [ "$status" -ne 0 ]
 }
 
 # claude_stub_appends <session-id> <transcript-line|"">: a claude stub that

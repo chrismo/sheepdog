@@ -11,8 +11,8 @@
 # the output of the first.
 #
 # With no arguments, the built-in list: every `read -r -d '' NAME <<'EOF'`
-# query in libexec/sd-state, libexec/sd-act, libexec/sd-watch and
-# lib/sheepdog.sh, and lib/next.sh's PRN_QUERY, each over its ci/fixtures/*.json input; the field picks
+# query in libexec/sd-act, libexec/sd-watch and lib/sheepdog.sh, each over
+# its ci/fixtures/*.json input; the field picks
 # (prc_val) and one-line queries use nothing these don't. Mode json (default)
 # runs the query through prc_json, line through prc_line. One line per
 # filter, then "super-stress: <filters> filters, <runs> runs each, <failures>
@@ -22,7 +22,6 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)
 source "$ROOT/lib/config.sh"
-source "$ROOT/lib/next.sh"
 FIX=$ROOT/ci/fixtures
 
 die() { echo "super-stress: $*" >&2; exit 1; }
@@ -55,12 +54,7 @@ entries=()
 add() { entries+=("$1"$'\t'"$2"$'\t'"$3"$'\t'"${4:-json}"); } # <name> <query-file> <fixture> [json|line]
 
 builtin_list() {
-  local st=$ROOT/libexec/sd-state act=$ROOT/libexec/sd-act
-  add sd-state:PICK_PR "$(heredoc "$st" PICK_PR)" "$FIX/gh-pr.json"
-  add sd-state:ASSEMBLE "$(heredoc "$st" ASSEMBLE)" "$FIX/state-args.json"
-  add sd-state:LINE "$(heredoc "$st" LINE)" "$FIX/state.json" line
-  add sd-state:LONG "$(heredoc "$st" LONG)" "$FIX/state.json" line
-  add sd-state:FLAGS "$(heredoc "$st" FLAGS)" "$FIX/flags.json" line
+  local act=$ROOT/libexec/sd-act
   add sheepdog:FLAG_LINES "$(heredoc "$ROOT/lib/sheepdog.sh" FLAG_LINES)" "$FIX/state.json" line
   add sd-watch:CLASSIFY "$(heredoc "$ROOT/libexec/sd-watch" CLASSIFY)" "$FIX/state.json"
   add sd-act:GATE "$(heredoc "$act" GATE)" "$FIX/state.json"
@@ -81,10 +75,6 @@ builtin_list() {
   # USAGE_Q calls STEP_COST_FN's step_cost, as harness_usage runs it.
   cat "$(heredoc "$ROOT/lib/sheepdog.sh" STEP_COST_FN)" "$(heredoc "$ROOT/lib/sheepdog.sh" USAGE_Q)" > "$WORK/sheepdog.USAGE_Q.full.spq"
   add sheepdog:USAGE_Q "$WORK/sheepdog.USAGE_Q.full.spq" "$FIX/usage.json"
-  printf '%s\n' "$PRN_QUERY" > "$WORK/next.PRN_QUERY.spq"
-  add next:PRN_QUERY "$WORK/next.PRN_QUERY.spq" "$FIX/next.json"
-  # a standing question's subquery, and the dirty step it holds off (#178)
-  add next:PRN_QUERY:question "$WORK/next.PRN_QUERY.spq" "$FIX/next-question.json"
 }
 
 if (( $# )); then

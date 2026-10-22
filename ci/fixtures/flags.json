@@ -1,4 +1,0 @@
-{"flags": {"suppressions": ["shellcheck\\s+disable", "eslint-disable", "#\\s*noqa"], "skips": ["(^|[;&|])\\s*skip(\\s|$)","\\.skip\\("], "testFiles": ["*.bats"]},
- "l": ["+\t2\t1\t0\ta.sh\ta.sh\t# shellcheck disable=SC2086", "+\t3\t1\t0\ta.sh\ta.sh\techo $x", "+\t2\t1\t1\tx.bats\tx.bats\t  skip \"later\"",
-       "+\t4\t1\t0\tnotes.txt\tnotes.txt\tskip this", "+\t5\t1\t0\tb.js\tb.js\tf()\t// eslint-disable-line", "+\t6\t1\t0\tb.js\tb.js\t",
-       "-\t2\t3\t1\tt.bats\tt.bats\t  [ 1 -eq 1 ]", "-\t1\t3\t1\tgone.bats\t/dev/null\t@test \"x\" {"]}

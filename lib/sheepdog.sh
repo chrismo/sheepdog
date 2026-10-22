@@ -1,4 +1,4 @@
-# Shared by sd act, sd state and sd watch. Source it after lib/config.sh;
+# Shared by sd act and sd watch. Source it after lib/config.sh;
 # needs bash 5 and super 0.3.0.
 #
 # harness_run is the harness adapter: the per-harness code, apart from the
@@ -353,28 +353,6 @@ harness_usage() {
           | prc_super -i json -s -c "$PRC_FNS"$'\n'"$STEP_COST_FN"$'\n'"$USAGE_Q" - 2>/dev/null) && [[ -n $rec ]] || return 0
   mkdir -p "${file%/*}" 2>/dev/null || return 0
   printf '%s\n' "$rec" >> "$file"
-}
-
-# branch_spend <branch>: what this repo's <branch> has cost so far, in USD, by
-# usage.sup's per-step cost_usd, as a JSON number; 0 with no record. A claude
-# row from before #150 holds its session's running total, so a resumed
-# session's older rows still overcount. The file is every repo's and
-# branch's, so a line that isn't a whole record (an append cut off, a stray
-# edit) is skipped with a warning rather than failing every branch's sd state;
-# one shaped like a record that still doesn't parse fails it. A filter, not
-# parse_sup per line: on super 0.3.0 that misreported valid lines around a bad
-# one, and -e=false still stops at a SUP syntax error.
-branch_spend() {
-  local file repo b out skipped
-  file=$(usage_file)
-  [[ -s $file ]] || { echo 0; return 0; }
-  repo=$(prc_json_string "$(main_worktree)") && b=$(prc_json_string "$1") || return 1
-  skipped=$(grep -cvE '^\{time:.*\}$' "$file") || true
-  (( skipped == 0 )) || echo "warning: $skipped line(s) of $file aren't usage records; their cost isn't counted" >&2
-  out=$({ grep -E '^\{time:.*\}$' "$file" || true; } \
-          | prc_super -i sup -j -c "where repo == $repo and branch == $b | aggregate usd:=sum(cost_usd) | values coalesce(usd, 0)" - 2>/dev/null) \
-    || return 1
-  echo "${out:-0}"
 }
 
 # harness_run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]

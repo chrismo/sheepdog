@@ -1,5 +1,5 @@
-# SuperDB queries and config reads for the bash verbs. Sourced by sd act,
-# sd watch and sd state; needs bash 5 and super 0.3.0. SuperDB's edges:
+# SuperDB queries and config reads for the bash verbs. Sourced by sd act and
+# sd watch; needs bash 5 and super 0.3.0. SuperDB's edges:
 # AGENTS.md, "SuperDB notes".
 #
 # Every function returns 1 on an error (message on stderr) and never exits:
@@ -11,6 +11,7 @@
 # is always piped.
 
 PRC_SD_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/../libexec" && pwd)/sd-config"
+PRC_SD_STATE="${PRC_SD_CONFIG%/*}/sd-state"
 
 prc_err() { echo "sd config: $*" >&2; return 1; }
 
@@ -21,16 +22,6 @@ prc_rebase_head() {
   head=$(cat "$gd/rebase-merge/head-name" 2>/dev/null || cat "$gd/rebase-apply/head-name" 2>/dev/null) || return 1
   [[ $head == refs/heads/* ]] || return 1
   echo "${head#refs/heads/}"
-}
-
-# prc_current_branch: the checked-out branch, or the one a paused rebase is
-# rebasing (restack --resolve runs on a detached HEAD, #179); empty when
-# detached otherwise or outside a repo.
-prc_current_branch() {
-  local b
-  b=$(git branch --show-current 2>/dev/null) || b=
-  [[ -n $b ]] || b=$(prc_rebase_head) || b=
-  echo "$b"
 }
 
 # Duplicated from a work repo's bin/lib/superdb.sh. The asdf shim re-resolves on every
@@ -93,6 +84,10 @@ prc_get() {
 
 # prc_step <step> <branch-or-empty> <forced-harness-or-empty>
 prc_step() { "$PRC_SD_CONFIG" step --harness "$3" -- "$1" ${2:+"$2"}; }
+
+# prn_next <remote>: sd state JSON on stdin; prints NEXT's steps as a JSON
+# array, first is next (src/next.rs, as sd state runs them).
+prn_next() { "$PRC_SD_STATE" --next "$1"; }
 
 prc_json_string() { # <string>
   local s=$1 t=${1//[$'\n\t\r']/}

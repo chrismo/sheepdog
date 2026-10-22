@@ -54,7 +54,7 @@ register() {
 }
 
 # ps_fixture <branch> [jq-assignments...] — sd state's JSON. Default: ready to merge.
-# .next comes from the real lib/next.sh, as in sd state, unless an assignment sets it.
+# .next comes from the real NEXT rules (lib/config.sh's prn_next), as in sd state, unless an assignment sets it.
 ps_fixture() {
   local b=$1; shift
   local j
@@ -71,7 +71,7 @@ ps_fixture() {
   local a
   for a; do j=$(jq "$a" <<<"$j"); done
   if [[ $(jq 'has("next")' <<<"$j") == false ]]; then
-    j=$(jq --argjson n "$(printf '%s\n' "$j" | bash5 -c 'source "$1/../lib/config.sh" && source "$1/../lib/next.sh" && prn_next origin' _ "$BATS_TEST_DIRNAME")" \
+    j=$(jq --argjson n "$(printf '%s\n' "$j" | bash5 -c 'source "$1/../lib/config.sh" && prn_next origin' _ "$BATS_TEST_DIRNAME")" \
           '. + {next: $n}' <<<"$j")
   fi
   printf '%s\n' "$j" > "$PS_FIXTURES/${b//\//__}.json"
@@ -648,9 +648,9 @@ one_step() {
   ps_fixture feat ".next = [{key: \"$1\", who: \"you\", say: \"say $1\", cmd: null}]"
 }
 
-@test "policy: every lib/next.sh step is in --help, notified or not, exactly once" {
+@test "policy: every NEXT step (src/next.rs) is in --help, notified or not, exactly once" {
   local steps listed
-  steps=$(grep -oE '(step\(|agent\(budget, )"[a-z-]+"' "$BATS_TEST_DIRNAME/../lib/next.sh" | sed -E 's/.*"([a-z-]+)"$/\1/' | sort -u)
+  steps=$(grep -oE '(step\(|agent\(budget, )"[a-z-]+"' "$BATS_TEST_DIRNAME/../src/next.rs" | sed -E 's/.*"([a-z-]+)"$/\1/' | sort -u)
   listed=$( { policy n; policy q; } | sort)
   [ -n "$(policy n)" ]
   diff <(echo "$steps") <(echo "$listed")
