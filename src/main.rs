@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         "act" => sheepdog::act::run(&rest),
         "config" => sheepdog::config::run(&rest),
         "state" => sheepdog::state::run(&rest),
+        "watch" => sheepdog::watch::run(&rest),
         _ => {
             eprintln!("sd: unknown verb: {verb}");
             ExitCode::from(1)

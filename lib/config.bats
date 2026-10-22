@@ -137,20 +137,15 @@ old_super() {
 @test "super: every bash command checks the version before reading config" {
   pin_setup
   old_super "$ASDF_DATA_DIR/installs/superdb/0.2.0/bin" 0.2.0
-  # Nothing real gets installed if sd watch install gets past the check.
-  mkdir -p "$TMP/home" "$TMP/fakebin"
-  printf '#!/usr/bin/env bash\necho "$*" >> "%s/launchctl-calls"\n' "$TMP" > "$TMP/fakebin/launchctl"
-  chmod +x "$TMP/fakebin/launchctl"
+  mkdir -p "$TMP/home"
   local cmd
-  for cmd in "sd-act address" "sd-watch install"; do
-    HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" SHEEPDOG_WATCH_LAUNCH_AGENTS="$TMP/agents" \
-      SHEEPDOG_STATE_DIR="$TMP/state" STATUS_DIR="$TMP/status" ASDF_SUPERDB_VERSION=0.2.0 \
+  for cmd in "sd-act address" sd-watch; do
+    HOME="$TMP/home" SHEEPDOG_STATE_DIR="$TMP/state" STATUS_DIR="$TMP/status" ASDF_SUPERDB_VERSION=0.2.0 \
       run "$LIBEXEC"/$cmd
     [ "$status" -eq 1 ]
     [[ "$output" == *"needs super 0.3.0, but "*" is v0.2.0"* ]]
   done
-  [ ! -e "$TMP/launchctl-calls" ]
-  [ ! -e "$TMP/agents" ]
+  [ ! -e "$TMP/state" ]
 }
 
 @test "super: the version is checked once per command, not per query" {

@@ -1,0 +1,106 @@
+sd watch - observe-only pass over every enrolled branch.
+
+Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | status | install | uninstall]
+
+  (none)     for each repo in global git config sheepdog.repo: fetch, then
+             sd state every branch with branch.<name>.sheepdog=true. Writes a
+             glyph for the branch's worktree (shown by tab-status; none
+             when two same-named worktrees are on one branch), notifies
+             per the policy below, and records the pass. Also deletes
+             refs/sheepdog/<b>/* whose branch no longer exists (pins outlive
+             a branch -D), and the cached state of branches no longer
+             enrolled. For one that is gone too (gh pr merge --delete-branch
+             takes its enrollment), its PR's merge is notified if it wasn't.
+  refresh    the same check for one branch (default: the current one), now:
+             fetch its repo, glyph, notify, cache its state. Not a pass: other
+             branches and glyphs are left alone and status still shows the
+             last pass. Exits non-zero when the branch couldn't be checked.
+  glyph      [<path>] the glyph for the worktree holding <path> (default .),
+             if it's still on the branch the last check saw; for a shell
+             prompt or tab title (fast: no super, no GitHub)
+  vacuum     a pass that unenrolls every stale branch now, without waiting
+             for vacuumAfter, even when it is 0, so an open PR's branch that
+             no worktree holds goes too: prints each one unenrolled and its
+             reason, and each one sd state is unsure of, skipped, and why.
+             It doesn't notify its own unenrolls.
+             --dry-run: what vacuum would do, judged from each branch's last
+             saved check (one where sd state failed isn't saved; nothing is
+             fetched or changed), and when a pass would unenroll it
+  status     print the last pass
+  install    launchd job: a pass every settings.interval seconds (default 300)
+  uninstall  remove the job
+
+Glyphs: ❌ needs chrismo   ⚠️ state unknown   🔧 work for later   ⏳ waiting (CI, review)
+        ✅ ready to merge  🏁 merged          🚫 closed           🤖 an agent step running
+
+Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
+  ci-red ci-blocked conflict human foreign parent-closed restack-undone: ❌ the
+    PR is stuck or wrong
+    until chrismo, or an agent chrismo starts, deals with it
+  bot-silent: ❌ the review bot hasn't answered within settings.botTimeout
+  merged ready: chrismo acts (clean up, merge)
+  review-decide: ❌ the local review still blocks after
+    settings.reviewRounds rounds, or the agent declined its findings:
+    chrismo fixes them or accepts HEAD
+  question: ❌ an agent step needs chrismo's answer, and nothing reruns it
+    until it comes (#167)
+  budget: ❌ the branch's steps have spent past settings.branchBudget, so
+    no agent step runs on it until chrismo raises it or takes over
+  ci-config: ❌ an agent step's commit changed CI config, held unpushed
+    until chrismo reviews it and runs sd act push (#124)
+  nothing default: ❌ nothing ahead of the base and no task to implement, or
+    the default branch itself: chrismo commits, records a task, or starts a
+    branch (#143, #159)
+  dirty: ❌ uncommitted edits hold up an agent or restack step that refuses
+    them, and nothing says whose they are: chrismo's hand edit, or an agent
+    step's that gave up, failed or timed out with no question (#178). The
+    two steps below are the same edits where the state says they're
+    chrismo's, so those aren't notified
+  read: ❌ info-only bot items, shown once nothing else moves without
+    chrismo: unnotified, an unattended loop stalls there unseen (#76)
+Not notified:
+  closed: chrismo closed it
+  errors stale: ⚠️ sd state can't be sure, so what was notified carries over
+  reset-dirty take: chrismo is mid-change on the branch: no sheepdog step
+    resets pushed commits away, so the reset and the edits with it are
+    chrismo's; the 🔧 glyph shows it
+  nothing-dirty: the same, on a branch chrismo hasn't committed to yet (an
+    agent step's edits show as running instead)
+  running: an agent step is running on the branch (#170); what was notified
+    carries over, since it hides every other step
+  blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it
+  attached: chrismo is in the branch's session; like merge-wait, keeps ready
+  bot: routine agent work, picked up when the branch is next worked on
+  review review-fix implement: the same
+  behind push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
+    (behind with no old base is chrismo's, but its errors step shows ⚠️ first)
+  ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub
+    recomputing after the base moved) keeps ready notified
+A notification that fails is tried once more, on the next pass that still
+shows its step, then given up on.
+
+Stale enrollments: a pass unenrolls a branch (git config only; never the
+branch, its pins, a worktree or a PR) with no local branch at once, and one
+merged, closed or checked out nowhere once it has been so for
+settings.vacuumAfter seconds (default 7 days; 0 turns off these three). A
+pass whose sd state reported errors or stale data neither starts, resets nor
+acts on that clock, and a new reason restarts it. Each timed unenroll
+notifies, once; one for no local branch is only a pass line. sd watch vacuum
+doesn't wait for the clock, vacuumAfter 0 included, but counts only these
+reasons and skips a branch sd state is unsure of, as a pass does.
+
+GitHub's rate limit: a pass checks no more branches after one whose sd
+state found less than settings.rateLimitFloor GraphQL points left (default
+250), or had a call refused for the rate limit. Status says so with the
+reset time, and lists each branch not checked; those keep their glyphs and
+cached state. The housekeeping that asks GitHub's GraphQL nothing still
+runs. refresh checks its one branch either way.
+
+Env:    SHEEPDOG_STATE_DIR (~/.local/state/sheepdog), STATUS_DIR (~/.claude/tab-status)
+        LOCAL_BIN (~/.local/bin): where install finds the sd link the job runs
+        SHEEPDOG_WATCH_TIMEOUT (120): seconds a fetch or sd state may take
+Config: read with lib/config.sh, no branch file (global file over
+        built-in defaults): settings.notify, .interval, .remote, .vacuumAfter,
+        .rateLimitFloor.
+        notify — shell command, run with <title> <message> appended
+        (default: a macOS notification)

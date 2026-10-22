@@ -90,11 +90,7 @@ fn die(msg: impl std::fmt::Display) -> ! {
 // ── usage.sup: what the branch has spent (#121) ──────────────────────────────
 
 fn usage_file() -> String {
-    let dir = std::env::var("SHEEPDOG_STATE_DIR")
-        .ok()
-        .filter(|d| !d.is_empty())
-        .unwrap_or_else(|| format!("{}/.local/state/sheepdog", std::env::var("HOME").unwrap_or_default()));
-    format!("{dir}/usage.sup")
+    format!("{}/usage.sup", config::state_dir())
 }
 
 /// One usage record's fields: a flat SUP record of strings, numbers, times,
