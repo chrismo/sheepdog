@@ -4,14 +4,14 @@
 // every stop and continue (#170), and rolls the branch back when it fails.
 
 use super::step::{agent_rules, step_session, step_store};
-use crate::git::{git, git_out, strip_nl};
+use crate::git::{git, git_out, rebase_head, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Step, PI_TOOLS};
+use crate::proc;
 use crate::val::t;
 use serde_json::Value;
 use std::fs;
-use std::os::unix::fs::DirBuilderExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 const CAP: usize = 3;
@@ -103,19 +103,11 @@ fn marked(wt: &str, files: &[String]) -> Vec<String> {
     files.iter().filter(has_marker).cloned().collect()
 }
 
-/// A fresh directory for a scratch index, 0700, as mktemp -d made it.
-fn scratch_dir() -> Option<PathBuf> {
-    (0..100).find_map(|n| {
-        let dir = std::env::temp_dir().join(format!("sd-resolve-{}-{n}", std::process::id()));
-        fs::DirBuilder::new().mode(0o700).create(&dir).ok().map(|()| dir)
-    })
-}
-
 /// The tree of everything in <wt>, tracked or not (ignored files aside),
 /// staged or not, through a scratch index; the real index, mid-rebase, is
 /// left alone.
 fn worktree_tree(wt: &str) -> Option<String> {
-    let dir = scratch_dir()?;
+    let dir = proc::private_dir("sd-resolve")?;
     let index = dir.join("index");
     let step = |args: &[&str]| Command::new("git").arg("-C").arg(wt).args(args).env("GIT_INDEX_FILE", &index).output().ok().filter(|o| o.status.success());
     let tree = step(&["read-tree", "HEAD"])
@@ -124,12 +116,6 @@ fn worktree_tree(wt: &str) -> Option<String> {
         .map(|o| strip_nl(String::from_utf8_lossy(&o.stdout).into_owned()));
     let _ = fs::remove_dir_all(&dir);
     tree
-}
-
-fn rebasing(wt: &str) -> bool {
-    ["rebase-merge", "rebase-apply"].iter().any(|d| {
-        git_out(wt, &["rev-parse", "--git-path", d]).is_some_and(|p| Path::new(wt).join(p).exists())
-    })
 }
 
 /// Resolve the stopped rebase, stop by stop, in <harness> (--harness's, else
@@ -212,7 +198,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
         if cont.is_ok_and(|o| o.status.success()) {
             break;
         }
-        if !rebasing(wt) {
+        if rebase_head(wt).is_none() {
             return Err(format!("git rebase --continue failed; {}", r.back()));
         }
     }
