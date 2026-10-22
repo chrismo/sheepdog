@@ -50,6 +50,33 @@ remote_default() {
   echo "${ref:-main}"
 }
 
+# repo_remote: the remote sheepdog fetches, pushes and asks GitHub about:
+# settings.remote, from the repo file inside a repo, else the global file.
+repo_remote() { prc_get settings.remote "" true; }
+
+# gh_repo_of <url>: host/owner/repo, the form GH_REPO takes, from a remote's
+# URL (scp-style, ssh://, https://); empty for a local path or file:// URL.
+# src/git.rs's gh_repo_of is the same for sd state.
+gh_repo_of() {
+  local u=${1%/}
+  u=${u%.git}
+  if [[ $u =~ ^[a-z+]+://([^@/]+@)?([^/:]+)(:[0-9]+)?/([^/]+)/([^/]+)$ ]]; then
+    echo "${BASH_REMATCH[2]}/${BASH_REMATCH[4]}/${BASH_REMATCH[5]}"
+  elif [[ $u =~ ^([^@/:]+@)?([^/:]+):([^/]+)/([^/]+)$ ]]; then
+    echo "${BASH_REMATCH[2]}/${BASH_REMATCH[3]}/${BASH_REMATCH[4]}"
+  fi
+}
+
+# gh_repo <remote>: export GH_REPO for <remote>'s URL; unset, gh picks among
+# the remotes, and in a fork's clone that's upstream. A URL with no repo in
+# it leaves GH_REPO be.
+gh_repo() {
+  local url repo
+  url=$(git remote get-url "$1" 2>/dev/null) || return 0
+  repo=$(gh_repo_of "$url")
+  if [[ -n $repo ]]; then export GH_REPO=$repo; fi
+}
+
 # commits_not_ours <reflog> <sha>: how many commits of <sha> no reflog entry reaches.
 commits_not_ours() {
   sed -n 's/^./^&/p' <<<"$1" | git rev-list --count --stdin "$2"

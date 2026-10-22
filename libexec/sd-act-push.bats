@@ -97,6 +97,20 @@ inherit_main() { git branch -q --set-upstream-to=origin/main "${1:-feat}"; }
   [ "$output" = "pushed fresh to origin (new branch)" ]
 }
 
+@test "a fork's clone: pushed to the repo file's settings.remote, never to origin" {
+  git init -q --bare "$TMP/fork.git"
+  git remote add fork "$TMP/fork.git"
+  "$BATS_TEST_DIRNAME/sd-config" set --repo settings.remote fork
+  git push -q fork main 2>/dev/null
+  commit more
+  before=$(remote feat)
+  run "$SD_ACT" push
+  [ "$status" -eq 0 ]
+  [ "$output" = "pushed feat to fork (new branch)" ]
+  [ "$(git ls-remote fork refs/heads/feat | cut -f1)" = "$(git rev-parse feat)" ]
+  [ "$(remote feat)" = "$before" ]
+}
+
 @test "rewritten, and the remote head is ours: force-pushed with a lease" {
   git commit -q --amend -m "feat, reworded"
   run "$SD_ACT" push
