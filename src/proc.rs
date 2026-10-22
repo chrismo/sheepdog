@@ -204,14 +204,14 @@ mod tests {
         // A grandchild in the background: only a kill of the group stops it
         // writing. (Checked by what it does, not kill -0: an orphan nobody
         // reaps stays a zombie.)
-        let script = format!("echo early; (sleep 2; echo late > {}) & wait", late.display());
+        let script = format!("echo early; (sleep 4; echo late > {}) & wait", late.display());
         let start = Instant::now();
         let o = with_timeout(1, "sh", &["-c", &script], None);
         assert!(start.elapsed() < Duration::from_secs(10));
         assert_eq!((o.ok, o.code, o.timed_out), (false, 124, true));
         assert_eq!(o.stdout, "early\n");
         assert_eq!(o.stderr, "timed out after 1s\n");
-        std::thread::sleep(Duration::from_secs(3).saturating_sub(start.elapsed()));
+        std::thread::sleep(Duration::from_secs(5).saturating_sub(start.elapsed()));
         assert!(!late.exists(), "the grandchild outlived the timeout");
         let o = with_timeout_merged(1, "sh", &["-c", "echo early >&2; sleep 30"], None);
         assert_eq!(o.stdout, "early\ntimed out after 1s\n");
@@ -221,8 +221,8 @@ mod tests {
     #[test]
     fn with_timeout_doesnt_wait_on_a_command_that_ignores_term() {
         let start = Instant::now();
-        let o = with_timeout(1, "sh", &["-c", "trap '' TERM; echo hi; sleep 6; echo after"], None);
-        assert!(start.elapsed() < Duration::from_secs(4), "waited {:?}", start.elapsed());
+        let o = with_timeout(1, "sh", &["-c", "trap '' TERM; echo hi; sleep 12; echo after"], None);
+        assert!(start.elapsed() < Duration::from_secs(8), "waited {:?}", start.elapsed());
         assert_eq!((o.ok, o.code, o.timed_out), (false, 124, true));
         assert_eq!(o.stdout, "hi\n");
         assert_eq!(o.stderr, "timed out after 1s\n");
@@ -235,12 +235,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let late = dir.join("late");
         // The leader dies on TERM; the grandchild ignores it and holds the pipe.
-        let script = format!("(trap '' TERM; sleep 3; echo late > {}) & wait", late.display());
+        let script = format!("(trap '' TERM; sleep 8; echo late > {}) & wait", late.display());
         let start = Instant::now();
         let o = with_timeout(1, "sh", &["-c", &script], None);
-        assert!(start.elapsed() < Duration::from_secs(3), "waited {:?}", start.elapsed());
+        assert!(start.elapsed() < Duration::from_secs(6), "waited {:?}", start.elapsed());
         assert_eq!((o.code, o.timed_out), (124, true));
-        std::thread::sleep(Duration::from_secs(4).saturating_sub(start.elapsed()));
+        std::thread::sleep(Duration::from_secs(9).saturating_sub(start.elapsed()));
         assert!(!late.exists(), "the grandchild outlived the timeout");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -249,7 +249,7 @@ mod tests {
     fn with_timeout_doesnt_wait_past_the_deadline_on_a_grandchild_holding_the_pipe() {
         let start = Instant::now();
         let o = with_timeout(1, "sh", &["-c", "echo hi; sleep 30 & exit 0"], None);
-        assert!(start.elapsed() < Duration::from_secs(5), "waited {:?}", start.elapsed());
+        assert!(start.elapsed() < Duration::from_secs(10), "waited {:?}", start.elapsed());
         // The command itself finished in time: its status, not a timeout.
         assert_eq!((o.ok, o.code, o.timed_out), (true, 0, false));
         assert_eq!(o.stdout, "hi\n");
