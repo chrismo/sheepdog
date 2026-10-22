@@ -112,8 +112,8 @@ makes sd state look again. A draft adds two REST calls, for its base
 branch's required checks. A gh failure is
 recorded in .errors and the git facts are still reported.
 
-Config: read with sd config (branch file over global file over
-built-in defaults), under settings: remote (origin), botLogin (bots that
+Config: read with sd config (branch file over repo file over global file
+over built-in defaults), under settings: remote (origin), botLogin (bots that
 post as users, counted as bots; a [bot] suffix is optional), botIgnore (bots
 whose posts are never owed, e.g. github-actions preview links), botIgnoreBody
 (regexes: bot reviews and PR comments whose body matches are never owed).

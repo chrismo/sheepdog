@@ -211,6 +211,14 @@ old_super() {
   [ "$bots" = '[]' ]
 }
 
+@test "lib: prc_get with no branch reads the repo file inside a repo, the global file outside (#194)" {
+  source "$BATS_TEST_DIRNAME/../lib/config.sh"
+  write_global '{"settings":{"remote":"upstream"}}'
+  "$SD_CONFIG" set --repo settings.remote fork
+  [ "$(prc_get settings.remote "" true)" = fork ]
+  [ "$(cd "$TMP" && prc_get settings.remote "" true)" = upstream ]
+}
+
 @test "lib: prc_json runs a query over piped JSON and prints each result as one JSON line" {
   source "$BATS_TEST_DIRNAME/../lib/config.sh"
   [ "$(printf '{"a":[1,2],"b":"x"}\n' | prc_json 'values {n: len(a), b}, b')" = $'{"n":2,"b":"x"}\n"x"' ]

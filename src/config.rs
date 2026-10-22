@@ -12,8 +12,8 @@ const HELP: &str = r#"sd config - harness and settings for the PR pipeline.
 Usage:
   sd config get   [--no-branch] [--json] <path> [<branch>]
   sd config step  [--harness <h>] <step> [<branch>]
-  sd config set   [--global | --branch <b>] [--json] <path> <value>
-  sd config unset [--global | --branch <b>] <path>
+  sd config set   [--global | --repo | --branch <b>] [--json] <path> <value>
+  sd config unset [--global | --repo | --branch <b>] <path>
   sd config show  [--no-branch] [<branch>]
   sd config files [--no-branch] [<branch>]
   sd config init  --global [--force]
@@ -23,6 +23,7 @@ Examples:
   sd config get settings.verify                    one value
   sd config step address                           what a step runs with (JSON)
   sd config set --global harnesses.claude.model opus
+  sd config set --repo settings.remote fork        every branch of this repo
   sd config set --json settings.botLogin '["marge"]'
   sd config unset steps.address.harness            inherit it again
   sd config show                                   everything, merged
@@ -30,6 +31,8 @@ Examples:
 
 Layers (top wins):
   branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees
+  repo      <main repo>/.git/sheepdog.json, shared by every branch and
+            worktree of that repo and read by no other
             (sd config files prints the paths)
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
@@ -50,14 +53,17 @@ Notes:
   - get prints strings raw, lists one per line, objects as JSON (--json: all)
   - exit 3: no value and no default. exit 1: an error
   - <branch> defaults to the current one; --no-branch skips the branch file
+    (inside a repo, the repo file is still read)
   - options may go anywhere; -- ends them (for a value like --json)
-  - set/unset write the current branch's file unless --global or --branch
+  - set/unset write the current branch's file unless --global, --repo or
+    --branch, at most one of them
   - init (no --global) writes empty blocks: a branch file holds only overrides
   - files are typed: an unknown key or a bad value is an error naming the
     file and path; a number may be quoted ("1800", as set writes it without
     --json); forkLimit, reviewRounds, interval and rateLimitFloor are whole
-    numbers; get prints a value as written; remote, interval, notify,
-    vacuumAfter and rateLimitFloor are global-file only
+    numbers; get prints a value as written; remote is global or repo file
+    only; interval, notify, vacuumAfter and rateLimitFloor are global-file
+    only; a repo file takes everything else a branch file does
   - set values are strings; --json takes a number, list, object or null
   - step: the harness's block, with the step's block for it laid over it
 "#;
@@ -140,10 +146,11 @@ const SETTINGS: &[(&str, Ty)] = &[
     ("implementAllow", Ty::List), ("protectedPaths", Ty::List),
     ("flags", Ty::Obj(FLAGS)),
 ];
-// The watcher's settings: it reads no branch file.
+// The watcher's settings: it reads no branch file, and reads remote alone
+// from inside each repo.
+const GLOBAL_OR_REPO: &[(&str, Ty)] = &[("remote", Ty::Str)];
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
-    ("remote", Ty::Str), ("interval", Ty::Whole), ("notify", Ty::Str),
-    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
+    ("interval", Ty::Whole), ("notify", Ty::Str), ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
 ];
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
@@ -155,6 +162,7 @@ const CONFIG: &[(&str, Ty)] = &[
 #[derive(Clone, Copy, PartialEq)]
 enum Layer {
     Global,
+    Repo,
     Branch,
 }
 
@@ -207,11 +215,13 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
     let find = |fields: &[(&str, Ty)]| fields.iter().find(|(name, _)| *name == k).map(|&(_, t)| t);
     match ty {
         Ty::Obj(fields) => find(fields).ok_or("unknown key"),
-        _ => match (find(SETTINGS), find(GLOBAL_ONLY)) {
-            (Some(t), _) => Ok(t),
-            (None, Some(t)) if layer == Layer::Global => Ok(t),
-            (None, Some(_)) => Err("global file only"),
-            (None, None) => Err("unknown key"),
+        _ => match (find(SETTINGS), find(GLOBAL_OR_REPO), find(GLOBAL_ONLY)) {
+            (Some(t), _, _) => Ok(t),
+            (_, Some(t), _) if layer != Layer::Branch => Ok(t),
+            (_, Some(_), _) => Err("global or repo file only"),
+            (_, _, Some(t)) if layer == Layer::Global => Ok(t),
+            (_, _, Some(_)) => Err("global file only"),
+            _ => Err("unknown key"),
         },
     }
 }
@@ -316,6 +326,11 @@ pub fn state_dir() -> String {
         .unwrap_or_else(|| format!("{}/.local/state/sheepdog", std::env::var("HOME").unwrap_or_default()))
 }
 
+/// Beside the branch files' dir, so no branch name can collide with it.
+fn repo_file() -> Option<String> {
+    git::common_dir().map(|dir| format!("{dir}/sheepdog.json"))
+}
+
 fn branch_file(b: &str) -> Res<String> {
     let Some(dir) = git::common_dir() else { return err("not a git repository") };
     let name = b.replace('%', "%25").replace('/', "%2F");
@@ -360,7 +375,8 @@ fn checked(doc: &Value, kind: Layer, file: &str) -> Res<()> {
     Err(Fail::Error(ps.into_iter().map(|p| format!("{file}: {p}")).collect()))
 }
 
-/// The global file with the branch file merged over it, nulls kept.
+/// The global file with the repo file and then the branch file merged over
+/// it, nulls kept.
 fn files(b: &str, no_branch: bool) -> Res<Value> {
     let b = match (no_branch, b) {
         (true, _) => String::new(),
@@ -368,8 +384,12 @@ fn files(b: &str, no_branch: bool) -> Res<Value> {
         (false, b) => b.to_string(),
     };
     let g = layer(&global_file(), Some(Layer::Global))?;
+    let r = match repo_file() {
+        Some(f) => layer(&f, Some(Layer::Repo))?,
+        None => json!({}),
+    };
     let bj = if b.is_empty() { json!({}) } else { layer(&branch_file(&b)?, Some(Layer::Branch))? };
-    Ok(merge(&[&g, &bj], false))
+    Ok(merge(&[&g, &r, &bj], false))
 }
 
 fn with_defaults(files: &Value) -> Value {
@@ -421,7 +441,8 @@ pub fn get_text(path: &str, b: &str, as_json: bool) -> Result<String, Vec<String
     get_line(path, b, false, as_json)
 }
 
-/// get_text with no branch file: prc_get <path> '' true.
+/// get_text with no branch file: prc_get <path> '' true. Inside a repo, its
+/// repo file is still read.
 pub fn get_global(path: &str, as_json: bool) -> Result<String, Vec<String>> {
     get_line(path, "", true, as_json)
 }
@@ -438,9 +459,13 @@ fn show(b: &str, no_branch: bool) -> Res<String> {
 fn paths(b: &str, no_branch: bool) -> Res<String> {
     let path_line = |kind: &str, f: &str| {
         let missing = if Path::new(f).exists() { "" } else { "  (missing)" };
-        format!("{kind}  {f}{missing}\n")
+        format!("{kind:<6}  {f}{missing}\n")
     };
     let mut out = path_line("global", &global_file());
+    out += &match repo_file() {
+        Some(f) => path_line("repo", &f),
+        None => "repo    (none: not a git repository)\n".into(),
+    };
     if no_branch {
         return Ok(out);
     }
@@ -515,19 +540,22 @@ fn warn_inherited_effort(step: &str, h: &str, hb: &Value, sb: &Value) {
     }
 }
 
-fn target_file(global: bool, b: &str) -> Res<String> {
+fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
     if global {
-        return Ok(global_file());
+        return Ok((global_file(), Layer::Global));
+    }
+    if repo {
+        let Some(f) = repo_file() else { return err("not a git repository") };
+        return Ok((f, Layer::Repo));
     }
     let b = branch_arg(b)?;
     if !git::branch_exists(&b) {
         return err(format!("no such branch: {b}"));
     }
-    branch_file(&b)
+    Ok((branch_file(&b)?, Layer::Branch))
 }
 
-fn write(file: &str, doc: &Value) -> Res<()> {
-    let kind = if file == global_file() { Layer::Global } else { Layer::Branch };
+fn write(file: &str, kind: Layer, doc: &Value) -> Res<()> {
     checked(doc, kind, file)?;
     write_file(file, doc)
 }
@@ -549,7 +577,7 @@ fn write_file(file: &str, doc: &Value) -> Res<()> {
         })
 }
 
-fn set(file: &str, path: &str, value: &str, as_json: bool) -> Res<()> {
+fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<()> {
     let segs = segments(path)?;
     let v = if as_json {
         match one_value(value) {
@@ -569,10 +597,10 @@ fn set(file: &str, path: &str, value: &str, as_json: bool) -> Res<()> {
         }
     }
     put(&mut doc, &segs, v);
-    write(file, &doc)
+    write(file, kind, &doc)
 }
 
-fn unset(file: &str, path: &str) -> Res<()> {
+fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {
     let segs = segments(path)?;
     let mut doc = layer(file, None)?;
     let (last, parent) = segs.split_last().expect("a path has a segment");
@@ -583,7 +611,7 @@ fn unset(file: &str, path: &str) -> Res<()> {
     if let Some(m) = cur.and_then(Value::as_object_mut) {
         m.shift_remove(last);
     }
-    write(file, &doc)
+    write(file, kind, &doc)
 }
 
 /// A branch file holds only overrides, so its skeleton has no harness.
@@ -638,8 +666,8 @@ fn cli(argv: &[String]) -> Res<String> {
         "files" | "show" => &["--no-branch"],
         "step" => &["--harness"],
         "init" => &["--force", "--global"],
-        "set" => &["--global", "--branch", "--json"],
-        "unset" => &["--global", "--branch"],
+        "set" => &["--global", "--repo", "--branch", "--json"],
+        "unset" => &["--global", "--repo", "--branch"],
         _ => return err(format!("unknown verb: {verb}")),
     };
 
@@ -653,7 +681,7 @@ fn cli(argv: &[String]) -> Res<String> {
                 args.extend(it.by_ref().map(String::as_str));
             }
             "-h" | "--help" => return Ok(HELP.into()),
-            o @ ("--no-branch" | "--json" | "--harness" | "--force" | "--global" | "--branch") => {
+            o @ ("--no-branch" | "--json" | "--harness" | "--force" | "--global" | "--repo" | "--branch") => {
                 if !takes.contains(&o) {
                     return err(format!("{verb} doesn't take {o}"));
                 }
@@ -664,9 +692,8 @@ fn cli(argv: &[String]) -> Res<String> {
                     } else {
                         harness_opt = v.clone();
                     }
-                } else {
-                    flags.push(o);
                 }
+                flags.push(o);
             }
             v => args.push(v),
         }
@@ -711,17 +738,20 @@ fn cli(argv: &[String]) -> Res<String> {
             init(&branch_file(&b)?, has("--force"), false)
         }
         _ => {
-            let file = target_file(has("--global"), &branch_opt)?;
+            if ["--global", "--repo", "--branch"].iter().filter(|f| has(f)).count() > 1 {
+                return err(format!("{verb} takes at most one of --global, --repo and --branch"));
+            }
+            let (file, kind) = target_file(has("--global"), has("--repo"), &branch_opt)?;
             if verb == "unset" {
                 if n != 1 {
                     needs(verb, "<path>");
                 }
-                unset(&file, arg(0))?;
+                unset(&file, kind, arg(0))?;
             } else {
                 if n != 2 {
                     needs(verb, "<path> <value>");
                 }
-                set(&file, arg(0), arg(1), has("--json"))?;
+                set(&file, kind, arg(0), arg(1), has("--json"))?;
             }
             Ok(String::new())
         }
@@ -785,8 +815,25 @@ mod tests {
 
     #[test]
     fn a_global_only_setting_in_a_branch_file_says_so() {
-        assert_eq!(probs(json!({"settings": {"remote": "x"}}), Layer::Branch), ["settings.remote: global file only"]);
-        assert!(probs(json!({"settings": {"remote": "x"}}), Layer::Global).is_empty());
+        assert_eq!(
+            probs(json!({"settings": {"remote": "x", "interval": 5}}), Layer::Branch),
+            ["settings.interval: global file only", "settings.remote: global or repo file only"]
+        );
+        assert!(probs(json!({"settings": {"remote": "x", "interval": 5}}), Layer::Global).is_empty());
+    }
+
+    #[test]
+    fn a_repo_file_takes_remote_but_not_the_other_watcher_settings() {
+        assert!(probs(json!({"settings": {"remote": "fork", "verify": "make"}}), Layer::Repo).is_empty());
+        assert_eq!(
+            probs(json!({"settings": {"interval": 5, "notify": "say", "vacuumAfter": 1, "rateLimitFloor": 1}}), Layer::Repo),
+            [
+                "settings.interval: global file only",
+                "settings.notify: global file only",
+                "settings.rateLimitFloor: global file only",
+                "settings.vacuumAfter: global file only",
+            ]
+        );
     }
 
     #[test]
@@ -849,6 +896,7 @@ mod tests {
     }
 
     // The only unit test that reads a config file: no other sets SHEEPDOG_CONFIG.
+    // It reads this checkout's repo file too, which can't set interval.
     #[test]
     fn get_global_reads_the_global_file_over_the_defaults_and_no_branch_file() {
         let dir = std::env::temp_dir().join(format!("sd-config-unit-{}", std::process::id()));
@@ -859,7 +907,7 @@ mod tests {
         assert_eq!(get_global("settings.botTimeout", false), Ok("900".into()));
         assert_eq!(get_global("settings.botLogin", false), Ok("x".into()));
         assert_eq!(get_global("settings.botLogin", true), Ok(r#"["x"]"#.into()));
-        assert_eq!(get_global("settings.remote", false), Ok("origin".into()));
+        assert_eq!(get_global("settings.interval", false), Ok("300".into()));
         assert_eq!(get_global("settings.nope", false), Err(vec![]));
         fs::write(&file, "[]").unwrap();
         assert_eq!(get_global("settings.remote", false), Err(vec![format!("not a JSON object: {}", file.display())]));
