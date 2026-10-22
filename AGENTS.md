@@ -96,22 +96,26 @@ from chrismo's real config, glyphs and launchd job.
 
 ## Development
 
-This is a TDD repo: write a failing test first, then make it pass. A verb's
-acceptance tests are Rust, in `tests/<verb>.rs` (the built binary run through
-a link named `sd-<verb>`, by `tests/common`'s harness, #199); `sd`'s own
-dispatch is `tests/cli.rs`. The only bats suite left is `ci/test.bats`.
+This is a TDD repo: write a failing test first, then make it pass. Every test
+is a cargo test. Unit tests sit beside the code in `src/`; a verb's acceptance
+tests are in `tests/<verb>.rs` (the built binary run through a link named
+`sd-<verb>`, by `tests/common`'s harness, #199); `sd`'s own dispatch is
+`tests/cli.rs`, and `install.sh` is `tests/install.rs`. The tests need `git`,
+`jq` (tests/next.rs and the fake `gh`), `bash` (the fixtures' fakes) and
+`perl` (tests/act_restack.rs's fixtures) on `PATH`.
 
 **`cargo test` builds its own debug binary.** It runs the Rust unit tests and
 `tests/` against it. `bin/sd` runs the release build: after a change under
 `src/`, `cargo build --release` before trying `bin/sd` by hand.
 
 **The full suite runs on the PR's CI, not locally and not by `rwx run`.**
-Locally, run only the tests you're writing or changing during red-green,
-picked by name with `-f`, not whole files and never the suite:
+Locally, run only the tests you're writing or changing during red-green: one
+test file (`--test <file>`, no `.rs`) and a filter on the test name, never the
+whole suite:
 
 ```bash
-bats -f 'every default glob' ci/test.bats
-cargo test --test act_review no_usable_round
+cargo test --test act_review no_usable_round   # tests/act_review.rs
+cargo test --lib tally                         # unit tests in src/
 ```
 
 When the change is ready, commit and `sd act push`; the PR's run is the
@@ -123,47 +127,33 @@ doesn't stand in for the PR's run: a later commit changes the files, and RWX
 runs everything again. Over 2026-10-18 to -21, `rwx run` was 43 of the 56 full
 runs. Push when the work is ready for a full check, not after every commit.
 
-The macOS-only `sd watch` plist tests return early on RWX (`no_plutil` in
-`tests/watch.rs`). After changing the plist, run them locally:
-`cargo test --test watch install`.
+The macOS-only `sd watch` plist tests return early on RWX: cargo test has no
+skip, so each starts with `if no_plutil() { return; }` (`tests/watch.rs`) and
+passes on Linux without checking anything. After changing the plist, run them
+locally: `cargo test --test watch install`.
 
-**Check which bash bats is using before trusting a green run.** `bats` is
-`#!/usr/bin/env bash`, so test bodies run under whichever bash is first on
-`PATH`. Under bash 3.2 a `[[ ]]` or `(( ))` that is not the last statement of a
-test body does not fail the test under `set -e`, so the suite passes no matter
-what it claims. Bash 5 fails it correctly.
+**`install.sh` is plain `bash`** and must run under macOS's 3.2 (#204), so
+keep its constructs 3.2-safe. `tests/install.rs` runs it by its
+`#!/usr/bin/env bash` shebang, so under whichever `bash` is first on `PATH`
+(often Homebrew's 5); after changing it, also run it by hand under `/bin/bash`.
 
-```bash
-bash --version | head -1
-PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
-```
-
-**Every script is `#!/usr/bin/env bash5` but `install.sh`**, which is plain
-`bash` and must run under macOS's 3.2 (#204). Test them
-by running them, not sourcing, so the shebang picks the bash. agent-rig's
-`install.sh` makes the `~/.local/bin/bash5` link; without it a script fails
-with `env: bash5: No such file or directory`.
-
-The suites pass inside Claude Code's sandbox as well as outside it (424/424 in
-104 s, 2026-10-13). `rwx` may not: an x509/TLS error from it in the sandbox
+`rwx` may fail inside Claude Code's sandbox: an x509/TLS error from it there
 means the sandbox, so run it outside.
 
 ## CI (RWX)
 
-`.rwx/tests.yml` runs every suite on Ubuntu for PRs and pushes to `main`, through
-Captain (`.captain/config.yml`) via `ci/test`. A push to a branch with an open
-PR starts a run; `sd state` reports its result. To read a run:
+`.rwx/tests.yml` runs `cargo test --locked` on Ubuntu for PRs and pushes to
+`main`, as one task, `cargo-test`. Its filter lists the files the tests read
+from the repo (`src/`, `tests/`, `lib/prompts/`, `lib/review-rules.md`,
+`install.sh`, `bin/sd`, the Cargo files): a test that starts reading another
+one needs it added there, or a change to that file won't rerun the task. A
+push to a branch with an open PR starts a run; `sd state` reports its result.
+To read a run:
 
 ```bash
 rwx runs list --branch <branch>
-rwx logs --task test <run-id>
+rwx logs --task cargo-test <run-id>
 ```
 
 `rwx run` (a run from local edits, no push) is for chrismo to ask for; see
-"Don't launch runs with `rwx run`" above.
-
-One 16-CPU task, not Captain shards: `bats --jobs` balances tests across CPUs
-better than Captain balances 11 files across runners (37 s vs 77 s, 2026-10-14).
-
-Linux has no `plutil`, so the `sd watch` tests that validate the launchd
-plist return early there (`no_plutil`). They still run on macOS.
+"Don't launch runs with `rwx run`" above. `rwx lint .rwx/tests.yml` is free.

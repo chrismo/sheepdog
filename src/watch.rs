@@ -91,7 +91,7 @@ fn plist(prog: &str, interval: &str, path: &str, log: &str) -> String {
 }
 
 /// The job's PATH: <bindir> first unless it's ~/.local/bin, which stays on
-/// PATH anyway (bash5 and claude are linked there).
+/// PATH anyway (claude's installer links it there).
 fn job_path(home: &str, bindir: &str) -> String {
     let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
     if bindir == format!("{home}/.local/bin") {
