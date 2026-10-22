@@ -1906,6 +1906,7 @@ plural() { if (( $1 == 1 )); then echo "1 $2"; else echo "$1 $2s"; fi; }
 # push_branch <branch> <remote>: publish <branch> as fetched just now. Rewritten
 # history, or a pushed commit reset away, is force-pushed with a lease on that
 # remote head, and only when the head is in the branch's reflog (we put it there).
+# sd act push is src/act/push.rs, which has its own copies of these: change both.
 push_branch() {
   local b=$1 remote=$2 rsha ahead behind reflog theirs
   git fetch --quiet --prune "$remote" || { echo "sd act: fetch from $remote failed" >&2; return 1; }
@@ -1989,23 +1990,6 @@ push_ref() {
       echo "sd act: push to $remote failed: ${err//$'\n'/ }" >&2
     fi
     return 1
-  fi
-}
-
-push() {
-  local remote
-  git rev-parse -q --verify "refs/heads/$branch" >/dev/null || die "no such branch: $branch"
-  if ! $force && [[ -n $(git config --get "branch.$branch.sd-lock" || true) ]]; then
-    die "not pushing $branch: taken over (branch.$branch.sd-lock is set; --force to push anyway)"
-  fi
-  remote=$(repo_remote) || die "sd config failed"
-  [[ $branch != "$(remote_default "$remote")" ]] \
-    || die "not pushing $branch: it's the default branch; start a branch (sd act start <branch> \"<task>\")"
-  push_branch "$branch" "$remote" || exit 1
-  # chrismo pushing is the approval of what an agent changed in CI config.
-  if git config --get "branch.$branch.sd-held" >/dev/null; then
-    git config --unset "branch.$branch.sd-held"
-    echo "released the CI config hold on $branch"
   fi
 }
 
@@ -2506,7 +2490,7 @@ case $verb in
   answer) answer ;;
   restack) restack ;;
   retarget) retarget ;;
-  push) push ;;
+  push) act_rs ;;
   verify) act_rs ;;
   autofix) act_rs ;;
   ci-fix) running_during "$branch" ci-fix ci_fix ;;
