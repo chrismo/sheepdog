@@ -70,11 +70,3 @@ tasks:
     outputs:
       test-results:
         - path: test-results/captain-results.json
-
-  # Every named SuperDB query, 200 runs each: a panic or a differing output fails.
-  - key: super-stress
-    use: [code, system-packages, superdb]
-    run: ci/super-stress
-    filter:
-      - "!docs/**"
-      - "!README.md"

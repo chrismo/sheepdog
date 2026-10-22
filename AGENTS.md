@@ -126,12 +126,13 @@ bash --version | head -1
 PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
 ```
 
-**Stress-test a changed SuperDB query.** super 0.3.0 has panicked
-intermittently on one construct, so `ci/super-stress` runs every named query
-(the `read -r -d '' NAME <<'EOF'` heredocs in `libexec/sd-*` and `lib/next.sh`'s
-`PRN_QUERY`) 200 times over `ci/fixtures/` and fails on a panic or a differing
-output. RWX runs it with the suite, so the PR's run after touching a query
-covers it. SuperDB's edges are under "SuperDB notes" below.
+**No `unnest … into` in a SuperDB query.** super 0.3.0 panicked
+intermittently on that one construct, and a test in `ci/super-stress.bats`
+fails if any script uses it. CI no longer stress-tests queries (2026-10-21:
+the Rust port is retiring SuperDB). `ci/super-stress` still runs every named
+query (the `read -r -d '' NAME <<'EOF'` heredocs in `libexec/sd-*` and
+`lib/next.sh`'s `PRN_QUERY`) 200 times over `ci/fixtures/` for anyone who wants
+it locally. SuperDB's edges are under "SuperDB notes" below.
 
 **Every script is `#!/usr/bin/env bash5`, `install.sh` included.** Test them
 by running them, not sourcing, so the shebang picks the bash. agent-rig's
