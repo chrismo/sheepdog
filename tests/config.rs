@@ -1822,9 +1822,9 @@ fn global_file_only(key: &str, global: &str) {
 }
 
 #[test]
-fn validate_remote_interval_and_notify_are_refused_in_a_branch_file() {
+fn validate_remote_is_refused_in_a_branch_file() {
     let sd = Sd::new();
-    sd.write_global(r#"{"settings":{"remote":"upstream","interval":60,"notify":"say"}}"#);
+    sd.write_global(r#"{"settings":{"remote":"upstream"}}"#);
     assert_eq!(sd.out(&["get", "settings.remote"]), "upstream");
     sd.write_branch("feat", r#"{"settings":{"remote":"fork"}}"#);
     let r = sd.run(&["get", "settings.remote"]);

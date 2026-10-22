@@ -29,11 +29,10 @@ Examples:
   sd config show                                   everything, merged
   sd config files                                  where the files are
 
-Layers (top wins):
+Layers (top wins; sd config files prints the paths):
   branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees
   repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
-            (sd config files prints the paths)
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
             stepBudget 5 (USD per claude step; 0 is no cap), branchBudget
@@ -150,7 +149,8 @@ const SETTINGS: &[(&str, Ty)] = &[
 // from inside each repo.
 const GLOBAL_OR_REPO: &[(&str, Ty)] = &[("remote", Ty::Str)];
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
-    ("interval", Ty::Whole), ("notify", Ty::Str), ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
+    ("interval", Ty::Whole), ("notify", Ty::Str),
+    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
 ];
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
@@ -896,21 +896,22 @@ mod tests {
     }
 
     // The only unit test that reads a config file: no other sets SHEEPDOG_CONFIG.
-    // It reads this checkout's repo file too, which can't set interval.
+    // It reads the repo file of whatever checkout runs it, so it asks only
+    // for the keys a repo file can't hold.
     #[test]
     fn get_global_reads_the_global_file_over_the_defaults_and_no_branch_file() {
         let dir = std::env::temp_dir().join(format!("sd-config-unit-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let file = dir.join("config.json");
-        fs::write(&file, r#"{"settings": {"botTimeout": 900, "botLogin": ["x"]}}"#).unwrap();
+        fs::write(&file, r#"{"settings": {"interval": 60, "notify": "say"}}"#).unwrap();
         std::env::set_var("SHEEPDOG_CONFIG", &file);
-        assert_eq!(get_global("settings.botTimeout", false), Ok("900".into()));
-        assert_eq!(get_global("settings.botLogin", false), Ok("x".into()));
-        assert_eq!(get_global("settings.botLogin", true), Ok(r#"["x"]"#.into()));
-        assert_eq!(get_global("settings.interval", false), Ok("300".into()));
+        assert_eq!(get_global("settings.interval", false), Ok("60".into()));
+        assert_eq!(get_global("settings.notify", false), Ok("say".into()));
+        assert_eq!(get_global("settings.notify", true), Ok(r#""say""#.into()));
+        assert_eq!(get_global("settings.vacuumAfter", false), Ok("604800".into()));
         assert_eq!(get_global("settings.nope", false), Err(vec![]));
         fs::write(&file, "[]").unwrap();
-        assert_eq!(get_global("settings.remote", false), Err(vec![format!("not a JSON object: {}", file.display())]));
+        assert_eq!(get_global("settings.interval", false), Err(vec![format!("not a JSON object: {}", file.display())]));
         let _ = fs::remove_dir_all(&dir);
     }
 
