@@ -1829,6 +1829,14 @@ old_labels_retired() {
   grep -q "bootstrap gui/$(id -u) $PLIST" "$PS_FIXTURES/launchctl"
 }
 
+@test "install: the job abandons its process group, so launchd spares a step that hasn't reached setsid (#12)" {
+  needs_plutil
+  setup_launchd
+  run "$SD_WATCH" install
+  [ "$status" -eq 0 ]
+  [ "$(plutil -extract AbandonProcessGroup raw "$PLIST")" = true ]
+}
+
 @test "install: the job runs sd watch" {
   needs_plutil
   setup_launchd
