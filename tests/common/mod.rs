@@ -14,6 +14,9 @@ use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
 
+/// A gh for a verb that never talks to GitHub: it says so and fails.
+pub const GH_FAILS: &str = "#!/usr/bin/env bash\necho \"gh called: $*\" >&2\nexit 1\n";
+
 /// Held for writing while a fake is written, and for reading while a child is
 /// spawned: a spawn on another thread would carry the fake's open fd into its
 /// child, and running the fake then fails with ETXTBSY (Linux).
@@ -163,7 +166,17 @@ impl Sd {
     /// bin/sd-<verb>, a link to the binary, made on first use: another verb
     /// a test runs, as the bats suites ran libexec/sd-config.
     pub fn link(&self, verb: &str) -> PathBuf {
-        let l = self.tmp.join(format!("bin/sd-{verb}"));
+        self.link_in("bin", verb)
+    }
+
+    /// fakebin/sd-<verb>, a link to the binary: the real verb on PATH, as
+    /// the bats suites had libexec/ there.
+    pub fn on_path(&self, verb: &str) {
+        self.link_in("fakebin", verb);
+    }
+
+    fn link_in(&self, dir: &str, verb: &str) -> PathBuf {
+        let l = self.tmp.join(format!("{dir}/sd-{verb}"));
         if !l.exists() {
             std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_sd"), &l).unwrap();
         }
@@ -172,10 +185,14 @@ impl Sd {
 
     /// fakebin/<name> := <script>, executable.
     pub fn fake(&self, name: &str, script: &str) {
+        self.script(&self.tmp.join("fakebin").join(name), script);
+    }
+
+    /// <f> := <script>, executable: a fake, or a git hook.
+    pub fn script(&self, f: &Path, script: &str) {
         let _g = SPAWN.write().unwrap();
-        let f = self.tmp.join("fakebin").join(name);
-        fs::write(&f, script).unwrap();
-        fs::set_permissions(&f, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(f, script).unwrap();
+        fs::set_permissions(f, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     pub fn command(&self, program: &Path) -> Command {
