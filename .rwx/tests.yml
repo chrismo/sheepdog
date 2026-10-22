@@ -71,6 +71,7 @@ tasks:
       - tests/**
       - lib/prompts/**
       - lib/review-rules.md
+      - "libexec/*"
 
   - key: test
     use: [code, system-packages, bats, captain, build]
