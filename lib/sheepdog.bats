@@ -423,7 +423,7 @@ EOF
   echo '{"settings": {"stepBudget": -1}}' > "$SHEEPDOG_CONFIG"
   run --separate-stderr harness_run claude sid1 new 30 "do it" '{}'
   [ "$status" -ne 0 ]
-  [[ "$stderr" == *"settings.stepBudget must be 0 or more"* ]]
+  [[ "$stderr" == *"settings.stepBudget: expected a number of 0 or more, got -1"* ]]
   [ ! -e "$FX/args" ]
   echo 'not json' > "$SHEEPDOG_CONFIG"
   run --separate-stderr harness_run claude sid1 new 30 "do it" '{}'
