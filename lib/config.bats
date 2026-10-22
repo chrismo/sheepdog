@@ -139,7 +139,7 @@ old_super() {
   old_super "$ASDF_DATA_DIR/installs/superdb/0.2.0/bin" 0.2.0
   mkdir -p "$TMP/home"
   local cmd
-  for cmd in "sd-act address" sd-watch; do
+  for cmd in "sd-act address"; do
     HOME="$TMP/home" SHEEPDOG_STATE_DIR="$TMP/state" STATUS_DIR="$TMP/status" ASDF_SUPERDB_VERSION=0.2.0 \
       run "$LIBEXEC"/$cmd
     [ "$status" -eq 1 ]
@@ -164,7 +164,7 @@ old_super() {
   pin_setup
   old_super "$ASDF_DATA_DIR/installs/superdb/0.2.0/bin" 0.2.0
   local cmd
-  for cmd in sd-config sd-state sd-act sd-watch; do
+  for cmd in sd-config sd-state sd-act; do
     ASDF_SUPERDB_VERSION=0.2.0 run "$LIBEXEC/$cmd" --help
     [ "$status" -eq 0 ]
   done

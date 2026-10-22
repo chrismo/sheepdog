@@ -9,6 +9,10 @@ name = "sd"
 path = "src/main.rs"
 
 [dependencies]
+# The watcher's last-pass line is in local time (localtime_r, strftime).
+libc = "0.2"
 regex = "1"
 # preserve_order keeps a config file's keys where the user put them on set.
 serde_json = { version = "1", features = ["preserve_order"] }
+# The watcher's per-repo state dir is named by the first 8 hex of sha1(path), as shasum made it.
+sha1_smol = "1"

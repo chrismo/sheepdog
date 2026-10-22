@@ -48,7 +48,11 @@ pub fn in_repo() -> bool {
 }
 
 pub fn branch_exists(b: &str) -> bool {
-    git_ok(".", &["rev-parse", "-q", "--verify", &format!("refs/heads/{b}")])
+    branch_in(".", b)
+}
+
+pub fn branch_in(dir: &str, b: &str) -> bool {
+    git_ok(dir, &["rev-parse", "-q", "--verify", &format!("refs/heads/{b}")])
 }
 
 pub fn common_dir() -> Option<String> {
@@ -63,7 +67,7 @@ pub fn current_branch() -> Option<String> {
     }
 }
 
-/// lib/config.sh's prc_rebase_head: the branch a rebase paused in <dir> is rebasing.
+/// The branch a rebase paused in <dir> is rebasing.
 pub fn rebase_head(dir: &str) -> Option<String> {
     let gd = git_out(dir, &["rev-parse", "--absolute-git-dir"])?;
     let head = ["rebase-merge", "rebase-apply"]

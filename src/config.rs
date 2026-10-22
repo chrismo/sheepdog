@@ -347,7 +347,8 @@ fn branch_arg(b: &str) -> Res<String> {
     git::current_branch().map_or_else(|| err("detached HEAD; name a branch"), Ok)
 }
 
-fn one_value(text: &str) -> Option<Value> {
+/// <text> as exactly one JSON value.
+pub fn one_value(text: &str) -> Option<Value> {
     let mut it = serde_json::Deserializer::from_str(text).into_iter::<Value>();
     match (it.next(), it.next()) {
         (Some(Ok(v)), None) => Some(v),

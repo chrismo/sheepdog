@@ -1,6 +1,7 @@
-// sd watch's subcommands that need no pass (src/watch_help.txt): glyph,
-// status, install and uninstall. The pass, refresh and vacuum are still
-// libexec/sd-watch's, which hands these to the binary (#201).
+// sd watch (src/watch_help.txt): the pass, refresh and vacuum are pass.rs's;
+// glyph, status, install and uninstall, which need no pass, are here.
+
+mod pass;
 
 use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};
@@ -254,7 +255,14 @@ pub fn run(argv: &[String]) -> ExitCode {
         },
         "install" => return install(),
         "uninstall" => return uninstall(),
-        "" | "refresh" | "vacuum" => die("the pass, refresh and vacuum are still in bash: run them through bin/sd"),
+        "" => return pass::pass(),
+        "refresh" => return pass::refresh(&argv[1..]),
+        "vacuum" => match &argv[1..] {
+            [] => return pass::vacuum(),
+            [o] if o == "--dry-run" => return pass::vacuum_preview(),
+            [o] if o == "-h" || o == "--help" => print!("{HELP}"),
+            _ => die("usage: sd watch vacuum [--dry-run]"),
+        },
         _ => die(format!("unknown command: {sub}")),
     }
     ExitCode::SUCCESS
