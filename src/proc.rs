@@ -150,7 +150,9 @@ pub fn timeout(secs: u64, mut c: Command, merged: bool) -> Out {
             while !(exited() && readers.iter().all(JoinHandle::is_finished)) && Instant::now() < grace {
                 std::thread::sleep(Duration::from_millis(10));
             }
-            if !exited() {
+            // The leader exiting doesn't mean the group is gone: a grandchild
+            // that ignored TERM still holds the pipes.
+            if !(exited() && readers.iter().all(JoinHandle::is_finished)) {
                 let _ = kill("-KILL");
                 let _ = child.wait();
             }
