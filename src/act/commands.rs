@@ -94,8 +94,10 @@ pub fn autofix(b: &str) {
     }
     for args in [&["add", "-A"][..], &["commit", "-q", "-m", &format!("autofix: {cmd}")]] {
         let g = git(&wt, args);
+        // The hooks' output: git sends theirs to stderr.
+        print!("{}", g.stdout);
+        eprint!("{}", g.stderr);
         if !g.ok {
-            eprint!("{}", g.stderr);
             die(format!("commit failed; autofix's changes are left in {wt}"));
         }
     }

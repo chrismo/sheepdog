@@ -151,6 +151,17 @@ head_sha() { git rev-parse HEAD; }
   [[ "$output" == *"timed out"* ]]
 }
 
+@test "the commit's hooks are heard: a pre-commit hook's output passes through" {
+  autofix_cmd "echo d >> file.txt"
+  printf '#!/bin/sh\necho hook-out\necho hook-err >&2\n' > .git/hooks/pre-commit
+  chmod +x .git/hooks/pre-commit
+  run "$SD_ACT" autofix
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hook-out"* ]]
+  [[ "$output" == *"hook-err"* ]]
+  [[ "$output" == *"autofix committed"* ]]
+}
+
 @test "--help lists autofix" {
   run "$SD_ACT" --help
   [[ "$output" =~ sd\ act\ autofix\  ]]
