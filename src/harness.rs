@@ -87,35 +87,13 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
                 eprintln!("sd config failed");
                 1
             })?;
-            // A cap in args is the more specific one, so it replaces stepBudget's.
-            let mut in_args = None;
-            for (i, a) in extra.iter().enumerate() {
-                if *a == "--max-budget-usd" {
-                    in_args = Some(extra.get(i + 1).copied().unwrap_or("0"));
-                } else if let Some(v) = a.strip_prefix("--max-budget-usd=") {
-                    in_args = Some(v);
-                }
-            }
-            let no_cap = Regex::new(r"^0*(\.0*)?$").expect("a fixed pattern compiles").is_match(&budget);
-            match in_args {
-                Some(v) => cap = v.parse().unwrap_or(0.0),
-                None if !no_cap => {
-                    typed.extend(["--max-budget-usd".to_string(), budget.clone()]);
-                    cap = budget.parse().unwrap_or(0.0);
-                    cap_note = format!(" (settings.stepBudget {budget} USD)");
-                }
-                None => {}
-            }
-            let sess = if s.mode == "resume" { "--resume" } else { "--session-id" };
-            let mut c = Command::new("claude");
-            // The prompt goes first: --allowedTools and --disallowedTools are
-            // variadic and would swallow a trailing one.
-            c.args(["-p", s.prompt, sess, sid, "--output-format", "json", "--json-schema", s.schema])
-                .args(["--permission-mode", "acceptEdits", "--allowedTools", s.claude_allow, "--disallowedTools", CLAUDE_DENY]);
-            if !on(s.settings, "useApiKey") {
-                c.env_remove("ANTHROPIC_API_KEY");
-            }
-            c
+            let (flags, c, note) = step_cap(&budget, &extra).map_err(|e| {
+                eprintln!("{e}");
+                1
+            })?;
+            typed.extend(flags);
+            (cap, cap_note) = (c, note);
+            claude_command(s)
         }
         "pi" => {
             flag("--provider", set("provider"));
@@ -183,6 +161,52 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         }
     }
     result
+}
+
+/// claude's cap on a step: the flags to add, the cap in USD (0 for none) and
+/// a note naming stepBudget as its source. A cap in args is the more specific
+/// one, so it replaces stepBudget's. A cap that is negative, or in args
+/// missing or not a number, is an error: 0 would silently mean no cap.
+fn step_cap(budget: &str, extra: &[&str]) -> Result<(Vec<String>, f64, String), String> {
+    let mut in_args = None;
+    for (i, a) in extra.iter().enumerate() {
+        if *a == "--max-budget-usd" {
+            in_args = Some(extra.get(i + 1).copied().unwrap_or(""));
+        } else if let Some(v) = a.strip_prefix("--max-budget-usd=") {
+            in_args = Some(v);
+        }
+    }
+    if let Some(v) = in_args {
+        return match v.parse::<f64>() {
+            Ok(c) if c >= 0.0 => Ok((vec![], c, String::new())),
+            _ => Err(format!("--max-budget-usd in args must be 0 or more, not \"{v}\"")),
+        };
+    }
+    if budget.starts_with('-') {
+        return Err(format!("settings.stepBudget must be 0 or more, not \"{budget}\""));
+    }
+    if Regex::new(r"^0*(\.0*)?$").expect("a fixed pattern compiles").is_match(budget) {
+        return Ok((vec![], 0.0, String::new()));
+    }
+    Ok((
+        vec!["--max-budget-usd".to_string(), budget.to_string()],
+        budget.parse().unwrap_or(0.0),
+        format!(" (settings.stepBudget {budget} USD)"),
+    ))
+}
+
+/// claude's command for the step, before the typed flags and args.
+fn claude_command(s: &Step) -> Command {
+    let sess = if s.mode == "resume" { "--resume" } else { "--session-id" };
+    let mut c = Command::new("claude");
+    // The prompt goes first: --allowedTools and --disallowedTools are
+    // variadic and would swallow a trailing one.
+    c.args(["-p", s.prompt, sess, s.session, "--output-format", "json", "--json-schema", s.schema])
+        .args(["--permission-mode", "acceptEdits", "--allowedTools", s.claude_allow, "--disallowedTools", CLAUDE_DENY]);
+    if !on(s.settings, "useApiKey") {
+        c.env_remove("ANTHROPIC_API_KEY");
+    }
+    c
 }
 
 /// The JSON values in <text>; None when it isn't JSON.
@@ -494,6 +518,50 @@ mod tests {
         assert_eq!(said("claude", r#"{"is_error":false,"subtype":"success","result":""}"#, "", 0.0), "");
         assert_eq!(said("claude", "Error: unknown option --bogus\n", "", 0.0), "Error: unknown option --bogus\n");
         assert_eq!(said("pi", "{\"a\": 1}", "", 0.0), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn step_cap_is_args_else_step_budget_and_rejects_what_would_mean_no_cap_by_accident() {
+        let flags = |b: &str, x: &[&str]| step_cap(b, x).map(|(f, c, _)| (f.join(" "), c));
+        assert_eq!(flags("0", &[]), Ok((String::new(), 0.0)));
+        assert_eq!(flags("", &[]), Ok((String::new(), 0.0)));
+        assert_eq!(flags("2.5", &[]), Ok(("--max-budget-usd 2.5".to_string(), 2.5)));
+        assert!(step_cap("2.5", &[]).unwrap().2.contains("settings.stepBudget 2.5 USD"));
+        assert_eq!(flags("2.5", &["--max-budget-usd", "1"]), Ok((String::new(), 1.0)));
+        assert_eq!(flags("2.5", &["--max-budget-usd=0"]), Ok((String::new(), 0.0)));
+        assert!(flags("-1", &[]).unwrap_err().contains("stepBudget must be 0 or more"));
+        assert!(flags("0", &["--max-budget-usd"]).is_err());
+        assert!(flags("0", &["--max-budget-usd", "lots"]).is_err());
+        assert!(flags("0", &["--max-budget-usd=-3"]).is_err());
+    }
+
+    #[test]
+    fn claude_command_puts_the_prompt_before_the_variadic_tool_flags_and_unsets_the_api_key() {
+        let settings = json!({});
+        let step = |settings| Step {
+            harness: "claude",
+            session: "sid",
+            mode: "resume",
+            timeout: 0,
+            prompt: "do it",
+            schema: "{}",
+            settings,
+            name: "",
+            branch: "",
+            claude_allow: "Read,Edit",
+            pi_tools: "",
+        };
+        let c = claude_command(&step(&settings));
+        let args: Vec<_> = c.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert_eq!(&args[..4], ["-p", "do it", "--resume", "sid"]);
+        let pos = |f: &str| args.iter().position(|a| a == f).unwrap();
+        assert!(pos("-p") < pos("--allowedTools") && pos("-p") < pos("--disallowedTools"));
+        assert_eq!(args[pos("--allowedTools") + 1], "Read,Edit");
+        assert_eq!(args[pos("--disallowedTools") + 1], CLAUDE_DENY);
+        assert!(c.get_envs().any(|(k, v)| k == "ANTHROPIC_API_KEY" && v.is_none()));
+
+        let keep = json!({"useApiKey": true});
+        assert!(!claude_command(&step(&keep)).get_envs().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
     }
 
     #[test]
