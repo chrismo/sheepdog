@@ -1,8 +1,8 @@
 // Black-box tests of sd watch (#201): the built binary, run as sd-watch
 // through a link (tests/common), making its passes over the registered
 // repos. Moved from libexec/sd-watch.bats; each test keeps the bats test's
-// title above it. The libexec/sd-watch link's test is in lib/config.bats,
-// beside the sd-config and sd-state links'.
+// title above it. The libexec/sd-watch link's test is in tests/links.rs,
+// beside the other verbs'.
 //
 // Real git for repos, enrollment and fetch. sd state is faked: it serves
 // $PS_FIXTURES/<branch>.json, so each glyph/notification rule can be driven
@@ -2481,8 +2481,6 @@ fn no_plutil() -> bool {
     !cfg!(target_os = "macos")
 }
 
-const OLD_LABELS: [&str; 2] = ["com.agent-rig.pr-watch", "com.pr-tend.pr-watch"];
-
 impl Sd {
     /// setup_launchd: the plist's directory in the temp dir, a fake launchctl
     /// logging to $PS_FIXTURES/launchctl, and no LOCAL_BIN. Nor CARGO, which
@@ -2500,21 +2498,6 @@ impl Sd {
 
     fn launchctl(&self) -> String {
         cat(&self.ps("launchctl"))
-    }
-
-    fn old_plists(&self) {
-        fs::create_dir_all(self.tmp.join("LaunchAgents")).unwrap();
-        for l in OLD_LABELS {
-            fs::write(self.tmp.join(format!("LaunchAgents/{l}.plist")), "old\n").unwrap();
-        }
-    }
-
-    #[track_caller]
-    fn old_labels_retired(&self) {
-        for l in OLD_LABELS {
-            assert_has(&self.launchctl(), &[&format!("bootout gui/{}/{l}", uid())]);
-            assert!(!self.tmp.join(format!("LaunchAgents/{l}.plist")).exists());
-        }
     }
 
     /// A dir in the temp dir holding a link to the repo's bin/sd, as LOCAL_BIN.
@@ -2690,35 +2673,6 @@ fn uninstall_boots_out_and_removes_the_plist() {
     assert_eq!(r.status, 0, "{}", r.output);
     assert!(!plist.exists());
     assert_has(&sd.launchctl(), &[&format!("bootout gui/{}/com.sheepdog.watch", uid())]);
-}
-
-// @test "install: boots out the jobs under the old labels and removes their plists"
-#[test]
-fn install_boots_out_the_jobs_under_the_old_labels_and_removes_their_plists() {
-    if no_plutil() {
-        return;
-    }
-    let mut sd = sd();
-    let plist = sd.setup_launchd();
-    sd.old_plists();
-    let r = sd.run(&["install"]);
-    assert_eq!(r.status, 0, "{}", r.output);
-    sd.old_labels_retired();
-    assert!(plist.exists());
-}
-
-// @test "uninstall: also boots out the old labels"
-#[test]
-fn uninstall_also_boots_out_the_old_labels() {
-    if no_plutil() {
-        return;
-    }
-    let mut sd = sd();
-    sd.setup_launchd();
-    sd.old_plists();
-    let r = sd.run(&["uninstall"]);
-    assert_eq!(r.status, 0, "{}", r.output);
-    sd.old_labels_retired();
 }
 
 // @test "install: a non-numeric interval is refused and the old job is kept"

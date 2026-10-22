@@ -15,8 +15,6 @@ use std::process::{Command, ExitCode, Stdio};
 const HELP: &str = include_str!("watch_help.txt");
 
 const LABEL: &str = "com.sheepdog.watch";
-// Earlier labels: a machine still running one would run two watchers.
-const OLD_LABELS: [&str; 2] = ["com.agent-rig.pr-watch", "com.pr-tend.pr-watch"];
 
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("sd watch: {msg}");
@@ -152,13 +150,6 @@ fn uid() -> String {
     crate::proc::run("id", &["-u"], None, None).stdout.trim_end().to_string()
 }
 
-fn retire_old_labels(uid: &str) {
-    for l in OLD_LABELS {
-        bootout(uid, l);
-        let _ = fs::remove_file(format!("{}/{l}.plist", launch_agents()));
-    }
-}
-
 fn install() -> ExitCode {
     let plist_file = plist_file();
     let mut bindir = env_or("LOCAL_BIN", || format!("{}/.local/bin", home()));
@@ -207,7 +198,6 @@ fn install() -> ExitCode {
         die(format!("can't write {plist_file}: {e}"));
     }
     let uid = uid();
-    retire_old_labels(&uid);
     bootout(&uid, LABEL);
     match Command::new("launchctl").args(["bootstrap", &format!("gui/{uid}"), &plist_file]).status() {
         Ok(s) if s.success() => {}
@@ -220,7 +210,6 @@ fn install() -> ExitCode {
 
 fn uninstall() -> ExitCode {
     let uid = uid();
-    retire_old_labels(&uid);
     bootout(&uid, LABEL);
     let _ = fs::remove_file(plist_file());
     println!("uninstalled {LABEL}");

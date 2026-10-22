@@ -41,7 +41,7 @@ fn or_die<T>(r: Result<T, Vec<String>>) -> T {
     })
 }
 
-/// prc_get <path> <b> false, as `|| die "sd config failed"` read it.
+/// A config value for branch <b>, or die "sd config failed".
 pub fn cfg(path: &str, b: &str) -> String {
     or_die(crate::config::get_text(path, b, false))
 }

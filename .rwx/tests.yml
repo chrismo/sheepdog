@@ -40,18 +40,6 @@ tasks:
       rm -rf bats-core
       bats --version
 
-  # lib/config.sh needs exactly 0.3.0, and lib/config.bats skips its super tests
-  # unless a real binary is at the asdf install path.
-  - key: superdb
-    run: |
-      dir="$HOME/.asdf/installs/superdb/0.3.0/bin"
-      mkdir -p "$dir"
-      curl -fsSL https://github.com/brimdata/super/releases/download/v0.3.0/super-v0.3.0.linux-amd64.tar.gz \
-        | tar -xz -C "$dir" super
-      "$dir/super" -version
-      echo "$dir:$PATH" > "$RWX_ENV/PATH"
-      echo 'superdb 0.3.0' > "$HOME/.tool-versions"
-
   - key: captain
     call: rwx/install-captain 1.2.0
 
@@ -83,9 +71,10 @@ tasks:
       - tests/**
       - lib/prompts/**
       - lib/review-rules.md
+      - "libexec/*"
 
   - key: test
-    use: [code, system-packages, bats, superdb, captain, build]
+    use: [code, system-packages, bats, captain, build]
     runner:
       cpus: 16
     run: |

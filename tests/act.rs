@@ -2,7 +2,7 @@
 // an unknown verb, and a flag on a verb it isn't for (#204). The built
 // binary, run as sd-act through a link (tests/common). Moved from
 // libexec/sd-act.bats; each test keeps the bats test's title above it. The
-// libexec/sd-act link's test is in lib/config.bats, beside the other verbs'.
+// libexec/sd-act link's test is in tests/links.rs, beside the other verbs'.
 // The verbs are tested in tests/act_*.rs.
 
 mod common;

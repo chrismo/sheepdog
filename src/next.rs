@@ -1,5 +1,5 @@
 // What to do next on a branch, from its sd state JSON. sd state runs it, and
-// the bash verbs reach it through lib/config.sh's prn_next (sd state --next).
+// sd state --next runs it on a record piped in.
 //
 // A step is {key, who, say, cmd}. who is who does it once it's automated:
 //   you    chrismo's judgment     agent  a model step

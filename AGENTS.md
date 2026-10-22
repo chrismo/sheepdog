@@ -99,17 +99,16 @@ verb's acceptance tests are Rust, in `tests/<verb>.rs` (the built binary run
 through a link named `sd-<verb>`, by `tests/common`'s harness, #199); the bash
 verbs' are bats.
 
-**Build before bats.** The ported verbs' links point at the release binary, and
-lib/config.sh's `prc_get`, `prc_step` and `prn_next` run it, so every bats suite
-needs `cargo build --release` after a change under `src/`. `cargo test` runs the
-Rust unit tests and `tests/`, against its own debug build.
+**Build before bats.** The verbs' links point at the release binary, so every
+bats suite needs `cargo build --release` after a change under `src/`.
+`cargo test` runs the Rust unit tests and `tests/`, against its own debug build.
 
 **The full suite runs on the PR's CI, not locally and not by `rwx run`.**
 Locally, run only the tests you're writing or changing during red-green,
 picked by name with `-f`, not whole files and never the suite:
 
 ```bash
-bats -f 'sd-act: is a link' lib/config.bats
+bats -f 'usage names every verb' bin/sd.bats
 cargo test --test act_review no_usable_round
 ```
 
@@ -136,14 +135,6 @@ what it claims. Bash 5 fails it correctly.
 bash --version | head -1
 PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
 ```
-
-**No `unnest … into` in a SuperDB query.** super 0.3.0 panicked
-intermittently on that one construct, and a test in `ci/super-stress.bats`
-fails if any script uses it. CI no longer stress-tests queries (2026-10-21:
-the Rust port is retiring SuperDB). `ci/super-stress` still runs a query 200
-times over a fixture for anyone who wants it locally; no script has a named
-query left for its built-in list (#203). SuperDB's edges are under "SuperDB
-notes" below.
 
 **Every script is `#!/usr/bin/env bash5`, `install.sh` included.** Test them
 by running them, not sourcing, so the shebang picks the bash. agent-rig's
@@ -173,45 +164,3 @@ better than Captain balances 11 files across runners (37 s vs 77 s, 2026-10-14).
 
 Linux has no `plutil`, so the `sd watch` tests that validate the launchd
 plist return early there (`no_plutil`). They still run on macOS.
-
-## SuperDB notes (super 0.3.0, observed 2026-10-13 and -14)
-
-Every query goes through `prc_json` / `prc_line` / `prc_val` in
-`lib/config.sh`, with `PRC_FNS` (`on`, `n`, `nul`, `sj`) in scope. Check
-SuperSQL with the superdb MCP, not shell probes.
-
-- **Input is always piped.** `super` reads nothing from a here-string or a
-  `<` redirect.
-- **0.3.0 only.** Every command runs `super -version` once at start and refuses
-  anything else; the config types' optional fields (`{a?:string}`) don't parse
-  on older versions.
-- **A missing field is an error value**, not null: it prints as
-  `error("missing")` and poisons comparisons, so anything that may be absent
-  is `coalesce`d; `on(x)`, `n(x)` and `nul(x)` are the shorthands.
-- **`has()` is unreliable on fused types:** elements of a literal array of
-  differing records, and records from a JSON array of differing shapes, all
-  answer true. Test presence with `coalesce(x, null) is not null`.
-- **`grep(pattern, s)` with a pattern from data is a substring match**, not a
-  regex; only a literal pattern is a regex. Dynamic regexes go through
-  `regexp(re, s)`: `[]` on no match, an error value for an invalid regex
-  (Go RE2 syntax, no lookaround).
-- **`join([], sep)` is an error** ("array of string arg required"), hence
-  `sj()`.
-- **An empty array subquery is null:** `[unnest x | where false]` yields null,
-  so it is always `coalesce([...], [])`.
-- **A subquery sees only its own stream:** function parameters and outer
-  fields are invisible after the first `|`; carry them in the unnested record
-  (`unnest {ctx, x: items}`, exactly two fields with the array second).
-- **No `unnest … into ( … )` lateral subqueries:** the construct panicked
-  ("context canceled") in 12 of 200 runs; plain `unnest` and `aggregate … by`
-  had 0 failures. `count {r: this, j}` numbers a stream (1-based). Inside a
-  subquery, `aggregate` and `fork` were avoided so output order never depends
-  on the scheduler.
-- **`unflatten` needs its keys grouped by prefix**, so merged keys come out
-  alphabetical.
-- **No JSON encoder** (`sd config get` prints with a second call) and
-  **`-f line` prints strings raw**, one per line: an empty string is an empty
-  line, and `$( )` strips trailing newlines, so a run that needs to count lines
-  ends with a marker.
-- **Startup is about 17 ms per call** (jq: 4 ms), about 50 ms per config file
-  read, so queries are batched where a loop would have called jq per item.

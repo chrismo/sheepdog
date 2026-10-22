@@ -1,4 +1,4 @@
-// sd config. The bash verbs reach it through lib/config.sh's prc_get and prc_step.
+// sd config.
 
 use crate::git;
 use serde_json::{json, Map, Value};
@@ -439,14 +439,13 @@ fn stderr_lines<T>(r: Res<T>) -> Result<T, Vec<String>> {
     })
 }
 
-/// prc_get for the verbs ported to Rust: what `sd config get` prints, less
-/// the last newline, or the lines it would print to stderr (none when unset).
+/// What `sd config get` prints, less the last newline, or the lines it would
+/// print to stderr (none when unset).
 pub fn get_text(path: &str, b: &str, as_json: bool) -> Result<String, Vec<String>> {
     get_line(path, b, false, as_json)
 }
 
-/// get_text with no branch file: prc_get <path> '' true. Inside a repo, its
-/// repo file is still read.
+/// get_text with no branch file. Inside a repo, its repo file is still read.
 pub fn get_global(path: &str, as_json: bool) -> Result<String, Vec<String>> {
     get_line(path, "", true, as_json)
 }
@@ -487,8 +486,8 @@ fn paths(b: &str, no_branch: bool) -> Res<String> {
     Ok(out)
 }
 
-/// prc_step for the verbs ported to Rust: the JSON value `sd config step`
-/// prints, or the lines it would print to stderr.
+/// The JSON value `sd config step` prints, or the lines it would print to
+/// stderr.
 pub fn step(name: &str, b: &str, forced: &str) -> Result<Value, Vec<String>> {
     stderr_lines(step_block(name, b, forced))
 }

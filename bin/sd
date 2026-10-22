@@ -10,7 +10,6 @@
 #   watch         the watcher: one pass, or install it as a launchd job
 #   config        harness and settings
 #   review-local  the default local reviewer (sd act review runs it)
-#   migrate       move pr-tend state to sheepdog's names (one-time)
 #
 # sd <verb> --help for each verb's own usage.
 

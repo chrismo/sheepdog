@@ -3,7 +3,7 @@
 // SHEEPDOG_BASE..SHEEPDOG_HEAD, findings as a JSON list on stdout. The built
 // binary, run as sd-review-local through a link (tests/common). Moved from
 // libexec/sd-review-local.bats; each test keeps the bats test's title above
-// it. Its link test is in lib/config.bats with the other verbs'.
+// it. Its link test is in tests/links.rs with the other verbs'.
 //
 // claude and pi are stubs on PATH that record their arguments and print
 // $FX/result.json.

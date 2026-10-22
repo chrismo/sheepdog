@@ -51,3 +51,13 @@ suite() {
     [[ $defaults == *" ${f#./} "* ]] || { echo "not run by default: $f"; false; }
   done < <(find . -name '*.bats' -not -path './.git/*')
 }
+
+@test "with no args, every default glob matches a suite" {
+  local defaults g
+  defaults=$(sed -n 's/^(( \$# )) || set -- //p' "$CI_TEST")
+  [ -n "$defaults" ]
+  cd "$BATS_TEST_DIRNAME/.."
+  for g in $defaults; do
+    compgen -G "$g" >/dev/null || { echo "matches nothing: $g"; false; }
+  done
+}
