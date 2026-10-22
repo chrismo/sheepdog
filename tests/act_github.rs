@@ -13,22 +13,16 @@ fn cat(sd: &Sd, f: &str) -> String {
     chomp(&fs::read_to_string(sd.tmp.join(f)).unwrap_or_default())
 }
 
-// ack: a fake sd state answers from $FX/state.json.
+// ack: sd state answers from $FX/states/<branch>.json (SHEEPDOG_STATE_FIXTURES).
 mod ack {
     use super::*;
 
-    const SD_STATE: &str = r#"#!/usr/bin/env bash
-echo "$*" >> "$FX/sd-state.calls"
-cat "$FX/state.json"
-"#;
-
     /// The bats setup: repo (cwd) with one commit on main, feat checked out,
-    /// and the fake sd state first on PATH.
+    /// and sd state answering from $FX/states/.
     fn sd() -> Sd {
         let mut sd = Sd::for_verb("act");
-        sd.env = vec![("FX".to_string(), sd.path("fx"))];
-        fs::create_dir(sd.tmp.join("fx")).unwrap();
-        sd.fake("sd-state", SD_STATE);
+        sd.env = vec![("FX".to_string(), sd.path("fx")), ("SHEEPDOG_STATE_FIXTURES".to_string(), sd.path("fx/states"))];
+        fs::create_dir_all(sd.tmp.join("fx/states")).unwrap();
         sd.git(&["init", "-q", &sd.path("repo")]);
         sd.cd("repo");
         sd.git(&["commit", "-q", "--allow-empty", "-m", "init"]);
@@ -50,11 +44,16 @@ cat "$FX/state.json"
     impl Sd {
         /// state <item-json...>: sd state's answer, owing those items.
         fn state(&self, items: &[String]) {
-            let filter = r#"{branch: "feat", pr: {number: 7, state: "OPEN"}, threads: {owed_bot: 0, items: $ARGS.positional}}
+            self.state_of("feat", items);
+        }
+
+        /// state, for <b>: the only branch sd state then has an answer for.
+        fn state_of(&self, b: &str, items: &[String]) {
+            let filter = r#"{branch: $b, pr: {number: 7, state: "OPEN"}, threads: {owed_bot: 0, items: $ARGS.positional}}
          | .threads.owed_bot = ([.threads.items[] | select(.kind == "bot")] | length)"#;
-            let mut args = vec!["-n", filter, "--jsonargs"];
+            let mut args = vec!["-n", "--arg", "b", b, filter, "--jsonargs"];
             args.extend(items.iter().map(String::as_str));
-            fs::write(self.tmp.join("fx/state.json"), jq(&args, "") + "\n").unwrap();
+            fs::write(self.tmp.join(format!("fx/states/{b}.json")), jq(&args, "") + "\n").unwrap();
         }
 
         /// The ids marked handled on feat, sorted.
@@ -92,9 +91,8 @@ cat "$FX/state.json"
     fn ack_asks_sd_state_about_the_named_branch() {
         let sd = sd();
         sd.git(&["branch", "other"]);
-        sd.state(&[item("R1", "review", "bot", "i")]);
+        sd.state_of("other", &[item("R1", "review", "bot", "i")]);
         assert_eq!(sd.run(&["ack", "other"]).status, 0);
-        assert_eq!(cat(&sd, "fx/sd-state.calls"), "--json other");
         assert_eq!(sd.git(&["config", "--get-all", "branch.other.sd-handled"]), "R1");
     }
 
@@ -156,7 +154,7 @@ cat "$FX/state.json"
     fn ack_github_unreadable_is_refused() {
         let sd = sd();
         let s = jq(&["-n", r#"{branch: "feat", pr: null, threads: {owed_bot: null, items: []}, errors: ["gh: boom"]}"#], "");
-        fs::write(sd.tmp.join("fx/state.json"), s).unwrap();
+        fs::write(sd.tmp.join("fx/states/feat.json"), s).unwrap();
         let r = sd.run(&["ack"]);
         assert_eq!(r.status, 1);
         assert_has(&r.output, &["can't read the PR", "gh: boom"]);
@@ -165,32 +163,13 @@ cat "$FX/state.json"
     // @test "ack: sd state failing is an error"
     #[test]
     fn ack_sd_state_failing_is_an_error() {
-        let sd = sd();
-        sd.fake("sd-state", "#!/usr/bin/env bash\nexit 1\n");
+        let mut sd = sd();
+        // The real sd state, failing before it asks GitHub.
+        sd.env.retain(|(k, _)| k != "SHEEPDOG_STATE_FIXTURES");
+        sd.verb_ok("config", &["set", "--global", "--json", "settings.botIgnoreBody", r#"["("]"#]);
         let r = sd.run(&["ack"]);
         assert_eq!(r.status, 1);
-        assert_has(&r.output, &["sd state failed"]);
-    }
-
-    // @test "ack: sd state's warnings get through"
-    #[test]
-    fn ack_sd_states_warnings_get_through() {
-        let sd = sd();
-        sd.state(&[item("R1", "review", "bot", "i")]);
-        sd.fake("sd-state", "#!/usr/bin/env bash\necho \"warning: from sd state\" >&2\ncat \"$FX/state.json\"\n");
-        let r = sd.run(&["ack"]);
-        assert_eq!(r.status, 0);
-        assert_has(&r.output, &["warning: from sd state"]);
-    }
-
-    // @test "ack: an answer from sd state that isn't JSON says so"
-    #[test]
-    fn ack_an_answer_from_sd_state_that_isnt_json_says_so() {
-        let sd = sd();
-        sd.fake("sd-state", "#!/usr/bin/env bash\necho nope\n");
-        let r = sd.run(&["ack"]);
-        assert_eq!(r.status, 1);
-        assert_has(&r.output, &["can't parse sd state's answer"]);
+        assert_has(&r.output, &["botIgnoreBody has an invalid regex", "sd state failed"]);
     }
 
     // ── the agent's question (#167) ──────────────────────────────────────────────
@@ -211,12 +190,12 @@ cat "$FX/state.json"
     fn ack_question_drops_the_question_only_without_asking_sd_state() {
         let sd = sd();
         sd.question();
-        sd.state(&[item("R1", "review", "bot", "i")]);
+        // Only other has a state: asking sd state about feat would fail the run.
+        sd.state_of("other", &[item("R1", "review", "bot", "i")]);
         let r = sd.run(&["ack", "--question"]);
         assert_eq!(r.status, 0);
         assert_eq!(r.output, "acked the agent's question on feat (ci-fix)");
         assert!(sd.handled().is_empty());
-        assert!(!sd.tmp.join("fx/sd-state.calls").exists());
         assert_ne!(sd.git_status(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/question"]), 0);
     }
 
@@ -275,14 +254,12 @@ esac
 
     /// The bats setup: origin.git and its clone repo (cwd), feat one commit
     /// past main, pushed, with an open draft PR #7 and the local review
-    /// covering HEAD; settings.botCommand set; the fake gh and the real sd
-    /// state on PATH.
+    /// covering HEAD; settings.botCommand set; the fake gh on PATH.
     fn sd() -> Sd {
         let mut sd = Sd::for_verb("act");
         sd.env = vec![("GH".to_string(), sd.path("gh"))];
         fs::create_dir(sd.tmp.join("gh")).unwrap();
         sd.fake("gh", GH);
-        sd.on_path("state");
         sd.verb_ok("config", &["set", "--global", "settings.botCommand", "/review-bot"]);
         sd.origin(&["repo"]);
         sd.cd("repo");
@@ -529,5 +506,17 @@ esac
         assert_ne!(sd.run(&["trigger"]).status, 0);
         assert_eq!(sd.pin("bot"), "");
         assert_ne!(sd.git_status(&["config", "--get", "branch.feat.sd-bot-triggered"]), 0);
+    }
+
+    // @test "ack: sd state's warnings get through"
+    // Here, not in mod ack: the real sd state needs this suite's fake gh.
+    #[test]
+    fn ack_sd_states_warnings_get_through() {
+        let sd = sd();
+        fs::create_dir_all(sd.tmp.join("home/.local/state/sheepdog")).unwrap();
+        fs::write(sd.tmp.join("home/.local/state/sheepdog/usage.sup"), "{time:2026-10-16T20:33\n").unwrap();
+        let r = sd.run(&["ack"]);
+        assert_eq!(r.status, 0);
+        assert_has(&r.output, &["warning: 1 line(s) of", "aren't usage records"]);
     }
 }

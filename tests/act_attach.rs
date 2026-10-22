@@ -13,7 +13,7 @@
 // signal), and write the session's transcript where the real ones do
 // ($CLAUDE_CONFIG_DIR, $PI_CODING_AGENT_SESSION_DIR), unless
 // $FX/no-transcript. gh is a stub with no PRs, for the verbs that read sd
-// state first; the real sd state is on PATH.
+// state first; sd state is the real one, in-process.
 
 mod common;
 
@@ -68,7 +68,6 @@ fn sd() -> Sd {
     for h in ["claude", "pi"] {
         sd.fake(h, &TUI.replace("HARNESS", h));
     }
-    sd.on_path("state");
     sd.git(&["init", "-q", &sd.path("repo")]);
     sd.cd("repo");
     sd.write("file.txt", "a\nb\n");

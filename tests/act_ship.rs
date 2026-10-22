@@ -6,7 +6,7 @@
 // bats test's title above it.
 //
 // Real git (a bare origin, our clone, other/ for other people's pushes) and
-// the real sd state on PATH. gh is a stub: graphql answers from
+// the real sd state, in-process. gh is a stub: graphql answers from
 // $GH/<branch>.json (by number: the node of whichever file has it),
 // `gh pr create|edit|ready` are logged to $GH/calls. claude prints
 // $FX/result.json as structured output.
@@ -77,7 +77,6 @@ fn sd() -> Sd {
     }
     sd.fake("gh", GH);
     sd.fake("claude", CLAUDE);
-    sd.on_path("state");
     sd.result(r#"{"title": "Add c", "body": "Adds the third line.\n\nRefs #1"}"#);
     sd.origin(&["repo"]);
     sd.cd("repo");

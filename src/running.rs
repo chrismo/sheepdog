@@ -8,9 +8,9 @@ use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Stdio};
 
-pub fn file(b: &str) -> Option<String> {
-    let dir = git::common_dir()?;
-    Some(format!("{dir}/sheepdog/{}.running", b.replace('/', "__")))
+pub fn file(dir: &str, b: &str) -> Option<String> {
+    let common = git::common_dir(dir)?;
+    Some(format!("{common}/sheepdog/{}.running", b.replace('/', "__")))
 }
 
 /// When <pid> started, by ps, else nothing. It tells a marker's process from
@@ -28,8 +28,8 @@ pub fn proc_start(pid: &str) -> String {
 
 /// The agent step running on <b>, {step, pid, since}, else null. A marker
 /// whose pid is gone, or now another process's, is removed.
-pub fn state(b: &str) -> Option<Value> {
-    Some(state_at(&file(b)?))
+pub fn state(dir: &str, b: &str) -> Option<Value> {
+    Some(state_at(&file(dir, b)?))
 }
 
 /// state, of the marker at <f>.
@@ -73,7 +73,7 @@ fn free(marker: &str, b: &str) -> bool {
 /// alone. A HUP, INT or TERM ends <f>'s agent at once (proc::timeout), but
 /// the marker is removed before sd dies of it.
 pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
-    let Some(marker) = file(b) else {
+    let Some(marker) = file(".", b) else {
         eprintln!("sd: no running marker for {b}: not in a git repository");
         return None;
     };

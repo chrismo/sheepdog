@@ -330,21 +330,21 @@ pub fn state_dir() -> String {
 }
 
 /// Beside the branch files' dir, so no branch name can collide with it.
-fn repo_file() -> Option<String> {
-    git::common_dir().map(|dir| format!("{dir}/sheepdog.json"))
+fn repo_file(dir: &str) -> Option<String> {
+    git::common_dir(dir).map(|common| format!("{common}/sheepdog.json"))
 }
 
-fn branch_file(b: &str) -> Res<String> {
-    let Some(dir) = git::common_dir() else { return err("not a git repository") };
+fn branch_file(dir: &str, b: &str) -> Res<String> {
+    let Some(common) = git::common_dir(dir) else { return err("not a git repository") };
     let name = b.replace('%', "%25").replace('/', "%2F");
-    Ok(format!("{dir}/sheepdog/{name}.json"))
+    Ok(format!("{common}/sheepdog/{name}.json"))
 }
 
 fn branch_arg(b: &str) -> Res<String> {
     if !b.is_empty() {
         return Ok(b.to_string());
     }
-    git::current_branch().map_or_else(|| err("detached HEAD; name a branch"), Ok)
+    git::current_branch(".").map_or_else(|| err("detached HEAD; name a branch"), Ok)
 }
 
 /// <text> as exactly one JSON value.
@@ -381,18 +381,18 @@ fn checked(doc: &Value, kind: Layer, file: &str) -> Res<()> {
 
 /// The global file with the repo file and then the branch file merged over
 /// it, nulls kept.
-fn files(b: &str, no_branch: bool) -> Res<Value> {
+fn files(dir: &str, b: &str, no_branch: bool) -> Res<Value> {
     let b = match (no_branch, b) {
         (true, _) => String::new(),
-        (false, "") => git::current_branch().unwrap_or_default(),
+        (false, "") => git::current_branch(dir).unwrap_or_default(),
         (false, b) => b.to_string(),
     };
     let g = layer(&global_file(), Some(Layer::Global))?;
-    let r = match repo_file() {
+    let r = match repo_file(dir) {
         Some(f) => layer(&f, Some(Layer::Repo))?,
         None => json!({}),
     };
-    let bj = if b.is_empty() { json!({}) } else { layer(&branch_file(&b)?, Some(Layer::Branch))? };
+    let bj = if b.is_empty() { json!({}) } else { layer(&branch_file(dir, &b)?, Some(Layer::Branch))? };
     Ok(merge(&[&g, &r, &bj], false))
 }
 
@@ -419,9 +419,9 @@ fn line(v: &Value) -> String {
 }
 
 
-fn get(path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
+fn get(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
     let segs = segments(path)?;
-    let all = with_defaults(&files(b, no_branch)?);
+    let all = with_defaults(&files(dir, b, no_branch)?);
     let v = lookup(&all, &segs).ok_or(Fail::Unset)?;
     Ok(match v {
         Value::Array(a) if !as_json => a.iter().map(|e| line(e) + "\n").collect(),
@@ -442,20 +442,30 @@ fn stderr_lines<T>(r: Res<T>) -> Result<T, Vec<String>> {
 /// What `sd config get` prints, less the last newline, or the lines it would
 /// print to stderr (none when unset).
 pub fn get_text(path: &str, b: &str, as_json: bool) -> Result<String, Vec<String>> {
-    get_line(path, b, false, as_json)
+    get_text_in(".", path, b, as_json)
+}
+
+/// get_text, as inside the repo at <dir>.
+pub fn get_text_in(dir: &str, path: &str, b: &str, as_json: bool) -> Result<String, Vec<String>> {
+    get_line(dir, path, b, false, as_json)
 }
 
 /// get_text with no branch file. Inside a repo, its repo file is still read.
 pub fn get_global(path: &str, as_json: bool) -> Result<String, Vec<String>> {
-    get_line(path, "", true, as_json)
+    get_global_in(".", path, as_json)
 }
 
-fn get_line(path: &str, b: &str, no_branch: bool, as_json: bool) -> Result<String, Vec<String>> {
-    stderr_lines(get(path, b, no_branch, as_json)).map(|out| out.strip_suffix('\n').unwrap_or(&out).to_string())
+/// get_global as seen from <dir>: <dir>'s repo file, not the cwd's.
+pub fn get_global_in(dir: &str, path: &str, as_json: bool) -> Result<String, Vec<String>> {
+    get_line(dir, path, "", true, as_json)
+}
+
+fn get_line(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Result<String, Vec<String>> {
+    stderr_lines(get(dir, path, b, no_branch, as_json)).map(|out| out.strip_suffix('\n').unwrap_or(&out).to_string())
 }
 
 fn show(b: &str, no_branch: bool) -> Res<String> {
-    let all = with_defaults(&files(b, no_branch)?);
+    let all = with_defaults(&files(".", b, no_branch)?);
     Ok(serde_json::to_string_pretty(&all).expect("a Value serializes") + "\n")
 }
 
@@ -465,7 +475,7 @@ fn paths(b: &str, no_branch: bool) -> Res<String> {
         format!("{kind:<6}  {f}{missing}\n")
     };
     let mut out = path_line("global", &global_file());
-    out += &match repo_file() {
+    out += &match repo_file(".") {
         Some(f) => path_line("repo", &f),
         None => "repo    (none: not a git repository)\n".into(),
     };
@@ -477,12 +487,12 @@ fn paths(b: &str, no_branch: bool) -> Res<String> {
         if !git::in_repo() {
             return Ok(out + "branch  (none: not a git repository)\n");
         }
-        match git::current_branch() {
+        match git::current_branch(".") {
             Some(cur) => b = cur,
             None => return Ok(out + "branch  (none: detached HEAD)\n"),
         }
     }
-    out += &path_line("branch", &branch_file(&b)?);
+    out += &path_line("branch", &branch_file(".", &b)?);
     Ok(out)
 }
 
@@ -500,7 +510,7 @@ fn step_block(name: &str, b: &str, forced: &str) -> Res<Value> {
     if !forced.is_empty() && !HARNESSES.contains(&forced) {
         return err(format!("unknown harness: {forced} ({})", HARNESSES.join(" ")));
     }
-    let f = files(b, false)?;
+    let f = files(".", b, false)?;
     let at = |path: &[&str]| lookup(&f, path).cloned();
     let harness = if forced.is_empty() {
         [at(&["steps", name, "harness"]), at(&["harness"])]
@@ -548,14 +558,14 @@ fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
         return Ok((global_file(), Layer::Global));
     }
     if repo {
-        let Some(f) = repo_file() else { return err("not a git repository") };
+        let Some(f) = repo_file(".") else { return err("not a git repository") };
         return Ok((f, Layer::Repo));
     }
     let b = branch_arg(b)?;
     if !git::branch_exists(&b) {
         return err(format!("no such branch: {b}"));
     }
-    Ok((branch_file(&b)?, Layer::Branch))
+    Ok((branch_file(".", &b)?, Layer::Branch))
 }
 
 fn write(file: &str, kind: Layer, doc: &Value) -> Res<()> {
@@ -710,7 +720,7 @@ fn cli(argv: &[String]) -> Res<String> {
             if !(n == 1 || n == 2) {
                 needs(verb, "<path> [<branch>]");
             }
-            get(arg(0), arg(1), has("--no-branch"), has("--json"))
+            get(".", arg(0), arg(1), has("--no-branch"), has("--json"))
         }
         "files" | "show" => {
             if n > 1 {
@@ -738,7 +748,7 @@ fn cli(argv: &[String]) -> Res<String> {
             if !git::branch_exists(&b) {
                 return err(format!("no such branch: {b}"));
             }
-            init(&branch_file(&b)?, has("--force"), false)
+            init(&branch_file(".", &b)?, has("--force"), false)
         }
         _ => {
             if ["--global", "--repo", "--branch"].iter().filter(|f| has(f)).count() > 1 {
@@ -913,6 +923,12 @@ mod tests {
         assert_eq!(get_global("settings.notify", true), Ok(r#""say""#.into()));
         assert_eq!(get_global("settings.vacuumAfter", false), Ok("604800".into()));
         assert_eq!(get_global("settings.nope", false), Err(vec![]));
+        // get_global_in reads <dir>'s repo file, not the cwd's.
+        let repo = dir.join("repo");
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(&dir).output().unwrap().status.success());
+        git(&["init", "-q", repo.to_str().unwrap()]);
+        fs::write(repo.join(".git/sheepdog.json"), r#"{"settings": {"remote": "fork"}}"#).unwrap();
+        assert_eq!(get_global_in(repo.to_str().unwrap(), "settings.remote", false), Ok("fork".into()));
         fs::write(&file, "[]").unwrap();
         assert_eq!(get_global("settings.interval", false), Err(vec![format!("not a JSON object: {}", file.display())]));
         let _ = fs::remove_dir_all(&dir);

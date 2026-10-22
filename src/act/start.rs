@@ -57,7 +57,7 @@ fn code(st: std::io::Result<ExitStatus>) -> i32 {
 /// $GIT_COMMON_DIR/worktree-setup, else git config wt.setup. All its output
 /// goes to stderr. false when it failed.
 fn start_hook(src: &str, dst: &str, b: &str) -> bool {
-    let script = format!("{}/worktree-setup", common_dir().unwrap_or_default());
+    let script = format!("{}/worktree-setup", common_dir(".").unwrap_or_default());
     let mut c = if executable(Path::new(&script)) {
         eprintln!("sd act: running {script}");
         Command::new(&script)

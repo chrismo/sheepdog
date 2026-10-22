@@ -84,6 +84,8 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
         die(format!("verify failed ({cmd}); not reviewing"));
     }
     let mut secs = step_timeout(b);
+    // A child process on purpose, sd-review-local too: by contract
+    // (src/review_local.rs) settings.localReview is any script.
     let mut reviewer = cfg("settings.localReview", b);
     if reviewer.is_empty() {
         // Its harness step's own stepTimeout must fire first: this one can't

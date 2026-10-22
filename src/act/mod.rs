@@ -183,16 +183,28 @@ pub fn plural(n: usize, word: &str) -> String {
     }
 }
 
-/// sd state --json <b>, run in <dir> as sd-state from PATH: the suites put a
-/// fake one there. Err is what it said on stderr; on
-/// success its stderr (warnings) passes through.
+/// sd state --json <b> as seen from <dir>, in-process (state::observe): Err
+/// is what sd state would have said on stderr. In a debug build (cargo test's)
+/// with SHEEPDOG_STATE_FIXTURES set, <b>'s answer is that directory's <b>.json
+/// instead: the suites drive a verb from a canned state that way. A release
+/// build, the one installed, never reads it.
 pub fn state_json(dir: &str, b: &str) -> Result<Value, String> {
-    let o = proc::run("sd-state", &["--json", b], Some(dir), None);
-    if !o.ok {
-        return Err(o.stderr);
+    let fixtures = if cfg!(debug_assertions) { std::env::var("SHEEPDOG_STATE_FIXTURES") } else { Err(std::env::VarError::NotPresent) };
+    match fixtures {
+        Ok(fx) if !fx.is_empty() => {
+            let f = format!("{fx}/{b}.json");
+            let text = std::fs::read_to_string(&f).map_err(|e| format!("sd act: no state fixture {f}: {e}\n"))?;
+            crate::config::one_value(&text).ok_or(format!("sd act: state fixture {f} isn't one JSON value\n"))
+        }
+        _ => {
+            // <dir>'s remote, and a config that can't be read is sd state's
+            // failure to report, not a reason to exit here.
+            let remote = crate::config::get_global_in(dir, "settings.remote", false).map_err(|lines| {
+                lines.iter().map(|l| format!("sd config: {l}\n")).collect::<String>() + "sd config failed\n"
+            })?;
+            crate::state::observe(dir, b, &remote)
+        }
     }
-    eprint!("{}", o.stderr);
-    serde_json::from_str(&o.stdout).map_err(|e| format!("sd act: can't parse sd state's answer: {e}\n"))
 }
 
 /// Why sd state found no base: its errors, else a parent that exists only

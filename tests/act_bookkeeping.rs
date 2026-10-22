@@ -57,7 +57,7 @@ impl Sd {
         self.git(&["for-each-ref", &format!("refs/sheepdog/{b}/")])
     }
 
-    /// no_prs: an origin with main on it, sd state on PATH, and a gh with no PRs.
+    /// no_prs: an origin with main on it and a gh with no PRs.
     fn no_prs(&self) {
         self.git(&["init", "-q", "--bare", &self.path("origin.git")]);
         self.git(&["remote", "add", "origin", &self.path("origin.git")]);
@@ -65,7 +65,6 @@ impl Sd {
         self.git(&["fetch", "-q", "origin"]);
         self.git(&["remote", "set-head", "origin", "main"]);
         self.fake("gh", NO_PRS);
-        self.on_path("state");
     }
 
     /// main, then par one commit past it, then kid one past par.

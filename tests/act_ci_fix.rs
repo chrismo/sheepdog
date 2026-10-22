@@ -7,12 +7,13 @@
 // verdict is recorded against the red SHA so the same red doesn't burn
 // another round.
 //
-// Real git (a bare origin and a clone). Fakes on PATH: sd state (answers from
-// $FX/state.json), gh (REST: commit status from $FX/status.json, check runs
-// from $FX/checks.json, a job's failed log from $FX/gha.log; every call logged
-// to $FX/gh.calls), rwx (results from $FX/rwx-results.json, logs from
-// $FX/rwx.log), claude (runs $FX/agent to edit, prints $FX/result.json, keeps
-// its prompt in $FX/claude.prompt).
+// Real git (a bare origin and a clone). sd state answers from
+// $FX/states/feat.json (SHEEPDOG_STATE_FIXTURES). Fakes on PATH: gh (REST:
+// commit status from $FX/status.json, check runs from $FX/checks.json, a job's
+// failed log from $FX/gha.log; every call logged to $FX/gh.calls), rwx
+// (results from $FX/rwx-results.json, logs from $FX/rwx.log), claude (runs
+// $FX/agent to edit, prints $FX/result.json, keeps its prompt in
+// $FX/claude.prompt).
 
 mod common;
 
@@ -20,8 +21,6 @@ use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-
-const SD_STATE: &str = "#!/usr/bin/env bash\ncat \"$FX/state.json\"\n";
 
 const GH: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FX/gh.calls"
@@ -92,9 +91,12 @@ const AGENT_COMMITS_CI: &str = "#!/usr/bin/env bash\nmkdir -p .github/workflows 
 /// HEAD, with the fixtures each fake answers from, and the agent that fixes it.
 fn sd() -> Sd {
     let mut sd = Sd::for_verb("act");
-    sd.env = vec![("SHEEPDOG_STATE_DIR".into(), sd.path("state")), ("FX".into(), sd.path("fx"))];
-    fs::create_dir(sd.tmp.join("fx")).unwrap();
-    sd.fake("sd-state", SD_STATE);
+    sd.env = vec![
+        ("SHEEPDOG_STATE_DIR".into(), sd.path("state")),
+        ("FX".into(), sd.path("fx")),
+        ("SHEEPDOG_STATE_FIXTURES".into(), sd.path("fx/states")),
+    ];
+    fs::create_dir_all(sd.tmp.join("fx/states")).unwrap();
     sd.fake("gh", GH);
     sd.fake("rwx", RWX);
     sd.fake("claude", CLAUDE);
@@ -153,7 +155,7 @@ impl Sd {
         for e in edits {
             j = jq(&[e], &j);
         }
-        self.put("state.json", &j);
+        self.put("states/feat.json", &j);
     }
 
     /// agent_result <jq expression>: what the agent returns.

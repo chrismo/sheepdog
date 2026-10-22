@@ -200,7 +200,7 @@ pub fn question_gate(b: &str, step: &str, force: bool, answering: bool) {
     if answering {
         return;
     }
-    let Ok(Some(q)) = state::question_state(b, &rev(".", &format!("refs/heads/{b}"))) else { return };
+    let Ok(Some(q)) = state::question_state(".", b, &rev(".", &format!("refs/heads/{b}"))) else { return };
     if !on(&q, "at_head") || t(&q, "step") != step {
         return;
     }
