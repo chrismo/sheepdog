@@ -17,12 +17,11 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, Run, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-const SD_ACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/libexec/sd-act");
 
 const SD_STATE: &str = "#!/usr/bin/env bash\ncat \"$FX/state.json\"\n";
 
@@ -131,15 +130,6 @@ fn shipped_prompt() -> String {
 }
 
 impl Sd {
-    /// `run "$SD_ACT" <args>` for what libexec/sd-act still serves, --help and
-    /// answer: the bash script, which needs super 0.3.0. HOME is the temp
-    /// dir's, so asdf's install is named here, as ~/.tool-versions would.
-    fn bash_act(&self, args: &[&str]) -> Run {
-        let asdf = std::env::var("ASDF_DATA_DIR")
-            .unwrap_or_else(|_| format!("{}/.asdf", std::env::var("HOME").unwrap_or_default()));
-        self.exec(Path::new(SD_ACT), &[("ASDF_DATA_DIR", &asdf), ("ASDF_SUPERDB_VERSION", "0.3.0")], args)
-    }
-
     /// $FX/<f> := <s>, newline-terminated.
     fn put(&self, f: &str, s: &str) {
         fs::write(self.tmp.join("fx").join(f), format!("{s}\n")).unwrap();
@@ -584,7 +574,7 @@ fn answer_resumes_the_asking_session_with_chrismos_answer_its_edits_kept_commits
     sd.rm("agent");
     sd.rm("gh.calls");
     sd.result(r#"{outcome: "fixed", commit_message: "Uppercase three", summary: "kept THREE, as chrismo said"}"#);
-    let r = sd.bash_act(&["answer", "keep THREE; the test is right"]);
+    let r = sd.run(&["answer", "keep THREE; the test is right"]);
     assert_eq!(r.status, 0, "{}", r.output);
     assert_has(&sd.prompt(), &["keep THREE; the test is right"]);
     assert_lacks(&sd.prompt(), "rwx: expected THREE"); // the session has the logs already
@@ -603,7 +593,7 @@ fn answer_the_agent_asking_again_records_the_new_question_178() {
     sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
     sd.run(&["ci-fix"]);
     sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "and the other one?"}"#);
-    let r = sd.bash_act(&["answer", "the first"]);
+    let r = sd.run(&["answer", "the first"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["and the other one?"]);
     let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]);
@@ -614,17 +604,17 @@ fn answer_the_agent_asking_again_records_the_new_question_178() {
 #[test]
 fn answer_refused_at_zero_tokens_with_no_text_no_question_or_one_that_no_longer_stands_178() {
     let sd = sd();
-    let r = sd.bash_act(&["answer"]);
+    let r = sd.run(&["answer"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["usage: sd act answer"]);
-    let r = sd.bash_act(&["answer", "yes"]);
+    let r = sd.run(&["answer", "yes"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["no question to answer on feat"]);
     sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
     sd.run(&["ci-fix"]);
     sd.rm("claude.args");
     append(&sd.cwd.join("file.txt"), "chrismo's edit");
-    let r = sd.bash_act(&["answer", "yes"]);
+    let r = sd.run(&["answer", "yes"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["the ci-fix agent's question on feat no longer stands"]);
     assert!(!sd.ran("claude.args"));
@@ -820,6 +810,6 @@ fn no_old_base_and_no_default_branch_to_trust_a_relative_cifixprompt_is_refused_
 #[test]
 fn help_lists_ci_fix() {
     let sd = sd();
-    let r = sd.bash_act(&["--help"]);
+    let r = sd.run(&["--help"]);
     assert_match(&r.output, r"sd act ci-fix ");
 }

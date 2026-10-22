@@ -74,11 +74,8 @@ tasks:
   # tests/state.rs adds a fake gh (bash, jq), and runs lib/*.sh's proc_start
   # (ps) and worktree_mark under bash5 to write what the bash steps write.
   # The agent steps read the shipped prompts from lib/ at run time.
-  # tests/act_{start,address,ci_fix}.rs run sd act answer and --help through
-  # the bash libexec/sd-act, which needs super and the release build.
-  # The agent steps read the shipped prompts from lib/ at run time.
   - key: cargo-test
-    use: [code, system-packages, rust, superdb, build]
+    use: [code, system-packages, rust]
     run: cargo test --locked
     filter:
       - Cargo.toml
@@ -88,9 +85,6 @@ tasks:
       - lib/*.sh
       - lib/prompts/**
       - lib/review-rules.md
-      - libexec/sd-act
-      - libexec/sd-config
-      - target/release/sd
 
   - key: test
     use: [code, system-packages, bats, superdb, captain, build]

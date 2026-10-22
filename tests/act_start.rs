@@ -18,12 +18,11 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, Run, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-const SD_ACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/libexec/sd-act");
 
 const GH: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH/calls"
@@ -89,15 +88,6 @@ fn sd() -> Sd {
 }
 
 impl Sd {
-    /// `run "$SD_ACT" <args>` for what libexec/sd-act still serves, answer:
-    /// the bash script, which needs super 0.3.0. HOME is the temp dir's, so
-    /// asdf's install is named here, as ~/.tool-versions would.
-    fn bash_act(&self, args: &[&str]) -> Run {
-        let asdf = std::env::var("ASDF_DATA_DIR")
-            .unwrap_or_else(|_| format!("{}/.asdf", std::env::var("HOME").unwrap_or_default()));
-        self.exec(Path::new(SD_ACT), &[("ASDF_DATA_DIR", &asdf), ("ASDF_SUPERDB_VERSION", "0.3.0")], args)
-    }
-
     /// $FX/<f> := <s>, newline-terminated.
     fn put(&self, f: &str, s: &str) {
         fs::write(self.tmp.join("fx").join(f), format!("{s}\n")).unwrap();
@@ -1238,7 +1228,7 @@ fn implement_sd_act_answer_resumes_its_session_with_the_answer_and_commits_its_e
     let sid = sd.git(&["config", "branch.feat-x.sd-session"]);
     sd.rm("agent");
     sd.put("result.json", r#"{"outcome": "done", "commit_message": "Edit file.txt", "summary": "done"}"#);
-    let r = sd.bash_act(&["answer", "the one with two lines"]);
+    let r = sd.run(&["answer", "the one with two lines"]);
     assert_eq!(r.status, 0, "{}", r.output);
     assert_has(&sd.prompt(), &["the one with two lines"]);
     assert_lacks(&sd.prompt(), "add a third line"); // the session has the task already

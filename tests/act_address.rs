@@ -11,12 +11,10 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, Run, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs;
-use std::path::Path;
 use std::time::Instant;
 
-const SD_ACT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/libexec/sd-act");
 
 const SD_STATE: &str = r#"#!/usr/bin/env bash
 echo "$PWD ${@: -1}" >> "$FX/sd-state.calls"
@@ -133,15 +131,6 @@ fn sd() -> Sd {
 }
 
 impl Sd {
-    /// `run "$SD_ACT" <args>` for what libexec/sd-act still serves, --help and
-    /// answer: the bash script, which needs super 0.3.0. HOME is the temp
-    /// dir's, so asdf's install is named here, as ~/.tool-versions would.
-    fn bash_act(&self, args: &[&str]) -> Run {
-        let asdf = std::env::var("ASDF_DATA_DIR")
-            .unwrap_or_else(|_| format!("{}/.asdf", std::env::var("HOME").unwrap_or_default()));
-        self.exec(Path::new(SD_ACT), &[("ASDF_DATA_DIR", &asdf), ("ASDF_SUPERDB_VERSION", "0.3.0")], args)
-    }
-
     /// $FX/<f> := <s>, newline-terminated.
     fn put(&self, f: &str, s: &str) {
         fs::write(self.tmp.join("fx").join(f), format!("{s}\n")).unwrap();
@@ -274,7 +263,7 @@ impl Sd {
 #[test]
 fn help_lists_address() {
     let sd = sd();
-    let r = sd.bash_act(&["--help"]);
+    let r = sd.run(&["--help"]);
     assert_has(&r.output, &["address"]);
 }
 
@@ -729,7 +718,7 @@ fn sd_act_answer_resumes_addresss_session_with_the_answer_then_drops_the_questio
             items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
                     {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
     );
-    let r = sd.bash_act(&["answer", "call it bar"]);
+    let r = sd.run(&["answer", "call it bar"]);
     assert_eq!(r.status, 0, "{}", r.output);
     assert_has(&sd.fx("claude.args"), &["call it bar"]);
     assert_eq!(sd.after("--resume"), sid);
@@ -749,7 +738,7 @@ fn sd_act_answer_hands_address_the_items_owed_now_so_one_that_came_after_the_que
     sd.run(&["address"]);
     // T2 arrives; HEAD and the worktree don't change, so the question stands
     sd.two_owed();
-    sd.bash_act(&["answer", "call it bar"]);
+    sd.run(&["answer", "call it bar"]);
     let args = sd.fx("claude.args");
     assert_has(&args, &["call it bar"]);
     assert_has(&args, &["Findings:"]);
@@ -767,7 +756,7 @@ fn sd_act_answer_with_nothing_left_for_the_agent_fails_at_zero_tokens_the_questi
     sd.rm("claude.args");
     // answered on GitHub: nothing owed
     sd.state(&[".threads.owed_bot = 0 | .threads.items = []"]);
-    let r = sd.bash_act(&["answer", "call it bar"]);
+    let r = sd.run(&["answer", "call it bar"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["nothing to address on feat", "sd act ack --question"]);
     assert!(!sd.ran("claude.args"));
@@ -776,7 +765,7 @@ fn sd_act_answer_with_nothing_left_for_the_agent_fails_at_zero_tokens_the_questi
     sd.two_owed();
     sd.nodes(r#".data.nodes[0,1].comments.nodes += [{author: {__typename: "User", login: "stranger"}, body: "mine"}]"#);
     sd.rm("gh.log");
-    let r = sd.bash_act(&["answer", "call it bar"]);
+    let r = sd.run(&["answer", "call it bar"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["no bot feedback the agent can take", "sd act ack --question"]);
     assert!(!sd.ran("claude.args"));
