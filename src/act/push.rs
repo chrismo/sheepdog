@@ -1,5 +1,4 @@
-// push (A3), and ship's and ci-fix's push. libexec/sd-act's push_branch,
-// push_ref and track still do the same for the bash steps: change both.
+// push (A3), and ship's and ci-fix's push.
 
 use super::{die, plural};
 use crate::git::{self, commits_not_ours, count, git, git_ok, git_out, made_here, remote_default, rev, strip_nl, worktree_for};

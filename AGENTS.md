@@ -25,9 +25,8 @@ reasoning. These are the rules agents build by:
    commits, pushes and talks to GitHub. Agents never need to know the
    pipeline exists.
 3. **Harness-agnostic.** Claude and pi both work. The per-harness code is
-   `src/harness.rs` (`lib/sheepdog.sh`'s `harness_run` calls it), the
-   tool-rule wording a step's prompt needs included (`tool_rules`; the bash
-   agent steps still branch on the harness for theirs); nothing else may.
+   `src/harness.rs`, the tool-rule wording a step's prompt needs included
+   (`tool_rules`); nothing else may.
 4. **Reconcile, don't rely on enforcement.** Never assume sheepdog is the only
    writer: each pass compares observed state to desired state and closes the
    gap. Per-step tool denies are cheap extras, never what correctness depends
@@ -140,10 +139,10 @@ PATH="/opt/homebrew/opt/bash/bin:$PATH" bats ...   # if 3.2 comes first
 **No `unnest … into` in a SuperDB query.** super 0.3.0 panicked
 intermittently on that one construct, and a test in `ci/super-stress.bats`
 fails if any script uses it. CI no longer stress-tests queries (2026-10-21:
-the Rust port is retiring SuperDB). `ci/super-stress` still runs every named
-query (the `read -r -d '' NAME <<'EOF'` heredocs in the bash `libexec/sd-*`)
-200 times over `ci/fixtures/` for anyone who wants it locally. SuperDB's
-edges are under "SuperDB notes" below.
+the Rust port is retiring SuperDB). `ci/super-stress` still runs a query 200
+times over a fixture for anyone who wants it locally; no script has a named
+query left for its built-in list (#203). SuperDB's edges are under "SuperDB
+notes" below.
 
 **Every script is `#!/usr/bin/env bash5`, `install.sh` included.** Test them
 by running them, not sourcing, so the shebang picks the bash. agent-rig's

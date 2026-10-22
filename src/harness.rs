@@ -1,9 +1,8 @@
 // The harness adapter: the per-harness code (#79 Design record, rule 3): the
 // headless steps, the TUI sd act attach opens, and the tool-rule wording a
-// step's prompt needs; libexec/sd-act's bash steps still word theirs
-// themselves. lib/sheepdog.sh's harness_run, harness_tally and
-// harness_transcript call it through `sd harness`, which bin/sd doesn't list:
-// it's for the bash steps, not for people.
+// step's prompt needs. lib/sheepdog.sh's harness_run and harness_tally call
+// it through `sd harness`, which bin/sd doesn't list: only lib/sheepdog.bats
+// runs them now that no bash step is left (#203).
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
@@ -24,9 +23,8 @@ const CLAUDE_DENY: &str = "Bash(git commit *),Bash(git push *),Bash(gh *)";
 pub const READONLY_ALLOW: &str = "Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)";
 pub const READONLY_PI_TOOLS: &str = "read";
 
-/// An editing step's tools: lib/sheepdog.sh's HARNESS_CLAUDE_ALLOW and
-/// HARNESS_PI_TOOLS, which the bash steps still use. Claude may read and
-/// edit; pi has no per-command bash rules, so no bash at all.
+/// An editing step's tools. Claude may read and edit; pi has no per-command
+/// bash rules, so no bash at all.
 pub const CLAUDE_ALLOW: &str = "Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)";
 pub const PI_TOOLS: &str = "read,edit,write";
 

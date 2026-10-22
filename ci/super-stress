@@ -10,10 +10,9 @@
 # sd act's steps. So every run of a filter (default 200) must exit 0 with
 # the output of the first.
 #
-# With no arguments, the built-in list: every `read -r -d '' NAME <<'EOF'`
-# query in libexec/sd-act, each over its ci/fixtures/*.json input; the
-# field picks (prc_val) and one-line queries use nothing these don't. Mode
-# json (default) runs the query through prc_json, line through prc_line. One
+# With no arguments, the built-in list, which is empty now: no script has a
+# SuperDB query left (#203). Mode json (default) runs the query through
+# prc_json, line through prc_line. One
 # line per filter, then "super-stress: <filters> filters, <runs> runs each,
 # <failures> failures"; exit 1 on any failure.
 
@@ -21,7 +20,6 @@ set -uo pipefail
 
 ROOT=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)
 source "$ROOT/lib/config.sh"
-FIX=$ROOT/ci/fixtures
 
 die() { echo "super-stress: $*" >&2; exit 1; }
 
@@ -41,23 +39,10 @@ prc_super_init || exit 1
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
-# heredoc <file> <NAME>: the query between `read -r -d '' NAME <<'EOF'` and EOF.
-heredoc() {
-  local out=$WORK/${1##*/}.$2.spq
-  sed -n "/^read -r -d '' $2 <<'EOF'/,/^EOF\$/p" "$1" | sed '1d;$d' > "$out"
-  [[ -s $out ]] || die "no heredoc $2 in $1"
-  echo "$out"
-}
-
 entries=()
 add() { entries+=("$1"$'\t'"$2"$'\t'"$3"$'\t'"${4:-json}"); } # <name> <query-file> <fixture> [json|line]
 
-builtin_list() {
-  local act=$ROOT/libexec/sd-act
-  add sd-act:RESTACK_GATE "$(heredoc "$act" RESTACK_GATE)" "$FIX/restack.json"
-  add sd-act:KEEP_PARENT "$(heredoc "$act" KEEP_PARENT)" "$FIX/keep-parent.json" line
-  add sd-act:RESTACK_GATE:replay "$(heredoc "$act" RESTACK_GATE)" "$FIX/restack-replay.json"
-}
+builtin_list() { :; }
 
 if (( $# )); then
   for a; do

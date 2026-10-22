@@ -139,20 +139,6 @@ old_super() {
   [ "$output" = "sd config: needs super 0.3.0, but super didn't run" ]
 }
 
-@test "super: every bash command checks the version before reading config" {
-  pin_setup
-  old_super "$ASDF_DATA_DIR/installs/superdb/0.2.0/bin" 0.2.0
-  mkdir -p "$TMP/home"
-  local cmd
-  for cmd in "sd-act address"; do
-    HOME="$TMP/home" SHEEPDOG_STATE_DIR="$TMP/state" STATUS_DIR="$TMP/status" ASDF_SUPERDB_VERSION=0.2.0 \
-      run "$LIBEXEC"/$cmd
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"needs super 0.3.0, but "*" is v0.2.0"* ]]
-  done
-  [ ! -e "$TMP/state" ]
-}
-
 @test "super: the version is checked once per command, not per query" {
   pin_setup
   fake_super "$ASDF_DATA_DIR/installs/superdb/0.3.0/bin" pinned
