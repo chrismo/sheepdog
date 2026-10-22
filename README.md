@@ -99,5 +99,5 @@ A custom local reviewer (`settings.localReview`) keeps the contract that
 
 `cargo test`: unit tests in `src/`, and acceptance tests in `tests/*.rs` that
 run the built `sd` against temp git repos with fake `gh`, `claude` and `pi`.
-They need `git`, `jq` and `bash` on `PATH`. CI (RWX, `.rwx/tests.yml`) runs
+They need `git`, `jq`, `bash` and `perl` on `PATH`. CI (RWX, `.rwx/tests.yml`) runs
 them on every PR; see `AGENTS.md` for running a few locally.

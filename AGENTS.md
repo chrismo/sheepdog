@@ -101,8 +101,8 @@ is a cargo test. Unit tests sit beside the code in `src/`; a verb's acceptance
 tests are in `tests/<verb>.rs` (the built binary run through a link named
 `sd-<verb>`, by `tests/common`'s harness, #199); `sd`'s own dispatch is
 `tests/cli.rs`, and `install.sh` is `tests/install.rs`. The tests need `git`,
-`jq` (tests/next.rs and the fake `gh`) and `bash` (the fixtures' fakes) on
-`PATH`.
+`jq` (tests/next.rs and the fake `gh`), `bash` (the fixtures' fakes) and
+`perl` (tests/act_restack.rs's fixtures) on `PATH`.
 
 **`cargo test` builds its own debug binary.** It runs the Rust unit tests and
 `tests/` against it. `bin/sd` runs the release build: after a change under
@@ -157,7 +157,3 @@ rwx logs --task cargo-test <run-id>
 
 `rwx run` (a run from local edits, no push) is for chrismo to ask for; see
 "Don't launch runs with `rwx run`" above. `rwx lint .rwx/tests.yml` is free.
-
-Linux has no `plutil`, so the `sd watch` tests that validate the launchd
-plist return early there (`no_plutil()`): they pass on RWX without checking
-anything, and only a run on macOS tests the plist.

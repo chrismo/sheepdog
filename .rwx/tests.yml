@@ -23,11 +23,11 @@ tasks:
       ref: ${{ init.commit-sha }}
 
   # src/running.rs runs ps (procps). The tests run git, jq, and fixtures in
-  # bash and sh; act_restack's resolve agent runs perl, which perl-base has.
+  # bash and sh; tests/act_restack.rs's fixtures edit files with perl.
   - key: system-packages
     run: |
       sudo apt-get update
-      sudo apt-get install -y git jq procps
+      sudo apt-get install -y git jq perl procps
       sudo apt-get clean
 
   - key: rust
