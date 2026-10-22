@@ -54,8 +54,8 @@ Notes:
   - set/unset write the current branch's file unless --global or --branch
   - init (no --global) writes empty blocks: a branch file holds only overrides
   - files are typed: an unknown key or a bad value is an error naming the
-    file and path; a number in quotes ("1800") is accepted, and a fraction is
-    cut to its whole part; remote, interval, notify, vacuumAfter and
+    file and path; a number may be quoted ("1800") or have a fraction, and get
+    prints it as written; remote, interval, notify, vacuumAfter and
     rateLimitFloor are global-file only
   - set values are strings; --json takes a number, list, object or null
   - step: the harness's block, with the step's block for it laid over it

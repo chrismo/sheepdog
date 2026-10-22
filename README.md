@@ -31,8 +31,9 @@ Upgrading from pr-tend? [Migrate its state first](#coming-from-pr-tend).
 
 The installer builds the Rust half of `sd` (`cargo build --release`; sheepdog
 is moving from bash to Rust a verb at a time, #193; `sd` rebuilds it on its
-own when the source is newer, as after a pull), links `bin/sd` into `~/.local/bin` (`$LOCAL_BIN` to change the
-link directory) and, on macOS, starts the watcher, which checks enrolled
+own when the source is newer, as after a pull), links `bin/sd` into
+`~/.local/bin` (`$LOCAL_BIN` to change the link directory) and, on macOS,
+starts the watcher, which checks enrolled
 branches every five minutes by default. Re-run it to update both. Use
 `sd watch uninstall` to stop the background job, or `sd watch install` to
 start it again (with the same `$LOCAL_BIN`, if you changed it). On other platforms, only the CLI is linked; the background

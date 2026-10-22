@@ -184,3 +184,21 @@ EOF
   [ "$status" -eq 0 ]
   [ ! -e "$CARGO_CALLS" ]
 }
+
+@test "an unknown verb fails without building" {
+  fake_layout
+  rm "$TMP/x/target/release/sd"
+  run "$TMP/x/bin/sd" frobnicate
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unknown verb: frobnicate"* ]]
+  [ ! -e "$CARGO_CALLS" ]
+}
+
+@test "a verb linked to a missing build is still a verb, and gets built" {
+  fake_layout
+  rm "$TMP/x/target/release/sd"
+  ln -s ../target/release/sd "$TMP/x/libexec/sd-linked"
+  run "$TMP/x/bin/sd" linked
+  [ -s "$CARGO_CALLS" ]
+  [[ "$output" != *"unknown verb"* ]]
+}

@@ -26,6 +26,11 @@ case ${1:-} in
   help|-h|--help) usage; exit 0 ;;
 esac
 
+# -L: a ported verb's link dangles until the build below.
+verb=$1; shift
+[[ $verb =~ ^[a-z][a-z-]*$ && ( -x $LIBEXEC/sd-$verb || -L $LIBEXEC/sd-$verb ) ]] \
+  || { echo "sd: unknown verb: $verb" >&2; exit 1; }
+
 # Every verb reads config through the Rust binary (#193), and a pull doesn't
 # build it. touch -c: cargo may leave a fresh build's mtime alone.
 bin=$ROOT/target/release/sd
@@ -35,9 +40,6 @@ if [[ ! -x $bin || -n $(find "$ROOT/src" "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" -
     || { echo "sd: couldn't build sd's Rust half; run $ROOT/install.sh" >&2; exit 1; }
   touch -c "$bin"
 fi
-
-verb=$1; shift
-[[ $verb =~ ^[a-z][a-z-]*$ && -x $LIBEXEC/sd-$verb ]] || { echo "sd: unknown verb: $verb" >&2; exit 1; }
 
 # The verbs call each other by name, as git's do: sd-act runs sd-state.
 PATH="$LIBEXEC:$PATH" exec "$LIBEXEC/sd-$verb" "$@"
