@@ -82,7 +82,7 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
     if !f.ok {
         die(format!("fetch from {remote} failed"));
     }
-    hold_gate(b, &format!("shipping {b}"), "Resolve the hold, then ship again");
+    hold_gate(b, &format!("shipping {b}"), "");
     let mut s = state(&wt, b);
     if b == t(&s, "sync.default") {
         die(format!("not shipping {b}: it's the default branch; start a branch (sd act start <branch> \"<task>\")"));

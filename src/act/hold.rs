@@ -137,10 +137,15 @@ pub fn hold_since(b: &str, base: &str, since: &str) {
     hold_after(b, base, &files);
 }
 
-/// Refuse <doing> while a hold is active; <then> follows the message.
+/// Refuse <doing> while a hold is active; <then>, if any, follows the message.
 pub fn hold_gate(b: &str, doing: &str, then: &str) {
     let Some(paths) = hold_paths(b, &repo_remote(), doing) else { return };
-    die(format!("not {doing}: {}. {then}", say(&paths)));
+    die(refusal(doing, &paths, then));
+}
+
+fn refusal(doing: &str, paths: &[String], then: &str) -> String {
+    let then = if then.is_empty() { String::new() } else { format!(". {then}") };
+    format!("not {doing}: {}{then}", say(paths))
 }
 
 #[cfg(test)]
@@ -167,6 +172,13 @@ mod tests {
     fn file_paths_drops_comments_blanks_and_the_space_around() {
         let text = "# CI\n.github/\n\n  deploy/pipeline.yml  # the deploy\n   \n#.rwx/\n";
         assert_eq!(file_paths(text), strings(&[".github/", "deploy/pipeline.yml"]));
+    }
+
+    #[test]
+    fn refusal_adds_then_only_when_there_is_one() {
+        let paths = strings(&[".rwx/ci.yml"]);
+        assert_eq!(refusal("shipping b", &paths, ""), format!("not shipping b: {}", say(&paths)));
+        assert_eq!(refusal("pushing b", &paths, "Then this"), format!("not pushing b: {}. Then this", say(&paths)));
     }
 
     #[test]
