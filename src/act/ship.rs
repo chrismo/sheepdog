@@ -7,8 +7,9 @@ use super::commands::status;
 use super::describe::{self, describe_run, stored};
 use super::hold::hold_gate;
 use super::push::push_branch;
-use super::restack::parent_to_default;
-use super::{die, no_base_why, state_json, Args};
+use super::restack::{parent_to_default, state};
+use super::review::short;
+use super::{die, no_base_why, Args};
 use crate::git::{git, git_out, rev, show_ref, worktree_for};
 use crate::proc;
 use crate::val::{at, on, sj, t, text};
@@ -50,11 +51,11 @@ fn reviewed(s: &Value) -> bool {
     matches!(at(s, "review.local.status").as_str(), Some("covered" | "rewritten-same"))
 }
 
-fn state(wt: &str, b: &str) -> Value {
-    state_json(wt, b).unwrap_or_else(|e| {
-        eprint!("{e}");
-        die("sd state failed")
-    })
+/// The PR's title and body from the description, trailing newlines dropped
+/// as bash's $( ) dropped them.
+fn pr_text(desc: &Value) -> (String, String) {
+    let trim = |s: String| s.trim_end_matches('\n').to_string();
+    (trim(t(desc, "title")), trim(text(at(desc, "body"))))
 }
 
 fn branch_parent(b: &str) -> String {
@@ -139,13 +140,13 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
                 let now = git_out(".", &["rev-parse", "--short", &now]).unwrap_or(now);
                 die(format!(
                     "HEAD moved during the describe step ({} → {now}); nothing pushed. Look, then ship again",
-                    head.get(..7).unwrap_or(&head)
+                    short(&head)
                 ));
             }
             d
         }
     };
-    let (title, body) = (t(&desc, "title"), text(at(&desc, "body")));
+    let (title, body) = pr_text(&desc);
     push_branch(b, remote).unwrap_or_else(|e| die(e));
     // GH_REPO, which act::run set, points gh at settings.remote's repo.
     if pr_state == "none" {
@@ -199,6 +200,13 @@ mod tests {
     fn parent_state_closed_before_anything_else_it_knows() {
         assert_eq!(parent_state(&with(json!(false), "CLOSED", false)), Parent::Closed);
         assert_eq!(parent_state(&with(json!(true), "CLOSED", true)), Parent::Closed);
+    }
+
+    #[test]
+    fn pr_text_drops_trailing_newlines_only() {
+        let desc = json!({"title": "Add c\n", "body": "Adds c.\n\nRefs #1\n\n"});
+        assert_eq!(pr_text(&desc), ("Add c".to_string(), "Adds c.\n\nRefs #1".to_string()));
+        assert_eq!(pr_text(&json!({"title": "Add c", "body": null})), ("Add c".to_string(), String::new()));
     }
 
     #[test]

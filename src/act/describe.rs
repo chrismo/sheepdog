@@ -4,8 +4,10 @@
 
 use super::commands::status;
 use super::implement::blank;
+use super::restack::state;
+use super::review::short;
 use super::step::{step_session, step_store};
-use super::{attached_check, die, no_base_why, state_json, Args};
+use super::{attached_check, die, no_base_why, Args};
 use crate::git::{self, git_out, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
@@ -61,10 +63,6 @@ pub(super) fn stored(text: &str, head: &str, target: &str) -> Option<Value> {
     let rec = crate::config::one_value(text)?;
     let target_is = |v: &Value| v.as_str() == Some(target);
     (at(&rec, "head").as_str() == Some(head) && target_is(at(&rec, "target"))).then_some(rec)
-}
-
-fn short(s: &str) -> &str {
-    s.get(..7).unwrap_or(s)
 }
 
 /// The describe step in the branch's session (a new one if none), read-only,
@@ -132,11 +130,7 @@ pub fn describe(b: &str, remote: &str, a: &Args) {
     if let Err(e) = std::env::set_current_dir(&wt) {
         die(format!("can't work in {wt}: {e}"));
     }
-    let s = state_json(&wt, b).unwrap_or_else(|e| {
-        eprint!("{e}");
-        die("sd state failed")
-    });
-    println!("{}", json::to_string(&describe_run(b, &s, remote, a)));
+    println!("{}", json::to_string(&describe_run(b, &state(&wt, b), remote, a)));
 }
 
 #[cfg(test)]

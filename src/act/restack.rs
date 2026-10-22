@@ -140,7 +140,7 @@ fn must(o: proc::Out) {
     }
 }
 
-fn state(dir: &str, b: &str) -> Value {
+pub(super) fn state(dir: &str, b: &str) -> Value {
     state_json(dir, b).unwrap_or_else(|e| {
         eprint!("{e}");
         die("sd state failed")
