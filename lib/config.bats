@@ -51,6 +51,11 @@ GLOBAL='{"harness":"claude",
   [ -x "$LIBEXEC/sd-review-local" ]
 }
 
+@test "sd-act: is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$LIBEXEC/sd-act")" = ../target/release/sd ]
+  [ -x "$LIBEXEC/sd-act" ]
+}
+
 # ── the super binary (lib/config.sh's queries): pinned asdf install, not the shim
 
 # super_query — one query through lib/config.sh, as the bash verbs run them.

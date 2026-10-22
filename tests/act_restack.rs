@@ -1,18 +1,20 @@
-// Black-box tests of sd act restack (A2) without --resolve, and retarget
-// (A4) (#202): the built binary, run as sd-act through a link
-// (tests/common). Moved from libexec/sd-act-restack.bats, with its enroll
-// tests; each test keeps the bats test's title above it. The --resolve tests
-// and the --help test stay in bats while restack --resolve and --help are
-// bash (#203).
+// Black-box tests of sd act restack (A2), with and without --resolve (J1: an
+// agent resolves the conflicts), and retarget (A4) (#202, #203): the built
+// binary, run as sd-act through a link (tests/common). Moved from
+// libexec/sd-act-restack.bats, with its enroll tests; each test keeps the
+// bats test's title above it.
 //
 // Real git (a bare origin, our clone, and other/ for other people's pushes)
 // and the real sd state. Fake gh: answers from $GH/<branch>.json, else "no
 // PR", and a fetch by number with that node of whichever file has it;
-// GH_FAIL_FOR=<branch> makes that branch's lookups fail.
+// GH_FAIL_FOR=<branch> makes that branch's lookups fail. For --resolve,
+// claude edits through $FX/agent and prints $FX/result.json as structured
+// output.
 
 mod common;
 
-use common::{assert_has, assert_lacks, jq, Sd};
+use common::{assert_has, assert_lacks, chomp, jq, Sd};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -57,10 +59,13 @@ fn sd() -> Sd {
     sd
 }
 
-/// perl -pi -e 's/^<from>$/<to>/' <f>
-fn subst(f: &Path, from: &str, to: &str) {
+/// perl -pi -e 's/^<from>$/<to>/; ...' <f>, for each (<from>, <to>) in turn.
+fn subst(f: &Path, subs: &[(&str, &str)]) {
     let s = fs::read_to_string(f).unwrap();
-    let out: String = s.lines().map(|l| format!("{}\n", if l == from { to } else { l })).collect();
+    let out: String = s
+        .lines()
+        .map(|l| format!("{}\n", subs.iter().fold(l, |l, (from, to)| if l == *from { to } else { l })))
+        .collect();
     fs::write(f, out).unwrap();
 }
 
@@ -84,15 +89,20 @@ impl Sd {
     /// edit <from> <to> <message>: file.txt's line <from> becomes <to> here,
     /// committed.
     fn edit(&self, from: &str, to: &str, msg: &str) {
-        subst(&self.cwd.join("file.txt"), from, to);
+        subst(&self.cwd.join("file.txt"), &[(from, to)]);
         self.git(&["commit", "-qam", msg]);
     }
 
     /// Someone else commits <from>→<to> in file.txt to <b> on origin.
     fn upstream(&self, b: &str, from: &str, to: &str, msg: &str) {
+        self.upstream_all(b, &[(from, to)], msg);
+    }
+
+    /// Someone else commits each <from>→<to> in file.txt to <b> on origin.
+    fn upstream_all(&self, b: &str, subs: &[(&str, &str)], msg: &str) {
         self.git_in("other", &["fetch", "-q", "origin"]);
         self.git_in("other", &["checkout", "-q", "-B", b, &format!("origin/{b}")]);
-        subst(&self.tmp.join("other/file.txt"), from, to);
+        subst(&self.tmp.join("other/file.txt"), subs);
         self.git_in("other", &["commit", "-qam", msg]);
         self.git_in("other", &["push", "-q", "origin", b]);
     }
@@ -611,4 +621,575 @@ fn enroll_records_nothing_for_a_branch_whose_pr_targets_the_default_branch() {
     assert_eq!(sd.run(&["enroll"]).status, 0);
     assert_eq!(sd.config("branch.feat.sd-parent"), "");
     assert_eq!(sd.base_pin(), "");
+}
+
+// ── --resolve: the agent resolves conflicts (J1) ─────────────────────────────
+
+const CLAUDE: &str = r#"#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FX/claude.args"
+args=("$@") prompt= i=0
+while (( i < $# )); do
+  case ${args[i]} in
+    --allowedTools|--disallowedTools)
+      i=$((i + 1)); while (( i < $# )) && [[ ${args[i]} != -* ]]; do i=$((i + 1)); done; continue ;;
+    --session-id|--resume|--output-format|--json-schema|--permission-mode|--model|--effort|--max-turns|--max-budget-usd) i=$((i + 2)); continue ;;
+    -*) ;;
+    *) prompt=${args[i]} ;;
+  esac
+  i=$((i + 1))
+done
+printf '%s' "$prompt" > "$FX/claude.prompt"
+echo "$PWD" >> "$FX/claude.calls"
+[[ -x $FX/agent ]] && "$FX/agent"
+[[ -e $FX/fail ]] && { echo "claude: boom" >&2; exit 1; }
+jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, structured_output: $r}'
+"#;
+
+/// The bats setup's agent half on top of sd(): the state dir (usage.sup),
+/// $FX, the fake claude, and its result.
+fn agent_sd() -> Sd {
+    let mut sd = sd();
+    sd.env.push(("SHEEPDOG_STATE_DIR".into(), sd.path("state")));
+    sd.env.push(("FX".into(), sd.path("fx")));
+    fs::create_dir(sd.tmp.join("fx")).unwrap();
+    sd.fake("claude", CLAUDE);
+    sd.result(r#"{"outcome": "done", "summary": "kept both"}"#);
+    sd
+}
+
+/// The line after <flag>'s last line in <args>: `grep -A1 -x -- <flag> | tail -1`.
+fn after(args: &str, flag: &str) -> String {
+    let lines: Vec<&str> = args.lines().collect();
+    let i = lines.iter().rposition(|l| *l == flag).unwrap_or_else(|| panic!("no {flag} in {args:?}"));
+    lines.get(i + 1).unwrap_or(&"").to_string()
+}
+
+/// `sed -n '/^<start>$/,/^$/p'`, chomped as `$( )` does.
+fn sed_range(s: &str, start: &str) -> String {
+    let mut out = vec![];
+    let mut on = false;
+    for l in s.lines() {
+        if on || l == start {
+            out.push(l);
+            on = !(on && l.is_empty());
+        }
+    }
+    chomp(&out.join("\n"))
+}
+
+impl Sd {
+    /// $FX/result.json := <j>
+    fn result(&self, j: &str) {
+        fs::write(self.tmp.join("fx/result.json"), format!("{j}\n")).unwrap();
+    }
+
+    /// `$(cat "$FX/<f>")`, or "" when it's missing.
+    fn fx(&self, f: &str) -> String {
+        chomp(&fs::read_to_string(self.tmp.join("fx").join(f)).unwrap_or_default())
+    }
+
+    fn fx_exists(&self, f: &str) -> bool {
+        self.tmp.join("fx").join(f).exists()
+    }
+
+    /// $FX/agent := <script>, what the agent does.
+    fn agent(&self, script: &str) {
+        self.script(&self.tmp.join("fx/agent"), script);
+    }
+
+    /// `printf <line> >> "$FX/agent"`: the agent does more.
+    fn agent_also(&self, line: &str) {
+        let f = self.tmp.join("fx/agent");
+        self.agent(&(fs::read_to_string(&f).unwrap() + line));
+    }
+
+    /// resolver <replacement>: an agent that replaces every conflict block in
+    /// file.txt with one line.
+    fn resolver(&self, rep: &str) {
+        self.agent(&format!(
+            "#!/usr/bin/env bash\nperl -0pi -e \"s/<<<<<<<.*?>>>>>>>[^\\n]*\\n/{rep}\\n/sg\" file.txt\n"
+        ));
+    }
+
+    fn rebase_in_progress(&self) -> bool {
+        self.git_path_exists("rebase-merge") || self.git_path_exists("rebase-apply")
+    }
+
+    /// orphaned_pin: A (a1, a2) squash-merged into main and deleted; child
+    /// was restacked onto A, then rewritten outside sheepdog: a2 is now an
+    /// exact copy, so the pin at A's head isn't an ancestor. A~1 and A's head.
+    fn orphaned_pin(&self) -> (String, String) {
+        self.git(&["switch", "-q", "main"]);
+        self.git(&["switch", "-qc", "A"]);
+        self.edit("c", "C", "a1");
+        self.edit("d", "D", "a2");
+        self.git(&["push", "-q", "origin", "A"]);
+        let (a1, a_head) = (self.rev("A~1"), self.rev("A"));
+        self.git(&["switch", "-qc", "child", "A~1"]);
+        self.edit("d", "D", "a2 again");
+        self.edit("f", "F", "child");
+        self.git(&["config", "branch.child.sd-parent", "A"]);
+        self.git(&["update-ref", "refs/sheepdog/child/base", &a_head]);
+        self.squash_a(true);
+        (a1, a_head)
+    }
+}
+
+// @test "help lists restack and push"
+#[test]
+fn help_lists_restack_and_push() {
+    let sd = agent_sd();
+    let r = sd.run(&["--help"]);
+    assert_has(&r.output, &["sd act restack"]);
+    assert_has(&r.output, &["sd act push"]);
+}
+
+// @test "stacked, pin lost, parent squash-merged and deleted: refused, no rebase, no agent"
+#[test]
+fn stacked_pin_lost_parent_squash_merged_and_deleted_refused_no_rebase_no_agent() {
+    let sd = agent_sd();
+    sd.git(&["switch", "-q", "main"]);
+    sd.git(&["switch", "-qc", "A"]);
+    sd.edit("c", "C", "a1");
+    sd.edit("d", "D", "a2");
+    sd.git(&["push", "-q", "origin", "A"]);
+    let a_head = sd.rev("A");
+    sd.git(&["switch", "-qc", "child", "A~1"]);
+    sd.edit("d", "DD", "a2, changed");
+    sd.edit("f", "F", "child");
+    sd.git(&["config", "branch.child.sd-parent", "A"]);
+    sd.git(&["update-ref", "refs/sheepdog/child/base", &a_head]);
+    sd.squash_a(true);
+    sd.merged_pr("A", &a_head, &[]);
+    let before = sd.rev("child");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("base pin {} is no longer in child's history", &a_head[..7])]);
+    assert_eq!(sd.rev("child"), before);
+    assert!(!sd.rebase_in_progress());
+    assert!(!sd.fx_exists("claude.calls"));
+}
+
+// @test "orphaned pin, all of the parent in HEAD: one commit on main by tree, no agent"
+#[test]
+fn orphaned_pin_all_of_the_parent_in_head_one_commit_on_main_by_tree_no_agent() {
+    let sd = agent_sd();
+    let (a1, a_head) = sd.orphaned_pin();
+    sd.merged_pr("A", &a_head, &[&a1, &a_head]);
+    let old_head = sd.rev("child");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.output, &["restacked child onto origin/main by tree (1 commit)"]);
+    let old = format!("child's commits are now one, committed by you; the old ones are at {}", &old_head[..7]);
+    assert_has(&r.output, &[&old]);
+    assert_eq!(sd.rev("child^"), sd.rev("origin/main"));
+    assert_eq!(sd.git(&["rev-list", "--count", "origin/main..child"]), "1");
+    assert_eq!(sd.git(&["diff", "origin/main", "child"]), sd.git(&["diff", &a_head, &old_head]));
+    assert_eq!(
+        sd.git(&["log", "-1", "--format=%B", "child"]),
+        "child (restacked by tree onto origin/main)\n\nReplaces:\nchild"
+    );
+    assert_eq!(sd.rev("refs/sheepdog/child/base"), sd.rev("origin/main"));
+    assert!(sd.file_has("F"));
+    assert!(!sd.fx_exists("claude.calls"));
+}
+
+// @test "a tree restack's commit is the branch's own in its reflog, not a reset (stacked_on, #94)"
+#[test]
+fn a_tree_restacks_commit_is_the_branchs_own_in_its_reflog_not_a_reset_stacked_on_94() {
+    let sd = agent_sd();
+    let (a1, a_head) = sd.orphaned_pin();
+    sd.merged_pr("A", &a_head, &[&a1, &a_head]);
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.git(&["reflog", "-1", "--format=%H", "refs/heads/child"]), sd.rev("child"));
+    assert!(!sd.git(&["reflog", "-1", "--format=%gs", "refs/heads/child"]).starts_with("reset: moving to "));
+}
+
+// @test "orphaned pin, a tree restack that would conflict: refused even with --resolve"
+#[test]
+fn orphaned_pin_a_tree_restack_that_would_conflict_refused_even_with_resolve() {
+    let sd = agent_sd();
+    let (a1, a_head) = sd.orphaned_pin();
+    sd.upstream("main", "f", "X", "upstream");
+    sd.merged_pr("A", &a_head, &[&a1, &a_head]);
+    let before = sd.rev("child");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["by tree would conflict"]);
+    let (a12, b12) = (&a_head[..12], &before[..12]);
+    let by_hand = format!(
+        "By hand: git switch child && git reset --hard origin/main && git diff --binary {a12} {b12} | git apply -3, resolve and commit, then git update-ref refs/sheepdog/child/base origin/main (the old head stays at {b12})"
+    );
+    assert_has(&r.output, &[&by_hand]);
+    assert_eq!(sd.rev("child"), before);
+    assert!(!sd.fx_exists("claude.calls"));
+}
+
+// @test "parent squash-merged, base below the parent's commits: refused, no rebase, no agent"
+#[test]
+fn parent_squash_merged_base_below_the_parents_commits_refused_no_rebase_no_agent() {
+    let sd = agent_sd();
+    sd.git(&["switch", "-q", "main"]);
+    sd.git(&["switch", "-qc", "A"]);
+    sd.edit("c", "C", "a1");
+    sd.edit("d", "D", "a2");
+    sd.git(&["push", "-q", "origin", "A"]);
+    let (a1, a_head) = (sd.rev("A~1"), sd.rev("A"));
+    sd.git(&["switch", "-qc", "child"]);
+    sd.edit("f", "F", "child");
+    sd.git(&["config", "branch.child.sd-parent", "A"]);
+    sd.git(&["update-ref", "refs/sheepdog/child/base", &sd.rev("main")]);
+    sd.squash_a(false);
+    sd.merged_pr("A", &a_head, &[&a1, &a_head]);
+    let before = sd.rev("child");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_ne!(r.status, 0);
+    let wrong = format!(
+        "wrong base: this would replay 2 of #1's commits onto origin/main; if the stack is linear, rebase past them by hand: git rebase --onto origin/main {} child && git update-ref refs/sheepdog/child/base origin/main",
+        &a_head[..12]
+    );
+    assert_has(&r.output, &[&wrong]);
+    assert_eq!(sd.rev("child"), before);
+    assert!(!sd.rebase_in_progress());
+    assert!(!sd.fx_exists("claude.calls"));
+    let by_hand = r.output.rsplit_once("by hand: ").unwrap().1;
+    assert_eq!(sd.exec(Path::new("bash"), &[], &["-c", "eval \"$1\" 2>/dev/null", "eval", by_hand]).status, 0);
+    assert_eq!(sd.git(&["log", "--format=%s", "origin/main..child"]), "child");
+    assert_eq!(sd.rev("refs/sheepdog/child/base"), sd.rev("origin/main"));
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.output, &["already on origin/main"]);
+}
+
+// @test "--resolve: the agent resolves a predicted conflict; base pinned; its change is unreviewed"
+#[test]
+fn resolve_the_agent_resolves_a_predicted_conflict_base_pinned_its_change_is_unreviewed() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+    assert!(sd.file_has("GX"));
+    assert_lacks(&fs::read_to_string(sd.cwd.join("file.txt")).unwrap(), "<<<<<<<");
+    assert_eq!(sd.base_pin(), sd.rev("origin/main"));
+    assert_has(&r.output, &["resolved by the agent, so feat's change is unreviewed"]);
+    assert!(!sd.rebase_in_progress());
+    assert_eq!(sd.git(&["status", "--porcelain"]), "");
+}
+
+// @test "--resolve: usage.sup logs the agent's step as resolve, not implement (#150)"
+#[test]
+fn resolve_usage_sup_logs_the_agents_step_as_resolve_not_implement_150() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
+    assert_has(&usage, &[r#"branch:"feat",step:"resolve","#]);
+    assert_lacks(&usage, r#"step:"implement""#);
+}
+
+// sd state's NEXT is the one place the order lives (#144).
+// @test "--resolve: names no next command; sd state's NEXT does that (#144)"
+#[test]
+fn resolve_names_no_next_command_sd_states_next_does_that_144() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_lacks(&r.output, "sd act review");
+    assert_lacks(&r.output, "next");
+}
+
+// @test "--resolve: prints the agent's summary of each stop (#156)"
+#[test]
+fn resolve_prints_the_agents_summary_of_each_stop_156() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    sd.result(r#"{"outcome": "done", "summary": "kept both; main's new case lacks the refactor"}"#);
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.output, &["feat (stop 1): kept both; main's new case lacks the refactor"]);
+}
+
+// @test "--resolve: an agent that changes CI config while resolving holds the restacked branch for chrismo (#124)"
+#[test]
+fn resolve_an_agent_that_changes_ci_config_while_resolving_holds_the_restacked_branch_for_chrismo_124() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    sd.agent_also("mkdir -p .github/workflows && echo x > .github/workflows/new.yml\n");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.output, &["held: the agent changed CI config (.github/workflows/new.yml): review, then sd act push"]);
+    assert_eq!(sd.config("branch.feat.sd-held"), format!("{}\n.github/workflows/new.yml", sd.rev("feat")));
+}
+
+// @test "--resolve: a CI config edit the agent staged itself is held all the same (#124)"
+#[test]
+fn resolve_a_ci_config_edit_the_agent_staged_itself_is_held_all_the_same_124() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    sd.agent_also(
+        "mkdir -p .github/workflows && echo x > .github/workflows/new.yml && git add .github/workflows/new.yml\n",
+    );
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.config("branch.feat.sd-held"), format!("{}\n.github/workflows/new.yml", sd.rev("feat")));
+}
+
+// @test "--resolve: a CI config file with a non-ASCII name is held under its own name (#124)"
+#[test]
+fn resolve_a_ci_config_file_with_a_non_ascii_name_is_held_under_its_own_name_124() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    sd.agent_also("mkdir -p .github/workflows && echo x > .github/workflows/tëst.yml\n");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.config("branch.feat.sd-held"), format!("{}\n.github/workflows/tëst.yml", sd.rev("feat")));
+}
+
+// @test "--resolve: a resolution that stays out of CI config holds nothing (#124)"
+#[test]
+fn resolve_a_resolution_that_stays_out_of_ci_config_holds_nothing_124() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.git_status(&["config", "--get", "branch.feat.sd-held"]), 1);
+}
+
+// @test "--resolve: settings.resolvePrompt replaces the guidance; the rebase boundaries stay"
+#[test]
+fn resolve_settings_resolveprompt_replaces_the_guidance_the_rebase_boundaries_stay() {
+    let sd = agent_sd();
+    sd.git(&["config", "branch.feat.sd-task", "capitalise g"]);
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    fs::write(sd.tmp.join("resolve.md"), "Prefer the target.\n").unwrap();
+    sd.write_global(&format!(r#"{{"settings": {{"resolvePrompt": "{}"}}}}"#, sd.path("resolve.md")));
+    sd.ok(&["restack", "--resolve"]);
+    let prompt = sd.fx("claude.prompt");
+    assert_eq!(prompt.lines().next(), Some("Prefer the target."));
+    assert!(!regex::Regex::new("keeps this branch.s intent").unwrap().is_match(&prompt));
+    assert_has(&prompt, &["Do not run git add"]);
+    assert_has(&prompt, &["already-on-target"]);
+}
+
+// @test "--resolve: the agent sees the conflicting files and hunks, in the branch's session, edit tools only"
+#[test]
+fn resolve_the_agent_sees_the_conflicting_files_and_hunks_in_the_branchs_session_edit_tools_only() {
+    let sd = agent_sd();
+    sd.git(&["config", "branch.feat.sd-task", "capitalise g"]);
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    sd.ok(&["restack", "--resolve"]);
+    let prompt = sd.fx("claude.prompt");
+    assert_has(&prompt, &["file.txt"]);
+    assert_has(&prompt, &["<<<<<<<"]);
+    assert_has(&prompt, &["capitalise g"]);
+    assert_eq!(sd.fx("claude.calls"), sd.path("repo"));
+    let sid = sd.config("branch.feat.sd-session");
+    assert!(!sid.is_empty());
+    let args = sd.fx("claude.args");
+    assert!(args.lines().any(|l| l == sid), "no {sid} in {args:?}");
+    let allow = after(&args, "--allowedTools");
+    assert!(allow.contains("Edit") && !allow.contains("git add") && !allow.contains("rebase"), "{allow}");
+}
+
+// @test "--resolve: a plain verify command and settings.implementAllow become rules, as for implement (#156)"
+#[test]
+fn resolve_a_plain_verify_command_and_settings_implementallow_become_rules_as_for_implement_156() {
+    let sd = agent_sd();
+    sd.write_global(r#"{"settings": {"verify": "grep -qx GX file.txt", "implementAllow": ["Bash(bats *)", "WebFetch"]}}"#);
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    let allow = after(&sd.fx("claude.args"), "--allowedTools");
+    assert_has(&format!(",{allow},"), &[",Bash(grep -qx GX file.txt),Bash(bats *),WebFetch,"]);
+    let prompt = sd.fx("claude.prompt");
+    assert_has(&prompt, &["The repo's checks, which the pipeline runs after you: grep -qx GX file.txt"]);
+    assert_has(&prompt, &["may run only these"]);
+}
+
+// @test "--resolve: with nothing allowed, the prompt says the agent can't run commands"
+#[test]
+fn resolve_with_nothing_allowed_the_prompt_says_the_agent_cant_run_commands() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert_has(&sd.fx("claude.prompt"), &["can't run commands"]);
+}
+
+// @test "--resolve: the agent is told which commit it is replaying, out of which"
+#[test]
+fn resolve_the_agent_is_told_which_commit_it_is_replaying_out_of_which() {
+    let sd = agent_sd();
+    sd.edit("b", "B", "feat two");
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let own1 = sd.git(&["rev-parse", "--short", "feat~1"]);
+    let own2 = sd.git(&["rev-parse", "--short", "feat"]);
+    sd.ok(&["restack", "--resolve"]);
+    let prompt = sd.fx("claude.prompt");
+    let replaying = format!("Replaying: {own1} feat");
+    assert!(prompt.lines().any(|l| l == replaying), "{prompt}");
+    assert!(prompt.lines().any(|l| l == " file.txt | 2 +-"), "{prompt}");
+    assert_eq!(
+        sed_range(&prompt, "Commits being replayed, oldest first:"),
+        format!("Commits being replayed, oldest first:\n{own1} feat\n{own2} feat two")
+    );
+}
+
+// @test "--resolve: the agent saying the change is already on the target rolls back as a wrong base"
+#[test]
+fn resolve_the_agent_saying_the_change_is_already_on_the_target_rolls_back_as_a_wrong_base() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.result(r#"{"outcome": "already-on-target", "summary": "main already has this"}"#);
+    let before = sd.rev("HEAD");
+    let replayed = sd.git(&["rev-parse", "--short", "HEAD"]);
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    let wrong = format!("wrong base: the agent says {replayed} feat is already on origin/main (main already has this)");
+    assert_has(&r.output, &[&wrong]);
+    assert_has(&r.output, &[&format!("rebase past it by hand: git rebase --onto origin/main {replayed} feat")]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert!(!sd.rebase_in_progress());
+    assert_eq!(sd.base_pin(), "");
+}
+
+// @test "--resolve: a conflict partway through goes to the agent too"
+#[test]
+fn resolve_a_conflict_partway_through_goes_to_the_agent_too() {
+    let sd = agent_sd();
+    sd.edit("e", "E", "there");
+    sd.edit("E", "e", "back");
+    sd.upstream("main", "e", "X", "upstream");
+    sd.resolver("X");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    // both stops resolved to main's line, so git dropped the two now-empty commits
+    assert_eq!(sd.fx("claude.calls").lines().count(), 2);
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+    assert!(sd.file_has("X") && sd.file_has("G"));
+    assert!(!sd.rebase_in_progress());
+}
+
+// @test "--resolve: one running marker lasts across every stop, then is gone (#170)"
+#[test]
+fn resolve_one_running_marker_lasts_across_every_stop_then_is_gone_170() {
+    let sd = agent_sd();
+    sd.edit("e", "E", "there");
+    sd.edit("E", "e", "back");
+    sd.upstream("main", "e", "X", "upstream");
+    sd.resolver("X");
+    let marker = sd.tmp.join("repo/.git/sheepdog/feat.running");
+    sd.agent_also(&format!("cat {} >> {}\n", marker.display(), sd.path("fx/during")));
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    let during = sd.fx("during");
+    assert_eq!(during.lines().count(), 2);
+    let ids: BTreeSet<Vec<&str>> = during.lines().map(|l| l.split(' ').take(2).collect()).collect();
+    assert_eq!(ids.len(), 1);
+    assert_eq!(during.lines().next().unwrap().split(' ').nth(1), Some("resolve"));
+    assert!(!marker.exists());
+}
+
+// @test "--resolve: the agent giving up rolls back"
+#[test]
+fn resolve_the_agent_giving_up_rolls_back() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.result(r#"{"outcome": "gave-up", "summary": "no sensible merge"}"#);
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["gave up"]);
+    assert_has(&r.output, &["no sensible merge"]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert!(!sd.rebase_in_progress());
+    assert_eq!(sd.git(&["status", "--porcelain"]), "");
+    assert_eq!(sd.base_pin(), "");
+}
+
+// @test "--resolve: leftover conflict markers roll back"
+#[test]
+fn resolve_leftover_conflict_markers_roll_back() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.agent("#!/usr/bin/env bash\ntrue\n");
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["conflict markers"]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert!(!sd.rebase_in_progress());
+}
+
+// @test "--resolve: the agent step failing rolls back"
+#[test]
+fn resolve_the_agent_step_failing_rolls_back() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    fs::write(sd.tmp.join("fx/fail"), "").unwrap();
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert!(!sd.rebase_in_progress());
+}
+
+// @test "--resolve: verify runs on the result; a failure keeps the rebased branch and says so"
+#[test]
+fn resolve_verify_runs_on_the_result_a_failure_keeps_the_rebased_branch_and_says_so() {
+    let sd = agent_sd();
+    sd.verb_ok("config", &["set", "--global", "settings.verify", "grep -qx nope file.txt"]);
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["verify failed"]);
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+    assert_eq!(sd.base_pin(), sd.rev("origin/main"));
+}
+
+// @test "--resolve: more than 3 stops gives up and rolls back"
+#[test]
+fn resolve_more_than_3_stops_gives_up_and_rolls_back() {
+    let sd = agent_sd();
+    sd.edit("a", "A", "a1");
+    sd.edit("b", "B", "b1");
+    sd.edit("c", "C", "c1");
+    sd.edit("d", "D", "d1");
+    sd.upstream_all("main", &[("a", "1"), ("b", "2"), ("c", "3"), ("d", "4")], "upstream");
+    sd.resolver("R");
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["stopped 4 times"]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert!(!sd.rebase_in_progress());
+}
+
+// @test "--resolve with nothing to resolve is a plain restack, no agent"
+#[test]
+fn resolve_with_nothing_to_resolve_is_a_plain_restack_no_agent() {
+    let sd = agent_sd();
+    sd.upstream("main", "b", "B", "upstream");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    assert!(!sd.fx_exists("claude.calls"));
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
 }

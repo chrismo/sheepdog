@@ -1,9 +1,8 @@
 // Black-box tests of sd act enroll, unenroll, forget and unregister (#202):
 // the built binary, run as sd-act through a link (tests/common). Moved from
 // libexec/sd-act.bats; each test keeps the bats test's title above it. The
-// dispatcher's tests (the shebang, --help, no verb, an unknown verb, and
-// "--remove is for sd act forget only") stay there while bash serves them
-// (#204).
+// dispatcher's tests (--help, no verb, an unknown verb, and "--remove is for
+// sd act forget only") are in tests/act.rs.
 
 mod common;
 

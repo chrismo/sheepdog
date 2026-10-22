@@ -4,8 +4,8 @@
 // the lock is held, agent steps refuse to run; a stale lock (its pid is gone
 // from this host) is cleared. The built binary, run as sd-act through a link
 // (tests/common). Moved from libexec/sd-act-attach.bats; each test keeps the
-// bats test's title above it. "--help lists attach" is in sd-act.bats while
-// bash serves --help.
+// bats test's title above it. "--help lists attach" is in tests/act.rs,
+// beside the dispatcher's other --help tests.
 //
 // claude and pi are stubs standing in for the TUI: they record their args,
 // cwd and the lock as it is while they run, then exit as $FX says

@@ -1,15 +1,16 @@
 // Black-box tests of sd act verify (A10) and autofix (A11) (#202): the built
 // binary, run as sd-act through a link (tests/common). Moved from
-// libexec/sd-act-verify.bats and the verb's tests in sd-act-autofix.bats;
-// each test keeps the bats test's title above it. The autofix suite's
-// implement tests and its --help test stay in bats while implement and
-// --help are bash.
+// libexec/sd-act-verify.bats and sd-act-autofix.bats; each test keeps the
+// bats test's title above it. autofix's implement tests run it as the agent
+// steps do: implement runs autofix when verify fails, then verifies again
+// (address hooks in the same way, through the same function).
 //
-// Real git; the commands are shell one-liners. gh is a stub that fails.
+// Real git; the commands are shell one-liners. gh is a stub that fails;
+// claude is a stub whose edit $FX/agent makes, for the implement hook.
 
 mod common;
 
-use common::{assert_has, assert_lacks, spawn, Sd, GH_FAILS};
+use common::{assert_has, assert_lacks, assert_match, spawn, Sd, GH_FAILS};
 use std::fs;
 use std::process::Stdio;
 use std::time::Duration;
@@ -370,5 +371,144 @@ mod autofix {
         assert_has(&r.output, &["hook-out"]);
         assert_has(&r.output, &["hook-err"]);
         assert_has(&r.output, &["autofix committed"]);
+    }
+
+    // @test "--help lists autofix"
+    #[test]
+    fn help_lists_autofix() {
+        let sd = sd();
+        let r = sd.run(&["--help"]);
+        assert_match(&r.output, "sd act autofix ");
+    }
+}
+
+// ── the implement hook: autofix when verify fails, then verify again ─────────
+
+mod implement {
+    use super::*;
+
+    const CLAUDE: &str = r#"#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FX/claude.args"
+[[ -x $FX/agent ]] && "$FX/agent"
+jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, structured_output: $r}'
+"#;
+
+    /// The bats setup's agent half (the state dir, $FX, the fake claude) and
+    /// implement_setup: a task, an agent that adds "d  " (trailing spaces,
+    /// so verify fails), its result, and a verify that rejects them.
+    fn implement_setup() -> Sd {
+        let mut sd = sd();
+        sd.env = vec![("SHEEPDOG_STATE_DIR".into(), sd.path("state")), ("FX".into(), sd.path("fx"))];
+        fs::create_dir(sd.tmp.join("fx")).unwrap();
+        sd.fake("claude", CLAUDE);
+        sd.git(&["config", "branch.feat.sd-task", "add a fourth line"]);
+        fs::write(
+            sd.tmp.join("fx/result.json"),
+            "{\"outcome\": \"done\", \"summary\": \"added d\", \"commit_message\": \"add d\"}\n",
+        )
+        .unwrap();
+        sd.agent("#!/usr/bin/env bash\nprintf \"%s\\n\" a b c \"d  \" > file.txt\n");
+        sd.set_global("settings.verify", "! grep -q ' $' file.txt");
+        sd
+    }
+
+    impl Sd {
+        /// $FX/agent := <script>, what the agent does.
+        fn agent(&self, script: &str) {
+            self.script(&self.tmp.join("fx/agent"), script);
+        }
+
+        fn subject(&self) -> String {
+            self.git(&["log", "-1", "--format=%s"])
+        }
+    }
+
+    fn autofix_cmd(sd: &Sd, c: &str) {
+        sd.set_global("settings.autofix", c);
+    }
+
+    // @test "implement: a failed verify runs autofix; when it changes the tree, verify runs again"
+    #[test]
+    fn implement_a_failed_verify_runs_autofix_when_it_changes_the_tree_verify_runs_again() {
+        let sd = implement_setup();
+        autofix_cmd(&sd, "sed -i.bak 's/ *$//' file.txt && rm file.txt.bak");
+        let r = sd.run(&["implement"]);
+        assert_eq!(r.status, 0);
+        assert_has(&r.output, &["autofix committed"]);
+        assert_has(&r.output, &["verify passed"]);
+        assert_eq!(sd.subject(), "autofix: sed -i.bak 's/ *$//' file.txt && rm file.txt.bak");
+        assert_eq!(sd.git(&["log", "-2", "--format=%s"]).lines().last(), Some("add d"));
+        assert_eq!(sd.git(&["status", "--porcelain"]), "");
+    }
+
+    // @test "implement: a failed verify with no autofix fails as before"
+    #[test]
+    fn implement_a_failed_verify_with_no_autofix_fails_as_before() {
+        let sd = implement_setup();
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["verify failed"]);
+        assert_lacks(&r.output, "autofix");
+        assert_eq!(sd.subject(), "add d");
+    }
+
+    // @test "implement: autofix that changes nothing doesn't rerun verify; the failure stands"
+    #[test]
+    fn implement_autofix_that_changes_nothing_doesnt_rerun_verify_the_failure_stands() {
+        let sd = implement_setup();
+        autofix_cmd(&sd, "true");
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["autofix changed nothing"]);
+        assert_has(&r.output, &["verify failed"]);
+    }
+
+    // @test "implement: autofix failing after it changed files: reverted, the verify failure stands"
+    #[test]
+    fn implement_autofix_failing_after_it_changed_files_reverted_the_verify_failure_stands() {
+        let sd = implement_setup();
+        autofix_cmd(&sd, "echo half >> file.txt; exit 1");
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["reverted"]);
+        assert_has(&r.output, &["verify failed"]);
+        assert_eq!(sd.git(&["status", "--porcelain"]), "");
+        assert_eq!(sd.subject(), "add d");
+    }
+
+    // @test "implement: autofix commits but verify still fails: nonzero, the autofix commit stays"
+    #[test]
+    fn implement_autofix_commits_but_verify_still_fails_nonzero_the_autofix_commit_stays() {
+        let sd = implement_setup();
+        autofix_cmd(&sd, "echo more >> file.txt");
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["autofix committed"]);
+        assert_has(&r.output, &["verify failed"]);
+        assert_eq!(sd.subject(), "autofix: echo more >> file.txt");
+    }
+
+    // @test "implement: verify dirtying the tree is verify's failure; autofix doesn't run"
+    #[test]
+    fn implement_verify_dirtying_the_tree_is_verifys_failure_autofix_doesnt_run() {
+        let sd = implement_setup();
+        sd.set_global("settings.verify", "echo touched >> file.txt");
+        autofix_cmd(&sd, "echo ran > autofix-ran");
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["changed files"]);
+        assert_lacks(&r.output, "clean tree");
+        assert!(!sd.exists("autofix-ran"));
+    }
+
+    // @test "implement: verify passing first time never runs autofix"
+    #[test]
+    fn implement_verify_passing_first_time_never_runs_autofix() {
+        let sd = implement_setup();
+        sd.agent("#!/usr/bin/env bash\nprintf \"%s\\n\" a b c d > file.txt\n");
+        autofix_cmd(&sd, "echo ran > autofix-ran");
+        let r = sd.run(&["implement"]);
+        assert_eq!(r.status, 0);
+        assert!(!sd.exists("autofix-ran"));
     }
 }
