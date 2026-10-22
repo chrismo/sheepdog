@@ -1,9 +1,16 @@
 #!/usr/bin/env bash5
-# Link sd into ~/.local/bin ($LOCAL_BIN) and install its launchd watcher.
-# Safe to re-run.
+# Build sd's Rust verbs, link sd into ~/.local/bin ($LOCAL_BIN) and install
+# its launchd watcher. Safe to re-run.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+cargo=${CARGO:-cargo}
+command -v "$cargo" >/dev/null || { echo "! Cannot install sd: needs cargo to build it (https://rustup.rs)" >&2; exit 1; }
+"$cargo" build --release --quiet --manifest-path "$REPO_DIR/Cargo.toml" \
+  || { echo "! Cannot install sd: cargo build failed" >&2; exit 1; }
+echo "✓ Built sd's Rust verbs"
+
 LOCAL_BIN="${LOCAL_BIN:-$HOME/.local/bin}"
 mkdir -p "$LOCAL_BIN"
 LOCAL_BIN="$(cd "$LOCAL_BIN" && pwd)"

@@ -942,7 +942,7 @@ EOF
   write_cfg '{"settings":{"verify":["true","false"]}}'
   run "$SD_ACT" address
   [ "$status" -ne 0 ]
-  [[ "$output" == *"single command"* ]]
+  [[ "$output" == *'settings.verify: expected a string, got ["true","false"]'* ]]
   [ ! -f "$FX/claude.args" ]
 }
 

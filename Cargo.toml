@@ -1,0 +1,13 @@
+[package]
+name = "sheepdog"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "sd"
+path = "src/main.rs"
+
+[dependencies]
+# preserve_order keeps a config file's keys where the user put them on set.
+serde_json = { version = "1", features = ["preserve_order"] }

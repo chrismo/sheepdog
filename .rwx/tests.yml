@@ -55,8 +55,30 @@ tasks:
   - key: captain
     call: rwx/install-captain 1.2.0
 
+  # Ported verbs' libexec/sd-<verb> links to target/release/sd (#193).
+  - key: rust
+    call: rust-lang/install 1.1.1
+    with:
+      rust-version: 1.90.0
+
+  - key: build
+    use: [code, rust]
+    run: cargo build --release --locked
+    filter:
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+
+  - key: cargo-test
+    use: [code, rust]
+    run: cargo test --locked
+    filter:
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+
   - key: test
-    use: [code, system-packages, bats, superdb, captain]
+    use: [code, system-packages, bats, superdb, captain, build]
     runner:
       cpus: 16
     run: |

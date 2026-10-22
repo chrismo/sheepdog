@@ -16,7 +16,8 @@
 
 set -euo pipefail
 
-LIBEXEC="$(cd "$(dirname "$(realpath "$0")")/../libexec" && pwd)"
+ROOT="$(cd "$(dirname "$(realpath "$0")")/.." && pwd)"
+LIBEXEC="$ROOT/libexec"
 
 usage() { sed -n '3,/^$/s/^# \{0,1\}//p' "$0"; }
 
@@ -25,8 +26,20 @@ case ${1:-} in
   help|-h|--help) usage; exit 0 ;;
 esac
 
+# -L: a ported verb's link dangles until the build below.
 verb=$1; shift
-[[ $verb =~ ^[a-z][a-z-]*$ && -x $LIBEXEC/sd-$verb ]] || { echo "sd: unknown verb: $verb" >&2; exit 1; }
+[[ $verb =~ ^[a-z][a-z-]*$ && ( -x $LIBEXEC/sd-$verb || -L $LIBEXEC/sd-$verb ) ]] \
+  || { echo "sd: unknown verb: $verb" >&2; exit 1; }
+
+# Every verb reads config through the Rust binary (#193), and a pull doesn't
+# build it. touch -c: cargo may leave a fresh build's mtime alone.
+bin=$ROOT/target/release/sd
+if [[ ! -x $bin || -n $(find "$ROOT/src" "$ROOT/Cargo.toml" "$ROOT/Cargo.lock" -newer "$bin" -print -quit 2>/dev/null) ]]; then
+  cargo=${CARGO:-cargo}
+  { command -v "$cargo" >/dev/null && "$cargo" build --release --quiet --manifest-path "$ROOT/Cargo.toml" >&2; } \
+    || { echo "sd: couldn't build sd's Rust half; run $ROOT/install.sh" >&2; exit 1; }
+  touch -c "$bin"
+fi
 
 # The verbs call each other by name, as git's do: sd-act runs sd-state.
 PATH="$LIBEXEC:$PATH" exec "$LIBEXEC/sd-$verb" "$@"

@@ -2,9 +2,10 @@
 
 bats_require_minimum_version 1.5.0
 
-# Test suite for libexec/sd-config and lib/config.sh: built-in defaults, the
-# global XDG file and the branch file, merged in SuperDB. `step` is what one
-# pipeline step runs with; `get` reads any dotted path.
+# Test suite for libexec/sd-config (the Rust binary, src/config.rs) and
+# lib/config.sh: built-in defaults, the global XDG file and the branch file,
+# merged. `step` is what one pipeline step runs with; `get` reads any dotted
+# path. Build first: cargo build --release.
 
 SD_CONFIG="$BATS_TEST_DIRNAME/sd-config"
 
@@ -48,9 +49,9 @@ GLOBAL='{"harness":"claude",
   "steps":{"address":{"harness":"pi","pi":{"model":"cheaper","effort":null}},
            "review":{"claude":{"effort":"max"}}}}'
 
-@test "runs under bash 5 via the bash5 shebang" {
-  run head -1 "$SD_CONFIG"
-  [ "$output" = "#!/usr/bin/env bash5" ]
+@test "is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$SD_CONFIG")" = ../target/release/sd ]
+  [ -x "$SD_CONFIG" ]
 }
 
 @test "no verb: usage on stderr, nonzero" {
@@ -516,7 +517,7 @@ branch  $(branch_file feat)" ]
   write_global '{"harnesses":{"pi":"oops"}}'
   run "$SD_CONFIG" get harnesses.pi.model
   [ "$status" -eq 1 ]
-  [[ "$output" == *"harnesses.pi: cannot cast to"*": oops" ]]
+  [[ "$output" == *'harnesses.pi: expected an object, got "oops"' ]]
 }
 
 @test "get: a path set nowhere exits 3 with no output" {
@@ -578,7 +579,13 @@ branch  $(branch_file feat)" ]
   [[ "$output" == *"unknown verb"* ]]
 }
 
-# ── the super binary: pinned asdf install, not the shim ─────────────────────
+# ── the super binary (lib/config.sh's queries): pinned asdf install, not the shim
+
+# super_query — one query through lib/config.sh, as the bash verbs run them.
+# sd config itself is Rust and runs no super.
+super_query() {
+  bash5 -c 'source "$1" && prc_json "values 1" "{}"' _ "$BATS_TEST_DIRNAME/../lib/config.sh"
+}
 
 # fake_super <dir> <label> — a super that logs its label, then runs the real one.
 fake_super() {
@@ -607,7 +614,7 @@ pin_setup() {
 @test "super: the pinned asdf install is used, not the PATH shim" {
   pin_setup
   fake_super "$ASDF_DATA_DIR/installs/superdb/9.9.9/bin" pinned
-  ASDF_SUPERDB_VERSION=9.9.9 run "$SD_CONFIG" step describe
+  ASDF_SUPERDB_VERSION=9.9.9 run super_query
   [ "$status" -eq 0 ]
   [ "$(sort -u "$SUPER_LOG")" = pinned ]
 }
@@ -617,7 +624,7 @@ pin_setup() {
   fake_super "$ASDF_DATA_DIR/installs/superdb/9.9.9/bin" pinned
   mkdir -p "$TMP/home"
   printf 'nodejs 1.0.0\nsuperdb 9.9.9\n' > "$TMP/home/.tool-versions"
-  HOME="$TMP/home" run "$SD_CONFIG" step describe
+  HOME="$TMP/home" run super_query
   [ "$status" -eq 0 ]
   [ "$(sort -u "$SUPER_LOG")" = pinned ]
 }
@@ -628,13 +635,13 @@ pin_setup() {
   fake_super "$ASDF_DATA_DIR/installs/superdb/1.1.1/bin" wrong
   mkdir -p "$TMP/home"
   printf 'superdb 1.1.1\n' > "$TMP/home/.tool-versions"
-  HOME="$TMP/home" ASDF_SUPERDB_VERSION=9.9.9 run "$SD_CONFIG" step describe
+  HOME="$TMP/home" ASDF_SUPERDB_VERSION=9.9.9 run super_query
   [ "$(sort -u "$SUPER_LOG")" = pinned ]
 }
 
 @test "super: no installed pin falls back to super on PATH" {
   pin_setup
-  ASDF_SUPERDB_VERSION=9.9.9 run "$SD_CONFIG" step describe
+  ASDF_SUPERDB_VERSION=9.9.9 run super_query
   [ "$status" -eq 0 ]
   [ "$(sort -u "$SUPER_LOG")" = shim ]
 }
@@ -649,7 +656,7 @@ old_super() {
 @test "super: any version but 0.3.0 is refused, naming the one found" {
   pin_setup
   old_super "$ASDF_DATA_DIR/installs/superdb/0.2.0/bin" 0.2.0
-  ASDF_SUPERDB_VERSION=0.2.0 run "$SD_CONFIG" step describe
+  ASDF_SUPERDB_VERSION=0.2.0 run super_query
   [ "$status" -eq 1 ]
   [ "$output" = "sd config: needs super 0.3.0, but $ASDF_DATA_DIR/installs/superdb/0.2.0/bin/super is v0.2.0" ]
 }
@@ -660,12 +667,12 @@ old_super() {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/broken/super"
   chmod +x "$TMP/broken/super"
   mkdir -p "$TMP/home"
-  HOME="$TMP/home" PATH="$TMP/broken:$PATH" run "$SD_CONFIG" step describe
+  HOME="$TMP/home" PATH="$TMP/broken:$PATH" run super_query
   [ "$status" -eq 1 ]
   [ "$output" = "sd config: needs super 0.3.0, but super didn't run" ]
 }
 
-@test "super: every command checks the version before reading config" {
+@test "super: every bash command checks the version before reading config" {
   pin_setup
   old_super "$ASDF_DATA_DIR/installs/superdb/0.2.0/bin" 0.2.0
   # Nothing real gets installed if sd watch install gets past the check.
@@ -673,7 +680,7 @@ old_super() {
   printf '#!/usr/bin/env bash\necho "$*" >> "%s/launchctl-calls"\n' "$TMP" > "$TMP/fakebin/launchctl"
   chmod +x "$TMP/fakebin/launchctl"
   local cmd
-  for cmd in "sd-config show" "sd-state" "sd-act address" "sd-watch install"; do
+  for cmd in "sd-state" "sd-act address" "sd-watch install"; do
     HOME="$TMP/home" PATH="$TMP/fakebin:$PATH" SHEEPDOG_WATCH_LAUNCH_AGENTS="$TMP/agents" \
       SHEEPDOG_STATE_DIR="$TMP/state" STATUS_DIR="$TMP/status" ASDF_SUPERDB_VERSION=0.2.0 \
       run "$BATS_TEST_DIRNAME"/$cmd
@@ -689,8 +696,8 @@ old_super() {
   fake_super "$ASDF_DATA_DIR/installs/superdb/0.3.0/bin" pinned
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$1" >> "$SUPER_LOG"\nexec "$REAL_SUPER" "$@"\n' \
     > "$ASDF_DATA_DIR/installs/superdb/0.3.0/bin/super"
-  write_branch feat '{"settings":{"verify":"make"}}'
-  ASDF_SUPERDB_VERSION=0.3.0 run "$SD_CONFIG" show
+  ASDF_SUPERDB_VERSION=0.3.0 run bash5 -c 'source "$1" && prc_super_init &&
+    for q in 1 2 3 4; do prc_json "values $q" "{}"; done' _ "$BATS_TEST_DIRNAME/../lib/config.sh"
   [ "$status" -eq 0 ]
   [ "$(grep -c -- -version "$SUPER_LOG")" -eq 1 ]
   [ "$(wc -l < "$SUPER_LOG")" -gt 3 ]
@@ -709,7 +716,7 @@ old_super() {
 @test "super: no pin at all falls back to super on PATH" {
   pin_setup
   mkdir -p "$TMP/home"
-  HOME="$TMP/home" run "$SD_CONFIG" step describe
+  HOME="$TMP/home" run super_query
   [ "$status" -eq 0 ]
   [ "$(sort -u "$SUPER_LOG")" = shim ]
 }
@@ -1029,7 +1036,7 @@ old_super() {
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
   [[ "${lines[0]}" == *": harnesses.claud: unknown key" ]]
-  [[ "${lines[1]}" == *": steps.adress.claude: unknown key" ]]
+  [[ "${lines[1]}" == *": steps.adress: unknown key" ]]
   [ "${#lines[@]}" -eq 2 ]
 }
 
@@ -1037,8 +1044,8 @@ old_super() {
   write_global '{"harness":{},"harnesses":{"claude":{"effort":{}}}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "${lines[0]}" == *": harness: cannot cast"* ]]
-  [[ "${lines[1]}" == *": harnesses.claude.effort: cannot cast"* ]]
+  [[ "${lines[0]}" == *": harness: expected one of claude, pi, got {}" ]]
+  [[ "${lines[1]}" == *": harnesses.claude.effort: expected one of low, medium, high, xhigh, max, got {}" ]]
   [ "${#lines[@]}" -eq 2 ]
 }
 
@@ -1065,7 +1072,7 @@ old_super() {
   write_global '{"settings":{"stepBudget":"abc"}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "$output" == *"settings.stepBudget: cannot cast"* ]]
+  [[ "$output" == *'settings.stepBudget: expected a number of 0 or more, got "abc"' ]]
 }
 
 @test "settings.branchBudget (USD, 25) and forkLimit (tokens, 100000): defaults, per branch, typed (#121)" {
@@ -1078,7 +1085,21 @@ old_super() {
   write_global '{"settings":{"forkLimit":"lots"}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "$output" == *"settings.forkLimit: cannot cast"* ]]
+  [[ "$output" == *'settings.forkLimit: expected a whole number of 0 or more, got "lots"' ]]
+}
+
+@test "validate: counts and interval refuse a fraction; other seconds and the budgets take one" {
+  write_global '{"settings":{"reviewRounds":1.5,"interval":1.5,"stepBudget":2.5}}'
+  run "$SD_CONFIG" show
+  [ "$status" -eq 1 ]
+  [ "${lines[0]}" = "sd config: $SHEEPDOG_CONFIG: settings.interval: expected a whole number of 0 or more, got 1.5" ]
+  [ "${lines[1]}" = "sd config: $SHEEPDOG_CONFIG: settings.reviewRounds: expected a whole number of 0 or more, got 1.5" ]
+  [ "${#lines[@]}" -eq 2 ]
+  write_global '{}'
+  run "$SD_CONFIG" set --global settings.botTimeout 0.5
+  [ "$status" -eq 0 ]
+  run "$SD_CONFIG" set --global --json settings.stepBudget -1
+  [ "$status" -eq 1 ]
 }
 
 @test "settings.botTimeout: seconds to wait for the review bot, 3600 by default" {
@@ -1088,7 +1109,7 @@ old_super() {
   write_global '{"settings":{"botTimeout":"soon"}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "$output" == *"settings.botTimeout: cannot cast"* ]]
+  [[ "$output" == *'settings.botTimeout: expected a number of 0 or more, got "soon"' ]]
 }
 
 @test "settings.botCommand: a typed string setting, empty by default" {
@@ -1203,14 +1224,14 @@ old_super() {
   write_global '{"settings":{"stepTimeout":"30m"}}'
   run "$SD_CONFIG" get settings.remote
   [ "$status" -eq 1 ]
-  [[ "$output" == *"settings.stepTimeout: cannot cast to uint64: 30m"* ]]
+  [[ "$output" == *'settings.stepTimeout: expected a number of 0 or more, got "30m"' ]]
 }
 
 @test "validate: a bad effort level in the branch file names the branch file" {
   write_branch feat '{"harnesses":{"claude":{"effort":"hihg"}}}'
   run "$SD_CONFIG" step address
   [ "$status" -eq 1 ]
-  [[ "$output" == *"$(branch_file feat): harnesses.claude.effort: no such symbol in enum"*": hihg"* ]]
+  [[ "$output" == *"$(branch_file feat): harnesses.claude.effort: expected one of low, medium, high, xhigh, max, got \"hihg\""* ]]
 }
 
 @test "validate: harnesses.claude.useApiKey is a bool, and claude's only" {
@@ -1220,7 +1241,7 @@ old_super() {
   write_global '{"harnesses":{"claude":{"useApiKey":"yes"},"pi":{"useApiKey":true}}}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "${lines[0]}" == *": harnesses.claude.useApiKey: cannot cast"* ]]
+  [[ "${lines[0]}" == *': harnesses.claude.useApiKey: expected true or false, got "yes"' ]]
   [[ "${lines[1]}" == *": harnesses.pi.useApiKey: unknown key" ]]
 }
 
@@ -1235,8 +1256,8 @@ old_super() {
   write_global '{"steps":{"adress":{"harness":"pi"}},"harness":"claud"}'
   run "$SD_CONFIG" show
   [ "$status" -eq 1 ]
-  [[ "${lines[0]}" == *": harness: no such symbol in enum(claude,pi): claud" ]]
-  [[ "${lines[1]}" == *": steps.adress.harness: unknown key" ]]
+  [[ "${lines[0]}" == *': harness: expected one of claude, pi, got "claud"' ]]
+  [[ "${lines[1]}" == *": steps.adress: unknown key" ]]
 }
 
 @test "validate: every problem is listed, not just the first" {
@@ -1281,8 +1302,8 @@ old_super() {
 }
 
 @test "validate: the built-in defaults pass as a global file" {
-  source "$BATS_TEST_DIRNAME/../lib/config.sh"
-  printf '%s\n' "$PRC_DEFAULTS" > "$SHEEPDOG_CONFIG"
+  "$SD_CONFIG" show --no-branch > "$TMP/defaults.json"
+  mv "$TMP/defaults.json" "$SHEEPDOG_CONFIG"
   run "$SD_CONFIG" show
   [ "$status" -eq 0 ]
 }
