@@ -17,7 +17,7 @@ fn worktree(b: &str) -> String {
     wt
 }
 
-fn command(name: &str, b: &str) -> String {
+pub(super) fn command(name: &str, b: &str) -> String {
     let c = cfg(&format!("settings.{name}"), b);
     if c.contains('\n') {
         die(format!("{name} must be a single command, not a list"));

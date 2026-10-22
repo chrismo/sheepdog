@@ -1,7 +1,7 @@
 // The CI config hold (#124): an agent step's commit that touches a protected
 // path isn't pushed until chrismo has looked. libexec/sd-act's hold_* and
-// lib/sheepdog.sh's protected_paths still do the same for address, ci-fix
-// and restack --resolve: change both.
+// lib/sheepdog.sh's protected_paths still do the same for ci-fix, ship and
+// restack --resolve: change both.
 
 use super::{die, repo_remote};
 use crate::git::{git, git_out, is_ancestor, rev};
@@ -135,6 +135,12 @@ pub fn hold_since(b: &str, base: &str, since: &str) {
     let diff = git(".", &["diff", "-z", "--name-only", "--no-renames", since, &head]).stdout;
     let files: Vec<String> = diff.split('\0').filter(|f| !f.is_empty()).map(str::to_string).collect();
     hold_after(b, base, &files);
+}
+
+/// Refuse <doing> while a hold is active; <then> follows the message.
+pub fn hold_gate(b: &str, doing: &str, then: &str) {
+    let Some(paths) = hold_paths(b, &repo_remote(), doing) else { return };
+    die(format!("not {doing}: {}. {then}", say(&paths)));
 }
 
 #[cfg(test)]

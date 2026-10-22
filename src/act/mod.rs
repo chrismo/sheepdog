@@ -3,6 +3,7 @@
 // after its own prelude (#202), so this repeats the prelude's checks for a
 // run that doesn't come through it.
 
+mod address;
 mod attach;
 mod bookkeeping;
 mod commands;
@@ -80,7 +81,7 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
             "--resolve" => a.resolve = true,
             "--no-implement" => a.no_implement = true,
             "--question" => a.question = true,
-            // --answer is bash answer's, handing implement chrismo's answer.
+            // --answer is bash answer's, handing the step it resumes chrismo's answer.
             o @ ("--parent" | "--harness" | "--id" | "--answer") => {
                 let v = it.next().ok_or(format!("{o} needs a value"))?.clone();
                 match o {
@@ -118,17 +119,18 @@ impl Args {
             }
             (self.answer, self.branch) = (self.positionals[0].clone(), second);
         }
-        let answering = !self.answer.is_empty() && verb != "answer";
         let one_verb = [
             (self.accept, "--accept", "review"),
             (self.remove, "--remove", "forget"),
             (self.question, "--question", "ack"),
-            (answering, "--answer", "implement"),
         ];
         for (set, flag, only) in one_verb {
             if set && verb != only {
                 return Err(format!("{flag} is for sd act {only} only"));
             }
+        }
+        if !self.answer.is_empty() && !matches!(verb, "answer" | "implement" | "address") {
+            return Err("--answer is for sd act implement and address only".into());
         }
         Ok(())
     }
@@ -251,6 +253,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         "attach" => attach::attach(&b, &a.harness, a.force),
         "start" => return ExitCode::from(u8::try_from(start::start(&b, &remote, &a)).unwrap_or(1)),
         "implement" => implement::implement(&b, &a),
+        "address" => address::address(&b, &remote, &a),
         // The rest are still libexec/sd-act's.
         _ => die(format!("unknown verb: {verb}")),
     }
@@ -330,10 +333,11 @@ mod tests {
     }
 
     #[test]
-    fn answer_hands_implement_the_answer_and_no_other_verb() {
+    fn answer_hands_implement_and_address_the_answer_and_no_other_verb() {
         let a = parsed("implement", &["--answer", "-x, not y", "feat"]).unwrap();
         assert_eq!((a.answer.as_str(), a.branch.as_str()), ("-x, not y", "feat"));
-        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement only".into()));
+        assert_eq!(parsed("address", &["--answer", "bar"]).unwrap().answer, "bar");
+        assert_eq!(parsed("push", &["--answer", "yes"]), Err("--answer is for sd act implement and address only".into()));
     }
 
     #[test]

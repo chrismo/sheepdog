@@ -521,12 +521,12 @@ fn flags_json(base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> Result<Value
 
 // ── assemble ─────────────────────────────────────────────────────────────────
 
-fn unbot(s: &str) -> String {
-    s.strip_suffix("[bot]").unwrap_or(s).to_string()
+pub(crate) fn unbot(s: &str) -> &str {
+    s.strip_suffix("[bot]").unwrap_or(s)
 }
 
 fn login(a: &Value) -> String {
-    unbot(str_or(at(a, "login"), ""))
+    unbot(str_or(at(a, "login"), "")).to_string()
 }
 
 fn is_bot(a: &Value, bots: &[String]) -> bool {
@@ -681,7 +681,7 @@ struct Facts {
 }
 
 fn strings(v: &Value) -> Vec<String> {
-    arr(v).iter().map(|x| unbot(str_or(x, ""))).collect()
+    arr(v).iter().map(|x| unbot(str_or(x, "")).to_string()).collect()
 }
 
 fn assemble(s: &Facts) -> Value {
