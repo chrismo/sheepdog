@@ -76,6 +76,28 @@ pub fn jq(args: &[&str], input: &str) -> String {
     chomp(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// [[ <s> == *"<a>"*"<b>"* ]]: the parts are in <s>, in order.
+#[track_caller]
+pub fn assert_has(s: &str, parts: &[&str]) {
+    let mut rest = s;
+    for p in parts {
+        match rest.find(p) {
+            Some(i) => rest = &rest[i + p.len()..],
+            None => panic!("{s:?}\nlacks {p:?}"),
+        }
+    }
+}
+
+#[track_caller]
+pub fn assert_lacks(s: &str, part: &str) {
+    assert!(!s.contains(part), "{s:?}\nhas {part:?}");
+}
+
+#[track_caller]
+pub fn assert_match(s: &str, re: &str) {
+    assert!(regex::Regex::new(re).unwrap().is_match(s), "{s:?}\n!~ {re}");
+}
+
 /// A temp dir holding bin/sd-<verb>, a link to the binary under test; the
 /// global config file's path (global.json, not yet written); home/ for HOME;
 /// fakebin/, first on PATH; and git's global config.

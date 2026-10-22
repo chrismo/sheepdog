@@ -18,8 +18,7 @@
 
 mod common;
 
-use common::{chomp, jq, output, spawn, Run, Sd};
-use regex::Regex;
+use common::{assert_has, assert_lacks, assert_match, chomp, jq, output, spawn, Run, Sd};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -364,28 +363,6 @@ impl Run {
     fn keys(&self) -> String {
         self.field(r#"[.next[].key] | join(" ")"#)
     }
-}
-
-/// [[ <s> == *"<a>"*"<b>"* ]]: the parts are in <s>, in order.
-#[track_caller]
-fn assert_has(s: &str, parts: &[&str]) {
-    let mut rest = s;
-    for p in parts {
-        match rest.find(p) {
-            Some(i) => rest = &rest[i + p.len()..],
-            None => panic!("{s:?}\nlacks {p:?}"),
-        }
-    }
-}
-
-#[track_caller]
-fn assert_lacks(s: &str, part: &str) {
-    assert!(!s.contains(part), "{s:?}\nhas {part:?}");
-}
-
-#[track_caller]
-fn assert_match(s: &str, re: &str) {
-    assert!(Regex::new(re).unwrap().is_match(s), "{s:?}\n!~ {re}");
 }
 
 /// checks '<json array of contexts>'

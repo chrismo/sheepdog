@@ -122,8 +122,9 @@ doesn't stand in for the PR's run: a later commit changes the files, and RWX
 runs everything again. Over 2026-10-18 to -21, `rwx run` was 43 of the 56 full
 runs. Push when the work is ready for a full check, not after every commit.
 
-The macOS-only `sd watch` plist tests skip on RWX (`needs_plutil`). After
-changing the plist, run them locally: `bats -f install libexec/sd-watch.bats`.
+The macOS-only `sd watch` plist tests return early on RWX (`no_plutil` in
+`tests/watch.rs`). After changing the plist, run them locally:
+`cargo test --test watch install`.
 
 **Check which bash bats is using before trusting a green run.** `bats` is
 `#!/usr/bin/env bash`, so test bodies run under whichever bash is first on
@@ -171,7 +172,7 @@ One 16-CPU task, not Captain shards: `bats --jobs` balances tests across CPUs
 better than Captain balances 11 files across runners (37 s vs 77 s, 2026-10-14).
 
 Linux has no `plutil`, so the `sd watch` tests that validate the launchd
-plist skip there (`needs_plutil`). They still run on macOS.
+plist return early there (`no_plutil`). They still run on macOS.
 
 ## SuperDB notes (super 0.3.0, observed 2026-10-13 and -14)
 
