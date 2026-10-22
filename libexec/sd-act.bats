@@ -80,6 +80,17 @@ SH
   [ "$(git rev-parse refs/sheepdog/kid/base)" = "$(git rev-parse par)" ]
 }
 
+@test "enroll: a lineage write git refuses is reported, and enroll still succeeds" {
+  git switch -q main && no_prs
+  git switch -qc par && git commit -q --allow-empty -m p1
+  git switch -qc kid && git commit -q --allow-empty -m k1
+  git update-ref refs/sheepdog/kid HEAD   # refs/sheepdog/kid/base can't be made
+  run "$SD_ACT" enroll kid
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"enrolled kid"*"parent: par"*"refs/sheepdog/kid"* ]]
+  [ "$(git config branch.kid.sd-parent)" = par ]
+}
+
 @test "enroll: two candidate parents record neither, and say so" {
   git switch -q main && no_prs
   git switch -qc par && git commit -q --allow-empty -m p1
@@ -420,5 +431,5 @@ merged_wt() {
   touch .git/config.lock
   run "$SD_ACT" unenroll
   rm -f .git/config.lock
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
 }

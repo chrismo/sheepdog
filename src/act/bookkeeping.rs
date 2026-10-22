@@ -20,12 +20,19 @@ fn must(o: Out) -> Out {
 }
 
 /// git config --unset(-all), where 5 (it wasn't set) is fine and a real
-/// config error isn't.
+/// config error exits 1, as bash's || (( $? == 5 )) did.
 fn unset(args: &[&str]) {
     let o = git(".", args);
-    if o.code != 5 {
-        must(o);
+    if !o.ok && o.code != 5 {
+        eprint!("{}", o.stderr);
+        std::process::exit(1);
     }
+}
+
+/// A lineage write: Err with git's error, which enroll reports and goes on.
+fn write(args: &[&str]) -> Result<(), String> {
+    let o = git(".", args);
+    if o.ok { Ok(()) } else { Err(o.stderr.trim_end().to_string()) }
 }
 
 fn short(sha: &str) -> &str {
@@ -82,8 +89,8 @@ fn lineage(state: &Value) -> Lineage {
 /// pin; GitHub retargets the PR to the default branch on merge. With no PR
 /// and no recorded parent, the branch it was made from by a plain git branch.
 /// Err when git finds candidates but can't pick one (a tie, or a parent that
-/// moved on). <state> is the caller's sd state --json, so a second gh lookup
-/// can't disagree.
+/// moved on), or when git won't write it. <state> is the caller's sd state
+/// --json, so a second gh lookup can't disagree.
 pub fn record_lineage(b: &str, state: &Value, remote: &str) -> Result<(), String> {
     let (parent, old_base) = match lineage(state) {
         Lineage::Pr { parent, old_base } => (parent, old_base),
@@ -97,14 +104,14 @@ pub fn record_lineage(b: &str, state: &Value, remote: &str) -> Result<(), String
         },
         Lineage::None => return Ok(()),
     };
-    must(git(".", &["config", &format!("branch.{b}.sd-parent"), &parent]));
+    write(&["config", &format!("branch.{b}.sd-parent"), &parent])?;
     println!("parent: {parent}");
     if old_base.is_empty() {
         let why = no_base_why(state, remote);
         let why = if why.is_empty() { why } else { format!(": {why}") };
         eprintln!("sd act: warning: no usable base for {b}{why}");
     } else {
-        must(git(".", &["update-ref", &format!("refs/sheepdog/{b}/base"), &old_base]));
+        write(&["update-ref", &format!("refs/sheepdog/{b}/base"), &old_base])?;
         println!("base pinned at {}", short(&old_base));
     }
     Ok(())
