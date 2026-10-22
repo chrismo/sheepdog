@@ -1,4 +1,4 @@
-# Shared by sd act and sd watch. Source it after lib/config.sh;
+# Shared by sd act and sd review-local. Source it after lib/config.sh;
 # needs bash 5 and super 0.3.0.
 #
 # harness_run is the harness adapter: the per-harness code, apart from the

@@ -83,9 +83,9 @@ notified() { cat "$PS_FIXTURES/notified" 2>/dev/null || true; }
 
 # ── basics ───────────────────────────────────────────────────────────────────
 
-@test "runs under bash 5 via the bash5 shebang" {
-  run head -1 "$SD_WATCH"
-  [ "$output" = "#!/usr/bin/env bash5" ]
+@test "is a link to the Rust binary, which runs as the verb it's named for" {
+  [ "$(readlink "$SD_WATCH")" = ../target/release/sd ]
+  [ -x "$SD_WATCH" ]
 }
 
 @test "no registered repos: nothing to do, exit 0" {
@@ -383,22 +383,16 @@ SH
 }
 
 @test "a failed state write leaves no temp file behind" {
-  local real
-  real=$(bash5 -c 'source "$1/../lib/config.sh"; command -v "$(prc_superdb_binary)"' _ "$BATS_TEST_DIRNAME")
-  [[ $real != */shims/* ]] || skip "super is an asdf shim, which the fake's ASDF_DATA_DIR would break"
-  cat > "$TMP/fakebin/super" <<EOF
-#!/usr/bin/env bash
-for a; do [[ \$a == *"state: s"* ]] && { echo '{"partial":'; exit 1; }; done
-exec "$real" "\$@"
-EOF
-  chmod +x "$TMP/fakebin/super"
-  export ASDF_DATA_DIR="$TMP/no-asdf"
   ps_fixture feat
+  pass
+  # A directory where the state file goes: the temp file is written, and
+  # the rename onto it fails.
+  local f; f=$(find "$SHEEPDOG_STATE_DIR/branches" -name feat.json)
+  rm "$f" && mkdir "$f"
   run --separate-stderr pass
   [[ "$stderr" == *"couldn't save"*"feat.json"* ]] || false
-  [ -d "$SHEEPDOG_STATE_DIR/branches" ]
   [ -z "$(find "$SHEEPDOG_STATE_DIR/branches" -name '*.tmp')" ]
-  [ -z "$(find "$SHEEPDOG_STATE_DIR/branches" -name 'feat.json')" ]
+  [ -z "$(find "$SHEEPDOG_STATE_DIR/branches" -name 'feat.json' -type f)" ]
 }
 
 @test "a failed fetch keeps git's reason" {
@@ -571,6 +565,19 @@ SH
   pass
   [ "$(cat "$PS_FIXTURES/gh-repo")" = github.com/me/fork ]
   [ "$(notified)" = "repo feat|merged (#7); the local branch is already gone" ]
+}
+
+@test "gone: a repo file that can't be read is said, not blamed on GitHub, and the state kept" {
+  ps_fixture feat '.ci.verdict = "pending"'
+  pass
+  gone feat
+  gh_pull '{"state": "closed", "merged": true}'
+  printf '{not json\n' > "$(git rev-parse --git-common-dir)/sheepdog.json"
+  pass
+  grep -q "feat.*⚠️.*branch is gone; sd config failed" "$SHEEPDOG_STATE_DIR/last-pass"
+  ! grep -q "didn't say" "$SHEEPDOG_STATE_DIR/last-pass" || false
+  [ ! -e "$PS_FIXTURES/gh-calls" ]
+  [ -n "$(state_files)" ]
 }
 
 @test "gone: a PR that wasn't merged drops the state quietly" {
@@ -770,28 +777,6 @@ one_step() {
   pass
   [ "$(glyph repo)" = "⚠️" ]
   ps_fixture feat '.sync.up_to_date = false | .sync.conflict = true'
-  pass
-  [ "$(notified)" = "repo feat|restack onto main conflicts: resolve it" ]
-}
-
-@test "notify: a reason the pass couldn't send because super failed is sent next pass" {
-  local real
-  real=$(bash5 -c 'source "$1/../lib/config.sh"; command -v "$(prc_superdb_binary)"' _ "$BATS_TEST_DIRNAME")
-  [[ $real != */shims/* ]] || skip "super is an asdf shim, which the fake's ASDF_DATA_DIR would break"
-  ps_fixture feat '.sync.up_to_date = false | .sync.conflict = true'
-  cat > "$TMP/fakebin/super" <<EOF
-#!/usr/bin/env bash
-if [[ ! -e $PS_FIXTURES/super-works ]]; then
-  for a; do [[ \$a == *"r.msg}"* ]] && { echo panic >&2; exit 2; }; done
-fi
-exec "$real" "\$@"
-EOF
-  chmod +x "$TMP/fakebin/super"
-  export ASDF_DATA_DIR="$TMP/no-asdf"
-  pass
-  [ -z "$(notified)" ]
-  touch "$PS_FIXTURES/super-works"
-  pass
   pass
   [ "$(notified)" = "repo feat|restack onto main conflicts: resolve it" ]
 }

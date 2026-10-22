@@ -1,5 +1,5 @@
 # SuperDB queries and config reads for the bash verbs. Sourced by sd act and
-# sd watch; needs bash 5 and super 0.3.0. SuperDB's edges:
+# sd review-local; needs bash 5 and super 0.3.0. SuperDB's edges:
 # AGENTS.md, "SuperDB notes".
 #
 # Every function returns 1 on an error (message on stderr) and never exits:
@@ -14,15 +14,6 @@ PRC_SD_CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/../libexec" && pwd)/sd-confi
 PRC_SD_STATE="${PRC_SD_CONFIG%/*}/sd-state"
 
 prc_err() { echo "sd config: $*" >&2; return 1; }
-
-# prc_rebase_head [dir]: the branch a rebase paused there is rebasing.
-prc_rebase_head() {
-  local gd head
-  gd=$(git -C "${1:-.}" rev-parse --absolute-git-dir 2>/dev/null) || return 1
-  head=$(cat "$gd/rebase-merge/head-name" 2>/dev/null || cat "$gd/rebase-apply/head-name" 2>/dev/null) || return 1
-  [[ $head == refs/heads/* ]] || return 1
-  echo "${head#refs/heads/}"
-}
 
 # Duplicated from a work repo's bin/lib/superdb.sh. The asdf shim re-resolves on every
 # call (~14x slower), so call the pinned install directly; fall back to `super`

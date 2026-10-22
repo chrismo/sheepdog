@@ -6,12 +6,12 @@
 # Usage: ci/super-stress [-n <runs>] [<name>=<query-file>:<fixture>[:<mode>]]...
 #
 # super 0.3.0 panicked intermittently on one construct (`unnest … into`,
-# "context canceled", 12 of 200 runs), and these filters run unattended on
-# every watcher pass. So every run of a filter (default 200) must exit 0 with
+# "context canceled", 12 of 200 runs), and these filters run unattended in
+# sd act's steps. So every run of a filter (default 200) must exit 0 with
 # the output of the first.
 #
 # With no arguments, the built-in list: every `read -r -d '' NAME <<'EOF'`
-# query in libexec/sd-act, libexec/sd-watch and lib/sheepdog.sh, each over
+# query in libexec/sd-act and lib/sheepdog.sh, each over
 # its ci/fixtures/*.json input; the field picks
 # (prc_val) and one-line queries use nothing these don't. Mode json (default)
 # runs the query through prc_json, line through prc_line. One line per
@@ -56,7 +56,6 @@ add() { entries+=("$1"$'\t'"$2"$'\t'"$3"$'\t'"${4:-json}"); } # <name> <query-fi
 builtin_list() {
   local act=$ROOT/libexec/sd-act
   add sheepdog:FLAG_LINES "$(heredoc "$ROOT/lib/sheepdog.sh" FLAG_LINES)" "$FIX/state.json" line
-  add sd-watch:CLASSIFY "$(heredoc "$ROOT/libexec/sd-watch" CLASSIFY)" "$FIX/state.json"
   add sd-act:GATE "$(heredoc "$act" GATE)" "$FIX/state.json"
   add sd-act:TRIGGER_GATE "$(heredoc "$act" TRIGGER_GATE)" "$FIX/state.json"
   add sd-act:RETARGET_GATE "$(heredoc "$act" RETARGET_GATE)" "$FIX/state.json"
