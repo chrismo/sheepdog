@@ -64,9 +64,10 @@ fn sd_verb(verb: &'static str, seam: &str) -> (String, Vec<&'static str>) {
 /// The dispatch gate, the one place it's decided: a PR the viewer authored,
 /// with no one else's commits on the remote. A stand-in for #266's facts (the
 /// PR's author isn't the viewer; the remote has commits from someone else),
-/// which replace it; not keyed on sd-mode, which #266 deletes. fetch, a
-/// followed PR's one run step, passes whoever wrote the PR: it takes only the
-/// author's pushes, and refuses when the branch has commits of its own (#250).
+/// which replace it; not keyed on sd-mode, which #266 deletes. fetch passes
+/// whoever wrote the PR: only a followed PR's NEXT has it, sd act fetch
+/// refuses any other branch, and it takes only the author's pushes, refusing
+/// when the branch has commits of its own (#250).
 fn may_dispatch(s: &Value, key: &str) -> bool {
     if key == "fetch" {
         return true;
