@@ -1,12 +1,14 @@
 // implement (J0) and its review-fix rounds: the agent works the recorded
 // task, or the local review's open findings about HEAD, in the branch's
-// session; the pipeline commits its edits, then runs verify.
+// session; the pipeline commits its edits, then runs verify. A branch already
+// ahead of its target, with no findings to fix, has its task done: refused,
+// at zero tokens, unless --force (#241).
 
 use super::commands::{status, verify_autofix};
 use super::hold::hold_since;
 use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree,
                   question_answered, question_ask, question_gate, question_say, step_session, step_store, step_store_failed};
-use super::{die, state_json, Args};
+use super::{die, plural, state_json, Args};
 use crate::git::{git, git_input, git_out, rev, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Step, PI_TOOLS};
@@ -194,16 +196,14 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let rec = if rec.ok { rec.stdout } else { String::new() };
     let mut fs: Vec<Map<String, Value>> = vec![];
     let mut fix: Option<Value> = None;
-    if !rec.is_empty() {
-        let s = state_json(wt, b).unwrap_or_else(|e| {
-            eprint!("{e}");
-            die("sd state failed")
-        });
-        if on(&s, "review.findings.at_head") {
-            let r = crate::config::one_value(&rec).filter(Value::is_object);
-            fs = r.as_ref().and_then(numbered).unwrap_or_else(|| die(format!("couldn't read the review findings on {b}")));
-            fix = r;
-        }
+    let s = state_json(wt, b).unwrap_or_else(|e| {
+        eprint!("{e}");
+        die("sd state failed")
+    });
+    if !rec.is_empty() && on(&s, "review.findings.at_head") {
+        let r = crate::config::one_value(&rec).filter(Value::is_object);
+        fs = r.as_ref().and_then(numbered).unwrap_or_else(|| die(format!("couldn't read the review findings on {b}")));
+        fix = r;
     }
     let list = listed(&fs);
     let fixing = !list.is_empty();
@@ -213,6 +213,15 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     }
     let qstep = if fixing { "review-fix" } else { "implement" };
     question_gate(b, qstep, a.force, answering);
+    // NEXT offers implement only with nothing ahead of the target (#241).
+    let ahead = at(&s, "sync.ahead").as_u64().unwrap_or(0);
+    if ahead > 0 && !fixing && !answering && !a.force {
+        die(format!(
+            "nothing to implement: {b} is {} ahead of {}, so its task is done; --force to implement it again",
+            plural(ahead as usize, "commit"),
+            t(&s, "sync.target")
+        ));
+    }
     let verify = super::cfg("settings.verify", b);
     let rules = agent_rules(b);
     if !verify.is_empty() && rules.is_empty() {

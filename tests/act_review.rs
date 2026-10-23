@@ -355,6 +355,41 @@ fn accept_records_the_bot_trigger_it_followed_so_next_can_order_them_without_com
     assert_ne!(sd.git_status(&["config", "--get", "branch.feat.sd-accepted-after"]), 0);
 }
 
+#[test]
+fn a_head_the_local_review_covers_is_refused_at_zero_tokens_unless_force_241() {
+    let sd = sd();
+    sd.review();
+    fs::remove_file(sd.tmp.join("fx/reviewer.env")).unwrap();
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    let head = sd.rev("HEAD");
+    assert_has(&r.output, &[&format!("local review already covers {}; --force to review again", &head[..7])]);
+    assert!(!sd.fx_exists("reviewer.env"));
+    sd.ok(&["review", "--force"]);
+    assert!(sd.fx_exists("reviewer.env"));
+}
+
+#[test]
+fn the_same_change_rebased_is_covered_too_241() {
+    let sd = sd();
+    sd.review();
+    sd.git(&["commit", "-q", "--amend", "--no-edit", "--date", "2001-01-01T00:00:00Z"]);
+    assert_ne!(sd.pin("local"), sd.rev("HEAD"));
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["local review already covers"]);
+}
+
+#[test]
+fn a_commit_past_the_local_review_is_reviewed_241() {
+    let sd = sd();
+    sd.review();
+    sd.write("file.txt", "a\nb\nc\nd\n");
+    sd.git(&["commit", "-qam", "more"]);
+    sd.review();
+    assert_eq!(sd.pin("local"), sd.rev("HEAD"));
+}
+
 // @test "a findings record with no usable round starts the count over"
 #[test]
 fn a_findings_record_with_no_usable_round_starts_the_count_over() {
@@ -379,7 +414,7 @@ fn flags_125_printed_on_stderr_for_chrismo_clean_or_not_never_a_gate() {
     assert_has(&r.stderr, &["1 flagged for chrismo"]);
     assert_match(&r.stderr, r"⚑ +skip +a\.bats:2");
     sd.findings(r#"[{"file": "file.txt", "line": 3, "severity": "warning", "body": "c?"}]"#);
-    let r = sd.run_sep(&["review"]);
+    let r = sd.run_sep(&["review", "--force"]);
     assert_eq!(r.status, 0);
     assert_eq!(jq(&["length"], &r.output), "1");
     assert_match(&r.stderr, r"⚑ +skip +a\.bats:2");
