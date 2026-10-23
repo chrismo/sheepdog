@@ -1,6 +1,8 @@
 // The running marker (#170): while an agent step runs on a branch, the
 // branch's file says so, one line: "<pid> <step> <start time> <the pid's
-// proc_start>". sd state reads it.
+// proc_start>". sd state reads it. A step the watcher launched holds it as a
+// lease (#268), with a second line, "deadline <time>", past which the
+// watcher's reconcile ends it.
 
 use crate::val::t;
 use crate::{git, proc, time};
@@ -12,6 +14,11 @@ use std::sync::{Mutex, MutexGuard, Once, PoisonError};
 pub fn file(dir: &str, b: &str) -> Option<String> {
     let common = git::common_dir(dir)?;
     Some(format!("{common}/sheepdog/{}.running", b.replace('/', "__")))
+}
+
+/// Where a step the watcher launched writes how it ended (#268).
+pub fn outcome_file(dir: &str, b: &str) -> Option<String> {
+    file(dir, b)?.strip_suffix(".running").map(|f| format!("{f}.outcome"))
 }
 
 /// When <pid> started, by ps, else nothing. It tells a marker's process from
@@ -33,27 +40,48 @@ pub fn state(dir: &str, b: &str) -> Option<Value> {
     Some(state_at(&file(dir, b)?))
 }
 
-/// state, of the marker at <f>.
+/// state, of the marker at <f>. A dead holder's lease is left for the
+/// watcher's reconcile to report.
 fn state_at(f: &str) -> Value {
-    let Ok(text) = fs::read_to_string(f) else { return Value::Null };
-    if text.is_empty() {
-        return Value::Null;
+    let Some(l) = lease_at(f) else { return Value::Null };
+    if l.live {
+        let pid: Value = serde_json::from_str(&l.pid).unwrap_or(Value::Null);
+        json!({"step": l.step, "pid": pid, "since": l.since})
+    } else {
+        if l.deadline.is_none() {
+            let _ = fs::remove_file(f);
+        }
+        Value::Null
     }
-    let line = text.lines().next().unwrap_or("");
-    let mut it = line.split_whitespace();
+}
+
+/// A marker as it stands. live: its pid is still the process that wrote it.
+pub struct Lease {
+    pub pid: String,
+    pub step: String,
+    pub since: String,
+    /// In epoch ns; None for a step not launched by the watcher.
+    pub deadline: Option<i128>,
+    pub live: bool,
+}
+
+/// <b>'s marker, read and left in place.
+pub fn lease(dir: &str, b: &str) -> Option<Lease> {
+    lease_at(&file(dir, b)?)
+}
+
+fn lease_at(f: &str) -> Option<Lease> {
+    let text = fs::read_to_string(f).ok()?;
+    let mut lines = text.lines();
+    let mut it = lines.next()?.split_whitespace();
     let (pid, step, since) = (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or(""));
     let start = it.collect::<Vec<_>>().join(" ");
     let live = !pid.is_empty()
         && pid.chars().all(|c| c.is_ascii_digit())
         && Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
         && proc_start(pid) == start;
-    if live {
-        let pid: Value = serde_json::from_str(pid).unwrap_or(Value::Null);
-        json!({"step": step, "pid": pid, "since": since})
-    } else {
-        let _ = fs::remove_file(f);
-        Value::Null
-    }
+    let deadline = lines.find_map(|l| l.strip_prefix("deadline ")).and_then(time::epoch_ns);
+    Some(Lease { pid: pid.into(), step: step.into(), since: since.into(), deadline, live })
 }
 
 /// Fails, saying so, while another live process's step holds <b>'s marker,
@@ -129,16 +157,41 @@ pub fn holding<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     })
 }
 
+/// holding, for a step the watcher launched (#268): the marker is a lease
+/// that ends <secs> from now.
+pub fn leasing<T>(b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Option<T> {
+    let Some(marker) = file(".", b) else {
+        eprintln!("sd: no running marker for {b}: not in a git repository");
+        return None;
+    };
+    leasing_at(&marker, b, step, secs, f)
+}
+
+fn leasing_at<T>(marker: &str, b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Option<T> {
+    let end = time::utc((time::now_utc().1 / 1_000_000_000) as i64 + secs as i64);
+    marked(marker, b, step, &format!("deadline {end}\n"), || {
+        std::env::set_var("RUNNING_HELD", b);
+        let out = f();
+        std::env::remove_var("RUNNING_HELD");
+        out
+    })
+}
+
 /// during, with <b>'s marker at <marker>.
 fn during_at<T>(marker: &str, b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     if std::env::var("RUNNING_HELD").is_ok_and(|h| h == b) {
         return Some(f());
     }
+    marked(marker, b, step, "", f)
+}
+
+/// <f> under the marker at <marker>, its lines after the first <rest>.
+fn marked<T>(marker: &str, b: &str, step: &str, rest: &str, f: impl FnOnce() -> T) -> Option<T> {
     if !free(marker, b) {
         return None;
     }
     let pid = std::process::id().to_string();
-    let line = format!("{pid} {step} {} {}\n", time::now_utc().0, proc_start(&pid));
+    let line = format!("{pid} {step} {} {}\n{rest}", time::now_utc().0, proc_start(&pid));
     static AT_EXIT: Once = Once::new();
     AT_EXIT.call_once(|| unsafe {
         atexit(at_exit);
@@ -246,6 +299,43 @@ mod tests {
             "address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not starting another agent step. \
              If it's hung: kill 42, or remove /r/.git/sheepdog/feat.running"
         );
+    }
+
+    #[test]
+    fn leasing_writes_the_deadline_on_a_second_line_and_holds_the_marker_for_the_steps_inside_268() {
+        let f = marker("leased");
+        let seen = leasing_at(path(&f), "b-leased", "push", 30, || {
+            (fs::read_to_string(&f).unwrap(), std::env::var("RUNNING_HELD").ok())
+        });
+        let (text, held) = seen.expect("the step ran");
+        let me = std::process::id().to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with(&format!("{me} push ")), "{text}");
+        let deadline = lines[1].strip_prefix("deadline ").expect("a deadline line");
+        let left = (time::epoch_ns(deadline).unwrap() - time::now_utc().1) / 1_000_000_000;
+        assert!((28..=30).contains(&left), "{left}");
+        assert_eq!(held.as_deref(), Some("b-leased"));
+        assert_ne!(std::env::var("RUNNING_HELD").ok().as_deref(), Some("b-leased"));
+        assert!(!f.exists());
+    }
+
+    #[test]
+    fn lease_reads_a_marker_and_leaves_it_and_sd_state_leaves_a_dead_holders_lease_for_reconcile_268() {
+        let f = marker("lease");
+        assert!(lease_at(path(&f)).is_none());
+        let mut dead = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+        dead.wait().unwrap();
+        fs::write(&f, format!("{} push 2026-10-23T00:00:00Z x\ndeadline 2026-10-23T00:03:00Z\n", dead.id())).unwrap();
+        let l = lease_at(path(&f)).unwrap();
+        assert_eq!((l.step.as_str(), l.live), ("push", false));
+        assert_eq!(l.deadline, time::epoch_ns("2026-10-23T00:03:00Z"));
+        assert!(state_at(path(&f)).is_null());
+        assert!(f.exists());
+
+        let me = std::process::id().to_string();
+        fs::write(&f, format!("{me} implement 2026-10-23T00:00:00Z {}\n", proc_start(&me))).unwrap();
+        let l = lease_at(path(&f)).unwrap();
+        assert_eq!((l.pid.as_str(), l.live, l.deadline), (me.as_str(), true, None));
     }
 
     #[test]

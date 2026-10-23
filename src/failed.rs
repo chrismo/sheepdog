@@ -29,12 +29,17 @@ pub fn why(timed_out: bool, said: &str, stderr: &str, status: i32) -> String {
 
 /// Count a failure of <step> on <b>; a failure to record it only warns.
 pub fn record(b: &str, step: &str, harness: &str, error: &str) {
-    let prev = git(".", &["cat-file", "blob", &name(b)]);
+    record_in(".", b, step, harness, error);
+}
+
+/// record, in the repo at <dir>.
+pub fn record_in(dir: &str, b: &str, step: &str, harness: &str, error: &str) {
+    let prev = git(dir, &["cat-file", "blob", &name(b)]);
     let prev = serde_json::from_str::<Value>(&prev.stdout).ok().filter(|_| prev.ok).filter(Value::is_object);
     let rec = json::to_string(&counted(prev.as_ref(), step, harness, &time::now_utc().0, error)) + "\n";
-    let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
+    let obj = git_input(dir, &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
     let msg = format!("sd: {step} failed");
-    if !obj.ok || !git(".", &["update-ref", "-m", &msg, &name(b), &strip_nl(obj.stdout)]).ok {
+    if !obj.ok || !git(dir, &["update-ref", "-m", &msg, &name(b), &strip_nl(obj.stdout)]).ok {
         eprintln!("sd: warning: couldn't record the failure on {b}, so NEXT won't count it");
     }
 }

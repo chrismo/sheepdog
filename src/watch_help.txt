@@ -102,8 +102,8 @@ reasons and skips a branch sd state is unsure of, as a pass does.
 
 Dispatch (#267): off unless settings.dispatch is true (sd config set
 --global --json settings.dispatch true); branch.<b>.sd-dispatch false turns
-it off for one branch. A pass then runs a branch's first NEXT step when it
-is one of these run steps, as sd act <verb> <branch> from the repo: fetch,
+it off for one branch. A pass then launches a branch's first NEXT step when
+it is one of these run steps, as sd act <verb> <branch> from the repo: fetch,
 behind (restack), push, retarget, bot-trigger (trigger). One attempt per
 branch per pass, under SHEEPDOG_WATCH_TIMEOUT; the next pass sees what it
 did. Only on a PR the viewer (gh's login) authored with no one else's
@@ -113,10 +113,21 @@ branch has commits of chrismo's. Not while sd state reports errors or is
 unsure, an agent step runs or the session is attached, or after the rate
 limit stops the pass; never on refresh or vacuum.
 The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
-ship-parent, open-pr) and every agent step stay chrismo's. The step's
-output goes to stderr (the job's launchd.log), then its pass line, also in
-status: ran sd act <verb>: ok, failed (exit <n>): <its last line>, or
-timed out after <n>s.
+ship-parent, open-pr) and every agent step stay chrismo's.
+
+Launched steps (#268): the pass doesn't wait for one. It runs as sd watch
+step <secs> <verb> <branch>, in a session of its own (launchd's cleanup of
+the job never signals it), holding the branch's running marker as a lease:
+the marker's second line, deadline <time>, is the step's timeout plus 60s.
+Its output goes to steps.log in SHEEPDOG_STATE_DIR. The pass's line, also
+in status, is launched sd act <verb>; the next pass reports how it ended:
+ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
+<n>s, or stopped by a signal. Each pass first reconciles every branch's
+lease: one past its deadline gets TERM to its process group, KILL 5s later
+if it's still there; one whose process is gone with no outcome crashed.
+Either counts in the failure record (refs/sheepdog/<b>/failed, harness sd),
+as a launched step that timed out does. A marker with no deadline, a step
+chrismo ran, is never ended or counted.
 
 GitHub's rate limit: a pass checks no more branches after one whose sd
 state found less than settings.rateLimitFloor GraphQL points left (default
