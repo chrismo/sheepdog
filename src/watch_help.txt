@@ -46,6 +46,8 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     until it comes (#167)
   budget: ❌ the branch's steps have spent past settings.branchBudget, so
     no agent step runs on it until chrismo raises it or takes over
+  failed: ❌ 3 agent steps failed in a row (a harness or provider down?),
+    so none runs until chrismo fixes it and reruns the last one (#242)
   ci-config: ❌ an agent step's commit changed CI config, held unpushed
     until chrismo reviews it and runs sd act push (#124)
   nothing default: ❌ nothing ahead of the base and no task to implement, or

@@ -6,7 +6,7 @@
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
-use crate::{config, json, proc, running, time, usage};
+use crate::{config, failed, json, proc, running, time, usage};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
@@ -72,6 +72,13 @@ pub struct Step<'a> {
     pub pi_tools: &'a str,
 }
 
+impl Step<'_> {
+    /// The running marker's and failure record's step.
+    fn label(&self) -> &str {
+        if self.name.is_empty() { "agent" } else { self.name }
+    }
+}
+
 /// Runs the step in the current directory: its result objects, or its status
 /// with what went wrong on stderr. claude runs with ANTHROPIC_API_KEY unset
 /// unless useApiKey is true: an exported key overrides the claude.ai login
@@ -91,8 +98,7 @@ pub fn run_step(s: &Step) -> Result<Vec<Value>, i32> {
     if b.is_empty() {
         return agent(s, &b);
     }
-    let name = if s.name.is_empty() { "agent" } else { s.name };
-    running::during(&b, name, || agent(s, &b)).unwrap_or(Err(1))
+    running::during(&b, s.label(), || agent(s, &b)).unwrap_or(Err(1))
 }
 
 fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
@@ -174,13 +180,18 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         b: &before,
     }));
 
+    let said = if status != 0 { said(h, &out.stdout, &cap_note, spent) } else { String::new() };
     if status != 0 {
         eprint!("{}", tail(&out.stderr, 40));
-        let said = said(h, &out.stdout, &cap_note, spent);
         let said = said.trim_end_matches('\n');
         if !said.is_empty() {
             eprintln!("{}", tail(said, 20));
         }
+    }
+    if !b.is_empty() && result.is_ok() {
+        failed::clear(b);
+    } else if !b.is_empty() {
+        failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status));
     }
     result
 }

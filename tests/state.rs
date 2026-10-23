@@ -2611,6 +2611,29 @@ fn question_stands_at_head_with_the_worktree_the_step_left_nexts_question_step_1
     assert_eq!(r.field(".question.at_head"), "false");
 }
 
+#[test]
+fn failed_agent_steps_show_on_the_one_liner_and_in_long_three_in_a_row_hand_the_agent_steps_to_chrismo_242() {
+    let sd = sd();
+    sd.feat();
+    let rec = |n: u32| format!(r#"{{"step": "implement", "harness": "pi", "count": {n}, "since": "2026-10-22T20:00:00Z", "at": "2026-10-22T20:05:00Z", "error": "no quota"}}"#);
+    sd.put_blob("refs/sheepdog/feat/failed", &rec(1));
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".failed.step"), "implement");
+    assert_eq!(r.field(".failed.count"), "1");
+    assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "push open-pr");
+    let r = sd.run(&[]);
+    assert_has(&r.output, &["✗ 1 failed"]);
+    let r = sd.run(&["--long"]);
+    assert_has(&r.output, &["✗  1 agent step failed in a row, the last pi implement at 2026-10-22T20:05:00Z: no quota"]);
+    sd.put_blob("refs/sheepdog/feat/failed", &rec(3));
+    let r = sd.state(&[]);
+    assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "push failed");
+    sd.put_blob("refs/sheepdog/feat/failed", r#"{"step": "implement"}"#);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".failed"), "null");
+    assert_has(&r.field(".errors[0]"), &["refs/sheepdog/feat/failed isn't a failure record"]);
+}
+
 // @test "review: findings are declined only when the agent declined every one that blocks"
 #[test]
 fn review_findings_are_declined_only_when_the_agent_declined_every_one_that_blocks() {

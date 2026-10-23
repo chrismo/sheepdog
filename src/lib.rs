@@ -1,5 +1,6 @@
 pub mod act;
 pub mod config;
+pub mod failed;
 pub mod git;
 pub mod guidance;
 pub mod harness;

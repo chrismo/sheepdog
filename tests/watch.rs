@@ -1037,7 +1037,7 @@ fn policy_every_next_step_src_next_rs_is_in_help_notified_or_not_exactly_once() 
     let sd = sd();
     let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/next.rs")).unwrap();
     let mut steps: Vec<&str> =
-        Regex::new(r#"(?:step\(|agent\(budget, )"([a-z-]+)""#).unwrap().captures_iter(&src).map(|c| c.get(1).unwrap().as_str()).collect();
+        Regex::new(r#"(?:step\(|agent\(hold, )"([a-z-]+)""#).unwrap().captures_iter(&src).map(|c| c.get(1).unwrap().as_str()).collect();
     steps.sort();
     steps.dedup();
     let mut listed = [sd.policy("n"), sd.policy("q")].concat();

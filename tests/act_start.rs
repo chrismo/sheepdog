@@ -595,6 +595,31 @@ fn implement_names_no_next_command_sd_states_next_does_that_144() {
     assert_lacks(&r.output, "sd act review");
 }
 
+#[test]
+fn start_records_harness_before_implement_so_a_failed_first_step_keeps_it_242() {
+    let mut sd = sd();
+    sd.fake("pi", "#!/usr/bin/env bash\necho 'pi: no quota' >&2\nexit 1\n");
+    let r = sd.run_sep(&["start", "--harness", "pi", "feat-x", "add c"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "pi");
+    sd.fake("pi", PI);
+    sd.cd("feat-x");
+    sd.ok(&["implement"]);
+    assert!(sd.ran("pi.args"));
+}
+
+#[test]
+fn start_leaves_the_harness_of_a_branch_that_has_a_session_242() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.ok(&["implement"]);
+    sd.cd("repo");
+    sd.git(&["worktree", "remove", "--force", "../feat-x"]);
+    let r = sd.run_sep(&["start", "--harness", "pi", "--no-implement", "feat-x"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "claude");
+}
+
 // @test "implement: the prompt carries the task and the verify command"
 #[test]
 fn implement_the_prompt_carries_the_task_and_the_verify_command() {

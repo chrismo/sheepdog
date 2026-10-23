@@ -162,6 +162,12 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     if !a.parent.is_empty() {
         set(&["config", &format!("branch.{b}.sd-parent"), &a.parent]);
     }
+    // Before the first step, which may fail (#242); a branch with a session
+    // keeps its session's harness.
+    let session = git_out(".", &["config", "--get", &format!("branch.{b}.sd-session")]);
+    if !a.harness.is_empty() && session.is_none() {
+        set(&["config", &format!("branch.{b}.sd-harness"), &a.harness]);
+    }
     if !base.is_empty() {
         set(&["update-ref", "-m", "sd act start", &format!("refs/sheepdog/{b}/base"), &base]);
     }
