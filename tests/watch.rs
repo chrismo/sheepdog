@@ -2954,6 +2954,33 @@ fn dispatch_a_branch_turned_off_is_left_alone() {
 }
 
 #[test]
+fn dispatch_a_branch_with_an_unreadable_switch_is_left_alone() {
+    let sd = sd();
+    sd.dispatching();
+    sd.git(&["config", "branch.feat.sd-dispatch", "maybe"]);
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+}
+
+#[test]
+fn dispatch_not_while_a_step_runs_or_the_session_is_attached() {
+    let sd = sd();
+    sd.dispatching();
+    for (why, more) in [
+        ("running", r#".session.running = {step: "implement", pid: 1, since: "2026-10-23T00:00:00Z"}"#),
+        ("attached", ".session.locked = true"),
+    ] {
+        sd.first_step("feat", "push", &[more]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{why}");
+        sd.first_step("feat", "fetch", &[r#".mode = "reviewer""#, more]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{why}, followed");
+    }
+}
+
+#[test]
 fn dispatch_a_failed_step_is_tried_once_a_pass_and_says_why() {
     let sd = sd();
     sd.dispatching();

@@ -110,7 +110,8 @@ did. Only on a PR the viewer (gh's login) authored with no one else's
 commits on the remote: none this copy never had, none taken and reset away.
 fetch, a followed PR's, runs whoever wrote the PR: it refuses when the
 branch has commits of chrismo's. Not while sd state reports errors or is
-unsure, or after the rate limit stops the pass; never on refresh or vacuum.
+unsure, an agent step runs or the session is attached, or after the rate
+limit stops the pass; never on refresh or vacuum.
 The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
 ship-parent, open-pr) and every agent step stay chrismo's. The step's
 output goes to stderr (the job's launchd.log), then its pass line, also in

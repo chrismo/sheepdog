@@ -590,9 +590,12 @@ impl Watch {
         }
         let key = at(first, "key").as_str()?;
         let verb = DISPATCH.iter().find(|(k, _)| *k == key)?.1;
-        // Unset is on; a value git can't read as a bool is off.
-        let off = git(repo, &["config", "--type=bool", &format!("branch.{b}.sd-dispatch")]);
-        if !may_dispatch(s, key) || (off.code != 1 && off.stdout.trim_end() != "true") {
+        // Unset (exit 1) is on; a value git can't read as a bool (128) is off.
+        let switch = git(repo, &["config", "--type=bool", &format!("branch.{b}.sd-dispatch")]);
+        let enabled = switch.code == 1 || switch.stdout.trim_end() == "true";
+        // A followed PR's NEXT has no attached step, so neither is left to NEXT.
+        let busy = !at(s, "session.running").is_null() || on(s, "session.locked");
+        if !enabled || busy || !may_dispatch(s, key) {
             return None;
         }
         let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
