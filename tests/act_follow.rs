@@ -239,6 +239,28 @@ fn fetch_with_no_pr_head_recorded_takes_a_head_the_branch_is_in() {
 }
 
 #[test]
+fn follow_whose_worktree_add_fails_leaves_no_reviewer_config() {
+    let sd = sd();
+    sd.git(&["branch", "review"]);
+    let r = sd.run(&["follow", "7"]);
+    assert_ne!(r.status, 0);
+    assert!(sd.git_try(&["config", "--get", "branch.review/7.sd-mode"]).is_none());
+    assert!(sd.git_try(&["config", "--get", "branch.review/7.sd-pr"]).is_none());
+}
+
+#[test]
+fn fetch_leaves_the_remotes_other_refs_unpruned() {
+    let mut sd = sd();
+    sd.git_in("other", &["push", "-q", "origin", "HEAD:refs/heads/gone-soon"]);
+    sd.followed();
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git_in("other", &["push", "-q", "origin", ":refs/heads/gone-soon"]);
+    sd.author_pushes("more", false);
+    sd.ok(&["fetch"]);
+    assert!(sd.git_try(&["rev-parse", "--verify", "-q", "refs/remotes/origin/gone-soon"]).is_some());
+}
+
+#[test]
 fn fetch_is_for_a_followed_pr_only() {
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);

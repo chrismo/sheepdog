@@ -82,11 +82,16 @@ pub(super) fn start_hook(src: &str, dst: &str, b: &str) -> bool {
 /// git, its output on stderr as git writes it (so in git's order); dies
 /// saying <what> failed.
 pub(super) fn git_or_die(args: &[&str], what: &str) {
-    let mut c = Command::new("git");
-    c.args(args);
-    if code(on_stderr(c)) != 0 {
+    if !git_on_stderr(args) {
         die(format!("{what} failed"));
     }
+}
+
+/// git, its output on stderr as git writes it; false when it failed.
+pub(super) fn git_on_stderr(args: &[&str]) -> bool {
+    let mut c = Command::new("git");
+    c.args(args);
+    code(on_stderr(c)) == 0
 }
 
 /// implement in the new worktree, in its own process as bash's subshell had

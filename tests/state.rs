@@ -4287,6 +4287,18 @@ fn reviewer_mode_a_thread_reply_isnt_a_review_of_head() {
 }
 
 #[test]
+fn reviewer_mode_a_stacked_prs_stale_parent_isnt_stale() {
+    let sd = sd();
+    sd.git_in("other", &["push", "-q", "origin", "main:refs/heads/base"]);
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.following(&[r#".baseRefName = "base""#]);
+    sd.pr_fixture("base", &[".number = 6", r#".headRefOid = "ffffffffffffffffffffffffffffffffffffffff""#]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".parent.pr.number"), "6");
+    assert_eq!(r.field(".fresh"), "true", "{}", r.field(".stale[]"));
+}
+
+#[test]
 fn an_authors_branch_has_no_mode_and_no_github_review() {
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);

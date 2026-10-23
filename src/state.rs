@@ -1272,7 +1272,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     // ── O4 local vs remote ──
     // A followed PR's remote is its head as fetched: the author's, so never
     // judged ours or theirs (#250).
-    let remote_ref = if reviewer { format!("refs/sheepdog/{branch}/pr-head") } else { format!("refs/remotes/{remote}/{branch}") };
+    let remote_ref = if reviewer { git::pr_head_ref(branch) } else { format!("refs/remotes/{remote}/{branch}") };
     let remote_sha = rev(dir, &remote_ref);
     let (mut remote_ours, mut diverged, mut push_behind, mut theirs) = (Value::Null, false, 0i64, Value::Null);
     let ahead;
@@ -1327,11 +1327,15 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let (mut stale, mut lag) = (Vec::new(), Vec::new());
     let mut author_pushed = if reviewer { json!(false) } else { Value::Null };
     for (p, name) in [(&pr, branch), (&parent_pr, parent.as_str())] {
+        // A followed PR's base isn't this branch's to restack onto.
+        if reviewer && name != branch {
+            continue;
+        }
         if at(p, "state").as_str() == Some("OPEN") {
             if let Some(gh_sha) = at(p, "headRefOid").as_str().filter(|s| !s.is_empty()) {
                 let r = format!("refs/remotes/{remote}/{name}");
                 let r_sha = rev(dir, &r);
-                if reviewer && name == branch {
+                if reviewer {
                     if gh_sha != remote_sha {
                         let short = &gh_sha[..7.min(gh_sha.len())];
                         author_pushed = json!(true);

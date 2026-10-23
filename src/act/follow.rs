@@ -12,8 +12,8 @@ use super::bookkeeping::enroll_mark;
 use super::commands::status;
 use super::die;
 use super::review::short;
-use super::start::{destination, git_or_die, start_hook};
-use crate::git::{git, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for};
+use super::start::{destination, git_on_stderr, start_hook};
+use crate::git::{git, git_out, is_ancestor, main_worktree, pr_head_ref, rev, show_ref, worktree_for};
 use std::path::Path;
 
 pub const REVIEWER: &str = "reviewer";
@@ -30,10 +30,6 @@ pub fn branch(n: &str) -> String {
     format!("review/{n}")
 }
 
-fn pr_head_ref(b: &str) -> String {
-    format!("refs/sheepdog/{b}/pr-head")
-}
-
 /// PR <n>'s head into <dest>, and <remote>'s branches, for the base; the
 /// head's SHA.
 fn fetch_pr(dest: &str, n: &str, remote: &str) -> String {
@@ -47,7 +43,7 @@ fn fetch_pr(dest: &str, n: &str, remote: &str) -> String {
         eprint!("{}", f.stderr);
         die(format!("fetch from {remote} failed"));
     }
-    let f = git(".", &["fetch", "--quiet", "--prune", remote]);
+    let f = git(".", &["fetch", "--quiet", remote]);
     eprint!("{}", f.stderr);
     if !f.ok {
         die(format!("fetch from {remote} failed"));
@@ -65,15 +61,20 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
         die(format!("{b} already exists"));
     }
     let pr_head = fetch_pr(&pr_head_ref(b), n, remote);
-    // Before the worktree: a failed add leaves only config a rerun overwrites.
-    for (k, v) in [("sd-pr", n), ("sd-mode", REVIEWER)] {
+    let keys = [("sd-pr", n), ("sd-mode", REVIEWER)];
+    for (k, v) in keys {
         let o = git(".", &["config", &format!("branch.{b}.{k}"), v]);
         if !o.ok {
             eprint!("{}", o.stderr);
             std::process::exit(o.code);
         }
     }
-    git_or_die(&["worktree", "add", "-b", b, &dst, &pr_head], "git worktree add");
+    if !git_on_stderr(&["worktree", "add", "-b", b, &dst, &pr_head]) {
+        for (k, _) in keys {
+            git(".", &["config", "--unset", &format!("branch.{b}.{k}")]);
+        }
+        die("git worktree add failed");
+    }
     enroll_mark(b);
     eprintln!("enrolled {b}");
     let rc = if start_hook(&src, &dst, b) { 0 } else { 1 };
