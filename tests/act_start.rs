@@ -1398,6 +1398,7 @@ fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_ca
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        assert!(sd.ran("started"), "signal {sig}: the agent never started");
         assert!(Path::new(&marker).exists(), "signal {sig}: no marker while the step runs");
         unsafe { libc::kill(job.id() as i32, sig) };
         let st = job.wait().unwrap();
