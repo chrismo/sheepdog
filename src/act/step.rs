@@ -32,39 +32,51 @@ pub struct Session {
     /// sd config step's object for the step.
     pub cfg: Value,
     pub harness: String,
+    /// Minted for the step.
     pub id: String,
-    /// new or resume.
+    /// new or fork.
     pub mode: &'static str,
+    /// The session a fork starts from; "" for a new one.
+    pub parent: String,
     pub timeout: u64,
+}
+
+impl Session {
+    /// The next step's session: a fork of <ran>, the session the last one
+    /// ran in.
+    pub fn fork_of(&mut self, ran: String) {
+        (self.id, self.mode, self.parent) = (harness::new_session(), "fork", ran);
+    }
 }
 
 fn branch_config(b: &str, key: &str) -> String {
     git_out(".", &["config", "--get", &format!("branch.{b}.{key}")]).unwrap_or_default()
 }
 
-/// The branch's session (branch.<b>.sd-session) resumed, else a new one.
-/// Refuses while the branch is attached: the session is open in a TUI, and a
-/// resume beside it forks the transcript (#14). <harness> is --harness's,
-/// else the branch's own.
+/// A fork of the branch's session (branch.<b>.sd-session), else a new one
+/// (#69): the branch's session isn't touched, so a failed step leaves
+/// nothing in it for a rerun to inherit. Refuses while the branch is
+/// attached: the session is open in a TUI, and a fork misses what it hasn't
+/// written yet (#14). <harness> is --harness's, else the branch's own.
 pub fn step_session(b: &str, step: &str, harness: &str, force: bool, answering: bool) -> Session {
     attached_check(b, &format!("running the {step} step on {b}"), force);
     let stored_h = branch_config(b, "sd-harness");
     let cfg = or_die(config::step(step, b, if harness.is_empty() { &stored_h } else { harness }));
     let h = t(&cfg, "harness");
     let sid = branch_config(b, "sd-session");
-    let resuming = resumes(b, &stored_h, &h, &sid, answering).unwrap_or_else(|e| die(e));
+    let forking = forks(b, &stored_h, &h, &sid, answering).unwrap_or_else(|e| die(e));
     // An answer goes to the session that asked, however big it is.
-    let (id, mode) = if resuming && (answering || !past_fork_limit(b, &h, &sid)) {
-        (sid, "resume")
+    let (mode, parent) = if forking && (answering || !past_fork_limit(b, &h, &sid)) {
+        ("fork", sid)
     } else {
-        (harness::new_session(), "new")
+        ("new", String::new())
     };
-    Session { cfg, harness: h, id, mode, timeout: step_timeout(b) }
+    Session { cfg, harness: h, id: harness::new_session(), mode, parent, timeout: step_timeout(b) }
 }
 
-/// Whether a step on <h> resumes the branch's session <sid>, which belongs
+/// Whether a step on <h> forks the branch's session <sid>, which belongs
 /// to <stored_h> (claude when unset); Err when it can't run at all.
-fn resumes(b: &str, stored_h: &str, h: &str, sid: &str, answering: bool) -> Result<bool, String> {
+fn forks(b: &str, stored_h: &str, h: &str, sid: &str, answering: bool) -> Result<bool, String> {
     if sid.is_empty() {
         return match answering {
             true => Err(format!("no session on {b} to answer in (branch.{b}.sd-session)")),
@@ -79,7 +91,7 @@ fn resumes(b: &str, stored_h: &str, h: &str, sid: &str, answering: bool) -> Resu
 }
 
 /// The session's context (its last turn's tokens, harness::tally) is past
-/// settings.forkLimit, so a step starts a new session instead of inheriting
+/// settings.forkLimit, so a step starts a new session instead of forking
 /// it (#121). Every step's prompt is self-contained (task, contract, findings
 /// or logs), so the history is only an optimization, and past the limit it
 /// stops paying for itself.
@@ -119,18 +131,12 @@ pub(super) fn commit_edits(wt: &str, msg: &str) {
     }
 }
 
-/// After a step ran, remember its session and harness.
-pub fn step_store(b: &str, s: &Session) {
-    must(&["config", &format!("branch.{b}.sd-session"), &s.id]);
+/// After a step returned a usable result, the branch's session is <ran>,
+/// the one it ran in, and its harness the step's. A failed step's session
+/// stays on disk, and the branch's where it was (#69).
+pub fn step_store(b: &str, s: &Session, ran: &str) {
+    must(&["config", &format!("branch.{b}.sd-session"), ran]);
     must(&["config", &format!("branch.{b}.sd-harness"), &s.harness]);
-}
-
-/// step_store after a failure, only once the harness wrote the session's
-/// transcript: resuming a session it never started fails every retry (#254).
-pub fn step_store_failed(b: &str, s: &Session) {
-    if harness::has_transcript(&s.harness, &s.id) {
-        step_store(b, s);
-    }
 }
 
 /// The commit a step reads repo guidance (.sheepdog/, relative prompt paths)
@@ -294,22 +300,22 @@ mod tests {
 
     #[test]
     fn resumes_the_branchs_session_on_its_own_harness_else_a_new_one() {
-        assert_eq!(resumes("feat", "", "claude", "", false), Ok(false));
-        assert_eq!(resumes("feat", "", "claude", "sid", false), Ok(true));
-        assert_eq!(resumes("feat", "pi", "pi", "sid", true), Ok(true));
+        assert_eq!(forks("feat", "", "claude", "", false), Ok(false));
+        assert_eq!(forks("feat", "", "claude", "sid", false), Ok(true));
+        assert_eq!(forks("feat", "pi", "pi", "sid", true), Ok(true));
         assert_eq!(
-            resumes("feat", "", "pi", "sid", false),
+            forks("feat", "", "pi", "sid", false),
             Err("branch.feat.sd-session belongs to claude; unset it to start a pi session".into())
         );
         assert_eq!(
-            resumes("feat", "pi", "claude", "sid", false),
+            forks("feat", "pi", "claude", "sid", false),
             Err("branch.feat.sd-session belongs to pi; unset it to start a claude session".into())
         );
     }
 
     #[test]
     fn an_answer_needs_the_session_that_asked() {
-        assert_eq!(resumes("feat", "", "claude", "", true), Err("no session on feat to answer in (branch.feat.sd-session)".into()));
+        assert_eq!(forks("feat", "", "claude", "", true), Err("no session on feat to answer in (branch.feat.sd-session)".into()));
     }
 
     #[test]

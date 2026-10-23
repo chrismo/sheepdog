@@ -633,9 +633,8 @@ fn implement_the_prompt_carries_the_task_and_the_verify_command() {
     assert_has(&sd.prompt(), &["echo checks-ok"]);
 }
 
-// @test "implement: mints the branch's session and stores it; a second run resumes it"
 #[test]
-fn implement_mints_the_branchs_session_and_stores_it_a_second_run_resumes_it() {
+fn implement_mints_the_branchs_session_and_stores_it_a_second_run_forks_it_69() {
     let mut sd = sd();
     sd.started(TASK);
     sd.ok(&["implement"]);
@@ -644,8 +643,11 @@ fn implement_mints_the_branchs_session_and_stores_it_a_second_run_resumes_it() {
     assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "claude");
     assert!(sd.has_word("--session-id"));
     sd.ok(&["implement", "--force"]);
-    assert!(sd.has_word("--resume"));
-    assert!(sd.has_word(&sid));
+    assert!(sd.has_word("--fork-session"));
+    assert_eq!(sd.after("claude.args", "--resume"), sid);
+    let fork = sd.git(&["config", "branch.feat-x.sd-session"]);
+    assert_eq!(sd.after("claude.args", "--session-id"), fork);
+    assert_ne!(fork, sid);
 }
 
 // @test "implement: no free shell: no bare Bash, read-only git; commit, push and gh denied"
@@ -1421,19 +1423,18 @@ exit 1
 "#;
 
 #[test]
-fn implement_a_failed_step_keeps_a_session_the_harness_wrote_so_a_retry_resumes_it_254() {
+fn implement_a_failed_step_leaves_the_branchs_session_so_a_retry_forks_from_where_it_started_69() {
     let mut sd = sd();
     sd.started(TASK);
-    sd.fake("claude", CLAUDE_FAILS_MIDWAY);
-    let r = sd.run(&["implement"]);
-    assert_ne!(r.status, 0);
-    let sid = sd.git(&["config", "branch.feat-x.sd-session"]);
-    assert!(!sid.is_empty());
-    assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "claude");
-    sd.fake("claude", CLAUDE);
     sd.ok(&["implement"]);
-    assert!(sd.has_word("--resume"));
-    assert!(sd.has_word(&sid));
+    let sid = sd.git(&["config", "branch.feat-x.sd-session"]);
+    sd.fake("claude", CLAUDE_FAILS_MIDWAY);
+    let r = sd.run(&["implement", "--force"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-session"]), sid);
+    sd.fake("claude", CLAUDE);
+    sd.ok(&["implement", "--force"]);
+    assert_eq!(sd.after("claude.args", "--resume"), sid);
 }
 
 #[test]

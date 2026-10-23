@@ -6,11 +6,11 @@ use super::commands::status;
 use super::implement::blank;
 use super::restack::state;
 use super::review::short;
-use super::step::{step_session, step_store, step_store_failed};
+use super::step::{step_session, step_store};
 use super::{attached_check, die, no_base_why, Args};
 use crate::git::{self, git_out, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
+use crate::harness::{self, Ran, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::json;
 use crate::val::{at, on, t};
 use serde_json::{json, Value};
@@ -96,6 +96,7 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
         harness: h,
         session: sid,
         mode: ss.mode,
+        parent: &ss.parent,
         timeout: ss.timeout,
         prompt: &prompt,
         schema: DESCRIBE_SCHEMA,
@@ -105,12 +106,11 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
         claude_allow: READONLY_ALLOW,
         pi_tools: READONLY_PI_TOOLS,
     };
-    let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
-        step_store_failed(b, &ss);
+    let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
         die(format!("the {h} describe step failed or returned no usable result (session {sid})"))
     };
     let rec = record(&head, &t(s, "sync.target"), &result).unwrap_or_else(|| die(format!("the {h} describe step returned no title")));
-    step_store(b, &ss);
+    step_store(b, &ss, &ran);
     let f = file(b).unwrap_or_else(|| die("can't find the repo's git directory"));
     let dir = Path::new(&f).parent().unwrap_or(Path::new("."));
     if let Err(e) = fs::create_dir_all(dir).and_then(|_| fs::write(&f, json::to_string(&rec) + "\n")) {

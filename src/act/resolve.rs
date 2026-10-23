@@ -3,10 +3,10 @@
 // continues. restack.rs runs it under the branch's running marker, across
 // every stop and continue (#170), and rolls the branch back when it fails.
 
-use super::step::{agent_rules, step_session, step_store, step_store_failed};
+use super::step::{agent_rules, step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Step, PI_TOOLS};
+use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::proc;
 use crate::val::t;
 use serde_json::Value;
@@ -191,6 +191,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             harness: h,
             session: sid,
             mode: s.mode,
+            parent: &s.parent,
             timeout: s.timeout,
             prompt: &prompt,
             schema: SCHEMA,
@@ -200,12 +201,11 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             claude_allow: &allow,
             pi_tools: PI_TOOLS,
         };
-        let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
-            step_store_failed(b, &s);
+        let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
             return Err(format!("the {h} step failed or returned no usable result (session {sid}); {}", r.back()).into());
         };
-        step_store(b, &s);
-        s.mode = "resume";
+        step_store(b, &s, &ran);
+        s.fork_of(ran);
         println!("{b} (stop {stop}): {}", verdict(r, &replaying, &result)?);
         let after = worktree_tree(wt).ok_or_else(|| format!("can't read what the agent changed in {wt}; {}", r.back()))?;
         let diff = git(wt, &["diff-tree", "-z", "-r", "--name-only", "--no-renames", &snap, &after]).stdout;

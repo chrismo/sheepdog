@@ -12,7 +12,7 @@
 
 use crate::git::{self, git, strip_nl};
 use crate::guidance::{self, step_guidance};
-use crate::harness::{self, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
+use crate::harness::{self, Ran, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::val::t;
 use crate::{config, json};
 use regex::Regex;
@@ -97,6 +97,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         harness: &h,
         session: &sid,
         mode: "new",
+        parent: "",
         timeout: timeout.parse().unwrap_or(u64::MAX),
         prompt: &prompt,
         schema: SCHEMA,
@@ -106,7 +107,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         claude_allow: READONLY_ALLOW,
         pi_tools: READONLY_PI_TOOLS,
     };
-    let Ok(results) = harness::run_step(&step) else {
+    let Ok(Ran { results, .. }) = harness::run_step(&step) else {
         die(format!("the {h} review failed or returned no usable result"))
     };
     // One list, as the contract says: the last, if the harness gave several.

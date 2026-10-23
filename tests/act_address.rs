@@ -520,9 +520,8 @@ fn only_owed_bot_items_are_looked_up() {
     assert_eq!(sd.gh_call("nodes"), r#"["ids[]=T1"]"#);
 }
 
-// @test "claude: fresh session minted and stored, later runs resume it"
 #[test]
-fn claude_fresh_session_minted_and_stored_later_runs_resume_it() {
+fn claude_fresh_session_minted_and_stored_later_runs_fork_it_69() {
     let sd = sd();
     let r = sd.run(&["address"]);
     assert_eq!(r.status, 0);
@@ -536,13 +535,16 @@ fn claude_fresh_session_minted_and_stored_later_runs_resume_it() {
     sd.result(r#"{outcome: "done", commit_message: null, summary: "", items: [{id: "T1", action: "reply", reply: "Fine as is."}]}"#);
     let r = sd.run(&["address"]);
     assert_eq!(r.status, 0);
-    assert!(sd.has_word("claude.args", "--resume"));
-    assert!(sd.has_word("claude.args", &sid));
+    assert!(sd.has_word("claude.args", "--fork-session"));
+    assert_eq!(sd.after("--resume"), sid);
+    let fork = sd.git(&["config", "branch.feat.sd-session"]);
+    assert_eq!(sd.after("--session-id"), fork);
+    assert_ne!(fork, sid);
 }
 
-// @test "claude: a session past settings.forkLimit tokens isn't resumed; a new one starts (#121)"
+// @test "claude: a session past settings.forkLimit tokens isn't forked; a new one starts (#121)"
 #[test]
-fn claude_a_session_past_settings_forklimit_tokens_isnt_resumed_a_new_one_starts_121() {
+fn claude_a_session_past_settings_forklimit_tokens_isnt_forked_a_new_one_starts_121() {
     let mut sd = sd();
     sd.env.push(("CLAUDE_CONFIG_DIR".into(), sd.path("claude")));
     let old = "11111111-2222-4333-8444-555555555555";

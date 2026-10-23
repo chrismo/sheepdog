@@ -103,7 +103,7 @@ Verbs:
             asked again
   answer    chrismo's answer to the agent's standing question (below), with
             no TUI: the step that asked (implement or its review-fix round,
-            address, ci-fix) resumes the branch's session with <text> as its
+            address, ci-fix) forks the branch's session with <text> as its
             prompt, goes on from the edits it left, and finishes as that
             step does (commit, verify, push, replies), under the running
             marker. The question is dropped once the agent has run; a new
@@ -252,6 +252,15 @@ left, or past 3 stops. Its rebase rolled back, so HEAD and the worktree
 don't move: it stands until the target moves too, and sd act answer can't
 go on from it; resolve it by hand (sd act restack says how), or ack it.
 
+Sessions (#69): an agent step forks the branch's session
+(branch.<b>.sd-session; claude --resume --fork-session, pi --fork) under a
+new id, or starts a new one when there's none or it's past
+settings.forkLimit. Only a step that returns a usable result moves the
+branch's session to its fork; a give-up or a question counts. A failed
+step's fork is left on disk (its id is in the failure and in usage.sup),
+and the branch's session is where it was, so a rerun starts where the
+failed step did.
+
 --force:
   address         run even if the branch is unpushed, diverged or taken over
   restack, push, ship   run even if taken over
@@ -278,8 +287,7 @@ address options:
   --no-publish    stop after the local commit (the agent still runs: tokens);
                   also ci-fix
   --harness <h>   claude (default) or pi; remembered for the branch with
-                  the step's session (kept after a failure too, once the
-                  harness wrote it), by start before its first step (also
+                  the step's session, by start before its first step (also
                   start, implement)
 
 Config (sd config show):

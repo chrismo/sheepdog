@@ -1,5 +1,5 @@
 // answer: chrismo's answer to an agent step's standing question (#178), with
-// no TUI. The step that asked resumes the branch's session with the answer as
+// no TUI. The step that asked forks the branch's session with the answer as
 // its whole prompt (step::answer_prompt): the session holds the step's own
 // prompt, and its edits are still in the worktree, which the step would
 // otherwise refuse. The rest of the step (commit, verify, push, replies) runs
