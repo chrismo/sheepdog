@@ -652,13 +652,17 @@ impl Watch {
         let mut child = c.spawn()?;
         let pid = child.id().to_string();
         let t = Instant::now();
-        while t.elapsed() < Duration::from_secs(5)
-            && child.try_wait()?.is_none()
-            && !running::lease(repo, b).is_some_and(|l| l.pid == pid)
-        {
+        loop {
+            if running::lease(repo, b).is_some_and(|l| l.pid == pid) || t.elapsed() >= Duration::from_secs(5) {
+                return Ok(());
+            }
+            if let Some(st) = child.try_wait()? {
+                // A quick step can take its lease and end between two looks.
+                let ran = running::outcome_file(repo, b).is_some_and(|f| Path::new(&f).exists());
+                return if ran { Ok(()) } else { Err(std::io::Error::other(format!("it exited {} before taking its lease", proc::code(st)))) };
+            }
             std::thread::sleep(Duration::from_millis(20));
         }
-        Ok(())
     }
 
     /// The pass lines for the branch's launched step: how it ended, or that it

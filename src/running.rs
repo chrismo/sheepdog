@@ -170,9 +170,13 @@ pub fn leasing<T>(b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Opti
 fn leasing_at<T>(marker: &str, b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Option<T> {
     let end = time::utc((time::now_utc().1 / 1_000_000_000) as i64 + secs as i64);
     marked(marker, b, step, &format!("deadline {end}\n"), || {
+        let before = std::env::var_os("RUNNING_HELD");
         std::env::set_var("RUNNING_HELD", b);
         let out = f();
-        std::env::remove_var("RUNNING_HELD");
+        match before {
+            Some(v) => std::env::set_var("RUNNING_HELD", v),
+            None => std::env::remove_var("RUNNING_HELD"),
+        }
         out
     })
 }
@@ -214,6 +218,9 @@ fn marked<T>(marker: &str, b: &str, step: &str, rest: &str, f: impl FnOnce() -> 
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// Held by the tests that set RUNNING_HELD, which is process-wide.
+    static ENV: Mutex<()> = Mutex::new(());
 
     fn marker(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("sd-running-test-{}", std::process::id()));
@@ -303,6 +310,7 @@ mod tests {
 
     #[test]
     fn leasing_writes_the_deadline_on_a_second_line_and_holds_the_marker_for_the_steps_inside_268() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
         let f = marker("leased");
         let seen = leasing_at(path(&f), "b-leased", "push", 30, || {
             (fs::read_to_string(&f).unwrap(), std::env::var("RUNNING_HELD").ok())
@@ -315,7 +323,7 @@ mod tests {
         let left = (time::epoch_ns(deadline).unwrap() - time::now_utc().1) / 1_000_000_000;
         assert!((28..=30).contains(&left), "{left}");
         assert_eq!(held.as_deref(), Some("b-leased"));
-        assert_ne!(std::env::var("RUNNING_HELD").ok().as_deref(), Some("b-leased"));
+        assert!(std::env::var("RUNNING_HELD").is_err());
         assert!(!f.exists());
     }
 
@@ -340,6 +348,7 @@ mod tests {
 
     #[test]
     fn a_marker_holding_keeps_is_left_alone() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
         let f = marker("kept");
         std::env::set_var("RUNNING_HELD", "b-kept");
         let ran = during_at(path(&f), "b-kept", "implement", || f.exists());

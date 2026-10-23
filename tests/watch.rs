@@ -2952,6 +2952,18 @@ fn dispatch_doesnt_wait_for_the_step_and_its_lease_keeps_the_next_pass_off_the_b
 }
 
 #[test]
+fn dispatch_a_step_that_ends_before_taking_its_lease_wasnt_launched_268() {
+    let sd = sd();
+    sd.dispatching();
+    fs::create_dir_all(sd.path("repo/.git")).unwrap();
+    fs::write(sd.path("repo/.git/sheepdog"), "").unwrap();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tcouldn't launch sd act push: it exited 1 before taking its lease"]);
+    assert_eq!(cat(&sd.ps("acts")), "");
+}
+
+#[test]
 fn reconcile_a_launched_step_whose_process_is_gone_with_no_outcome_crashed_268() {
     let sd = sd();
     sd.quiet("feat");
