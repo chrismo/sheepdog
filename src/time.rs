@@ -35,6 +35,10 @@ pub fn epoch_ns(t: &str) -> Option<i128> {
 
 pub fn now_utc() -> (String, i128) {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    (utc(secs), i128::from(secs) * 1_000_000_000)
+}
+
+pub fn utc(secs: i64) -> String {
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);
     // civil from days (Howard Hinnant)
@@ -47,10 +51,7 @@ pub fn now_utc() -> (String, i128) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    (
-        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60),
-        i128::from(secs) * 1_000_000_000,
-    )
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
 #[cfg(test)]
@@ -64,6 +65,13 @@ mod tests {
         assert_eq!(epoch_ns("2026-10-16T15:00:00+02:00"), epoch_ns("2026-10-16T13:00:00Z"));
         assert_eq!(epoch_ns("1970-01-01T00:00:01.5Z"), Some(1_500_000_000));
         assert_eq!(epoch_ns("soon"), None);
+    }
+
+    #[test]
+    fn utc_writes_epoch_seconds_as_sheepdog_writes_times() {
+        assert_eq!(utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc(1_792_128_000), "2026-10-16T05:20:00Z");
+        assert_eq!(epoch_ns(&utc(1_792_155_601)), Some(1_792_155_601 * 1_000_000_000));
     }
 
     #[test]

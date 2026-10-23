@@ -864,3 +864,41 @@ fn harness_run_pis_stderr_follows_the_same_rule() {
     assert_ne!(r.status, 0);
     assert_has(&r.stderr, &[r#""subtype":"init""#]);
 }
+
+// claude -p's result on a session limit, as observed on 2026-10-16 (#269).
+const LIMIT: &str = r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You've hit your session limit · resets 12:20am (America/Chicago)","total_cost_usd":0,"num_turns":1}"#;
+
+#[test]
+fn harness_run_a_claude_step_that_hits_its_usage_limit_says_so_and_isnt_counted_a_failure_269() {
+    let sd = sd();
+    let rec = || sd.git(&["cat-file", "blob", "refs/sheepdog/feat/failed"]);
+    sd.fx("status", "1");
+    sd.fx("out", r#"{"type": "result", "is_error": true, "result": "API Error: 529 overloaded"}"#);
+    sd.step(&[("HARNESS_STEP", "implement")], &STEP);
+    let failed = rec();
+
+    let t = sd.tmp.join("claude/projects/-repo/sid1.jsonl");
+    fs::create_dir_all(t.parent().unwrap()).unwrap();
+    fs::write(
+        &t,
+        r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit · resets 12:20am (America/Chicago)"}]},"error":"rate_limit","apiError":"usage_limit_reached","apiErrorStatus":429,"apiErrorParams":{"rate_limit_info":{"status":"rejected","resetsAt":1792128000,"rateLimitType":"five_hour"}}}
+"#,
+    )
+    .unwrap();
+    sd.fx("out", LIMIT);
+    let r = sd.step(&[("HARNESS_STEP", "review")], &STEP);
+    assert_eq!(r.status, 75, "{}", r.stderr);
+    assert_eq!(r.output, "");
+    assert_has(&r.stderr, &["review stopped on claude's usage limit", "You've hit your session limit", "resets 2026-10-16T05:20:00Z"]);
+    assert_lacks(&r.stderr, r#""subtype":"init""#);
+    assert_eq!(rec(), failed, "the failure record is left as it was");
+    assert_eq!(sd.usage_last(&["step", "status"]), "review|75");
+
+    fs::remove_file(&t).unwrap();
+    sd.fx("out", &LIMIT.replace("(America/Chicago)", "(America/Chicago)\\nSee your plan"));
+    let r = sd.step(&[("HARNESS_STEP", "review")], &STEP);
+    assert_eq!(r.status, 75);
+    assert_lacks(&r.stderr, "resets 20");
+    assert_lacks(&r.stderr, "See your plan");
+    assert_eq!(rec(), failed);
+}
