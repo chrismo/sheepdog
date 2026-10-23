@@ -376,6 +376,10 @@ fn tail(s: &str, n: usize) -> &str {
     }
 }
 
+pub fn has_transcript(h: &str, sid: &str) -> bool {
+    transcript(h, sid).is_some()
+}
+
 /// The file the harness keeps <sid>'s transcript in, if it wrote one: the
 /// first match two levels down, as find -maxdepth 2 looked.
 fn transcript(h: &str, sid: &str) -> Option<PathBuf> {

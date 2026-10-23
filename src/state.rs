@@ -145,7 +145,8 @@ fn blob_record(dir: &str, r: &str) -> Option<Result<Value, ()>> {
     })
 }
 
-/// An agent step's question for chrismo (#167): {step, sha, text, at_head};
+/// An agent step's question for chrismo (#167): {step, kind, sha, text,
+/// at_head}, kind "ask", or "gave-up" for a give-up (#254);
 /// None with no record, Err for one that isn't one.
 pub(crate) fn question_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
     let Some(rec) = blob_record(dir, &format!("refs/sheepdog/{b}/question")) else { return Ok(None) };
@@ -156,7 +157,8 @@ pub(crate) fn question_state(dir: &str, b: &str, head: &str) -> Result<Option<Va
         let wt = worktree_for(dir, b);
         !wt.is_empty() && worktree_mark(&wt).as_deref() == Some(m)
     };
-    Ok(Some(json!({"step": step, "sha": h, "text": text, "at_head": at_head})))
+    let kind = s("kind").unwrap_or("ask");
+    Ok(Some(json!({"step": step, "kind": kind, "sha": h, "text": text, "at_head": at_head})))
 }
 
 /// The agent steps that failed in a row (#242, src/failed.rs): {step,
@@ -1532,7 +1534,7 @@ fn summary(s: &Value) -> String {
                 if on(f, "at_head") { "" } else { " on old head" }
             )
         }),
-        on(s, "question.at_head").then(|| format!("? {} asks", t(s, "question.step"))),
+        on(s, "question.at_head").then(|| format!("? {} {}", t(s, "question.step"), asks_or_gave_up(s))),
         (!at(s, "failed").is_null()).then(|| format!("✗ {} failed", t(s, "failed.count"))),
         if !flags.is_empty() {
             Some(format!("⚑ {} flagged", flags.len()))
@@ -1546,6 +1548,10 @@ fn summary(s: &Value) -> String {
         (!arr(at(s, "errors")).is_empty()).then(|| format!("⚠ {} error(s)", arr(at(s, "errors")).len())),
     ];
     parts.into_iter().flatten().collect::<Vec<_>>().join(" · ")
+}
+
+fn asks_or_gave_up(s: &Value) -> &'static str {
+    if t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" }
 }
 
 /// --long's lines after NEXT: owed items, review findings, the question, flags.
@@ -1580,7 +1586,7 @@ fn long_lines(s: &Value) -> String {
     }
     // The agent's standing question, whole.
     if on(s, "question.at_head") {
-        out.push_str(&format!("  ?  {} asks:\n", t(s, "question.step")));
+        out.push_str(&format!("  ?  {} {}:\n", t(s, "question.step"), asks_or_gave_up(s)));
         for l in t(s, "question.text").split('\n') {
             out.push_str(&format!("     {l}\n"));
         }

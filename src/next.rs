@@ -19,9 +19,10 @@
 // worktree is the agent's, so its edits aren't chrismo's to commit, and no
 // other step should touch it (#170).
 //
-// An agent step's question standing at HEAD (sd state's question, #167) is
-// chrismo's question step, with the human items; the step that asked
-// (asking: implement, review-fix, address, ci-fix) goes until it's answered.
+// An agent step's question standing at HEAD (sd state's question, #167; a
+// give-up is one too, #254) is chrismo's question step, with the human
+// items; the step that asked (asking: implement, review-fix, address,
+// ci-fix) goes until it's answered.
 // Once it no longer stands, uncommitted edits are chrismo's (#178): the
 // steps that refuse them (ci-red, bot, review-fix, review, open-pr, and
 // restack's behind and conflict) give way to one dirty step, as the empty
@@ -312,9 +313,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
             if open && !asking.is_empty() {
                 step("question", "you",
-                    format!(
-                        "the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"
-                    ),
+                    if is("question.kind", "gave-up") {
+                        format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again")
+                    } else {
+                        format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question")
+                    },
                     cmd("sd act answer \"<your answer>\""),
                 )
             } else {

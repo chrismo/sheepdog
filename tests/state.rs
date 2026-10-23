@@ -2634,6 +2634,24 @@ fn failed_agent_steps_show_on_the_one_liner_and_in_long_three_in_a_row_hand_the_
     assert_has(&r.field(".errors[0]"), &["refs/sheepdog/feat/failed isn't a failure record"]);
 }
 
+#[test]
+fn question_a_give_up_says_so_on_the_one_liner_and_in_long_254() {
+    let sd = sd();
+    sd.feat();
+    let rec = jq(
+        &["-nc", "--arg", "h", &sd.git(&["rev-parse", "HEAD"]), "--arg", "m", &sd.worktree_mark(),
+          r#"{head: $h, step: "implement", kind: "gave-up", mark: $m, text: "makes no sense"}"#],
+        "",
+    );
+    sd.put_blob("refs/sheepdog/feat/question", &rec);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".question.kind"), "gave-up");
+    let r = sd.run(&[]);
+    assert_has(&r.output, &["? implement gave up"]);
+    let r = sd.run(&["--long"]);
+    assert_has(&r.output, &["?  implement gave up:", "makes no sense"]);
+}
+
 // @test "review: findings are declined only when the agent declined every one that blocks"
 #[test]
 fn review_findings_are_declined_only_when_the_agent_declined_every_one_that_blocks() {

@@ -1303,6 +1303,74 @@ fn implement_gave_up_is_nonzero_with_the_agents_reason_nothing_committed() {
     assert_eq!(sd.subject(), "init");
 }
 
+#[test]
+fn implement_gave_up_stops_for_chrismo_a_rerun_refuses_at_zero_tokens_until_an_ack_254() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.rm("agent");
+    sd.put("result.json", r#"{"outcome": "gave-up", "commit_message": null, "summary": "makes no sense"}"#);
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["the agent gave up on feat-x: makes no sense", "NEXT shows the question until feat-x's HEAD"]);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/question"]);
+    assert_eq!(jq(&["-r", "[.step, .kind, .text] | join(\"|\")"], &rec), "implement|gave-up|makes no sense");
+    sd.rm("claude.args");
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not running implement on feat-x: its agent gave up, and nothing has changed since"]);
+    assert!(!sd.ran("claude.args"));
+    sd.ok(&["ack", "--question"]);
+    sd.agent("#!/usr/bin/env bash\necho c >> file.txt\n");
+    sd.put("result.json", r#"{"outcome": "done", "commit_message": "Add c", "summary": "Added it."}"#);
+    sd.ok(&["implement"]);
+}
+
+#[test]
+fn implement_done_with_nothing_changed_stops_for_chrismo_too_254() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.rm("agent");
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/question"]);
+    assert_eq!(jq(&["-r", "[.kind, .text] | join(\"|\")"], &rec), "gave-up|said done but changed nothing: Added the third line.");
+}
+
+/// A claude that wrote its session's transcript, then failed.
+const CLAUDE_FAILS_MIDWAY: &str = r#"#!/usr/bin/env bash
+sid= prev=
+for a in "$@"; do [[ $prev == --session-id || $prev == --resume ]] && sid=$a; prev=$a; done
+mkdir -p "$HOME/.claude/projects/p" && echo '{}' > "$HOME/.claude/projects/p/$sid.jsonl"
+echo "API Error: 529 overloaded" >&2
+exit 1
+"#;
+
+#[test]
+fn implement_a_failed_step_keeps_a_session_the_harness_wrote_so_a_retry_resumes_it_254() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.fake("claude", CLAUDE_FAILS_MIDWAY);
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    let sid = sd.git(&["config", "branch.feat-x.sd-session"]);
+    assert!(!sid.is_empty());
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "claude");
+    sd.fake("claude", CLAUDE);
+    sd.ok(&["implement"]);
+    assert!(sd.has_word("--resume"));
+    assert!(sd.has_word(&sid));
+}
+
+#[test]
+fn implement_a_failed_step_with_no_transcript_stores_no_session_254() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.put("fail", "");
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git_try(&["config", "branch.feat-x.sd-session"]), None);
+}
+
 // @test "implement: verify runs after the commit; a failure is nonzero and keeps the commit"
 #[test]
 fn implement_verify_runs_after_the_commit_a_failure_is_nonzero_and_keeps_the_commit() {

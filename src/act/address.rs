@@ -6,8 +6,8 @@ use super::commands::{command, status, verify_autofix};
 use super::hold::{hold_gate, hold_since};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, guidance_base, question_answered, question_ask, question_gate,
-                  question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, give_up, guidance_base, question_answered, question_ask, question_gate,
+                  question_say, step_session, step_store, step_store_failed};
 use super::{cfg, die, state_json, Args};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
@@ -448,6 +448,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         pi_tools: PI_TOOLS,
     };
     let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
+        step_store_failed(b, &sess);
         hold_since(b, &gbase, &before);
         die(format!("the {h} step failed or returned no usable result (session {sid})"))
     };
@@ -461,8 +462,8 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     let summary = t(&result, "summary");
     match outcome.as_str() {
         "done" | "needs-input" => {}
-        "gave-up" => die(format!("the agent gave up: {summary}. Any edits are left uncommitted in {wt}")),
-        _ => die(format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
+        "gave-up" => give_up(b, wt, "address", &summary, format!("the agent gave up: {summary}. Any edits are left uncommitted in {wt}")),
+        _ => give_up(b, wt, "address", &format!("returned outcome \"{outcome}\": {summary}"), format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
     }
     let changed = !status(wt).is_empty();
     let plan = scrubbed(plan(&fs, &result, changed, &theirs));

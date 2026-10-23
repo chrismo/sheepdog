@@ -42,8 +42,8 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
   review-decide: ❌ the local review still blocks after
     settings.reviewRounds rounds, or the agent declined its findings:
     chrismo fixes them or accepts HEAD
-  question: ❌ an agent step needs chrismo's answer, and nothing reruns it
-    until it comes (#167)
+  question: ❌ an agent step needs chrismo's answer, or gave up (#254), and
+    nothing reruns it until chrismo answers, edits or acks (#167)
   budget: ❌ the branch's steps have spent past settings.branchBudget, so
     no agent step runs on it until chrismo raises it or takes over
   failed: ❌ 3 agent steps failed in a row (a harness or provider down?),
@@ -55,7 +55,7 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     branch (#143, #159)
   dirty: ❌ uncommitted edits hold up an agent or restack step that refuses
     them, and nothing says whose they are: chrismo's hand edit, or an agent
-    step's that gave up, failed or timed out with no question (#178). The
+    step's that failed or timed out (#178). The
     two steps below are the same edits where the state says they're
     chrismo's, so those aren't notified
   read: ❌ info-only bot items, shown once nothing else moves without

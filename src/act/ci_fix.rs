@@ -8,8 +8,8 @@ use super::commands::{status, tail, verify_autofix, verify_autofix_to, Report};
 use super::hold::{hold_gate, hold_since};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, guidance_base, in_worktree, must, question_answered,
-                  question_ask, question_gate, question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree, must, question_answered,
+                  question_ask, question_gate, question_say, step_session, step_store, step_store_failed};
 use super::{cfg, die, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev};
@@ -254,6 +254,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         pi_tools: PI_TOOLS,
     };
     let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
+        step_store_failed(b, &s);
         hold_since(b, &base, &before);
         die(format!("the {h} ci-fix step failed or returned no usable result (session {sid})"))
     };
@@ -285,11 +286,11 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
             question_ask(b, wt, "ci-fix", &summary);
             die(format!("the agent needs input on {b}: {summary}\n{}: answer with {}, which goes on from its edits (if any) in {wt}; or in its session (sd act attach {b}), then commit or discard the edits, or with none, sd act ack --question; then sd act ci-fix", question_say(b), answer_cmd(b)));
         }
-        "gave-up" => die(format!("the agent gave up on {b}: {summary}. Edits (if any) are left uncommitted in {wt}")),
-        _ => die(format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
+        "gave-up" => give_up(b, wt, "ci-fix", &summary, format!("the agent gave up on {b}: {summary}. Edits (if any) are left uncommitted in {wt}")),
+        _ => give_up(b, wt, "ci-fix", &format!("returned outcome \"{outcome}\": {summary}"), format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
     }
     if status(wt).is_empty() {
-        die(format!("the agent says fixed but changed nothing (session {sid})"));
+        give_up(b, wt, "ci-fix", &format!("said fixed but changed nothing: {summary}"), format!("the agent says fixed but changed nothing (session {sid})"));
     }
     let msg = match at(&result, "commit_message").as_str() {
         Some(m) if !blank(m) => m.to_string(),

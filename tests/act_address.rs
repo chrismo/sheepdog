@@ -957,6 +957,22 @@ fn agent_gave_up_nothing_committed_pushed_or_posted() {
     assert_eq!(sd.gh_ops(), "nodes");
 }
 
+#[test]
+fn agent_gave_up_is_recorded_so_a_rerun_refuses_at_zero_tokens_254() {
+    let sd = sd();
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "gave-up", commit_message: null, summary: "too hard", items: []}"#);
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]);
+    assert_eq!(jq(&["-r", "[.step, .kind, .text] | join(\"|\")"], &rec), "address|gave-up|too hard");
+    sd.rm("claude.args");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["its agent gave up"]);
+    assert!(!sd.tmp.join("fx/claude.args").exists());
+}
+
 // @test "unparseable agent output: nothing pushed or posted"
 #[test]
 fn unparseable_agent_output_nothing_pushed_or_posted() {

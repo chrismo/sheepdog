@@ -1072,6 +1072,18 @@ fn question_a_you_step_quoting_its_first_line_in_place_of_the_agent_step_that_as
     assert_eq!(keys(&e![&red, &asked("ci-fix", false)]), "ci-red");
 }
 
+#[test]
+fn a_give_up_is_a_question_step_that_says_so_254() {
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    let gave_up = format!(".question = {}", json!({"step": "ci-fix", "kind": "gave-up", "sha": "h1", "text": "no idea\nmore", "at_head": true}));
+    assert_eq!(keys(&e![&red, &gave_up]), "question");
+    assert_eq!(
+        step("question", "say", &e![&red, &gave_up]),
+        "the agent gave up (ci-fix): no idea; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again"
+    );
+    assert_eq!(step("question", "cmd", &e![&red, &gave_up]), r#"sd act answer "<your answer>""#);
+}
+
 // @test "question: replaces only the step that asked, ahead of the loop's own steps (#167)"
 #[test]
 fn question_replaces_only_the_step_that_asked_ahead_of_the_loop_s_own_steps_167() {

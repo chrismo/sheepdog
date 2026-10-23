@@ -224,7 +224,10 @@ and that step refuses to run again. sd act answer carries chrismo's answer
 to it (#178); a commit, an edit, or sd act ack --question ends it too, the
 override the refusal names, as --force also lifts the step's other gates.
 An edit that ends it is chrismo's to commit: NEXT says so (dirty) in place
-of the agent steps that refuse a dirty worktree.
+of the agent steps that refuse a dirty worktree. A give-up is recorded the
+same way, with kind gave-up (#254): outcome gave-up, an outcome the step
+doesn't know, or done (fixed, for ci-fix) with nothing changed. The same
+inputs would only give up again, so it stops for chrismo too.
 
 --force:
   address         run even if the branch is unpushed, diverged or taken over
@@ -248,8 +251,9 @@ restack options:
 address options:
   --no-publish    stop after the local commit (the agent still runs: tokens);
                   also ci-fix
-  --harness <h>   claude (default) or pi; remembered for the branch once a
-                  step succeeds, by start before its first step (also
+  --harness <h>   claude (default) or pi; remembered for the branch with
+                  the step's session (kept after a failure too, once the
+                  harness wrote it), by start before its first step (also
                   start, implement)
 
 Config (sd config show):
