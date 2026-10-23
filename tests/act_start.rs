@@ -20,6 +20,8 @@ use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
 
 const GH: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GH/calls"
@@ -1358,6 +1360,55 @@ fn implement_done_with_nothing_changed_stops_for_chrismo_too_254() {
     assert_ne!(r.status, 0);
     let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/question"]);
     assert_eq!(jq(&["-r", "[.kind, .text] | join(\"|\")"], &rec), "gave-up|said done but changed nothing: Added the third line.");
+}
+
+#[test]
+fn implement_a_step_that_dies_leaves_no_running_marker_177() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.rm("agent");
+    let r = sd.run(&["implement"]);
+    assert_has(&r.output, &["the agent says done but changed nothing"]);
+    assert!(!Path::new(&sd.path("repo/.git/sheepdog/feat-x.running")).exists());
+}
+
+/// A claude that ran a turn (its transcript says so), then hangs.
+const CLAUDE_HANGS: &str = r#"#!/usr/bin/env bash
+sid= prev=
+for a in "$@"; do [[ $prev == --session-id || $prev == --resume ]] && sid=$a; prev=$a; done
+mkdir -p "$HOME/.claude/projects/p"
+echo '{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":1,"output_tokens":1}}}' >> "$HOME/.claude/projects/p/$sid.jsonl"
+touch "$FX/started"
+sleep 30
+"#;
+
+#[test]
+fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_cap_charged_177() {
+    use std::os::unix::process::ExitStatusExt;
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.fake("claude", CLAUDE_HANGS);
+    let marker = sd.path("repo/.git/sheepdog/feat-x.running");
+    for sig in [libc::SIGTERM, libc::SIGINT] {
+        sd.rm("started");
+        let mut job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::null()));
+        for _ in 0..100 {
+            if sd.ran("started") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(sd.ran("started"), "signal {sig}: the agent never started");
+        assert!(Path::new(&marker).exists(), "signal {sig}: no marker while the step runs");
+        unsafe { libc::kill(job.id() as i32, sig) };
+        let st = job.wait().unwrap();
+        assert_eq!(st.signal(), Some(sig), "{st:?}");
+        assert!(!Path::new(&marker).exists(), "signal {sig}: the marker is left");
+        let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
+        let row = usage.lines().last().unwrap();
+        // The agent's status: sd ends its group with TERM either way.
+        assert_has(row, &["status:143,cost_usd:null,total_cost_usd:null,estimated:false"]);
+    }
 }
 
 /// A claude that wrote its session's transcript, then failed.

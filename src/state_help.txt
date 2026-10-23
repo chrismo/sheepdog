@@ -121,7 +121,8 @@ Output:
 
 Never fetches, and writes only the PR numbers it finds (branch.<b>.sd-pr,
 the parent's too), when they change, and removes a running marker whose
-pid is gone. That makes it a .git/config writer:
+pid is gone or now another process's (#177). The PR numbers make it a
+.git/config writer:
 while it holds config.lock, another git config write fails. Remote refs
 are as fresh as the last fetch, except the PR's base (or, with no PR, the
 target) when NEXT's first step is ready alone, an agent step, open-pr,

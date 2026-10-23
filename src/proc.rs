@@ -18,6 +18,8 @@ pub struct Out {
     /// with_timeout gave up: code is 124, and the output ends with
     /// "timed out after <secs>s".
     pub timed_out: bool,
+    /// sd got a HUP, INT or TERM and ended the command with it.
+    pub stopped: bool,
 }
 
 fn not_found(prog: &str) -> Out {
@@ -45,7 +47,7 @@ pub fn run(prog: &str, args: &[&str], dir: Option<&str>, input: Option<&[u8]>) -
         code: o.status.code().unwrap_or(128),
         stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
-        timed_out: false,
+        ..Out::default()
     }
 }
 
@@ -228,6 +230,15 @@ fn in_group(secs: u64, c: Command, stderr: Stderr) -> Out {
     deferring_signals(|| timeout_in_group(secs, c, stderr, &|| CAUGHT.load(Ordering::SeqCst) != 0))
 }
 
+/// sd ends of the HUP, INT or TERM a deferring_signals is holding, if any:
+/// for an exit from inside one, which skips its end.
+pub fn die_of_caught() {
+    let sig = CAUGHT.load(Ordering::SeqCst);
+    if sig != 0 {
+        die_of(sig);
+    }
+}
+
 /// <f>, with a HUP, INT or TERM to sd held till it returns, then sd ends of
 /// it: a timeout inside ends its command at once, and <f> cleans up after it
 /// (the running marker).
@@ -273,6 +284,7 @@ fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn(
     let deadline = Instant::now() + Duration::from_secs(secs);
     let finished = |rs: &[JoinHandle<()>]| rs.iter().all(JoinHandle::is_finished);
     let mut status = None;
+    let mut was_stopped = false;
     // Reaped before the signal's looked at: a command that's done is done.
     let timed_out = loop {
         status = status.or_else(|| child.try_wait().ok().flatten());
@@ -280,6 +292,7 @@ fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn(
             break false;
         }
         if stopped() {
+            was_stopped = true;
             break false;
         }
         if Instant::now() >= deadline {
@@ -319,6 +332,7 @@ fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn(
         stdout: text(&out),
         stderr: err.as_ref().map(text).unwrap_or_default(),
         timed_out,
+        stopped: was_stopped,
     };
     if o.timed_out {
         let to = if stderr == Stderr::Merged { &mut o.stdout } else { &mut o.stderr };
@@ -457,6 +471,7 @@ mod tests {
         let o = timeout_in_group(20, c, Stderr::Piped, &stop);
         assert!(start.elapsed() < Duration::from_secs(10), "waited {:?}", start.elapsed());
         assert!(!o.timed_out);
+        assert!(o.stopped);
         assert_eq!(o.code, 143);
         assert_eq!(o.stdout, "hi\n");
         assert_eq!(o.stderr, "");
