@@ -1239,6 +1239,10 @@ fn reviewer_mode_submitted_on_head_waits_on_the_author() {
     assert_eq!(step("author-wait", "say", &e![REVIEWING, REVIEWED_LOCALLY, g]), "you reviewed HEAD (commented): waiting on the author");
     // Submitted with no local review: chrismo's review stands; no agent step.
     assert_eq!(keys(&e![REVIEWING, g]), "author-wait");
+    // A new draft after it is chrismo's to finish.
+    let again = ".review.github.pending = true";
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY, g, again]), "submit");
+    assert_eq!(step("submit", "say", &e![REVIEWING, g, again]), "finish your pending review on GitHub");
 }
 
 #[test]

@@ -739,7 +739,8 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
     let pushed = n("push.behind") > 0.0 || on("push.author_pushed");
     let fetch = open && !yours && !dirty && (g("fresh") == &Value::Bool(false) || pushed);
     let current = open && !yours && !fetch;
-    let submitted = on("review.github.at_head");
+    let pending = on("review.github.pending");
+    let submitted = on("review.github.at_head") && !pending;
     let local = covers("review.local") || covers("review.accepted") || on("review.findings.at_head");
     vec![
         if is("pr.state", "MERGED") {
@@ -795,8 +796,8 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
         } else {
             None
         },
-        if current && !submitted && local {
-            let say = if on("review.github.pending") {
+        if current && ((!submitted && local) || pending) {
+            let say = if pending {
                 "finish your pending review on GitHub".to_string()
             } else if on("review.findings.at_head") && n("review.findings.n") > 0.0 {
                 format!("{} at HEAD (sd state --long): put them in your review on GitHub", plural(g("review.findings.n"), "review finding"))
