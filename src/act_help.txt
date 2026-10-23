@@ -232,7 +232,11 @@ An edit that ends it is chrismo's to commit: NEXT says so (dirty) in place
 of the agent steps that refuse a dirty worktree. A give-up is recorded the
 same way, with kind gave-up (#254): outcome gave-up, an outcome the step
 doesn't know, or done (fixed, for ci-fix) with nothing changed. The same
-inputs would only give up again, so it stops for chrismo too.
+inputs would only give up again, so it stops for chrismo too. So does
+restack --resolve's (#257): gave-up, already-on-target, conflict markers
+left, or past 3 stops. Its rebase rolled back, so HEAD and the worktree
+don't move: it stands until the target moves too, and sd act answer can't
+go on from it; resolve it by hand (sd act restack says how), or ack it.
 
 --force:
   address         run even if the branch is unpushed, diverged or taken over
@@ -242,7 +246,8 @@ inputs would only give up again, so it stops for chrismo too.
   review          review again a HEAD the local review already covers
   attach          take over a lock another attach still holds
   ci-fix          run again on a red the agent already called flaky
-  implement, address, ci-fix   run though the agent's question stands
+  implement, address, ci-fix, restack --resolve   run though the agent's
+                  question stands
   trigger         even when neither the local review nor an accept covers
                   HEAD, or the bot is already pinned at HEAD (trigger it
                   again)

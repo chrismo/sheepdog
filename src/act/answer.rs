@@ -31,6 +31,9 @@ fn resumes(b: &str, q: &Value) -> Result<Resume, String> {
         "implement" | "review-fix" => Ok(Resume::Implement),
         "address" => Ok(Resume::Address),
         "ci-fix" => Ok(Resume::CiFix),
+        "resolve" => Err("can't answer resolve: its rebase rolled back, so there's nothing to go on from; \
+                          resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"
+            .into()),
         _ => Err(format!("can't answer a {step} question")),
     }
 }
@@ -63,6 +66,7 @@ mod tests {
         assert_eq!(resumes("feat", &q("review-fix", true)), Ok(Resume::Implement));
         assert_eq!(resumes("feat", &q("address", true)), Ok(Resume::Address));
         assert_eq!(resumes("feat", &q("ci-fix", true)), Ok(Resume::CiFix));
+        assert!(resumes("feat", &q("resolve", true)).is_err_and(|e| e.starts_with("can't answer resolve: its rebase rolled back")));
     }
 
     #[test]

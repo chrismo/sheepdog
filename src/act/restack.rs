@@ -7,7 +7,8 @@
 
 use super::commands::verify_run;
 use super::hold::hold_after;
-use super::resolve::{resolve_conflicts, Rebase};
+use super::resolve::{resolve_conflicts, Halt, Rebase};
+use super::step::{question_gate, resolve_gave_up};
 use super::{die, no_base_why, plural, state_json, Args};
 use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for};
 use crate::{proc, running};
@@ -186,6 +187,9 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
         }
         _ => {}
     }
+    if a.resolve {
+        question_gate(b, "resolve", a.force, false);
+    }
 
     let target = t(&s, "sync.target");
     let onto = format!("{remote}/{target}");
@@ -220,7 +224,8 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
                 rollback(&wt, b, &old_head);
                 std::process::exit(1)
             }
-            Some(Err(why)) => die(why),
+            Some(Err(Halt { why, gave_up: Some(text) })) => resolve_gave_up(b, &wt, &text, why, &onto, &new_base),
+            Some(Err(Halt { why, .. })) => die(why),
             // Before anything below can die: the resolution is on the branch now.
             Some(Ok(touched)) => hold_after(b, &old_base, &touched),
         }

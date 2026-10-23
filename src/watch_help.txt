@@ -43,7 +43,8 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     settings.reviewRounds rounds, or the agent declined its findings:
     chrismo fixes them or accepts HEAD
   question: ❌ an agent step needs chrismo's answer, or gave up (#254), and
-    nothing reruns it until chrismo answers, edits or acks (#167)
+    nothing reruns it until chrismo answers, edits or acks (#167); a
+    restack --resolve that gave up reruns once its target moves (#257)
   budget: ❌ the branch's steps have spent past settings.branchBudget, so
     no agent step runs on it until chrismo raises it or takes over
   failed: ❌ 3 agent steps failed in a row (a harness or provider down?),

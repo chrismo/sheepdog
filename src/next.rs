@@ -22,7 +22,9 @@
 // An agent step's question standing at HEAD (sd state's question, #167; a
 // give-up is one too, #254) is chrismo's question step, with the human
 // items; the step that asked (asking: implement, review-fix, address,
-// ci-fix) goes until it's answered.
+// ci-fix) goes until it's answered. restack --resolve's give-up holds the
+// conflict step until the target moves; it can't be answered, as its rebase
+// rolled back (#257).
 // Once it no longer stands, uncommitted edits are chrismo's (#178): the
 // steps that refuse them (ci-red, bot, review-fix, review, open-pr, and
 // restack's behind and conflict) give way to one dirty step, as the empty
@@ -315,14 +317,15 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 None
             },
             if open && !asking.is_empty() {
-                step("question", "you",
-                    if is("question.kind", "gave-up") {
-                        format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again")
-                    } else {
-                        format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question")
-                    },
-                    cmd("sd act answer \"<your answer>\""),
-                )
+                let answer = "sd act answer \"<your answer>\"";
+                let (say, then) = if asking == "resolve" {
+                    (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), "sd act restack")
+                } else if is("question.kind", "gave-up") {
+                    (format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again"), answer)
+                } else {
+                    (format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"), answer)
+                };
+                step("question", "you", say, cmd(then))
             } else {
                 None
             },
@@ -359,7 +362,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                         format!("restack onto {target} by tree conflicts, which --resolve can't do: resolve it by hand (sd act restack says how)"),
                         cmd("sd act restack"),
                     )
-                } else if refused {
+                } else if refused || asking == "resolve" {
                     None
                 } else {
                     agent(hold, "conflict", format!("restack onto {target} conflicts: resolve it"), "sd act restack --resolve")
