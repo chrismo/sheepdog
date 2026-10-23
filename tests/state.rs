@@ -2059,6 +2059,41 @@ fn summary_stale_refs_say_to_fetch() {
     assert_has(&r.output, &["stale: fetch"]);
 }
 
+// GitHub can lag a push it was just sent: its head is an older value of the
+// remote-tracking ref, so a fetch would get nothing (#246).
+// @test "fresh: GitHub's PR head is behind origin/feat after a push: wait, not fetch"
+#[test]
+fn fresh_github_s_pr_head_is_behind_origin_feat_after_a_push_wait_not_fetch() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.pr_fixture("feat", &[]);
+    sd.commit("b.txt", "b");
+    sd.git(&["push", "-q"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".fresh"), "true");
+    assert_eq!(r.field(".stale | length"), "0");
+    assert_has(&r.field(".lag[0]"), &["origin/feat"]);
+    assert_eq!(r.field(".next[0].key"), "gh-wait");
+    assert_eq!(r.field(".next[0].who"), "wait");
+    let r = sd.run(&[]);
+    assert_lacks(r.lines()[0], "stale");
+    assert_has(r.lines()[0], &["GitHub lagging"]);
+}
+
+// @test "fresh: GitHub's PR head is behind a force-push of origin/feat: wait, not fetch"
+#[test]
+fn fresh_github_s_pr_head_is_behind_a_force_push_of_origin_feat_wait_not_fetch() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.pr_fixture("feat", &[]);
+    sd.amend_a();
+    sd.git(&["push", "-qf"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".fresh"), "true");
+    assert_has(&r.field(".lag[0]"), &["origin/feat"]);
+    assert_eq!(r.field(".next[0].key"), "gh-wait");
+}
+
 // ── freshness: the PR's base on the remote, before ready (#169) ─────────────
 
 // @test "base fresh: main moved on the remote since the last fetch: fetch, not ready"
@@ -2122,6 +2157,31 @@ fn base_fresh_no_ls_remote_where_nothing_spends_or_merges_first() {
     let r = sd.state(&[]);
     assert_eq!(r.field(".next[0].key"), "push");
     assert_eq!(sd.upload_packs(), None);
+}
+
+// GitHub's DIRTY with no conflict here: the base may have moved since the
+// last fetch, so it's checked as before ready (#246).
+// @test "base fresh: GitHub says DIRTY and main moved on the remote: fetch, not blocked"
+#[test]
+fn base_fresh_github_says_dirty_and_main_moved_on_the_remote_fetch_not_blocked() {
+    let sd = sd();
+    sd.ready_pr(&[r#".mergeStateStatus = "DIRTY""#, r#".mergeable = "CONFLICTING""#]);
+    sd.main_moves("m.txt", "m");
+    let r = sd.state(&[]);
+    assert_has(&r.field(".stale[0]"), &["origin/main"]);
+    assert_eq!(r.field(".next[0].key"), "stale");
+    assert_eq!(r.field(".next[0].cmd"), "git fetch --prune origin");
+}
+
+// @test "base fresh: GitHub says DIRTY and main unchanged on the remote: blocked, after one ls-remote"
+#[test]
+fn base_fresh_github_says_dirty_and_main_unchanged_on_the_remote_blocked_after_one_ls_remote() {
+    let sd = sd();
+    sd.ready_pr(&[r#".mergeStateStatus = "DIRTY""#, r#".mergeable = "CONFLICTING""#]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".fresh"), "true");
+    assert_eq!(r.field(".next[0].key"), "blocked");
+    assert_eq!(sd.upload_packs(), Some(1));
 }
 
 // Before a step that spends tokens or triggers the bot, too (#182): a head

@@ -81,10 +81,17 @@ Reports, for <branch> (default: the current one):
             removes it. After 3, NEXT hands the agent's steps to chrismo
             (#242)
   fresh     false when GitHub's PR / parent-PR head differs from the local
-            remote-tracking ref, i.e. sync and push answers need a fetch;
+            remote-tracking ref and isn't an older value of it (see lag),
+            i.e. sync and push answers need a fetch;
             or, when NEXT's first step would be ready alone (#169), an
-            agent step, open-pr or bot-trigger (#182), when the remote's
-            base branch (by ls-remote; with no PR, sync.target) does
+            agent step, open-pr or bot-trigger (#182), or blocked alone
+            on GitHub's DIRTY (#246), when the remote's base branch (by
+            ls-remote; with no PR, sync.target) does
+  stale     why fresh is false
+  lag       GitHub's PR / parent-PR head that is an older value of the
+            remote-tracking ref (its ancestor, or in its reflog): GitHub
+            hasn't seen a push yet, so that isn't stale, and NEXT waits
+            (#246)
   stored    what sheepdog keeps for the branch: handled ids, refs/sheepdog/<b>/*
   rate_limit  GitHub's GraphQL quota: cost (this run's calls, summed),
             remaining and reset_at (the last call's; null when none
@@ -105,9 +112,10 @@ the parent's too), when they change, and removes a running marker whose
 pid is gone. That makes it a .git/config writer:
 while it holds config.lock, another git config write fails. Remote refs
 are as fresh as the last fetch, except the PR's base (or, with no PR, the
-target) when NEXT's first step is ready alone, an agent step, open-pr or
-bot-trigger: one git ls-remote of it, 10 s at most, and no check on a
-failure (#169, #182).
+target) when NEXT's first step is ready alone, an agent step, open-pr,
+bot-trigger, or blocked alone on DIRTY (GitHub sees a conflict the local
+refs don't): one git ls-remote of it, 10 s at most, and no check on a
+failure (#169, #182, #246).
 One gh GraphQL call per PR (the branch's,
 and a non-default parent's), by its stored number; a discovery by branch
 comes first for a PR not yet known, and is the only call for a branch with
