@@ -1333,16 +1333,17 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         }
         if at(p, "state").as_str() == Some("OPEN") {
             if let Some(gh_sha) = at(p, "headRefOid").as_str().filter(|s| !s.is_empty()) {
-                let r = format!("refs/remotes/{remote}/{name}");
-                let r_sha = rev(dir, &r);
+                let short = &gh_sha[..7.min(gh_sha.len())];
                 if reviewer {
                     if gh_sha != remote_sha {
-                        let short = &gh_sha[..7.min(gh_sha.len())];
                         author_pushed = json!(true);
                         stale.push(format!("PR #{}'s head is not at GitHub's {short}", text(at(p, "number"))));
                     }
-                } else if gh_sha != r_sha {
-                    let short = &gh_sha[..7.min(gh_sha.len())];
+                    continue;
+                }
+                let r = format!("refs/remotes/{remote}/{name}");
+                let r_sha = rev(dir, &r);
+                if gh_sha != r_sha {
                     let older = !r_sha.is_empty()
                         && (is_ancestor(dir, gh_sha, &r_sha)
                             || git_out(dir, &["reflog", "show", "--format=%H", &r]).unwrap_or_default().lines().any(|l| l == gh_sha));
