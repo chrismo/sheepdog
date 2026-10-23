@@ -210,6 +210,23 @@ fn fetch_moves_a_followed_branch_checked_out_nowhere() {
 }
 
 #[test]
+fn fetch_that_cant_move_the_branch_leaves_the_pr_head_as_it_was_and_a_rerun_takes_the_force_push() {
+    let mut sd = sd();
+    sd.followed();
+    let before = sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]);
+    let theirs = sd.author_pushes("their fix, amended", true);
+    let lock = sd.tmp.join("repo/.git/refs/heads/review/7.lock");
+    fs::write(&lock, "").unwrap();
+    let r = sd.run(&["fetch"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]), before);
+    fs::remove_file(&lock).unwrap();
+    let r = sd.run(&["fetch"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), theirs);
+}
+
+#[test]
 fn fetch_is_for_a_followed_pr_only() {
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);

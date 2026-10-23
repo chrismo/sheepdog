@@ -34,16 +34,15 @@ fn pr_head_ref(b: &str) -> String {
     format!("refs/sheepdog/{b}/pr-head")
 }
 
-/// PR <n>'s head into <b>'s pr-head ref, and <remote>'s branches, for the
-/// base; the head's SHA.
-fn fetch_pr(b: &str, n: &str, remote: &str) -> String {
-    let pr_head = pr_head_ref(b);
+/// PR <n>'s head into <dest>, and <remote>'s branches, for the base; the
+/// head's SHA.
+fn fetch_pr(dest: &str, n: &str, remote: &str) -> String {
     let pull = format!("refs/pull/{n}/head");
     let ls = git(".", &["ls-remote", remote, &pull]);
     if ls.ok && ls.stdout.trim().is_empty() {
         die(format!("no PR #{n} on {remote}"));
     }
-    let f = git(".", &["fetch", "--quiet", remote, &format!("+{pull}:{pr_head}")]);
+    let f = git(".", &["fetch", "--quiet", remote, &format!("+{pull}:{dest}")]);
     if !f.ok {
         eprint!("{}", f.stderr);
         die(format!("fetch from {remote} failed"));
@@ -53,7 +52,7 @@ fn fetch_pr(b: &str, n: &str, remote: &str) -> String {
     if !f.ok {
         die(format!("fetch from {remote} failed"));
     }
-    rev(".", &pr_head)
+    rev(".", dest)
 }
 
 pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
@@ -65,8 +64,8 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
     if show_ref(".", &format!("refs/heads/{b}")) {
         die(format!("{b} already exists"));
     }
-    let pr_head = fetch_pr(b, n, remote);
-    // Before the worktree, so a failure leaves nothing a rerun trips on.
+    let pr_head = fetch_pr(&pr_head_ref(b), n, remote);
+    // Before the worktree: a failed add leaves only config a rerun overwrites.
     for (k, v) in [("sd-pr", n), ("sd-mode", REVIEWER)] {
         let o = git(".", &["config", &format!("branch.{b}.{k}"), v]);
         if !o.ok {
@@ -99,17 +98,25 @@ pub fn fetch(b: &str, remote: &str) {
     if head != last && (last.is_empty() || !is_ancestor(".", &head, &last)) {
         die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {}", pr_head_ref(b)));
     }
-    let theirs = fetch_pr(b, &n, remote);
-    if theirs != head {
-        let o = if wt.is_empty() {
-            git(".", &["update-ref", "-m", "sd act fetch", &format!("refs/heads/{b}"), &theirs, &head])
-        } else {
-            git(&wt, &["reset", "--quiet", "--keep", &theirs])
-        };
-        if !o.ok {
-            eprint!("{}", o.stderr);
-            die(format!("couldn't move {b} to the PR's head"));
-        }
+    // pr-head moves only once the branch has: it's what the check above trusts.
+    let fetched = format!("refs/sheepdog/{b}/pr-fetched");
+    let theirs = fetch_pr(&fetched, &n, remote);
+    let moved = if theirs == head {
+        None
+    } else if wt.is_empty() {
+        Some(git(".", &["update-ref", "-m", "sd act fetch", &format!("refs/heads/{b}"), &theirs, &head]))
+    } else {
+        Some(git(&wt, &["reset", "--quiet", "--keep", &theirs]))
+    };
+    git(".", &["update-ref", "-d", &fetched]);
+    if let Some(o) = moved.filter(|o| !o.ok) {
+        eprint!("{}", o.stderr);
+        die(format!("couldn't move {b} to the PR's head"));
+    }
+    let o = git(".", &["update-ref", &pr_head_ref(b), &theirs]);
+    if !o.ok {
+        eprint!("{}", o.stderr);
+        die(format!("couldn't record the PR's head for {b}"));
     }
     println!("{b} at the PR's head, {}", short(&theirs));
 }

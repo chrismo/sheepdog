@@ -50,7 +50,7 @@ Reports, for <branch> (default: the current one):
             review --accept pinned it; null with no trigger then, or for a
             pin made by hand)
             review.github, for a followed PR: the viewer's last submitted
-            review, {sha (the commit it reviewed), state, at_head, pending
+            review (not a dismissed one), {sha (the commit it reviewed), state, at_head, pending
             (one is pending too)}; null with none, or when gh fails
   question  an agent step's needs-input, or its give-up (kind gave-up,
             else ask; #254) (refs/sheepdog/<b>/question, see

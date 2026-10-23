@@ -4259,6 +4259,10 @@ fn reviewer_mode_github_review_is_the_viewers_last_submitted_one_and_whether_its
     sd.edit_fixture("review/7", &format!(".data.repository.pullRequests.nodes[0].reviews.nodes = [{reviews}]"));
     let r = sd.state(&[]);
     assert_eq!(r.field_c(".review.github"), format!(r#"{{"sha":"{head}","state":"COMMENTED","at_head":true,"pending":true}}"#));
+    let dismissed = format!("[{}, {}]", review_of("r1", "me", "CHANGES_REQUESTED", "0123456"), review_of("r5", "me", "DISMISSED", &head));
+    sd.edit_fixture("review/7", &format!(".data.repository.pullRequests.nodes[0].reviews.nodes = {dismissed}"));
+    let r = sd.run(&["--json"]);
+    assert_eq!(r.field(".review.github.sha"), "0123456");
     sd.edit_fixture("review/7", ".data.repository.pullRequests.nodes[0].reviews.nodes |= .[:1]");
     let r = sd.state(&[]);
     assert_eq!(r.field_c(".review.github"), r#"{"sha":"0123456","state":"CHANGES_REQUESTED","at_head":false,"pending":false}"#);

@@ -70,7 +70,9 @@ Verbs:
             describe, trigger, answer, autofix. stdout is only the worktree's path
   fetch     a followed PR's head (A1): the author's pushes, force-pushes
             too, fetched and the branch reset to them. Refuses uncommitted
-            changes, or commits on the branch that no fetched head had
+            changes, or commits on the branch that no fetched head had: the
+            last head fetched is what it checks against, so commits on a head
+            the author has since rewritten look like the author's
   enroll    mark the branch for sd watch, and register this repo; for a
             stacked PR, store its parent and base before a merge erases them
             (or warn that git can't find the base, and how to pin it);

@@ -911,7 +911,7 @@ fn assemble(s: &Facts) -> Value {
     } else {
         let mine: Vec<&Value> = reviews.iter().filter(|r| str_or(at(r, "author.login"), "") == s.viewer).collect();
         let pending = mine.iter().any(|r| at(r, "state").as_str() == Some("PENDING"));
-        match mine.iter().rev().find(|r| at(r, "state").as_str() != Some("PENDING")) {
+        match mine.iter().rev().find(|r| !matches!(at(r, "state").as_str(), Some("PENDING" | "DISMISSED"))) {
             None if !pending => Value::Null,
             None => json!({"sha": null, "state": null, "at_head": false, "pending": true}),
             Some(r) => json!({"sha": at(r, "commit.oid"), "state": at(r, "state"),
