@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Build sd, link it into ~/.local/bin ($LOCAL_BIN), write the git hooks that
-# rebuild it after a pull or a rebase, and install its launchd watcher. Safe
-# to re-run. Plain bash: it runs under macOS's 3.2.
+# Build sd, link it into ~/.local/bin ($LOCAL_BIN), and install its launchd
+# watcher. Safe to re-run. Nothing rebuilds sd after a pull: re-run this, or
+# cargo build --release. Plain bash: it runs under macOS's 3.2.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # bin/sd links to target/release/sd, so the build goes there whatever the
-# environment says; the hooks below unset it too.
+# environment says.
 unset CARGO_TARGET_DIR
 
 cargo=${CARGO:-cargo}
-cargo_path=$(command -v "$cargo") || { echo "! Cannot install sd: needs cargo to build it (https://rustup.rs)" >&2; exit 1; }
+command -v "$cargo" >/dev/null || { echo "! Cannot install sd: needs cargo to build it (https://rustup.rs)" >&2; exit 1; }
 "$cargo" build --release --quiet --manifest-path "$REPO_DIR/Cargo.toml" \
   || { echo "! Cannot install sd: cargo build failed" >&2; exit 1; }
 echo "✓ Built sd"
@@ -28,31 +28,6 @@ if [[ -e $dest && ! -L $dest ]]; then
 else
   ln -sfn "$REPO_DIR/bin/sd" "$dest"
   echo "✓ Linked sd -> $LOCAL_BIN/"
-fi
-
-# The hooks run the cargo found above, so a git with another PATH (a GUI
-# client, a job) still finds it.
-mark="# sheepdog's install.sh wrote this hook, and rewrites it on a re-run."
-# --git-path is relative to REPO_DIR unless it's elsewhere (a worktree's);
-# --path-format=absolute would say so itself, but only from git 2.31.
-if hooks=$(git -C "$REPO_DIR" rev-parse --git-path hooks 2>/dev/null); then
-  [[ $hooks == /* ]] || hooks=$REPO_DIR/$hooks
-  mkdir -p "$hooks"
-  for name in post-merge post-rewrite; do
-    hook="$hooks/$name"
-    if [[ -e $hook ]] && ! grep -qxF "$mark" "$hook"; then
-      echo "! $hook isn't sheepdog's, so it's left alone: sd won't be rebuilt on $name" >&2
-      continue
-    fi
-    # Worktrees share hooks, so this one can outlive the checkout it builds.
-    printf '#!/usr/bin/env bash\n%s\n[ -d %q ] || { echo %q >&2; exit 0; }\nunset CARGO_TARGET_DIR\n%q build --release --quiet --manifest-path %q \\\n  || { echo %q >&2; exit 1; }\n' \
-      "$mark" "$REPO_DIR" "sd: $REPO_DIR is gone, so sd isn't rebuilt; run install.sh in the checkout sd should run" \
-      "$cargo_path" "$REPO_DIR/Cargo.toml" "sd: couldn't rebuild sd; run $REPO_DIR/install.sh" > "$hook"
-    chmod +x "$hook"
-    echo "✓ Wrote $hook, which rebuilds sd"
-  done
-else
-  echo "! $REPO_DIR is not a git checkout: nothing will rebuild sd; re-run ./install.sh after updating it" >&2
 fi
 
 if [[ $(uname -s) == Darwin ]]; then

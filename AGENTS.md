@@ -8,8 +8,9 @@ verb. `bin/sd` is a committed link to the build. Split out of agent-rig on
 filtered down to these paths. Named pr-tend until 2026-10-15 (#40).
 
 Edit this repo, never `~/.local/bin/sd`: it's a link to `bin/sd` made by
-`./install.sh`, which also writes the post-merge and post-rewrite git hooks
-that rebuild `target/release/sd` after a pull or a rebase.
+`./install.sh`. Nothing rebuilds `target/release/sd` after a pull; re-run
+`./install.sh` or `cargo build --release`. install.sh writes no git hooks: a
+global `core.hooksPath` would put them in every repo.
 
 ## Design rules
 

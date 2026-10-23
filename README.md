@@ -23,25 +23,23 @@ build by are in `AGENTS.md`.
 ## Install
 
 ```bash
-./install.sh        # builds sd, links it, hooks git to rebuild it, installs its launchd watcher
+./install.sh        # builds sd, links it, installs its launchd watcher
 ```
 
 The installer builds `sd` (`cargo build --release`), links `bin/sd`, a link
 to the build, into `~/.local/bin` (`$LOCAL_BIN` to change the link
-directory), writes post-merge and post-rewrite hooks into the checkout's git
-hooks directory that rebuild `sd` after a pull or a rebase (a hook already
-there that isn't sheepdog's is left alone, and the installer says so) and, on
-macOS, starts the watcher, which checks enrolled branches every five minutes
-by default. Re-run it to rewrite the link, the hooks and the watcher. Use
+directory) and, on macOS, starts the watcher, which checks enrolled branches
+every five minutes by default. Re-run it to rewrite the link and the watcher. Use
 `sd watch uninstall` to stop the background job, or `sd watch install` to
 start it again (with the same `$LOCAL_BIN`, if you changed it). On other
 platforms, only the CLI is linked; the background watcher requires macOS
 (launchd). Anything at `$LOCAL_BIN/sd` that isn't a symlink blocks
 installation before any links or jobs are changed.
 
-Upgrading from a checkout where `bin/sd` was still a bash script: run
-`./install.sh` once after the pull that brings this in. Before then nothing
-rebuilds `sd`, and the watcher's old build looks for verbs that are gone.
+Nothing rebuilds `sd` on its own: after a pull that changes `src/`, re-run
+`./install.sh` (or `cargo build --release`). Until then `bin/sd` is the old
+build, and on a checkout where `bin/sd` was still a bash script, the link
+points at a build that doesn't exist yet.
 
 Needs on `PATH`: `cargo` to build (https://rustup.rs), `git` and `gh`.
 `claude` and/or `pi` for the agent steps. The tests also need `jq`.
