@@ -454,6 +454,17 @@ fn info_bot_items_wait_until_the_pipeline_can_t_move_without_chrismo_168() {
     assert_eq!(keys(&e![&info, ".pr.draft = true", r#".pr.merge_state = "DRAFT""#]), "read draft");
 }
 
+#[test]
+fn info_bot_items_wait_behind_a_restack_too_247() {
+    let info = e![".threads.owed_bot = 1", ".threads.info = 1"];
+    // soak 6: main moved and the restack conflicts; the resolve supersedes the item
+    assert_eq!(keys(&e![&info, ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true"]), "conflict");
+    assert_eq!(keys(&e![&info, STACKED]), "behind");
+    assert_eq!(keys(&e![&info, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3"]), "behind");
+    // a by-tree conflict is chrismo's to resolve, so nothing moves without chrismo
+    assert_eq!(keys(&e![&info, STACKED, ".sync.conflict = true", ".sync.by_tree = true"]), "conflict read");
+}
+
 // @test "past settings.branchBudget: one you step in place of the agent steps; run steps still run (#121)"
 #[test]
 fn past_settings_branchbudget_one_you_step_in_place_of_the_agent_steps_run_steps_still_run_121() {
