@@ -2452,3 +2452,88 @@ fn explain_is_in_the_help() {
     let help = sd.ok(&["--help"]);
     assert!(help.contains("sd config explain [--no-branch] [--branch <b>] [--json] [<path>]"), "{help}");
 }
+
+// ── explain: warnings, resetBy, the step table's rows (#251 phase 2) ─────────
+
+fn warnings(sd: &Sd, args: &[&str]) -> Vec<Value> {
+    let mut a = vec!["explain", "--json"];
+    a.extend_from_slice(args);
+    json(&sd.out(&a))["warnings"].as_array().unwrap().clone()
+}
+
+#[test]
+fn explain_warns_when_verify_is_empty() {
+    let sd = Sd::new();
+    let out = sd.out(&["explain"]);
+    let line = out.lines().find(|l| l.starts_with("warning: ")).unwrap_or_else(|| panic!("no warning: {out}"));
+    assert!(line.contains("settings.verify") && line.contains("sd config set --repo settings.verify"), "{line}");
+    let w = warnings(&sd, &[]);
+    assert_eq!(w.len(), 1);
+    assert_eq!(raw(&w[0]["path"]), "settings.verify");
+}
+
+#[test]
+fn explain_no_warnings_when_verify_is_plain_words() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"make test"}}"#);
+    assert!(!sd.out(&["explain"]).contains("warning: "));
+    assert!(warnings(&sd, &[]).is_empty());
+}
+
+#[test]
+fn explain_warns_when_verify_isnt_plain_words_and_claude_may_not_run_it() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"make && make lint"}}"#);
+    let w = warnings(&sd, &[]);
+    assert_eq!(w.len(), 1);
+    assert_eq!(raw(&w[0]["path"]), "settings.implementAllow");
+    sd.write_repo(r#"{"settings":{"implementAllow":["Bash(make *)"]}}"#);
+    assert!(warnings(&sd, &[]).is_empty());
+}
+
+#[test]
+fn explain_a_path_shows_only_warnings_for_the_keys_listed() {
+    let sd = Sd::new();
+    assert_eq!(warnings(&sd, &["settings.verify"]).len(), 1);
+    assert!(warnings(&sd, &["settings.interval"]).is_empty());
+    sd.write_global(r#"{"settings":{"verify":"make && make lint"}}"#);
+    assert_eq!(warnings(&sd, &["settings.verify"]).len(), 1);
+    assert_eq!(warnings(&sd, &["settings.implementAllow"]).len(), 1);
+    assert!(!sd.out(&["explain", "settings.interval"]).contains("warning: "));
+}
+
+#[test]
+fn explain_names_the_layer_that_reset_a_key() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"stepTimeout":900}}"#);
+    sd.write_branch("feat", r#"{"settings":{"stepTimeout":null}}"#);
+    assert_eq!(
+        sd.out(&["explain", "settings.stepTimeout"]),
+        "settings.stepTimeout = 1800  [defaults, reset by branch; overrides global]"
+    );
+    let keys = explain_keys(&sd, &["settings.stepTimeout"]);
+    assert_eq!(raw(&keys[0]["resetBy"]), "branch");
+    let plain = explain_keys(&sd, &["settings.interval"]);
+    assert!(lacks(&plain[0], "resetBy"));
+}
+
+#[test]
+fn explain_a_steps_path_shows_only_that_steps_row() {
+    let sd = Sd::new();
+    for p in ["steps.review", "steps.review.pi.effort"] {
+        let out = sd.out(&["explain", p]);
+        assert!(out.lines().any(|l| l.starts_with("review ")), "{out}");
+        assert!(!out.lines().any(|l| l.starts_with("address ")), "{out}");
+    }
+    assert!(sd.out(&["explain", "steps"]).lines().any(|l| l.starts_with("address ")));
+    assert!(sd.out(&["explain", "harness"]).lines().any(|l| l.starts_with("address ")));
+}
+
+#[test]
+fn explain_an_empty_model_or_effort_shows_a_dash() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"harnesses":{"claude":{"model":"","effort":null}}}"#);
+    let out = sd.out(&["explain"]);
+    let row = out.lines().find(|l| l.starts_with("review ")).unwrap_or_else(|| panic!("no review row: {out}"));
+    assert_eq!(row.split_whitespace().collect::<Vec<_>>(), ["review", "claude", "-", "-"]);
+}

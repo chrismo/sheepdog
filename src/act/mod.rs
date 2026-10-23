@@ -18,6 +18,7 @@ mod review;
 mod ship;
 mod start;
 mod step;
+pub(crate) use step::plain_words;
 
 use crate::git::{self, git, git_out};
 use crate::proc;
