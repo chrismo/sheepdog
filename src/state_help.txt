@@ -81,7 +81,8 @@ Reports, for <branch> (default: the current one):
             removes it. After 3, NEXT hands the agent's steps to chrismo
             (#242)
   fresh     false when GitHub's PR / parent-PR head differs from the local
-            remote-tracking ref, i.e. sync and push answers need a fetch;
+            remote-tracking ref and isn't an older value of it (see lag),
+            i.e. sync and push answers need a fetch;
             or, when NEXT's first step would be ready alone (#169), an
             agent step, open-pr or bot-trigger (#182), or blocked alone
             on GitHub's DIRTY (#246), when the remote's base branch (by
