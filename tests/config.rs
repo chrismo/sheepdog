@@ -2487,7 +2487,7 @@ fn explain_warns_when_verify_isnt_plain_words_and_claude_may_not_run_it() {
     let w = warnings(&sd, &[]);
     assert_eq!(w.len(), 1);
     assert_eq!(raw(&w[0]["path"]), "settings.implementAllow");
-    sd.write_repo(r#"{"settings":{"implementAllow":"Bash(make *)"}}"#);
+    sd.write_repo(r#"{"settings":{"implementAllow":["Bash(make *)"]}}"#);
     assert!(warnings(&sd, &[]).is_empty());
 }
 
@@ -2496,6 +2496,9 @@ fn explain_a_path_shows_only_warnings_for_the_keys_listed() {
     let sd = Sd::new();
     assert_eq!(warnings(&sd, &["settings.verify"]).len(), 1);
     assert!(warnings(&sd, &["settings.interval"]).is_empty());
+    sd.write_global(r#"{"settings":{"verify":"make && make lint"}}"#);
+    assert_eq!(warnings(&sd, &["settings.verify"]).len(), 1);
+    assert_eq!(warnings(&sd, &["settings.implementAllow"]).len(), 1);
     assert!(!sd.out(&["explain", "settings.interval"]).contains("warning: "));
 }
 
@@ -2529,8 +2532,8 @@ fn explain_a_steps_path_shows_only_that_steps_row() {
 #[test]
 fn explain_an_empty_model_or_effort_shows_a_dash() {
     let sd = Sd::new();
-    sd.write_global(r#"{"harnesses":{"claude":{"model":"","effort":""}}}"#);
+    sd.write_global(r#"{"harnesses":{"claude":{"model":"","effort":null}}}"#);
     let out = sd.out(&["explain"]);
-    let row = out.lines().find(|l| l.starts_with("review ")).unwrap();
+    let row = out.lines().find(|l| l.starts_with("review ")).unwrap_or_else(|| panic!("no review row: {out}"));
     assert_eq!(row.split_whitespace().collect::<Vec<_>>(), ["review", "claude", "-", "-"]);
 }

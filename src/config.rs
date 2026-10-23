@@ -587,24 +587,31 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
         vec![]
     };
 
-    let text_of = |k: &str| trace_key(k).value.and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    let verify = text_of("settings.verify");
-    let mut warnings: Vec<(&str, String)> = Vec::new();
+    let verify = trace_key("settings.verify").value.and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let allow_empty = match trace_key("settings.implementAllow").value {
+        Some(Value::Array(a)) => a.is_empty(),
+        Some(Value::String(s)) => s.is_empty(),
+        _ => true,
+    };
+    // (the keys it shows under, the key it names, the message)
+    let mut warnings: Vec<(&[&str], &str, String)> = Vec::new();
     if verify.is_empty() {
         warnings.push((
+            &["settings.verify"],
             "settings.verify",
             "settings.verify is empty: the agent steps can't build or run the tests, and `sd act verify` checks nothing; set it with `sd config set --repo settings.verify '<command>'`".into(),
         ));
     } else if !crate::act::plain_words(&verify)
-        && text_of("settings.implementAllow").is_empty()
+        && allow_empty
         && all_steps.iter().any(|(_, v)| v.get("harness").and_then(Value::as_str) == Some("claude"))
     {
         warnings.push((
+            &["settings.verify", "settings.implementAllow"],
             "settings.implementAllow",
             "settings.verify isn't plain words and settings.implementAllow is empty, so the Claude agent isn't allowed to run verify itself; add a Claude Code permission rule for it to settings.implementAllow".into(),
         ));
     }
-    warnings.retain(|(k, _)| all.iter().any(|a| a == k) && keys.iter().any(|x| x == k));
+    warnings.retain(|(shown_under, _, _)| shown_under.iter().any(|w| keys.iter().any(|x| x == w)));
 
     if as_json {
         let ks: Vec<Value> = traced
@@ -617,7 +624,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
                 o
             })
             .collect();
-        let ws: Vec<Value> = warnings.iter().map(|(k, m)| json!({"path": k, "message": m})).collect();
+        let ws: Vec<Value> = warnings.iter().map(|(_, k, m)| json!({"path": k, "message": m})).collect();
         let mut out = json!({ "keys": ks, "warnings": ws });
         if with_steps {
             let field = |v: &Value, f: &str| v.get(f).cloned().unwrap_or(Value::Null);
@@ -671,7 +678,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             out += "\n";
         }
     }
-    for (_, m) in &warnings {
+    for (_, _, m) in &warnings {
         out += &format!("warning: {m}\n");
     }
     Ok(out)
