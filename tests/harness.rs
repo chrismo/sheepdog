@@ -895,8 +895,10 @@ fn harness_run_a_claude_step_that_hits_its_usage_limit_says_so_and_isnt_counted_
     assert_eq!(sd.usage_last(&["step", "status"]), "review|75");
 
     fs::remove_file(&t).unwrap();
+    sd.fx("out", &LIMIT.replace("(America/Chicago)", "(America/Chicago)\\nSee your plan"));
     let r = sd.step(&[("HARNESS_STEP", "review")], &STEP);
     assert_eq!(r.status, 75);
     assert_lacks(&r.stderr, "resets 20");
+    assert_lacks(&r.stderr, "See your plan");
     assert_eq!(rec(), failed);
 }

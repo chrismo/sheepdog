@@ -93,7 +93,8 @@ impl Step<'_> {
 /// at once: nothing streams while it runs. While it runs, the branch's
 /// running marker says so, for sd state (#170). A step the harness's usage
 /// limit stopped isn't a failure (#269): it says so, with the reset, and
-/// leaves the failure record (#242) as it was.
+/// leaves the failure record (#242) as it was. The verbs still take any Err
+/// as their step failing: they say so after the limit's line, and exit 1.
 pub fn run_step(s: &Step) -> Result<Ran, Stop> {
     let b = match s.branch {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
@@ -228,7 +229,8 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
 
     if let Some(l) = limit {
         let resets = l.resets.as_ref().map(|r| format!(" (resets {r})")).unwrap_or_default();
-        eprintln!("sd: {} stopped on {h}'s usage limit, not counted as a failure: {}{resets}", s.label(), l.said);
+        let said = l.said.lines().next().unwrap_or_default();
+        eprintln!("sd: {} stopped on {h}'s usage limit, not counted as a failure: {said}{resets}", s.label());
         return Err(Stop::Limit(l));
     }
     let said = if status != 0 { said(h, &out.stdout, &cap_note, spent) } else { String::new() };
@@ -604,8 +606,13 @@ pub fn run(argv: &[String]) -> ExitCode {
                     }
                     ExitCode::SUCCESS
                 }
-                Err(Stop::Failed(code)) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
-                Err(Stop::Limit(_)) => ExitCode::from(LIMIT_STATUS as u8),
+                Err(stop) => {
+                    let code = match stop {
+                        Stop::Failed(code) => code,
+                        Stop::Limit(_) => LIMIT_STATUS,
+                    };
+                    ExitCode::from(u8::try_from(code).unwrap_or(1))
+                }
             }
         }
         _ => usage_exit(),
