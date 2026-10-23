@@ -1280,7 +1280,12 @@ fn reviewer_mode_merged_or_closed_forget_the_branch() {
     assert_eq!(keys(&e![REVIEWING, r#".pr.state = "MERGED""#]), "merged");
     assert_eq!(step("merged", "cmd", &e![REVIEWING, r#".pr.state = "MERGED""#]), "sd act forget --remove");
     assert_eq!(keys(&e![REVIEWING, r#".pr.state = "CLOSED""#]), "closed");
-    assert_eq!(step("closed", "cmd", &e![REVIEWING, r#".pr.state = "CLOSED""#]), "sd act forget --remove");
+    assert_eq!(step("closed", "cmd", &e![REVIEWING, r#".pr.state = "CLOSED""#]), "sd act forget");
+}
+
+#[test]
+fn reviewer_mode_with_no_pr_only_the_errors() {
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY, ".pr = null", r#".errors = ["gh (review/7): GitHub has no PR #7"]"#]), "errors");
 }
 
 #[test]

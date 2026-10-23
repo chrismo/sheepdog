@@ -95,12 +95,15 @@ pub fn fetch(b: &str, remote: &str) {
     }
     let head = rev(".", &format!("refs/heads/{b}"));
     let last = rev(".", &pr_head_ref(b));
-    if head != last && (last.is_empty() || !is_ancestor(".", &head, &last)) {
-        die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {}", pr_head_ref(b)));
-    }
-    // pr-head moves only once the branch has: it's what the check above trusts.
+    // pr-head moves only once the branch has: it's what this check trusts.
+    // With none recorded, the head just fetched stands in.
     let fetched = format!("refs/sheepdog/{b}/pr-fetched");
     let theirs = fetch_pr(&fetched, &n, remote);
+    let known = if last.is_empty() { &theirs } else { &last };
+    if head != *known && !is_ancestor(".", &head, known) {
+        git(".", &["update-ref", "-d", &fetched]);
+        die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {}", pr_head_ref(b)));
+    }
     let moved = if theirs == head {
         None
     } else if wt.is_empty() {

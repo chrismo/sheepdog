@@ -227,6 +227,18 @@ fn fetch_that_cant_move_the_branch_leaves_the_pr_head_as_it_was_and_a_rerun_take
 }
 
 #[test]
+fn fetch_with_no_pr_head_recorded_takes_a_head_the_branch_is_in() {
+    let mut sd = sd();
+    sd.followed();
+    sd.git(&["update-ref", "-d", "refs/sheepdog/review/7/pr-head"]);
+    let theirs = sd.author_pushes("more", false);
+    let r = sd.run(&["fetch"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), theirs);
+    assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]), theirs);
+}
+
+#[test]
 fn fetch_is_for_a_followed_pr_only() {
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);

@@ -731,7 +731,7 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
     let n = |p: &str| val::n(s, p);
     let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
     let covers = |p: &str| g(p).get("status").and_then(Value::as_str).is_some_and(|x| matches!(x, "covered" | "rewritten-same"));
-    let open = is_null(s, "pr") || is("pr.state", "OPEN");
+    let open = is("pr.state", "OPEN");
     // Commits the PR's head doesn't have, with nothing new from the author:
     // chrismo's (sd act fetch refuses them).
     let yours = open && n("push.ahead") > 0.0 && n("push.behind") == 0.0;
@@ -751,11 +751,11 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
             None
         },
         if is("pr.state", "CLOSED") {
-            step("closed", "you", "PR closed without merging: forget the branch", cmd("sd act forget --remove"))
+            step("closed", "you", "PR closed without merging: forget the branch, and remove its worktree", cmd("sd act forget"))
         } else {
             None
         },
-        if open && len(g("errors")) > 0 {
+        if !is("pr.state", "MERGED") && !is("pr.state", "CLOSED") && len(g("errors")) > 0 {
             step("errors", "you",
                 format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
                 cmd("sd state --json"),
