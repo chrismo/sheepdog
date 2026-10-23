@@ -2282,3 +2282,173 @@ fn help_says_gh_follows_settings_remote_and_how_a_forks_clone_sets_it() {
     let help = sd.ok(&["--help"]);
     assert!(help.contains("(GH_REPO); a fork's clone keeps everything"), "{help}");
 }
+
+// ── explain: every key's value and the layer it came from (#251) ─────────────
+
+fn explain_keys(sd: &Sd, args: &[&str]) -> Vec<Value> {
+    let mut a = vec!["explain", "--json"];
+    a.extend_from_slice(args);
+    json(&sd.out(&a))["keys"].as_array().unwrap().clone()
+}
+
+#[test]
+fn explain_a_value_from_each_layer() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"make","interval":120}}"#);
+    sd.write_repo(r#"{"settings":{"stepTimeout":900}}"#);
+    sd.write_branch("feat", r#"{"settings":{"botCommand":"@bot review"}}"#);
+    let r = sd.run(&["explain"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    let has = |l: &str| assert!(r.output.lines().any(|x| x == l), "no line {l:?}: {}", r.output);
+    has("settings.verify = make  [global; overrides defaults]");
+    has("settings.interval = 120  [global; overrides defaults]");
+    has("settings.stepTimeout = 900  [repo; overrides defaults]");
+    has("settings.botCommand = @bot review  [branch; overrides defaults]");
+    has("settings.reviewRounds = 3  [defaults]");
+    has("settings.autofix = \"\"  [defaults]");
+    has("settings.protectedPaths (unset)");
+}
+
+#[test]
+fn explain_marks_a_key_a_higher_layer_overrides() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"g","stepTimeout":900}}"#);
+    sd.write_repo(r#"{"settings":{"verify":"r"}}"#);
+    sd.write_branch("feat", r#"{"settings":{"verify":"b","stepTimeout":60}}"#);
+    let out = sd.out(&["explain"]);
+    let has = |l: &str| assert!(out.lines().any(|x| x == l), "no line {l:?}: {out}");
+    has("settings.verify = b  [branch; overrides repo, global, defaults]");
+    has("settings.stepTimeout = 60  [branch; overrides global, defaults]");
+    let keys = explain_keys(&sd, &["settings.verify"]);
+    assert_eq!(compact(&keys[0]["overrides"]), r#"["repo","global","defaults"]"#);
+    assert_eq!(raw(&keys[0]["source"]), "branch");
+}
+
+#[test]
+fn explain_a_null_in_a_higher_layer_falls_back_to_the_default() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"stepTimeout":900}}"#);
+    sd.write_branch("feat", r#"{"settings":{"stepTimeout":null}}"#);
+    let keys = explain_keys(&sd, &["settings.stepTimeout"]);
+    assert_eq!(raw(&keys[0]["value"]), "1800");
+    assert_eq!(raw(&keys[0]["source"]), "defaults");
+    assert_eq!(compact(&keys[0]["overrides"]), r#"["global"]"#);
+}
+
+#[test]
+fn explain_one_key_prints_just_that_key() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"make"}}"#);
+    assert_eq!(
+        sd.out(&["explain", "settings.verify"]),
+        "settings.verify = make  [global; overrides defaults]"
+    );
+}
+
+#[test]
+fn explain_a_section_prints_the_keys_under_it() {
+    let sd = Sd::new();
+    let out = sd.out(&["explain", "settings.flags"]);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 3, "{out}");
+    assert!(lines.iter().all(|l| l.starts_with("settings.flags.") && l.ends_with("[defaults]")), "{out}");
+}
+
+#[test]
+fn explain_an_unknown_key_fails() {
+    let sd = Sd::new();
+    let r = sd.run(&["explain", "settings.nope"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, "sd config: unknown key: settings.nope");
+}
+
+#[test]
+fn explain_lists_every_key_the_typed_tables_define() {
+    let sd = Sd::new();
+    let paths: Vec<String> = explain_keys(&sd, &[]).iter().map(|k| raw(&k["path"])).collect();
+    for p in [
+        "harness",
+        "harnesses.claude.useApiKey",
+        "harnesses.pi.provider",
+        "steps.ci-fix.pi.effort",
+        "steps.review.harness",
+        "settings.flags.testFiles",
+        "settings.remote",
+        "settings.rateLimitFloor",
+    ] {
+        assert!(paths.iter().any(|x| x == p), "no {p}: {paths:?}");
+    }
+    let mut unique = paths.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), paths.len());
+}
+
+#[test]
+fn explain_shows_each_steps_harness_model_and_effort_side_by_side() {
+    let sd = Sd::new();
+    sd.write_global(GLOBAL);
+    let out = sd.out(&["explain"]);
+    let row = |step: &str| -> Vec<String> {
+        out.lines()
+            .find(|l| l.starts_with(&format!("{step} ")))
+            .unwrap_or_else(|| panic!("no {step} row: {out}"))
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    };
+    assert_eq!(row("address"), ["address", "pi", "cheaper", "-"]);
+    assert_eq!(row("review"), ["review", "claude", "strong", "max"]);
+    assert_eq!(row("describe"), ["describe", "claude", "strong", "high"]);
+}
+
+#[test]
+fn explain_json_steps_match_what_step_resolves() {
+    let sd = Sd::new();
+    sd.write_global(GLOBAL);
+    sd.write_branch("feat", r#"{"steps":{"describe":{"harness":"pi"}}}"#);
+    let v = json(&sd.out(&["explain", "--json"]));
+    for step in ["address", "ci-fix", "describe", "implement", "review"] {
+        let s = json(&sd.out(&["step", step]));
+        for f in ["harness", "model", "effort"] {
+            assert_eq!(v["steps"][step][f], s[f], "{step}.{f}");
+        }
+    }
+    assert_eq!(raw(&v["steps"]["describe"]["harness"]), "pi");
+}
+
+#[test]
+fn explain_json_one_key_has_no_steps_and_unset_is_null() {
+    let sd = Sd::new();
+    let v = json(&sd.out(&["explain", "--json", "settings.protectedPaths"]));
+    assert!(lacks(&v, "steps"));
+    assert_eq!(v["keys"].as_array().unwrap().len(), 1);
+    assert_eq!(v["keys"][0]["value"], Value::Null);
+    assert_eq!(raw(&v["keys"][0]["source"]), "unset");
+}
+
+#[test]
+fn explain_no_branch_and_a_named_branch() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"global"}}"#);
+    sd.write_branch("feat", r#"{"settings":{"verify":"feat"}}"#);
+    sd.write_branch("other", r#"{"settings":{"verify":"other"}}"#);
+    assert_eq!(sd.out(&["explain", "settings.verify"]), "settings.verify = feat  [branch; overrides global, defaults]");
+    assert_eq!(sd.out(&["explain", "--branch", "other", "settings.verify"]), "settings.verify = other  [branch; overrides global, defaults]");
+    assert_eq!(sd.out(&["explain", "--no-branch", "settings.verify"]), "settings.verify = global  [global; overrides defaults]");
+}
+
+#[test]
+fn explain_branch_option_with_no_path_explains_every_key_for_that_branch() {
+    let sd = Sd::new();
+    sd.write_branch("other", r#"{"settings":{"verify":"other"}}"#);
+    let out = sd.out(&["explain", "--branch", "other"]);
+    assert!(out.lines().any(|l| l == "settings.verify = other  [branch; overrides defaults]"), "{out}");
+}
+
+#[test]
+fn explain_is_in_the_help() {
+    let sd = Sd::new();
+    let help = sd.ok(&["--help"]);
+    assert!(help.contains("sd config explain [--no-branch] [--branch <b>] [--json] [<path>]"), "{help}");
+}
