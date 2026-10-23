@@ -3,7 +3,8 @@
 // in a repo on feat one commit past main. `sd harness run` is run_step from
 // the command line, its tool lists in HARNESS_CLAUDE_ALLOW and
 // HARNESS_PI_TOOLS, the step's name and branch in HARNESS_STEP and
-// HARNESS_BRANCH; sd --help doesn't list it. Moved from lib/sheepdog.bats;
+// HARNESS_BRANCH, a fork's parent in HARNESS_PARENT; sd --help doesn't list
+// it. Moved from lib/sheepdog.bats;
 // each test keeps the bats test's title above it. harness_tally's tests are
 // src/harness.rs's unit tests.
 //
@@ -51,6 +52,7 @@ fn sd() -> Sd {
         // Set when sheepdog runs these tests from its own step.
         ("HARNESS_STEP", String::new()),
         ("HARNESS_BRANCH", String::new()),
+        ("HARNESS_PARENT", String::new()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -370,6 +372,70 @@ fn harness_run_a_resumed_claude_steps_cost_is_what_its_sessions_total_gained_the
     // The branch's spend is the steps', not the totals' (2.625): sd state sums cost_usd (src/state.rs).
     let spend: f64 = sd.usage().iter().filter(|u| u["branch"] == "feat").filter_map(|u| u["cost_usd"].as_f64()).sum();
     assert_eq!(spend, 1.625);
+}
+
+/// Whether <args> hold <run> in a row.
+fn in_a_row(args: &[String], run: &[&str]) -> bool {
+    args.windows(run.len()).any(|w| w.iter().zip(run).all(|(a, b)| a == b))
+}
+
+#[test]
+fn harness_run_a_claude_fork_runs_from_its_parent_under_the_minted_id_and_is_charged_what_it_added_69() {
+    let sd = sd();
+    sd.claude_out("0.25");
+    sd.step(&[], &["claude", "parent", "new", "30", "do it", "{}"]);
+    // A fork's total_cost_usd carries its parent's running total.
+    sd.claude_out("0.75");
+    let r = sd.step(&[("HARNESS_PARENT", "parent")], &["claude", "kid", "fork", "30", "again", "{}"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert!(in_a_row(&sd.args(), &["--resume", "parent", "--fork-session", "--session-id", "kid"]), "{:?}", sd.args());
+    assert_eq!(sd.usage_last(&["session", "mode", "cost_usd", "total_cost_usd"]), "kid|fork|0.5|0.75");
+}
+
+#[test]
+fn harness_run_a_pi_fork_runs_from_its_parent_and_is_charged_only_the_turns_it_added_69() {
+    let sd = sd();
+    let dir = sd.tmp.join("pi/--repo--");
+    fs::create_dir_all(&dir).unwrap();
+    let parent = dir.join("2026-10-17T00-00-00-000Z_parent.jsonl");
+    fs::write(
+        &parent,
+        "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input\":100,\"output\":10,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":110,\"cost\":{\"total\":0.5}}}}\n",
+    )
+    .unwrap();
+    // pi's fork copies the parent's turns into its own transcript.
+    sd.fx(
+        "append",
+        r#"{"type":"message","message":{"role":"assistant","usage":{"input":20,"output":5,"cacheRead":100,"cacheWrite":0,"totalTokens":125,"cost":{"total":0.25}}}}"#,
+    );
+    let kid = dir.join("2026-10-17T00-01-00-000Z_kid.jsonl");
+    sd.fake(
+        "pi",
+        &format!(
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$FX/args\"\ncat '{}' \"$FX/append\" > '{}'\ncat \"$FX/out\"\n",
+            parent.display(),
+            kid.display()
+        ),
+    );
+    sd.fx("out", PI_OK);
+    let r = sd.step(&[("HARNESS_PARENT", "parent")], &["pi", "kid", "fork", "30", "do it", "{}"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert!(in_a_row(&sd.args(), &["--fork", "parent", "--session-id", "kid"]), "{:?}", sd.args());
+    assert_eq!(sd.usage_last(&["session", "mode", "cost_usd", "input", "turns"]), "kid|fork|0.25|20|1");
+}
+
+#[test]
+fn harness_run_a_claude_step_that_reports_another_session_id_is_logged_and_recorded_under_it_69() {
+    let sd = sd();
+    sd.fx("out", r#"{"type": "result", "is_error": false, "structured_output": {"ok": true}, "session_id": "theirs", "total_cost_usd": 0.25}"#);
+    let r = sd.step(&[], &["claude", "mine", "new", "30", "do it", "{}"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.stderr, &["claude ran session theirs, not mine: going on in theirs"]);
+    assert_eq!(sd.usage_last(&["session"]), "theirs");
+    sd.fx("out", r#"{"type": "result", "is_error": false, "structured_output": {"ok": true}, "session_id": "mine", "total_cost_usd": 0.25}"#);
+    let r = sd.step(&[], &["claude", "mine", "new", "30", "do it", "{}"]);
+    assert_lacks(&r.stderr, "going on in");
+    assert_eq!(sd.usage_last(&["session"]), "mine");
 }
 
 // @test "harness_run: a session's total that went down isn't a running total; the step is charged all of it (#150)"

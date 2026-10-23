@@ -7,11 +7,11 @@
 use super::commands::{status, verify_autofix};
 use super::hold::hold_since;
 use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree,
-                  question_answered, question_ask, question_gate, question_say, step_session, step_store, step_store_failed};
+                  question_answered, question_ask, question_gate, question_say, step_session, step_store};
 use super::{die, plural, state_json, Args};
 use crate::git::{git, git_input, git_out, rev, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Step, PI_TOOLS};
+use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::val::{at, on, t, text};
 use crate::json;
 use serde_json::{Map, Value};
@@ -260,6 +260,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         harness: h,
         session: sid,
         mode: s.mode,
+        parent: &s.parent,
         timeout: s.timeout,
         prompt: &prompt,
         schema,
@@ -269,12 +270,11 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         claude_allow: &allow,
         pi_tools: PI_TOOLS,
     };
-    let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
-        step_store_failed(b, &s);
+    let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
         hold_since(b, &gbase, &before);
         die(format!("the {h} implement step failed or returned no usable result (session {sid})"))
     };
-    step_store(b, &s);
+    step_store(b, &s, &ran);
     question_answered(b, answering);
     hold_since(b, &gbase, &before);
     let agent_head = rev(".", &head);

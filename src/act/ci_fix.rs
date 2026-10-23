@@ -9,12 +9,12 @@ use super::hold::{hold_gate, hold_since};
 use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree, must, question_answered,
-                  question_ask, question_gate, question_say, step_session, step_store, step_store_failed};
+                  question_ask, question_gate, question_say, step_session, step_store};
 use super::{cfg, die, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev};
 use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Step, PI_TOOLS};
+use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::proc;
 use crate::val::{at, n, on, sj, t, text};
 use regex::Regex;
@@ -244,6 +244,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         harness: h,
         session: sid,
         mode: s.mode,
+        parent: &s.parent,
         timeout: s.timeout,
         prompt: &prompt,
         schema: CI_FIX_SCHEMA,
@@ -253,12 +254,11 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         claude_allow: &allow,
         pi_tools: PI_TOOLS,
     };
-    let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
-        step_store_failed(b, &s);
+    let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
         hold_since(b, &base, &before);
         die(format!("the {h} ci-fix step failed or returned no usable result (session {sid})"))
     };
-    step_store(b, &s);
+    step_store(b, &s, &ran);
     question_answered(b, answering);
     hold_since(b, &base, &before);
     let agent_head = rev(".", &head);

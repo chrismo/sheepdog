@@ -315,9 +315,8 @@ fn describe_stored_for_head_and_ship_reuses_it_without_calling_the_agent() {
     assert_has(&sd.calls(), &["--title Add c"]);
 }
 
-// @test "describe: mints the branch's session, later runs resume it"
 #[test]
-fn describe_mints_the_branchs_session_later_runs_resume_it() {
+fn describe_mints_the_branchs_session_later_runs_fork_it_and_the_fork_is_the_branchs_69() {
     let sd = sd();
     sd.ok(&["describe"]);
     let sid = sd.config("branch.feat.sd-session");
@@ -325,13 +324,15 @@ fn describe_mints_the_branchs_session_later_runs_resume_it() {
     assert!(has_line(&sd.claude_args(), "--session-id"));
     sd.ok(&["describe"]);
     let args = sd.claude_args();
-    assert!(has_line(&args, "--resume"));
-    assert!(has_line(&args, &sid));
+    assert!(has_line(&args, "--resume") && has_line(&args, &sid) && has_line(&args, "--fork-session"));
+    let fork = sd.config("branch.feat.sd-session");
+    assert_ne!(fork, sid);
+    assert!(has_line(&args, &fork));
 }
 
-// @test "describe: a session past settings.forkLimit tokens (100000) isn't resumed; a new one starts (#121)"
+// @test "describe: a session past settings.forkLimit tokens (100000) isn't forked; a new one starts (#121)"
 #[test]
-fn describe_a_session_past_settings_forklimit_tokens_100000_isnt_resumed_a_new_one_starts_121() {
+fn describe_a_session_past_settings_forklimit_tokens_100000_isnt_forked_a_new_one_starts_121() {
     let mut sd = sd();
     sd.env.push(("CLAUDE_CONFIG_DIR".to_string(), sd.path("claude")));
     sd.ok(&["describe"]);
@@ -339,6 +340,7 @@ fn describe_a_session_past_settings_forklimit_tokens_100000_isnt_resumed_a_new_o
     sd.transcript(&sid, 100000);
     sd.ok(&["describe"]);
     assert!(has_line(&sd.claude_args(), "--resume"));
+    let sid = sd.config("branch.feat.sd-session");
     sd.transcript(&sid, 100001);
     let r = sd.run_sep(&["describe"]);
     assert_eq!(r.status, 0);

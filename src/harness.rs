@@ -54,8 +54,10 @@ pub fn new_session() -> String {
 pub struct Step<'a> {
     pub harness: &'a str,
     pub session: &'a str,
-    /// new or resume.
+    /// new, resume or fork.
     pub mode: &'a str,
+    /// The session a fork starts from; "" otherwise.
+    pub parent: &'a str,
     /// Seconds; 0 for none.
     pub timeout: u64,
     pub prompt: &'a str,
@@ -90,7 +92,7 @@ impl Step<'_> {
 /// can put protocol JSON there) shows only when the step fails, and then all
 /// at once: nothing streams while it runs. While it runs, the branch's
 /// running marker says so, for sd state (#170).
-pub fn run_step(s: &Step) -> Result<Vec<Value>, i32> {
+pub fn run_step(s: &Step) -> Result<Ran, i32> {
     let b = match s.branch {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
         b => b.to_string(),
@@ -101,8 +103,21 @@ pub fn run_step(s: &Step) -> Result<Vec<Value>, i32> {
     running::during(&b, s.label(), || agent(s, &b)).unwrap_or(Err(1))
 }
 
-fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
-    let (h, sid) = (s.harness, s.session);
+/// A step's result objects, and the session it ran in.
+pub struct Ran {
+    pub results: Vec<Value>,
+    pub session: String,
+}
+
+impl Ran {
+    /// The last result object, and the session.
+    pub fn last(mut self) -> Option<(Value, String)> {
+        self.results.pop().map(|r| (r, self.session))
+    }
+}
+
+fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
+    let (h, minted) = (s.harness, s.session);
     // Only the first line, as bash's read -ra took it.
     let args = t(s.settings, "args");
     let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
@@ -127,7 +142,11 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         }
         "pi" => {
             let mut c = Command::new("pi");
-            c.args(["-p", "--session-id", sid, "--tools", s.pi_tools]);
+            c.arg("-p");
+            if s.mode == "fork" {
+                c.args(["--fork", s.parent]);
+            }
+            c.args(["--session-id", minted, "--tools", s.pi_tools]);
             c
         }
         _ => {
@@ -144,8 +163,10 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         ));
     }
 
-    let before = tally(h, sid);
-    let spent = usage::session_total(h, sid);
+    // A fork's transcript, and claude's total_cost_usd, carry its parent's.
+    let from = if s.mode == "fork" { s.parent } else { minted };
+    let before = tally(h, from);
+    let spent = usage::session_total(h, from);
     let t0 = Instant::now();
     // No timeout: as long as a u32 of seconds runs, as perl's alarm 0 did.
     // A longer one is cut to that too: a later deadline overflows Instant.
@@ -162,14 +183,15 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         Some(mut os) if h == "claude" && os.len() == 1 => os.remove(0),
         _ => Value::Null,
     };
-    let (now, repo, after) = (time::now_utc().0, main_worktree("."), tally(h, sid));
+    let sid = ran_in(h, minted, &o);
+    let (now, repo, after) = (time::now_utc().0, main_worktree("."), tally(h, &sid));
     usage::append(&usage::record(&usage::Step {
         time: &now,
         repo: &repo,
         branch: b,
         step: s.name,
         harness: h,
-        session: sid,
+        session: &sid,
         mode: s.mode,
         status,
         ms: t0.elapsed().as_millis() as i64,
@@ -194,7 +216,19 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
     } else if !b.is_empty() {
         failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status));
     }
-    result
+    result.map(|results| Ran { results, session: sid })
+}
+
+/// The session the step ran in: <minted>, unless claude reports another,
+/// which is logged and taken (#69).
+fn ran_in(h: &str, minted: &str, o: &Value) -> String {
+    match t(o, "session_id") {
+        r if !r.is_empty() && r != minted => {
+            eprintln!("sd: {h} ran session {r}, not {minted}: going on in {r}");
+            r
+        }
+        _ => minted.to_string(),
+    }
 }
 
 /// claude's cap on a step: the flags to add, the cap in USD (0 for none) and
@@ -287,11 +321,16 @@ pub fn session_exists(h: &str, sid: &str) -> bool {
 
 /// claude's command for the step, before the typed flags and args.
 fn claude_command(s: &Step) -> Command {
-    let sess = if s.mode == "resume" { "--resume" } else { "--session-id" };
     let mut c = Command::new("claude");
     // The prompt goes first: --allowedTools and --disallowedTools are
     // variadic and would swallow a trailing one.
-    c.args(["-p", s.prompt, sess, s.session, "--output-format", "json", "--json-schema", s.schema])
+    c.args(["-p", s.prompt]);
+    match s.mode {
+        "resume" => c.args(["--resume", s.session]),
+        "fork" => c.args(["--resume", s.parent, "--fork-session", "--session-id", s.session]),
+        _ => c.args(["--session-id", s.session]),
+    };
+    c.args(["--output-format", "json", "--json-schema", s.schema])
         .args(["--permission-mode", "acceptEdits", "--allowedTools", s.claude_allow, "--disallowedTools", CLAUDE_DENY]);
     login_only(&mut c, s.settings);
     c
@@ -375,10 +414,6 @@ fn tail(s: &str, n: usize) -> &str {
         Some((i, _)) if n > 0 => &s[i + 1..],
         _ => s,
     }
-}
-
-pub fn has_transcript(h: &str, sid: &str) -> bool {
-    transcript(h, sid).is_some()
 }
 
 /// The file the harness keeps <sid>'s transcript in, if it wrote one: the
@@ -465,14 +500,15 @@ fn tally_of(h: &str, text: &str) -> Value {
 }
 
 fn usage_exit() -> ExitCode {
-    eprintln!("usage: sd harness run <harness> <session-id> <new|resume> <timeout> <prompt> <json-schema> [<settings-json>]");
+    eprintln!("usage: sd harness run <harness> <session-id> <new|resume|fork> <timeout> <prompt> <json-schema> [<settings-json>]");
     eprintln!("       sd harness tally <harness> <session-id>");
     ExitCode::from(1)
 }
 
-/// sd harness: run_step and tally. The step's name, its branch and the tool
-/// lists come in the environment: HARNESS_STEP, HARNESS_BRANCH,
-/// HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS, the last two required.
+/// sd harness: run_step and tally. The step's name, its branch, a fork's
+/// parent and the tool lists come in the environment: HARNESS_STEP,
+/// HARNESS_BRANCH, HARNESS_PARENT, HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS,
+/// the last two required.
 pub fn run(argv: &[String]) -> ExitCode {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     match a.as_slice() {
@@ -491,7 +527,7 @@ pub fn run(argv: &[String]) -> ExitCode {
                 return ExitCode::from(1);
             };
             let env = |k: &str| std::env::var(k).unwrap_or_default();
-            let (name, branch) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"));
+            let (name, branch, parent) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"), env("HARNESS_PARENT"));
             let (Ok(claude_allow), Ok(pi_tools)) = (std::env::var("HARNESS_CLAUDE_ALLOW"), std::env::var("HARNESS_PI_TOOLS")) else {
                 eprintln!("sd harness: HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS must be set");
                 return ExitCode::from(1);
@@ -500,6 +536,7 @@ pub fn run(argv: &[String]) -> ExitCode {
                 harness: h,
                 session: sid,
                 mode,
+                parent: &parent,
                 timeout: timeout as u64,
                 prompt,
                 schema,
@@ -510,8 +547,8 @@ pub fn run(argv: &[String]) -> ExitCode {
                 pi_tools: &pi_tools,
             };
             match run_step(&step) {
-                Ok(rs) => {
-                    for r in rs {
+                Ok(ran) => {
+                    for r in ran.results {
                         println!("{}", json::to_string(&r));
                     }
                     ExitCode::SUCCESS
@@ -630,6 +667,7 @@ mod tests {
             harness: "claude",
             session: "sid",
             mode: "resume",
+            parent: "",
             timeout: 0,
             prompt: "do it",
             schema: "{}",

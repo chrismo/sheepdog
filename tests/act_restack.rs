@@ -1086,6 +1086,26 @@ fn resolve_a_conflict_partway_through_goes_to_the_agent_too() {
     assert!(!sd.rebase_in_progress());
 }
 
+#[test]
+fn resolve_each_stop_forks_the_last_ones_session_which_ends_as_the_branchs_69() {
+    let sd = agent_sd();
+    sd.edit("e", "E", "there");
+    sd.edit("E", "e", "back");
+    sd.upstream("main", "e", "X", "upstream");
+    sd.resolver("X");
+    sd.agent_also(&format!("{{ cat {}; echo @@stop@@; }} >> {}\n", sd.path("fx/claude.args"), sd.path("fx/stops")));
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0);
+    let all = sd.fx("stops");
+    let stops: Vec<&str> = all.split("@@stop@@\n").filter(|s| !s.trim().is_empty()).collect();
+    assert_eq!(stops.len(), 2);
+    let forks = |s: &str| s.lines().any(|l| l == "--fork-session");
+    assert!(!forks(stops[0]));
+    assert!(forks(stops[1]));
+    assert_eq!(after(stops[1], "--resume"), after(stops[0], "--session-id"));
+    assert_eq!(sd.config("branch.feat.sd-session"), after(stops[1], "--session-id"));
+}
+
 // @test "--resolve: one running marker lasts across every stop, then is gone (#170)"
 #[test]
 fn resolve_one_running_marker_lasts_across_every_stop_then_is_gone_170() {
