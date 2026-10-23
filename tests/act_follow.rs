@@ -1,11 +1,12 @@
 // Black-box tests of sd act follow (#250: reviewer mode): a teammate's PR,
 // fetched by number from refs/pull/<n>/head, on a branch review/<n> in a
 // worktree beside the main one, marked as a reviewer's branch and enrolled;
-// and the author's verbs, which a reviewer's branch refuses.
+// sd act fetch, which takes the author's pushes; and the author's verbs,
+// which a reviewer's branch refuses.
 //
 // Real git (a bare origin, our clone at repo/, the teammate's at other/). The
 // teammate's PR is refs/pull/7/head on origin, as GitHub keeps one for every
-// PR, a fork's included. gh is a stub with no PRs.
+// PR, a fork's included. gh is a stub (GH below) serving that PR by number.
 
 mod common;
 
