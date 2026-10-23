@@ -34,6 +34,9 @@
 // A conflict with it is, and so is a restack after the parent merged.
 // Only bot items are ever marked i, so owed_bot - info is the blocking bot count.
 //
+// Info bot items are read once nothing else moves without chrismo (#168): a
+// restack too, whose push and re-review would supersede them (#247).
+//
 // Past settings.branchBudget (spend.budget; 0 is none), nothing spends tokens
 // on the branch: the first agent step becomes chrismo's, the rest go, and the
 // run steps stay (#121). So does open-pr: sd act ship describes the branch
@@ -430,6 +433,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 && !fixing
                 && !bot_due
                 && !bot_waiting
+                && !restack_due
                 && !is("ci.verdict", "inconclusive")
                 && !(stacked && on("parent.merged"))
             {
