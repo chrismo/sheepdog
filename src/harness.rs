@@ -72,6 +72,13 @@ pub struct Step<'a> {
     pub pi_tools: &'a str,
 }
 
+impl Step<'_> {
+    /// The running marker's and failure record's step.
+    fn label(&self) -> &str {
+        if self.name.is_empty() { "agent" } else { self.name }
+    }
+}
+
 /// Runs the step in the current directory: its result objects, or its status
 /// with what went wrong on stderr. claude runs with ANTHROPIC_API_KEY unset
 /// unless useApiKey is true: an exported key overrides the claude.ai login
@@ -91,8 +98,7 @@ pub fn run_step(s: &Step) -> Result<Vec<Value>, i32> {
     if b.is_empty() {
         return agent(s, &b);
     }
-    let name = if s.name.is_empty() { "agent" } else { s.name };
-    running::during(&b, name, || agent(s, &b)).unwrap_or(Err(1))
+    running::during(&b, s.label(), || agent(s, &b)).unwrap_or(Err(1))
 }
 
 fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
@@ -185,10 +191,7 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
     if !b.is_empty() {
         match &result {
             Ok(rs) if !rs.is_empty() => failed::clear(b),
-            _ => {
-                let name = if s.name.is_empty() { "agent" } else { s.name };
-                failed::record(b, name, h, &failed::why(out.timed_out, &said, &out.stderr, status));
-            }
+            _ => failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status)),
         }
     }
     result

@@ -215,7 +215,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it",
                 t("failed.count"), t("failed.harness"), t("failed.step"), t("failed.at"), t("failed.error")
             ),
-            rerun(&t("failed.step")),
+            rerun(&t("failed.step")).or_else(|| cmd(format!("git update-ref -d refs/sheepdog/{}/failed", t("branch")))),
         )
     });
     let hold = &hold;

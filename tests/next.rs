@@ -491,6 +491,8 @@ fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_ru
     );
     assert_eq!(step("failed", "cmd", &e![&three, ".threads.owed_bot = 2"]), "sd act address");
     assert_eq!(step("failed", "cmd", &e![&failed(3, "resolve"), ".threads.owed_bot = 2"]), "sd act restack --resolve");
+    // a step nothing reruns: clearing the record is the way on
+    assert_eq!(step("failed", "cmd", &e![&failed(3, "agent"), ".threads.owed_bot = 2"]), "git update-ref -d refs/sheepdog/feat/failed");
     // a restack ahead of the agent's steps, and a push after them, stay
     assert_eq!(keys(&e![&three, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 2"]), "behind failed");
     assert_eq!(keys(&e![&three, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "failed push");

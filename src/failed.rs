@@ -1,6 +1,7 @@
 // The failure record (#242): refs/sheepdog/<b>/failed, one line of JSON,
-// {step, harness, count, since, at, error}. An agent step that fails, or
-// returns nothing usable, counts one more; one that succeeds removes it.
+// {step, harness, count, since, at, error}. An agent step whose harness ran
+// and failed, or returned nothing usable, counts one more; one that succeeds
+// removes it.
 
 use crate::git::{git, git_input, strip_nl};
 use crate::{json, time};
