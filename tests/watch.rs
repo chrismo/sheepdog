@@ -7,6 +7,8 @@
 // which SHEEPDOG_STATE_PROGRAM names (a debug build's seam, src/watch/pass.rs),
 // serves $PS_FIXTURES/<branch>.json, so each glyph/notification rule can be
 // driven directly. Notifications go to a stub configured as settings.notify.
+// sd act is faked the same way for the steps a pass runs (#267):
+// fakebin/sd-act, which SHEEPDOG_ACT_PROGRAM names, logs to $PS_FIXTURES/acts.
 
 mod common;
 
@@ -24,6 +26,16 @@ echo "$PWD $b" >> "$PS_FIXTURES/calls"
 f="$PS_FIXTURES/${b//\//__}.json"
 [[ -f $f ]] || { echo "sd state: no fixture for $b" >&2; exit 1; }
 cat "$f"
+"#;
+
+/// $PS_FIXTURES/act-sleep: seconds to take; act-fails: the refusal to fail with.
+const SD_ACT: &str = r#"#!/usr/bin/env bash
+echo "$PWD $*" >> "$PS_FIXTURES/acts"
+[[ -f $PS_FIXTURES/act-sleep ]] && sleep "$(cat "$PS_FIXTURES/act-sleep")"
+echo "did $1"
+[[ -f $PS_FIXTURES/act-fails ]] || exit 0
+echo "sd act $1: $(cat "$PS_FIXTURES/act-fails")" >&2
+exit 1
 "#;
 
 const NOTIFY: &str = r#"#!/usr/bin/env bash
@@ -57,10 +69,12 @@ fn sd() -> Sd {
         ("STATUS_DIR".to_string(), sd.path("status")),
         ("PS_FIXTURES".to_string(), sd.path("ps")),
         ("SHEEPDOG_STATE_PROGRAM".to_string(), sd.path("fakebin/sd-state")),
+        ("SHEEPDOG_ACT_PROGRAM".to_string(), sd.path("fakebin/sd-act")),
     ];
     sd.env = env;
     fs::create_dir(sd.tmp.join("ps")).unwrap();
     sd.fake("sd-state", SD_STATE);
+    sd.fake("sd-act", SD_ACT);
     sd.fake("notify", NOTIFY);
     // Never the real macOS notifier: every config a test writes keeps this one.
     sd.verb_ok("config", &["set", "--global", "settings.notify", &sd.path("fakebin/notify")]);
@@ -2795,4 +2809,220 @@ fn rate_limit_vacuum_skips_the_branches_the_pass_didnt_check_and_says_so() {
     assert_eq!(r.status, 0);
     assert_eq!(r.output, "repo  other  skipped, not checked: GitHub rate limit");
     assert!(sd.enrolled("other"));
+}
+
+// ── the loop, slice 1: a pass runs mechanical steps (#267) ──────────────────
+
+impl Sd {
+    /// sd watch with settings.dispatch on.
+    fn dispatching(&self) {
+        self.write_cfg(r#"{"settings":{"dispatch":true}}"#);
+    }
+
+    /// <b>'s first NEXT step is the run step <key>, on a PR the viewer
+    /// authored, then <more> jq assignments.
+    fn first_step(&self, b: &str, key: &str, more: &[&str]) {
+        let next = format!(
+            r#".viewer = "me" | .pr.author = "me" | .next = [{{key: "{key}", who: "run", say: "say {key}", cmd: "sd act x"}}, {{key: "ci-wait", who: "wait", say: "CI running", cmd: null}}]"#
+        );
+        self.ps_fixture(b, &[&[next.as_str()], more].concat());
+    }
+
+    /// The sd act calls the pass made, "<dir> <args>" each; forgets them.
+    fn acts(&self) -> String {
+        let s = cat(&self.ps("acts"));
+        let _ = fs::remove_file(self.ps("acts"));
+        s
+    }
+}
+
+#[test]
+fn dispatch_is_off_by_default() {
+    let sd = sd();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+    assert_lacks(&sd.last_pass(), "sd act");
+}
+
+#[test]
+fn dispatch_runs_the_first_step_when_its_a_run_step_one_line_each_in_status_and_the_log() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    for (key, verb) in [("push", "push"), ("behind", "restack"), ("retarget", "retarget"), ("bot-trigger", "trigger")] {
+        sd.first_step("feat", key, &[]);
+        let r = sd.pass_run(&[]);
+        assert_eq!(r.status, 0, "{key}: {}", r.stderr);
+        assert_eq!(sd.acts(), format!("{repo} {verb} feat"), "{key}");
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t🔧\t\nrepo\tfeat\t-\tran sd act {verb}: ok")]);
+        assert_has(&r.stderr, &[&format!("did {verb}"), &format!("repo  feat  -  ran sd act {verb}: ok")]);
+    }
+}
+
+#[test]
+fn dispatch_sd_act_is_this_binarys_own_not_an_sd_act_on_path() {
+    let mut sd = sd();
+    sd.env.retain(|(k, _)| k != "SHEEPDOG_ACT_PROGRAM");
+    sd.fake("gh", common::GH_FAILS);
+    sd.dispatching();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: ok"]);
+    assert_ne!(sd.git(&["ls-remote", "origin", "feat"]), "");
+}
+
+#[test]
+fn dispatch_runs_only_the_first_step_and_only_a_run_step() {
+    let sd = sd();
+    sd.dispatching();
+    let mine = r#".viewer = "me" | .pr.author = "me""#;
+    for next in [
+        r#"[{key: "ci-wait", who: "wait", say: "w", cmd: null}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
+        r#"[{key: "human", who: "you", say: "h", cmd: null}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
+        r#"[{key: "review", who: "agent", say: "r", cmd: "sd act review"}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
+        r#"[{key: "push", who: "you", say: "p", cmd: "sd act push"}]"#,
+    ] {
+        sd.ps_fixture("feat", &[mine, &format!(".next = {next}")]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{next}");
+    }
+}
+
+#[test]
+fn dispatch_leaves_the_run_steps_outside_this_slice_to_chrismo() {
+    let sd = sd();
+    sd.dispatching();
+    for key in ["merged", "stale", "ship-parent", "open-pr", "draft", "ci-rerun", "made-up"] {
+        sd.first_step("feat", key, &[]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{key}");
+    }
+}
+
+#[test]
+fn dispatch_gate_only_a_pr_the_viewer_authored_with_no_one_elses_commits_on_the_remote() {
+    let sd = sd();
+    sd.dispatching();
+    for (why, more) in [
+        ("someone else's PR", r#".pr.author = "alice""#),
+        ("no viewer", ".viewer = null"),
+        ("no author", ".pr.author = null"),
+        ("no PR", ".pr = null"),
+        ("commits this copy never had", ".push.remote_ours = false | .push.theirs = 2"),
+        ("theirs unknown", ".push.remote_ours = false | .push.theirs = null"),
+        ("taken from someone and reset away", ".push.remote_ours = true | .push.remote_made = false"),
+    ] {
+        sd.first_step("feat", "push", &[more]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{why}");
+    }
+    let repo = sd.path("repo");
+    for (why, more) in [
+        ("remote head is ours", ".push.remote_ours = true | .push.remote_made = null"),
+        ("ours, made here", ".push.remote_ours = true | .push.remote_made = true"),
+        ("not ours by reflog, but no commits it never had", ".push.remote_ours = false | .push.theirs = 0"),
+        ("not pushed", ".push.remote_sha = null | .push.remote_ours = null"),
+    ] {
+        sd.first_step("feat", "push", &[more]);
+        sd.pass();
+        assert_eq!(sd.acts(), format!("{repo} push feat"), "{why}");
+    }
+}
+
+#[test]
+fn dispatch_fetches_a_followed_pr_whoever_wrote_it() {
+    let sd = sd();
+    sd.dispatching();
+    sd.first_step("feat", "fetch", &[r#".mode = "reviewer" | .pr.author = "alice""#]);
+    sd.pass();
+    assert_eq!(sd.acts(), format!("{} fetch feat", sd.path("repo")));
+}
+
+#[test]
+fn dispatch_a_branch_turned_off_is_left_alone() {
+    let sd = sd();
+    sd.dispatching();
+    sd.git(&["config", "branch.feat.sd-dispatch", "false"]);
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+    sd.git(&["config", "branch.feat.sd-dispatch", "true"]);
+    sd.pass();
+    assert_eq!(sd.acts(), format!("{} push feat", sd.path("repo")));
+}
+
+#[test]
+fn dispatch_a_branch_with_an_unreadable_switch_is_left_alone() {
+    let sd = sd();
+    sd.dispatching();
+    sd.git(&["config", "branch.feat.sd-dispatch", "maybe"]);
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+}
+
+#[test]
+fn dispatch_not_while_a_step_runs_or_the_session_is_attached() {
+    let sd = sd();
+    sd.dispatching();
+    for (why, more) in [
+        ("running", r#".session.running = {step: "implement", pid: 1, since: "2026-10-23T00:00:00Z"}"#),
+        ("attached", ".session.locked = true"),
+    ] {
+        sd.first_step("feat", "push", &[more]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{why}");
+        sd.first_step("feat", "fetch", &[r#".mode = "reviewer""#, more]);
+        sd.pass();
+        assert_eq!(sd.acts(), "", "{why}, followed");
+    }
+}
+
+#[test]
+fn dispatch_a_failed_step_is_tried_once_a_pass_and_says_why() {
+    let sd = sd();
+    sd.dispatching();
+    fs::write(sd.ps("act-fails"), "refused: no\n").unwrap();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts().lines().count(), 1);
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: failed (exit 1): sd act push: refused: no"]);
+    sd.pass();
+    assert_eq!(sd.acts().lines().count(), 1);
+}
+
+#[test]
+fn dispatch_a_step_past_the_watch_timeout_is_ended() {
+    let sd = sd();
+    sd.dispatching();
+    fs::write(sd.ps("act-sleep"), "10\n").unwrap();
+    sd.first_step("feat", "push", &[]);
+    let t = Instant::now();
+    sd.pass_env(&[("SHEEPDOG_WATCH_TIMEOUT", "1")]);
+    assert!(t.elapsed().as_secs() < 8, "{:?}", t.elapsed());
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: timed out after 1s"]);
+}
+
+#[test]
+fn dispatch_not_while_sd_state_is_unsure_or_the_rate_limit_stops_the_pass() {
+    let sd = sd();
+    sd.dispatching();
+    sd.first_step("feat", "push", &[r#".errors = ["boom"]"#]);
+    sd.pass();
+    assert_eq!(sd.acts(), "", "errors");
+    sd.first_step("feat", "push", &[r#".rate_limit = {cost: 2, remaining: 100, reset_at: "2026-10-16T13:00:00Z", limited: false}"#]);
+    sd.pass();
+    assert_eq!(sd.acts(), "", "rate limit");
+}
+
+#[test]
+fn dispatch_neither_refresh_nor_vacuum_runs_steps() {
+    let sd = sd();
+    sd.dispatching();
+    sd.first_step("feat", "push", &[]);
+    sd.ok(&["refresh"]);
+    sd.ok(&["vacuum"]);
+    assert_eq!(sd.acts(), "");
 }

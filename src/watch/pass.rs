@@ -1,9 +1,10 @@
 // The pass, refresh and vacuum (src/watch_help.txt): sd state every enrolled
 // branch, glyph it, notify per the policy, and keep each branch's state for
-// the next pass. sd state runs as `sd state`, this binary in a process of its
-// own, so a hung one can be timed out: on purpose not state::observe
-// in-process, as sd act calls it, since the watcher supervises its children
-// with deadlines (#12).
+// the next pass; with settings.dispatch, a pass also runs a branch's first
+// step when it's a mechanical one (#267). sd state runs as `sd state`, this
+// binary in a process of its own, so a hung one can be timed out: on purpose
+// not state::observe in-process, as sd act calls it, since the watcher
+// supervises its children with deadlines (#12). So do dispatched steps.
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
@@ -41,16 +42,44 @@ struct Class {
     note: Option<&'static str>,
 }
 
-/// The program that is sd state, and the args before its own: sd itself and
-/// "state". In a debug build (cargo test's) with SHEEPDOG_STATE_PROGRAM set,
-/// that program instead, run as sd-state was: the suite fakes sd state with
+/// The run steps a pass runs (#267), by NEXT key, with the sd act verb each
+/// is. Not stale (the pass has just fetched), merged (forget --remove deletes
+/// the worktree), draft, ci-rerun, or ship-parent and open-pr, which may
+/// spend tokens describing.
+const DISPATCH: [(&str, &str); 5] =
+    [("fetch", "fetch"), ("behind", "restack"), ("push", "push"), ("retarget", "retarget"), ("bot-trigger", "trigger")];
+
+/// The program that is sd <verb>, and the args before its own: sd itself and
+/// <verb>. In a debug build (cargo test's) with <seam> set, that program
+/// instead, run as sd-<verb> is: the suite fakes sd state and sd act with
 /// it. A release build, the one installed, never reads it.
-fn state_program() -> (String, &'static [&'static str]) {
-    let fake = if cfg!(debug_assertions) { std::env::var("SHEEPDOG_STATE_PROGRAM") } else { Err(std::env::VarError::NotPresent) };
+fn sd_verb(verb: &'static str, seam: &str) -> (String, Vec<&'static str>) {
+    let fake = if cfg!(debug_assertions) { std::env::var(seam).ok() } else { None };
     match fake {
-        Ok(p) if !p.is_empty() => (p, &[]),
-        _ => (proc::sd_itself().map_or("sd".into(), |p| p.to_string_lossy().into_owned()), &["state"]),
+        Some(p) if !p.is_empty() => (p, vec![]),
+        _ => (proc::sd_itself().map_or("sd".into(), |p| p.to_string_lossy().into_owned()), vec![verb]),
     }
+}
+
+/// The dispatch gate, the one place it's decided: a PR the viewer authored,
+/// with no one else's commits on the remote. A stand-in for #266's facts (the
+/// PR's author isn't the viewer; the remote has commits from someone else),
+/// which replace it; not keyed on sd-mode, which #266 deletes. fetch passes
+/// whoever wrote the PR: only a followed PR's NEXT has it, sd act fetch
+/// refuses any other branch, and it takes only the author's pushes, refusing
+/// when the branch has commits of its own (#250).
+fn may_dispatch(s: &Value, key: &str) -> bool {
+    if key == "fetch" {
+        return true;
+    }
+    let viewer = t(s, "viewer");
+    let mine = !viewer.is_empty() && t(s, "pr.author") == viewer;
+    let no_one_elses = match at(s, "push.remote_ours") {
+        Value::Bool(true) => at(s, "push.remote_made") != &Value::Bool(false),
+        Value::Bool(false) => at(s, "push.theirs").as_f64() == Some(0.0),
+        _ => at(s, "push.remote_sha").is_null(),
+    };
+    mine && no_one_elses
 }
 
 fn reason(step: &Value) -> Value {
@@ -318,6 +347,8 @@ struct Watch {
     rate_stop: bool,
     /// sd watch vacuum's lines, when one runs.
     vacuum: Option<String>,
+    /// settings.dispatch, for a pass: run a branch's first step (#267).
+    dispatch: bool,
     /// The .pr files and the glyph index rows written.
     written: Vec<String>,
     glyphs: String,
@@ -333,6 +364,7 @@ impl Watch {
             rate_floor: 0.0,
             rate_stop: false,
             vacuum: None,
+            dispatch: false,
             written: vec![],
             glyphs: String::new(),
         }
@@ -431,8 +463,8 @@ impl Watch {
     /// Check one branch: its pass lines, whether sd state answered, and why
     /// the pass must stop for the rate limit, if it must.
     fn check(&mut self, repo: &str, name: &str, b: &str, wt: &str) -> (String, bool, Option<String>) {
-        let (prog, verb) = state_program();
-        let o = proc::with_timeout(self.timeout, &prog, &[verb, &["--json", b]].concat(), Some(repo));
+        let (prog, verb) = sd_verb("state", "SHEEPDOG_STATE_PROGRAM");
+        let o = proc::with_timeout(self.timeout, &prog, &[&verb[..], &["--json", b]].concat(), Some(repo));
         if !o.ok {
             let why = format!("sd state failed: {}", o.stderr.lines().next().unwrap_or(""));
             self.write_glyph(wt, b, "⚠️");
@@ -542,7 +574,46 @@ impl Watch {
             self.log(name, b, &u);
         }
         let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
+        let errors = at(&s, "errors").as_array().is_some_and(|e| !e.is_empty());
+        if self.dispatch && !c.carry && !errors && stop.is_none() {
+            out.push_str(&self.dispatch(repo, name, b, &s).unwrap_or_default());
+        }
         (out, true, stop)
+    }
+
+    /// Run the branch's first NEXT step when it's one a pass runs: one
+    /// attempt, under the watch timeout. Its output goes to stderr, the job's
+    /// log, and so does its pass line.
+    fn dispatch(&self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
+        let first = at(s, "next").get(0)?;
+        if at(first, "who").as_str() != Some("run") {
+            return None;
+        }
+        let key = at(first, "key").as_str()?;
+        let verb = DISPATCH.iter().find(|(k, _)| *k == key)?.1;
+        // Unset (exit 1) is on; a value git can't read as a bool (128) is off.
+        let switch = git(repo, &["config", "--type=bool", &format!("branch.{b}.sd-dispatch")]);
+        let enabled = switch.code == 1 || switch.stdout.trim_end() == "true";
+        // A followed PR's NEXT has no attached step, so neither is left to NEXT.
+        let busy = !at(s, "session.running").is_null() || on(s, "session.locked");
+        if !enabled || busy || !may_dispatch(s, key) {
+            return None;
+        }
+        let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
+        let mut c = Command::new(prog);
+        c.args(pre).args([verb, b]).current_dir(repo);
+        let o = proc::timeout(self.timeout, c, true);
+        eprint!("{}", o.stdout);
+        let how = if o.ok {
+            "ok".to_string()
+        } else if o.timed_out {
+            format!("timed out after {}s", self.timeout)
+        } else {
+            format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+        };
+        let line = format!("{name}\t{b}\t-\tran sd act {verb}: {how}\n");
+        eprint!("{}", show(&line));
+        Some(line)
     }
 
     /// Ask GitHub what became of a gone branch's PR: its pass line, and
@@ -736,7 +807,9 @@ impl Watch {
 }
 
 pub fn pass() -> ExitCode {
-    Watch::new().pass();
+    let mut w = Watch::new();
+    w.dispatch = config::get_global("settings.dispatch", false).is_ok_and(|v| v == "true");
+    w.pass();
     ExitCode::SUCCESS
 }
 

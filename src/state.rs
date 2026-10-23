@@ -27,7 +27,7 @@ const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!, $co
   repository(owner: $owner, name: $repo) {
     defaultBranchRef { name }
     pullRequest(number: $number) {
-      number url state isDraft isCrossRepository headRepositoryOwner { login } headRefName baseRefName headRefOid mergeable mergedAt
+      number url state isDraft author { login } isCrossRepository headRepositoryOwner { login } headRefName baseRefName headRefOid mergeable mergedAt
       mergeStateStatus reviewDecision
       reviewRequests(first: 20) { nodes { requestedReviewer {
         ... on User { login } ... on Bot { login } ... on Mannequin { login } ... on Team { slug } } } }
@@ -844,7 +844,7 @@ fn assemble(s: &Facts) -> Value {
         Value::Null
     } else {
         json!({"number": at(pr, "number"), "url": at(pr, "url"), "state": at(pr, "state"), "draft": at(pr, "isDraft"),
-               "base": at(pr, "baseRefName"), "head_sha": at(pr, "headRefOid"), "mergeable": at(pr, "mergeable"),
+               "author": at(pr, "author.login"), "base": at(pr, "baseRefName"), "head_sha": at(pr, "headRefOid"), "mergeable": at(pr, "mergeable"),
                "merge_state": at(pr, "mergeStateStatus"), "review_decision": at(pr, "reviewDecision"),
                "review_requests": arr(at(pr, "reviewRequests.nodes")).iter()
                    .map(|n| first_of(n, "requestedReviewer.login", "requestedReviewer.slug"))
@@ -932,7 +932,7 @@ fn assemble(s: &Facts) -> Value {
         .collect();
     let jn = |x: &str| nn(x);
     json!({
-        "branch": s.branch, "head": s.head, "task": jn(&s.task),
+        "branch": s.branch, "head": s.head, "task": jn(&s.task), "viewer": jn(&s.viewer),
         "mode": if s.reviewer { json!("reviewer") } else { Value::Null },
         "pr": pr_out,
         "parent": {"name": s.parent, "source": s.parent_source, "merged": s.parent_merged, "local": s.parent_local,
