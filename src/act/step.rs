@@ -125,6 +125,14 @@ pub fn step_store(b: &str, s: &Session) {
     must(&["config", &format!("branch.{b}.sd-harness"), &s.harness]);
 }
 
+/// step_store after a failure, only once the harness wrote the session's
+/// transcript: resuming a session it never started fails every retry (#254).
+pub fn step_store_failed(b: &str, s: &Session) {
+    if harness::has_transcript(&s.harness, &s.id) {
+        step_store(b, s);
+    }
+}
+
 /// The commit a step reads repo guidance (.sheepdog/, relative prompt paths)
 /// from, which the branch's agent can't rewrite: the base pin, else where
 /// the branch forked from the default branch, the remote's or else the local
@@ -163,20 +171,36 @@ pub fn agent_rules(b: &str) -> Vec<String> {
 
 /// refs/sheepdog/<b>/question's blob: what a step asked, at the HEAD and
 /// worktree mark it left. Control characters other than tab, newline and CR
-/// are dropped, as are trailing newlines.
-fn question_record(head: &str, step: &str, mark: &str, text: &str) -> String {
+/// are dropped, as are trailing newlines. A give-up (#254) has kind
+/// "gave-up"; a question has no kind.
+fn question_record(head: &str, step: &str, mark: &str, text: &str, kind: &str) -> String {
     let keep = |c: &char| !c.is_ascii_control() || matches!(c, '\t' | '\n' | '\r');
     let text: String = text.chars().filter(keep).collect();
-    let rec = json!({"head": head, "step": step, "mark": mark, "text": text.trim_end_matches('\n')});
+    let mut rec = json!({"head": head, "step": step, "mark": mark, "text": text.trim_end_matches('\n')});
+    if !kind.is_empty() {
+        rec["kind"] = json!(kind);
+    }
     json::to_string(&rec) + "\n"
 }
 
 /// Record a step's needs-input on HEAD and the worktree as the step left
 /// them; a failure only warns, as the question is printed anyway.
 pub fn question_ask(b: &str, wt: &str, step: &str, text: &str) {
+    record_question(b, wt, step, text, "");
+}
+
+/// The agent stopped without doing the step: it gave up, or changed nothing
+/// it said it had. Recorded as a question of kind gave-up (#254); dies with
+/// <msg>.
+pub fn give_up(b: &str, wt: &str, step: &str, text: &str, msg: String) -> ! {
+    record_question(b, wt, step, text, "gave-up");
+    die(format!("{msg}\n{}", question_say(b)))
+}
+
+fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str) {
     let head = rev(".", &format!("refs/heads/{b}"));
     let recorded = worktree_mark(wt).filter(|_| !head.is_empty()).is_some_and(|mark| {
-        let rec = question_record(&head, step, &mark, text);
+        let rec = question_record(&head, step, &mark, text, kind);
         let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
         let msg = format!("sd act {step}: needs input");
         obj.ok && git(".", &["update-ref", "-m", &msg, &format!("refs/sheepdog/{b}/question"), &strip_nl(obj.stdout)]).ok
@@ -208,8 +232,9 @@ pub fn question_gate(b: &str, step: &str, force: bool, answering: bool) {
         eprintln!("sd act: warning: the {step} agent's question on {b} stands; running anyway");
         return;
     }
+    let did = if t(&q, "kind") == "gave-up" { "gave up" } else { "asked" };
     die(format!(
-        "not running {step} on {b}: its agent asked, and nothing has changed since:\n{}\nAnswer with {}; or answer in its session (sd act attach {b}), then sd act ack --question",
+        "not running {step} on {b}: its agent {did}, and nothing has changed since:\n{}\nAnswer with {}; or answer in its session (sd act attach {b}), then sd act ack --question",
         t(&q, "text"),
         answer_cmd(b)
     ));
@@ -271,10 +296,12 @@ mod tests {
 
     #[test]
     fn question_record_is_one_line_its_text_without_control_characters() {
-        let rec = question_record("h1", "implement", "m1", "Which file?\u{1b}[31m\tA\r\n\u{0}or B?\n\n");
+        let rec = question_record("h1", "implement", "m1", "Which file?\u{1b}[31m\tA\r\n\u{0}or B?\n\n", "");
         assert_eq!(rec, "{\"head\":\"h1\",\"step\":\"implement\",\"mark\":\"m1\",\"text\":\"Which file?[31m\\tA\\r\\nor B?\"}\n");
         let v: Value = serde_json::from_str(&rec).unwrap();
         assert_eq!(t(&v, "text"), "Which file?[31m\tA\r\nor B?");
+        let rec = question_record("h1", "address", "m1", "too hard", "gave-up");
+        assert_eq!(rec, "{\"head\":\"h1\",\"step\":\"address\",\"mark\":\"m1\",\"text\":\"too hard\",\"kind\":\"gave-up\"}\n");
     }
 
     #[test]

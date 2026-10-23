@@ -3,7 +3,7 @@
 // continues. restack.rs runs it under the branch's running marker, across
 // every stop and continue (#170), and rolls the branch back when it fails.
 
-use super::step::{agent_rules, step_session, step_store};
+use super::step::{agent_rules, step_session, step_store, step_store_failed};
 use crate::git::{git, git_out, rebase_head, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Step, PI_TOOLS};
@@ -181,6 +181,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             pi_tools: PI_TOOLS,
         };
         let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
+            step_store_failed(b, &s);
             return Err(format!("the {h} step failed or returned no usable result (session {sid}); {}", r.back()));
         };
         step_store(b, &s);

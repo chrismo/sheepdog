@@ -513,6 +513,23 @@ fn needs_input_and_gave_up_edits_left_uncommitted_nothing_pushed() {
     assert_eq!(sd.remote_feat(), before);
 }
 
+#[test]
+fn gave_up_or_fixed_with_nothing_changed_is_recorded_as_a_give_up_254() {
+    let sd = sd();
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "gave-up", commit_message: null, summary: "no idea"}"#);
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]);
+    assert_eq!(jq(&["-r", "[.step, .kind, .text] | join(\"|\")"], &rec), "ci-fix|gave-up|no idea");
+    sd.ok(&["ack", "--question"]);
+    sd.result(r#"{outcome: "fixed", commit_message: "Fix it", summary: "fixed the test"}"#);
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]);
+    assert_eq!(jq(&["-r", "[.kind, .text] | join(\"|\")"], &rec), "gave-up|said fixed but changed nothing: fixed the test");
+}
+
 // @test "needs-input: the question is recorded on HEAD; a rerun refuses at zero tokens until an ack (#167)"
 #[test]
 fn needs_input_the_question_is_recorded_on_head_a_rerun_refuses_at_zero_tokens_until_an_ack_167() {

@@ -42,8 +42,9 @@ Reports, for <branch> (default: the current one):
             review.accepted also has after (the bot's triggered when sd act
             review --accept pinned it; null with no trigger then, or for a
             pin made by hand)
-  question  an agent step's needs-input (refs/sheepdog/<b>/question, see
-            sd act ack): {step, sha, text, at_head}; at_head while HEAD and
+  question  an agent step's needs-input, or its give-up (kind gave-up,
+            else ask; #254) (refs/sheepdog/<b>/question, see
+            sd act ack): {step, kind, sha, text, at_head}; at_head while HEAD and
             the worktree's uncommitted state are what the step left, and
             then NEXT's question step replaces the step that asked (#167)
   flags     for chrismo, never a gate (#125): in the net diff old_base..HEAD

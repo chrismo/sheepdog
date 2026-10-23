@@ -4,8 +4,8 @@
 
 use super::commands::{status, verify_autofix};
 use super::hold::hold_since;
-use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, guidance_base, in_worktree, question_answered,
-                  question_ask, question_gate, question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree,
+                  question_answered, question_ask, question_gate, question_say, step_session, step_store, step_store_failed};
 use super::{die, state_json, Args};
 use crate::git::{git, git_input, git_out, rev, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
@@ -261,6 +261,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         pi_tools: PI_TOOLS,
     };
     let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
+        step_store_failed(b, &s);
         hold_since(b, &gbase, &before);
         die(format!("the {h} implement step failed or returned no usable result (session {sid})"))
     };
@@ -273,8 +274,8 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let mut summary = t(&result, "summary");
     match outcome.as_str() {
         "done" | "needs-input" => {}
-        "gave-up" => die(format!("the agent gave up on {b}: {summary}. Edits (if any) are left uncommitted in {wt}")),
-        _ => die(format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
+        "gave-up" => give_up(b, wt, qstep, &summary, format!("the agent gave up on {b}: {summary}. Edits (if any) are left uncommitted in {wt}")),
+        _ => give_up(b, wt, qstep, &format!("returned outcome \"{outcome}\": {summary}"), format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
     }
     let changed = !status(wt).is_empty() || rev(".", &head) != before;
     // A fix round's answers: any ask goes to chrismo, as needs-input does.
@@ -297,7 +298,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     if !status(wt).is_empty() {
         commit_edits(wt, &commit_message(&result, fixing, &task));
     } else if !changed && !fixing {
-        die(format!("the agent says done but changed nothing (session {sid})"));
+        give_up(b, wt, qstep, &format!("said done but changed nothing: {summary}"), format!("the agent says done but changed nothing (session {sid})"));
     }
     if let Some(r) = &fix {
         let rec = answered_record(r, &answers);
