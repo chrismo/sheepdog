@@ -172,13 +172,18 @@ pub fn agent_rules(b: &str) -> Vec<String> {
 /// refs/sheepdog/<b>/question's blob: what a step asked, at the HEAD and
 /// worktree mark it left. Control characters other than tab, newline and CR
 /// are dropped, as are trailing newlines. A give-up (#254) has kind
-/// "gave-up"; a question has no kind.
-fn question_record(head: &str, step: &str, mark: &str, text: &str, kind: &str) -> String {
+/// "gave-up"; a question has no kind. A resolve's give-up (#257) also keys
+/// on the ref it rebased onto, at its SHA.
+fn question_record(head: &str, step: &str, mark: &str, text: &str, kind: &str, onto: Option<(&str, &str)>) -> String {
     let keep = |c: &char| !c.is_ascii_control() || matches!(c, '\t' | '\n' | '\r');
     let text: String = text.chars().filter(keep).collect();
     let mut rec = json!({"head": head, "step": step, "mark": mark, "text": text.trim_end_matches('\n')});
     if !kind.is_empty() {
         rec["kind"] = json!(kind);
+    }
+    if let Some((r, sha)) = onto {
+        rec["onto_ref"] = json!(r);
+        rec["onto"] = json!(sha);
     }
     json::to_string(&rec) + "\n"
 }
@@ -186,24 +191,35 @@ fn question_record(head: &str, step: &str, mark: &str, text: &str, kind: &str) -
 /// Record a step's needs-input on HEAD and the worktree as the step left
 /// them; a failure only warns, as the question is printed anyway.
 pub fn question_ask(b: &str, wt: &str, step: &str, text: &str) {
-    record_question(b, wt, step, text, "");
+    record_question(b, wt, step, text, "", None);
 }
 
 /// The agent stopped without doing the step: it gave up, or changed nothing
 /// it said it had. Recorded as a question of kind gave-up (#254); dies with
 /// <msg>.
 pub fn give_up(b: &str, wt: &str, step: &str, text: &str, msg: String) -> ! {
-    if record_question(b, wt, step, text, "gave-up") {
+    if record_question(b, wt, step, text, "gave-up", None) {
         die(format!("{msg}\n{}", question_say(b)))
     }
     die(msg)
 }
 
+/// restack --resolve's give-up onto <target> (<remote>/<branch>) at <sha>
+/// (#257).
+pub fn resolve_gave_up(b: &str, wt: &str, text: &str, msg: String, target: &str, sha: &str) -> ! {
+    if record_question(b, wt, "resolve", text, "gave-up", Some((&format!("refs/remotes/{target}"), sha))) {
+        die(format!(
+            "{msg}\nNEXT shows it until {b}'s HEAD or worktree, or {target}, changes, or sd act ack --question"
+        ))
+    }
+    die(msg)
+}
+
 /// false, having warned, when it couldn't be recorded.
-fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str) -> bool {
+fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str, onto: Option<(&str, &str)>) -> bool {
     let head = rev(".", &format!("refs/heads/{b}"));
     let recorded = worktree_mark(wt).filter(|_| !head.is_empty()).is_some_and(|mark| {
-        let rec = question_record(&head, step, &mark, text, kind);
+        let rec = question_record(&head, step, &mark, text, kind, onto);
         let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
         let did = if kind == "gave-up" { "gave up" } else { "needs input" };
         let msg = format!("sd act {step}: {did}");
@@ -238,11 +254,12 @@ pub fn question_gate(b: &str, step: &str, force: bool, answering: bool) {
         return;
     }
     let did = if t(&q, "kind") == "gave-up" { "gave up" } else { "asked" };
-    die(format!(
-        "not running {step} on {b}: its agent {did}, and nothing has changed since:\n{}\nAnswer with {}; or answer in its session (sd act attach {b}), then sd act ack --question",
-        t(&q, "text"),
-        answer_cmd(b)
-    ));
+    let how = if step == "resolve" {
+        "Resolve it by hand (sd act restack says how), or sd act ack --question to let it try again".to_string()
+    } else {
+        format!("Answer with {}; or answer in its session (sd act attach {b}), then sd act ack --question", answer_cmd(b))
+    };
+    die(format!("not running {step} on {b}: its agent {did}, and nothing has changed since:\n{}\n{how}", t(&q, "text")));
 }
 
 /// The prompt for a step resumed with chrismo's answer, then the items owed
@@ -301,11 +318,11 @@ mod tests {
 
     #[test]
     fn question_record_is_one_line_its_text_without_control_characters() {
-        let rec = question_record("h1", "implement", "m1", "Which file?\u{1b}[31m\tA\r\n\u{0}or B?\n\n", "");
+        let rec = question_record("h1", "implement", "m1", "Which file?\u{1b}[31m\tA\r\n\u{0}or B?\n\n", "", None);
         assert_eq!(rec, "{\"head\":\"h1\",\"step\":\"implement\",\"mark\":\"m1\",\"text\":\"Which file?[31m\\tA\\r\\nor B?\"}\n");
         let v: Value = serde_json::from_str(&rec).unwrap();
         assert_eq!(t(&v, "text"), "Which file?[31m\tA\r\nor B?");
-        let rec = question_record("h1", "address", "m1", "too hard", "gave-up");
+        let rec = question_record("h1", "address", "m1", "too hard", "gave-up", None);
         assert_eq!(rec, "{\"head\":\"h1\",\"step\":\"address\",\"mark\":\"m1\",\"text\":\"too hard\",\"kind\":\"gave-up\"}\n");
     }
 

@@ -153,10 +153,15 @@ pub(crate) fn question_state(dir: &str, b: &str, head: &str) -> Result<Option<Va
     let rec = rec?;
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
     let (Some(h), Some(step), Some(m), Some(text)) = (s("head"), s("step"), s("mark"), s("text")) else { return Err(()) };
-    let at_head = h == head && {
-        let wt = worktree_for(dir, b);
-        !wt.is_empty() && worktree_mark(&wt).as_deref() == Some(m)
-    };
+    let at_head = h == head
+        && {
+            let wt = worktree_for(dir, b);
+            !wt.is_empty() && worktree_mark(&wt).as_deref() == Some(m)
+        }
+        && match (s("onto_ref"), s("onto")) {
+            (Some(r), Some(sha)) => rev(dir, r) == sha,
+            _ => true,
+        };
     let kind = s("kind").unwrap_or("ask");
     Ok(Some(json!({"step": step, "kind": kind, "sha": h, "text": text, "at_head": at_head})))
 }

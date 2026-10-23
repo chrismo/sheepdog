@@ -1095,6 +1095,19 @@ fn a_give_up_is_a_question_step_that_says_so_254() {
     assert_eq!(step("question", "cmd", &e![&red, &gave_up]), r#"sd act answer "<your answer>""#);
 }
 
+#[test]
+fn a_resolve_give_up_holds_the_conflict_step_and_says_resolve_by_hand_257() {
+    let conflict = e![".sync.up_to_date = false", ".sync.behind = 3", ".sync.conflict = true"];
+    let gave_up = |at_head: bool| format!(".question = {}", json!({"step": "resolve", "kind": "gave-up", "sha": "h1", "text": "no sensible merge", "at_head": at_head}));
+    assert_eq!(keys(&e![&conflict, &gave_up(true)]), "question");
+    assert_eq!(
+        step("question", "say", &e![&conflict, &gave_up(true)]),
+        "the agent gave up (resolve): no sensible merge; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"
+    );
+    assert_eq!(step("question", "cmd", &e![&conflict, &gave_up(true)]), "sd act restack");
+    assert_eq!(keys(&e![&conflict, &gave_up(false)]), "conflict");
+}
+
 // @test "question: replaces only the step that asked, ahead of the loop's own steps (#167)"
 #[test]
 fn question_replaces_only_the_step_that_asked_ahead_of_the_loop_s_own_steps_167() {

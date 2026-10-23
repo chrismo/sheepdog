@@ -51,6 +51,24 @@ impl Rebase<'_> {
     }
 }
 
+/// Why a resolve stopped. <gave_up>, the question's text, marks a stop the
+/// agent caused, which a rerun onto the same target would repeat (#257).
+#[derive(Debug, PartialEq)]
+pub struct Halt {
+    pub why: String,
+    pub gave_up: Option<String>,
+}
+
+impl From<String> for Halt {
+    fn from(why: String) -> Self {
+        Halt { why, gave_up: None }
+    }
+}
+
+fn gave_up(text: String, why: String) -> Halt {
+    Halt { why, gave_up: Some(text) }
+}
+
 struct Stop<'a> {
     task: &'a str,
     replaying: &'a str,
@@ -78,19 +96,20 @@ fn prompt(r: &Rebase, guidance: &str, stop: &Stop, runs: &str) -> String {
 /// The agent's result for a stop: Ok(its summary) to go on, else why the
 /// restack stops. A replayed commit the agent finds already on the target
 /// is a wrong base, never dropped on its word.
-fn verdict(r: &Rebase, replaying: &str, result: &Value) -> Result<String, String> {
+fn verdict(r: &Rebase, replaying: &str, result: &Value) -> Result<String, Halt> {
     let (b, onto, back, summary) = (r.b, r.onto, r.back(), t(result, "summary"));
     match t(result, "outcome").as_str() {
         "done" => Ok(summary),
         "already-on-target" => {
             let sha = replaying.split(' ').next().unwrap_or("");
-            Err(format!(
+            let why = format!(
                 "wrong base: the agent says {replaying} is already on {onto} ({summary}); {back}. If it's a merged parent's \
                  and the stack is linear, rebase past it by hand: git rebase --onto {onto} {sha} {b}, \
                  then git update-ref refs/sheepdog/{b}/base $(git merge-base {onto} {b})"
-            ))
+            );
+            Err(gave_up(why.clone(), why))
         }
-        _ => Err(format!("the agent gave up: {summary}; {back}")),
+        _ => Err(gave_up(summary.clone(), format!("the agent gave up: {summary}; {back}"))),
     }
 }
 
@@ -123,7 +142,7 @@ fn worktree_tree(wt: &str) -> Option<String> {
 /// the agent changed): the worktree before and after each stop compared
 /// whole, so staging or committing them itself hides nothing. Err(why), the
 /// rebase left for the caller to roll back.
-pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<String>, String> {
+pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<String>, Halt> {
     let (b, wt) = (r.b, r.wt);
     std::env::set_current_dir(wt).map_err(|e| format!("can't work in {wt}: {e}; {}", r.back()))?;
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
@@ -140,7 +159,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
         (Ok(verify), Ok(_)) => verify,
         (Err(lines), _) | (_, Err(lines)) => {
             lines.iter().for_each(|l| eprintln!("sd config: {l}"));
-            return Err(format!("sd config failed; {}", r.back()));
+            return Err(format!("sd config failed; {}", r.back()).into());
         }
     };
     let (allow, said) = harness::tool_rules(&s.harness, &agent_rules(b));
@@ -153,11 +172,12 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
     let mut touched: Vec<String> = Vec::new();
     for stop in 1.. {
         if stop > CAP {
-            return Err(format!("the rebase onto {} stopped {stop} times (cap {CAP}); {}", r.onto, r.back()));
+            let why = format!("the rebase onto {} stopped {stop} times (cap {CAP})", r.onto);
+            return Err(gave_up(why.clone(), format!("{why}; {}", r.back())));
         }
         let files: Vec<String> = git(wt, &["diff", "--name-only", "--diff-filter=U"]).stdout.lines().map(str::to_string).collect();
         if files.is_empty() {
-            return Err(format!("the rebase stopped without conflicting files; {}", r.back()));
+            return Err(format!("the rebase stopped without conflicting files; {}", r.back()).into());
         }
         let hunks = strip_nl(git(wt, &["diff"]).stdout);
         let replaying = git_out(wt, &["log", "-1", "--format=%h %s", "REBASE_HEAD"]).unwrap_or_default();
@@ -182,7 +202,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
         };
         let Some(result) = harness::run_step(&step).ok().and_then(|rs| rs.into_iter().last()) else {
             step_store_failed(b, &s);
-            return Err(format!("the {h} step failed or returned no usable result (session {sid}); {}", r.back()));
+            return Err(format!("the {h} step failed or returned no usable result (session {sid}); {}", r.back()).into());
         };
         step_store(b, &s);
         s.mode = "resume";
@@ -192,7 +212,8 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
         touched.extend(diff.split('\0').filter(|f| !f.is_empty()).map(str::to_string));
         let left = marked(wt, &files);
         if !left.is_empty() {
-            return Err(format!("conflict markers left in: {}; {}", left.join(", "), r.back()));
+            let why = format!("conflict markers left in: {}", left.join(", "));
+            return Err(gave_up(why.clone(), format!("{why}; {}", r.back())));
         }
         git(wt, &["add", "-A"]);
         let cont = Command::new("git").args(["-C", wt, "rebase", "--continue"]).env("GIT_EDITOR", "true").output();
@@ -200,7 +221,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             break;
         }
         if rebase_head(wt).is_none() {
-            return Err(format!("git rebase --continue failed; {}", r.back()));
+            return Err(format!("git rebase --continue failed; {}", r.back()).into());
         }
     }
     Ok(touched)
@@ -224,21 +245,20 @@ mod tests {
     #[test]
     fn verdict_already_on_target_is_a_wrong_base_with_the_way_past_it() {
         let r = json!({"outcome": "already-on-target", "summary": "main already has this"});
-        assert_eq!(
-            verdict(&rebase(), "abc1234 feat two", &r),
-            Err("wrong base: the agent says abc1234 feat two is already on origin/main (main already has this); rolled back to 0123456. \
-                 If it's a merged parent's and the stack is linear, rebase past it by hand: git rebase --onto origin/main abc1234 feat, \
-                 then git update-ref refs/sheepdog/feat/base $(git merge-base origin/main feat)"
-                .into())
-        );
+        let why = "wrong base: the agent says abc1234 feat two is already on origin/main (main already has this); rolled back to 0123456. \
+                   If it's a merged parent's and the stack is linear, rebase past it by hand: git rebase --onto origin/main abc1234 feat, \
+                   then git update-ref refs/sheepdog/feat/base $(git merge-base origin/main feat)";
+        assert_eq!(verdict(&rebase(), "abc1234 feat two", &r), Err(gave_up(why.into(), why.into())));
     }
 
     #[test]
     fn verdict_anything_else_is_giving_up() {
         for r in [json!({"outcome": "gave-up", "summary": "no sensible merge"}), json!({"outcome": "maybe", "summary": "no sensible merge"})] {
-            assert_eq!(verdict(&rebase(), "abc1234 feat", &r), Err("the agent gave up: no sensible merge; rolled back to 0123456".into()));
+            let why = "the agent gave up: no sensible merge; rolled back to 0123456";
+            assert_eq!(verdict(&rebase(), "abc1234 feat", &r), Err(gave_up("no sensible merge".into(), why.into())));
         }
-        assert_eq!(verdict(&rebase(), "abc1234 feat", &json!({})), Err("the agent gave up: ; rolled back to 0123456".into()));
+        let why = "the agent gave up: ; rolled back to 0123456";
+        assert_eq!(verdict(&rebase(), "abc1234 feat", &json!({})), Err(gave_up(String::new(), why.into())));
     }
 
     #[test]

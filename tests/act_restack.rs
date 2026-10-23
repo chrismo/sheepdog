@@ -1123,6 +1123,67 @@ fn resolve_the_agent_giving_up_rolls_back() {
     assert_eq!(sd.base_pin(), "");
 }
 
+#[test]
+fn resolve_a_give_up_stands_until_the_target_moves_257() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.result(r#"{"outcome": "gave-up", "summary": "no sensible merge"}"#);
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["until feat's HEAD or worktree, or origin/main, changes"]);
+    let q: serde_json::Value = serde_json::from_str(&sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"])).unwrap();
+    assert_eq!(q["step"], "resolve");
+    assert_eq!(q["kind"], "gave-up");
+    assert_eq!(q["text"], "no sensible merge");
+    assert_eq!(q["onto"], sd.rev("origin/main"));
+
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not running resolve on feat: its agent gave up", "Resolve it by hand (sd act restack says how)"]);
+    assert_eq!(sd.fx("claude.calls").lines().count(), 1);
+
+    sd.upstream("main", "a", "Z", "more upstream");
+    sd.run(&["restack", "--resolve"]);
+    assert_eq!(sd.fx("claude.calls").lines().count(), 2);
+}
+
+#[test]
+fn resolve_force_runs_past_a_standing_give_up_257() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.result(r#"{"outcome": "gave-up", "summary": "no sensible merge"}"#);
+    sd.run(&["restack", "--resolve"]);
+    sd.resolver("GX");
+    sd.result(r#"{"outcome": "done", "summary": "kept both"}"#);
+    let r = sd.run(&["restack", "--resolve", "--force"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.fx("claude.calls").lines().count(), 2);
+}
+
+#[test]
+fn resolve_every_stop_the_agent_caused_is_a_give_up_257() {
+    let wrong_base = agent_sd();
+    wrong_base.upstream("main", "g", "X", "upstream");
+    wrong_base.result(r#"{"outcome": "already-on-target", "summary": "main already has this"}"#);
+    let markers = agent_sd();
+    markers.upstream("main", "g", "X", "upstream");
+    markers.agent("#!/usr/bin/env bash\ntrue\n");
+    for (sd, text) in [(&wrong_base, "wrong base: the agent says"), (&markers, "conflict markers left in: file.txt")] {
+        assert_eq!(sd.run(&["restack", "--resolve"]).status, 1);
+        let q = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]);
+        assert_has(&q, &[r#""step":"resolve""#, text, r#""kind":"gave-up""#]);
+    }
+}
+
+#[test]
+fn resolve_a_failed_agent_step_is_no_give_up_257() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    fs::write(sd.tmp.join("fx/fail"), "").unwrap();
+    assert_eq!(sd.run(&["restack", "--resolve"]).status, 1);
+    assert_eq!(sd.git(&["for-each-ref", "refs/sheepdog/feat/question"]), "");
+}
+
 // @test "--resolve: leftover conflict markers roll back"
 #[test]
 fn resolve_leftover_conflict_markers_roll_back() {
