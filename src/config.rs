@@ -15,6 +15,7 @@ Usage:
   sd config set   [--global | --repo | --branch <b>] [--json] <path> <value>
   sd config unset [--global | --repo | --branch <b>] <path>
   sd config show  [--no-branch] [<branch>]
+  sd config explain [--no-branch] [--json] [<path> [<branch>]]
   sd config files [--no-branch] [<branch>]
   sd config init  --global [--force]
   sd config init  [--force] [<branch>]
@@ -27,6 +28,8 @@ Examples:
   sd config set --json settings.botLogin '["marge"]'
   sd config unset steps.address.harness            inherit it again
   sd config show                                   everything, merged
+  sd config explain                                every key, its layer, each step's harness
+  sd config explain settings.verify                one key (or a section, e.g. steps.address)
   sd config files                                  where the files are
 
 Layers (top wins; sd config files prints the paths):
@@ -68,6 +71,12 @@ Notes:
     on the fork with sd config set --repo settings.remote fork
   - set values are strings; --json takes a number, list, object or null
   - step: the harness's block, with the step's block for it laid over it
+  - explain: each key (all the typed tables define; <path> picks one key or
+    a section) with its value and the layer it came from, marking the lower
+    layers and defaults it overrides; a null hides the layers below it. Then,
+    for no <path> or one under harness, harnesses or steps, each step's
+    harness, model and effort as step resolves them. --json: {keys, steps};
+    "" as <path> to name a <branch> for every key
 "#;
 
 fn defaults() -> Value {
@@ -382,6 +391,12 @@ fn checked(doc: &Value, kind: Layer, file: &str) -> Res<()> {
 /// The global file with the repo file and then the branch file merged over
 /// it, nulls kept.
 fn files(dir: &str, b: &str, no_branch: bool) -> Res<Value> {
+    let [g, r, bj] = layer_docs(dir, b, no_branch)?;
+    Ok(merge(&[&g, &r, &bj], false))
+}
+
+/// The global, repo and branch files as written, each {} when missing.
+fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<[Value; 3]> {
     let b = match (no_branch, b) {
         (true, _) => String::new(),
         (false, "") => git::current_branch(dir).unwrap_or_default(),
@@ -393,7 +408,7 @@ fn files(dir: &str, b: &str, no_branch: bool) -> Res<Value> {
         None => json!({}),
     };
     let bj = if b.is_empty() { json!({}) } else { layer(&branch_file(dir, &b)?, Some(Layer::Branch))? };
-    Ok(merge(&[&g, &r, &bj], false))
+    Ok([g, r, bj])
 }
 
 fn with_defaults(files: &Value) -> Value {
@@ -469,6 +484,153 @@ fn show(b: &str, no_branch: bool) -> Res<String> {
     Ok(serde_json::to_string_pretty(&all).expect("a Value serializes") + "\n")
 }
 
+/// Every key the typed tables define, as dotted paths in table order.
+fn key_paths(ty: Ty, prefix: &str, out: &mut Vec<String>) {
+    let fields = match ty {
+        Ty::Obj(fields) => fields.to_vec(),
+        Ty::Settings => [SETTINGS, GLOBAL_OR_REPO, GLOBAL_ONLY].concat(),
+        _ => {
+            out.push(prefix.to_string());
+            return;
+        }
+    };
+    for (k, t) in fields {
+        let p = if prefix.is_empty() { k.to_string() } else { format!("{prefix}.{k}") };
+        key_paths(t, &p, out);
+    }
+}
+
+/// What <doc> holds at <path>: nothing, a null (which hides lower layers), or
+/// a value.
+enum Probe<'a> {
+    Absent,
+    Null,
+    Set(&'a Value),
+}
+
+fn probe<'a>(doc: &'a Value, path: &[&str]) -> Probe<'a> {
+    let mut cur = doc;
+    for seg in path {
+        match cur.as_object().and_then(|m| m.get(*seg)) {
+            Some(Value::Null) => return Probe::Null,
+            Some(next) => cur = next,
+            None => return Probe::Absent,
+        }
+    }
+    Probe::Set(cur)
+}
+
+/// The effective value at <path>, the layer it came from, and the lower
+/// layers it hides. <layers> run top to bottom; a null hides everything below
+/// it, so the default shows.
+fn trace(layers: &[(&'static str, &Value)], dflt: &Value, path: &[&str]) -> (Option<Value>, &'static str, Vec<&'static str>) {
+    let mut won: Option<(&'static str, Value)> = None;
+    let mut cut = false;
+    let mut hidden = Vec::new();
+    for (name, doc) in layers {
+        match probe(doc, path) {
+            Probe::Set(v) if won.is_none() && !cut => won = Some((*name, v.clone())),
+            Probe::Set(_) => hidden.push(*name),
+            Probe::Null if won.is_none() => cut = true,
+            _ => {}
+        }
+    }
+    let default = match probe(dflt, path) {
+        Probe::Set(v) => Some(v.clone()),
+        _ => None,
+    };
+    match (won, default) {
+        (Some((name, v)), d) => {
+            if d.is_some() {
+                hidden.push("defaults");
+            }
+            (Some(v), name, hidden)
+        }
+        (None, Some(d)) => (Some(d), "defaults", hidden),
+        (None, None) => (None, "unset", hidden),
+    }
+}
+
+fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
+    let mut keys = Vec::new();
+    key_paths(Ty::Obj(CONFIG), "", &mut keys);
+    if !path.is_empty() {
+        segments(path)?;
+        keys.retain(|k| k == path || k.starts_with(&format!("{path}.")));
+        if keys.is_empty() {
+            return err(format!("unknown key: {path}"));
+        }
+    }
+    let [g, r, bj] = layer_docs(dir, b, no_branch)?;
+    let dflt = defaults();
+    let layers = [("branch", &bj), ("repo", &r), ("global", &g)];
+    let traced: Vec<_> = keys
+        .iter()
+        .map(|k| {
+            let segs: Vec<&str> = k.split('.').collect();
+            (k.as_str(), trace(&layers, &dflt, &segs))
+        })
+        .collect();
+
+    let root = path.split('.').next().unwrap_or("");
+    let with_steps = path.is_empty() || ["harness", "harnesses", "steps"].contains(&root);
+    let merged = merge(&[&g, &r, &bj], false);
+    let steps: Vec<(&str, Value)> =
+        if with_steps { STEPS.iter().map(|s| (*s, resolve_step(&merged, s, "").0)).collect() } else { vec![] };
+
+    if as_json {
+        let ks: Vec<Value> = traced
+            .iter()
+            .map(|(k, (v, src, over))| json!({"path": k, "value": v, "source": src, "overrides": over}))
+            .collect();
+        let mut out = json!({ "keys": ks });
+        if with_steps {
+            let field = |v: &Value, f: &str| v.get(f).cloned().unwrap_or(Value::Null);
+            out["steps"] = Value::Object(
+                steps
+                    .iter()
+                    .map(|(s, v)| {
+                        let row = json!({"harness": field(v, "harness"), "model": field(v, "model"), "effort": field(v, "effort")});
+                        (s.to_string(), row)
+                    })
+                    .collect(),
+            );
+        }
+        return Ok(out.to_string() + "\n");
+    }
+
+    let mut out = String::new();
+    for (k, (v, src, over)) in &traced {
+        let Some(v) = v else {
+            out += &format!("{k} (unset)\n");
+            continue;
+        };
+        let shown = match v {
+            Value::String(s) if s.is_empty() => "\"\"".to_string(),
+            v => line(v),
+        };
+        let hides = if over.is_empty() { String::new() } else { format!("; overrides {}", over.join(", ")) };
+        out += &format!("{k} = {shown}  [{src}{hides}]\n");
+    }
+    if with_steps {
+        let cell = |v: &Value, f: &str| v.get(f).map_or("-".to_string(), line);
+        let rows: Vec<[String; 4]> = steps
+            .iter()
+            .map(|(s, v)| [s.to_string(), cell(v, "harness"), cell(v, "model"), cell(v, "effort")])
+            .collect();
+        let head = ["step", "harness", "model", "effort"].map(String::from);
+        let width: Vec<usize> =
+            (0..4).map(|i| rows.iter().chain([&head]).map(|r| r[i].chars().count()).max().unwrap_or(0)).collect();
+        out += "\n";
+        for row in [&head].into_iter().chain(rows.iter()) {
+            let cells: Vec<String> = row.iter().zip(width.iter().copied()).map(|(c, w)| format!("{c:<w$}")).collect();
+            out += cells.join("  ").trim_end();
+            out += "\n";
+        }
+    }
+    Ok(out)
+}
+
 fn paths(b: &str, no_branch: bool) -> Res<String> {
     let path_line = |kind: &str, f: &str| {
         let missing = if Path::new(f).exists() { "" } else { "  (missing)" };
@@ -510,8 +672,15 @@ fn step_block(name: &str, b: &str, forced: &str) -> Res<Value> {
     if !forced.is_empty() && !HARNESSES.contains(&forced) {
         return err(format!("unknown harness: {forced} ({})", HARNESSES.join(" ")));
     }
-    let f = files(".", b, false)?;
-    let at = |path: &[&str]| lookup(&f, path).cloned();
+    let (out, hb, sb) = resolve_step(&files(".", b, false)?, name, forced);
+    warn_inherited_effort(name, out["harness"].as_str().unwrap_or(""), &hb, &sb);
+    Ok(out)
+}
+
+/// A step's resolved view from the merged files, and the two blocks it
+/// came from.
+fn resolve_step(f: &Value, name: &str, forced: &str) -> (Value, Value, Value) {
+    let at = |path: &[&str]| lookup(f, path).cloned();
     let harness = if forced.is_empty() {
         [at(&["steps", name, "harness"]), at(&["harness"])]
             .into_iter()
@@ -523,8 +692,6 @@ fn step_block(name: &str, b: &str, forced: &str) -> Res<Value> {
     };
     let hb = at(&["harnesses", &harness]).unwrap_or(Value::Null);
     let sb = at(&["steps", name, &harness]).unwrap_or(Value::Null);
-    warn_inherited_effort(name, &harness, &hb, &sb);
-
     let mut out = Map::new();
     out.insert("harness".into(), Value::String(harness));
     for block in [&hb, &sb] {
@@ -535,7 +702,7 @@ fn step_block(name: &str, b: &str, forced: &str) -> Res<Value> {
         }
     }
     out.retain(|_, v| !v.is_null());
-    Ok(Value::Object(out))
+    (Value::Object(out), hb, sb)
 }
 
 /// Effort level names depend on the model. A step block that writes effort,
@@ -677,6 +844,7 @@ fn cli(argv: &[String]) -> Res<String> {
         "-h" | "--help" => return Ok(HELP.into()),
         "get" => &["--no-branch", "--json"],
         "files" | "show" => &["--no-branch"],
+        "explain" => &["--no-branch", "--json"],
         "step" => &["--harness"],
         "init" => &["--force", "--global"],
         "set" => &["--global", "--repo", "--branch", "--json"],
@@ -721,6 +889,12 @@ fn cli(argv: &[String]) -> Res<String> {
                 needs(verb, "<path> [<branch>]");
             }
             get(".", arg(0), arg(1), has("--no-branch"), has("--json"))
+        }
+        "explain" => {
+            if n > 2 {
+                needs(verb, "at most a <path> and a <branch>");
+            }
+            explain(".", arg(0), arg(1), has("--no-branch"), has("--json"))
         }
         "files" | "show" => {
             if n > 1 {
