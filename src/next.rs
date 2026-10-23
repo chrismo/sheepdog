@@ -207,12 +207,16 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         None
     };
     let hold = budget.or_else(|| {
-        (n("failed.count") >= FAIL_LIMIT).then(|| {
-            json!({"key": "failed", "who": "you", "cmd": rerun(&t("failed.step")), "say": format!(
+        if n("failed.count") < FAIL_LIMIT {
+            return None;
+        }
+        step("failed", "you",
+            format!(
                 "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it",
                 t("failed.count"), t("failed.harness"), t("failed.step"), t("failed.at"), t("failed.error")
-            )})
-        })
+            ),
+            rerun(&t("failed.step")),
+        )
     });
     let hold = &hold;
 
