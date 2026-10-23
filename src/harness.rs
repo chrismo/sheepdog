@@ -188,11 +188,10 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
             eprintln!("{}", tail(said, 20));
         }
     }
-    if !b.is_empty() {
-        match &result {
-            Ok(rs) if !rs.is_empty() => failed::clear(b),
-            _ => failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status)),
-        }
+    if !b.is_empty() && result.is_ok() {
+        failed::clear(b);
+    } else if !b.is_empty() {
+        failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status));
     }
     result
 }

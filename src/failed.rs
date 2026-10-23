@@ -23,7 +23,7 @@ fn counted(prev: Option<&Value>, step: &str, harness: &str, now: &str, error: &s
 pub fn why(timed_out: bool, said: &str, stderr: &str, status: i32) -> String {
     let last = |s: &str| s.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(str::to_string);
     let line = if timed_out { last(stderr) } else { last(said).or_else(|| last(stderr)) };
-    let line = line.unwrap_or_else(|| if status == 0 { "no usable result".into() } else { format!("exit {status}") });
+    let line = line.unwrap_or_else(|| format!("exit {status}"));
     line.chars().take(200).collect()
 }
 
@@ -61,7 +61,6 @@ mod tests {
         assert_eq!(why(false, "API Error: 529\n\n", "noise\n", 1), "API Error: 529");
         assert_eq!(why(false, " \n", "first\n  pi: no quota  \n\n", 1), "pi: no quota");
         assert_eq!(why(false, "", "", 2), "exit 2");
-        assert_eq!(why(false, "", "", 0), "no usable result");
         assert_eq!(why(false, &"x".repeat(300), "", 1).len(), 200);
     }
 }
