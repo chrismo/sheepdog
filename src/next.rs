@@ -54,6 +54,11 @@
 // After FAIL_LIMIT agent steps failed in a row (failed, #242), the agent
 // steps go to chrismo the same way.
 //
+// A followed PR (mode reviewer, sd act follow, #250) is a teammate's: none of
+// the author's steps, only its own list (reviewer below). The author's pushes
+// are fetched before anything else; the agent reviews HEAD; then the review
+// is chrismo's to submit on GitHub, and once it's of HEAD the author's turn.
+//
 // Field reads follow the SuperDB query this replaced (src/val.rs), and an
 // equality holds only between two present values.
 
@@ -268,6 +273,13 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             format!("agent: {} running since {}", t("session.running.step"), t("session.running.since")),
             None,
         )]
+    } else if is("mode", "reviewer") {
+        let again = match &last_review {
+            Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
+            None if reviewed => "review again: the PR was rewritten since the last review".into(),
+            None => "review the PR's change".into(),
+        };
+        reviewer(s, hold, again)
     } else {
         vec![
             if is("pr.state", "MERGED") {
@@ -710,6 +722,100 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         out.pop();
     }
     Ok(Value::Array(out))
+}
+
+/// A followed PR's steps (#250).
+fn reviewer(s: &Value, budget: &Option<Value>, again: String) -> Vec<Option<Value>> {
+    let g = |p: &str| at(s, p);
+    let on = |p: &str| val::on(s, p);
+    let n = |p: &str| val::n(s, p);
+    let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
+    let covers = |p: &str| g(p).get("status").and_then(Value::as_str).is_some_and(|x| matches!(x, "covered" | "rewritten-same"));
+    let open = is_null(s, "pr") || is("pr.state", "OPEN");
+    // Commits the PR's head doesn't have, with nothing new from the author:
+    // chrismo's (sd act fetch refuses them).
+    let yours = open && n("push.ahead") > 0.0 && n("push.behind") == 0.0;
+    let dirty = open && on("push.dirty");
+    let pushed = n("push.behind") > 0.0 || sj(g("stale"), "\n").contains("PR #");
+    let fetch = open && !yours && !dirty && (g("fresh") == &Value::Bool(false) || pushed);
+    let current = open && !yours && !fetch;
+    let submitted = on("review.github.at_head");
+    let local = covers("review.local") || covers("review.accepted") || on("review.findings.at_head");
+    vec![
+        if is("pr.state", "MERGED") {
+            step("merged", "run",
+                "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
+                cmd("sd act forget --remove"),
+            )
+        } else {
+            None
+        },
+        if is("pr.state", "CLOSED") {
+            step("closed", "you", "PR closed without merging: forget the branch", cmd("sd act forget --remove"))
+        } else {
+            None
+        },
+        if open && len(g("errors")) > 0 {
+            step("errors", "you",
+                format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
+                cmd("sd state --json"),
+            )
+        } else {
+            None
+        },
+        if yours {
+            step("yours", "you",
+                format!(
+                    "{} has {} the PR doesn't: move {} to a branch of your own; review and fetch wait",
+                    val::t(s, "branch"),
+                    plural(g("push.ahead"), "commit"),
+                    if n("push.ahead") == 1.0 { "it" } else { "them" }
+                ),
+                None,
+            )
+        } else {
+            None
+        },
+        if dirty {
+            step("dirty", "you",
+                "the worktree has uncommitted changes, which review and fetch refuse: discard them (git reset --hard; git clean for untracked files)",
+                cmd("git status"),
+            )
+        } else {
+            None
+        },
+        if fetch {
+            let say = if pushed { "the author pushed: take it" } else { "fetch: GitHub is ahead of your remote refs" };
+            step("fetch", "run", say, cmd("sd act fetch"))
+        } else {
+            None
+        },
+        if current && !dirty && !submitted && !local {
+            agent(budget, "review", again, "sd act review")
+        } else {
+            None
+        },
+        if current && !submitted && local {
+            let say = if on("review.github.pending") {
+                "finish your pending review on GitHub".to_string()
+            } else if on("review.findings.at_head") && n("review.findings.n") > 0.0 {
+                format!("{} at HEAD (sd state --long): put them in your review on GitHub", plural(g("review.findings.n"), "review finding"))
+            } else {
+                "the reviewer found nothing at HEAD: approve or comment on GitHub".to_string()
+            };
+            step("submit", "you", say, cmd(format!("gh pr view {} --web", text(g("pr.number")))))
+        } else {
+            None
+        },
+        if current && submitted {
+            step("author-wait", "wait",
+                format!("you reviewed HEAD ({}): waiting on the author", val::t(s, "review.github.state").to_lowercase().replace('_', " ")),
+                None,
+            )
+        } else {
+            None
+        },
+    ]
 }
 
 fn minutes(w: &Value) -> String {

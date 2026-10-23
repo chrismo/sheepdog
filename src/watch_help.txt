@@ -61,6 +61,9 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     chrismo's, so those aren't notified
   read: ❌ info-only bot items, shown once nothing else moves without
     chrismo: unnotified, an unattended loop stalls there unseen (#76)
+  submit yours: ❌ a followed PR (sd act follow, #250) is chrismo's turn:
+    the review of HEAD is theirs to submit on GitHub, or the branch has
+    commits the PR doesn't
 Not notified:
   closed: chrismo closed it
   errors stale gh-wait: ⚠️ sd state can't be sure, so what was notified
@@ -80,6 +83,8 @@ Not notified:
     (behind with no old base is chrismo's, but its errors step shows ⚠️ first)
   ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub
     recomputing after the base moved) keeps ready notified
+  fetch author-wait: a followed PR's (#250): the author pushed, mechanical
+    to take; or chrismo's review of HEAD is in, and it's the author's turn
 A notification that fails is tried once more, on the next pass that still
 shows its step, then given up on.
 

@@ -1188,3 +1188,116 @@ fn dirty_no_step_while_the_question_stands_the_edits_are_the_agent_s_the_worktre
     assert_eq!(keys(&e![r#".ci.verdict = "pending""#, ".push.dirty = true"]), "ci-wait");
 }
 
+
+// ── reviewer mode: a teammate's PR, followed (#250) ──────────────────────────
+
+/// A followed PR at its head, reviewed by no one yet.
+const REVIEWING: &[&str] = &[
+    r#".mode = "reviewer""#,
+    r#".branch = "review/7""#,
+    ".push.remote_ours = null",
+    r#".review.local = {sha: null, status: "none"}"#,
+    ".review.github = null",
+];
+
+const REVIEWED_LOCALLY: &str = r#".review.local = {sha: "h1", status: "covered"}"#;
+
+#[test]
+fn reviewer_mode_unreviewed_the_agent_reviews_the_prs_change() {
+    assert_eq!(keys(&e![REVIEWING]), "review");
+    assert_eq!(step("review", "who", &e![REVIEWING]), "agent");
+    assert_eq!(step("review", "say", &e![REVIEWING]), "review the PR's change");
+    assert_eq!(step("review", "cmd", &e![REVIEWING]), "sd act review");
+}
+
+#[test]
+fn reviewer_mode_reviewed_here_chrismo_submits_on_github() {
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY]), "submit");
+    assert_eq!(step("submit", "who", &e![REVIEWING, REVIEWED_LOCALLY]), "you");
+    assert_eq!(step("submit", "say", &e![REVIEWING, REVIEWED_LOCALLY]), "the reviewer found nothing at HEAD: approve or comment on GitHub");
+    assert_eq!(step("submit", "cmd", &e![REVIEWING, REVIEWED_LOCALLY]), "gh pr view 7 --web");
+}
+
+#[test]
+fn reviewer_mode_findings_at_head_go_in_chrismos_review_never_a_fix_round() {
+    let f = r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}"#;
+    assert_eq!(keys(&e![REVIEWING, f]), "submit");
+    assert_eq!(step("submit", "say", &e![REVIEWING, f]), "2 review findings at HEAD (sd state --long): put them in your review on GitHub");
+}
+
+#[test]
+fn reviewer_mode_a_pending_review_on_github_is_chrismos_to_finish() {
+    let p = r#".review.github = {sha: null, state: null, at_head: false, pending: true}"#;
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY, p]), "submit");
+    assert_eq!(step("submit", "say", &e![REVIEWING, REVIEWED_LOCALLY, p]), "finish your pending review on GitHub");
+}
+
+#[test]
+fn reviewer_mode_submitted_on_head_waits_on_the_author() {
+    let g = r#".review.github = {sha: "h1", state: "COMMENTED", at_head: true, pending: false}"#;
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY, g]), "author-wait");
+    assert_eq!(step("author-wait", "who", &e![REVIEWING, REVIEWED_LOCALLY, g]), "wait");
+    assert_eq!(step("author-wait", "say", &e![REVIEWING, REVIEWED_LOCALLY, g]), "you reviewed HEAD (commented): waiting on the author");
+    // Submitted with no local review: chrismo's review stands; no agent step.
+    assert_eq!(keys(&e![REVIEWING, g]), "author-wait");
+}
+
+#[test]
+fn reviewer_mode_the_author_pushed_fetch_it_before_reviewing() {
+    let stale = e![".fresh = false", r#".stale = ["PR #7's head is not at GitHub's abc1234"]"#];
+    assert_eq!(keys(&e![REVIEWING, &stale]), "fetch");
+    assert_eq!(step("fetch", "who", &e![REVIEWING, &stale]), "run");
+    assert_eq!(step("fetch", "say", &e![REVIEWING, &stale]), "the author pushed: take it");
+    assert_eq!(step("fetch", "cmd", &e![REVIEWING, &stale]), "sd act fetch");
+    assert_eq!(keys(&e![REVIEWING, ".push.behind = 2"]), "fetch");
+    assert_eq!(keys(&e![REVIEWING, ".push.behind = 1 | .push.ahead = 1 | .push.diverged = true"]), "fetch");
+}
+
+#[test]
+fn reviewer_mode_after_the_author_pushes_review_again() {
+    let again = e![r#".review.local = {sha: "h0", status: "uncovered", uncovered: 2}"#, r#".review.github = {sha: "h0", state: "CHANGES_REQUESTED", at_head: false, pending: false}"#];
+    assert_eq!(keys(&e![REVIEWING, &again]), "review");
+    assert_eq!(step("review", "say", &e![REVIEWING, &again]), "review again: 2 commits since the last review");
+}
+
+#[test]
+fn reviewer_mode_uncommitted_changes_block_review_and_fetch() {
+    let dirty = ".push.dirty = true";
+    assert_eq!(keys(&e![REVIEWING, dirty]), "dirty");
+    assert_eq!(step("dirty", "who", &e![REVIEWING, dirty]), "you");
+    assert_eq!(keys(&e![REVIEWING, dirty, ".push.behind = 1"]), "dirty");
+}
+
+#[test]
+fn reviewer_mode_commits_the_pr_doesnt_have_are_chrismos_to_move() {
+    let mine = ".push.ahead = 1";
+    assert_eq!(keys(&e![REVIEWING, mine]), "yours");
+    assert_eq!(step("yours", "say", &e![REVIEWING, mine]), "review/7 has 1 commit the PR doesn't: move it to a branch of your own; review and fetch wait");
+}
+
+#[test]
+fn reviewer_mode_merged_or_closed_forget_the_branch() {
+    assert_eq!(keys(&e![REVIEWING, r#".pr.state = "MERGED""#]), "merged");
+    assert_eq!(step("merged", "cmd", &e![REVIEWING, r#".pr.state = "MERGED""#]), "sd act forget --remove");
+    assert_eq!(keys(&e![REVIEWING, r#".pr.state = "CLOSED""#]), "closed");
+    assert_eq!(step("closed", "cmd", &e![REVIEWING, r#".pr.state = "CLOSED""#]), "sd act forget --remove");
+}
+
+#[test]
+fn reviewer_mode_errors_are_listed_first() {
+    assert_eq!(keys(&e![REVIEWING, r#".errors = ["gh (review/7): GitHub has no PR #7"]"#]), "errors review");
+}
+
+#[test]
+fn reviewer_mode_never_offers_the_authors_steps() {
+    let authors = e![
+        r#".ci.verdict = "red" | .ci.failing = ["test"]"#,
+        ".sync.up_to_date = false | .sync.behind = 3",
+        r#".pr.merge_state = "BEHIND" | .pr.draft = true"#,
+        ".threads.owed_bot = 2 | .threads.owed_human = 1",
+        r#".bot.command = "@bot review""#,
+        r#".task = "a task""#,
+    ];
+    assert_eq!(keys(&e![REVIEWING, &authors]), "review");
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY, &authors]), "submit");
+}

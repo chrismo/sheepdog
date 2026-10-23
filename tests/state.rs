@@ -4138,3 +4138,155 @@ fn summary_a_merged_pr_whose_remote_branch_is_gone_counts_nothing_unpushed_153()
     assert_lacks(r.lines()[0], "unpushed");
     assert_lacks(r.lines()[0], "not pushed");
 }
+
+// ── reviewer mode: a teammate's PR, followed by number (#250) ────────────────
+
+impl Sd {
+    /// The teammate commits <msg> on their-fix in other and pushes it as PR
+    /// #7's head ref alone, as a fork's PR has it; its SHA.
+    fn author_pushes(&self, msg: &str) -> String {
+        if self.git_status(&["-C", &self.path("other"), "switch", "-q", "their-fix"]) != 0 {
+            self.git_in("other", &["switch", "-qc", "their-fix"]);
+        }
+        self.git_in("other", &["commit", "-q", "--allow-empty", "-m", msg]);
+        self.git_in("other", &["push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"]);
+        self.git_in("other", &["rev-parse", "HEAD"])
+    }
+
+    /// The PR's head fetched to refs/sheepdog/review/7/pr-head, as sd act follow
+    /// and fetch do.
+    fn fetch_pr_head(&self) {
+        self.git(&["fetch", "-q", "origin", "+refs/pull/7/head:refs/sheepdog/review/7/pr-head"]);
+    }
+
+    /// sd act follow 7, by hand: review/7 at the PR's head, checked out here,
+    /// its number and reviewer mode recorded; GitHub has PR #7 at that head,
+    /// from a fork's their-fix.
+    fn following(&self, assigns: &[&str]) {
+        self.author_pushes("their fix");
+        self.fetch_pr_head();
+        self.git(&["switch", "-qc", "review/7", "refs/sheepdog/review/7/pr-head"]);
+        self.git(&["config", "branch.review/7.sd-pr", "7"]);
+        self.git(&["config", "branch.review/7.sd-mode", "reviewer"]);
+        let all = [&[r#".headRefName = "their-fix""#, ".isCrossRepository = true"][..], assigns].concat();
+        self.pr_fixture("review/7", &all);
+    }
+}
+
+/// A submitted review of <commit> by <login>, as GitHub lists one.
+fn review_of(id: &str, login: &str, state: &str, commit: &str) -> String {
+    format!(r#"{{id: "{id}", url: "u", state: "{state}", body: "", commit: {{oid: "{commit}"}}, author: {{__typename: "User", login: "{login}"}}}}"#)
+}
+
+#[test]
+fn reviewer_mode_the_pr_is_its_stored_number_alone_whatever_its_head_is_called() {
+    let sd = sd();
+    sd.following(&[]);
+    let r = sd.state(&[]);
+    assert_eq!(sd.calls(), "#7 ");
+    assert_eq!(r.field(".mode"), "reviewer");
+    assert_eq!(r.field(".pr.number"), "7");
+    assert_eq!(r.field(".errors | length"), "0", "{}", r.errors());
+    assert_eq!(sd.git(&["config", "branch.review/7.sd-pr"]), "7");
+}
+
+#[test]
+fn reviewer_mode_a_number_github_cant_resolve_is_an_error_not_a_discovery() {
+    let sd = sd();
+    sd.following(&[]);
+    sd.git(&["config", "branch.review/7.sd-pr", "42"]);
+    let r = sd.state(&[]);
+    assert_eq!(sd.calls(), "#42 ");
+    assert_eq!(r.field(".pr"), "null");
+    assert_has(&r.errors(), &["GitHub has no PR #42"]);
+    assert_eq!(sd.git(&["config", "branch.review/7.sd-pr"]), "42");
+}
+
+#[test]
+fn reviewer_mode_the_remote_is_the_prs_head_ref_not_a_remote_branch() {
+    let sd = sd();
+    sd.following(&[]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".push.remote_sha"), sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]));
+    assert_eq!(r.field_c("[.push.ahead, .push.behind, .push.remote_ours, .push.theirs]"), "[0,0,null,null]");
+    assert_eq!(r.field(".fresh"), "true");
+}
+
+#[test]
+fn reviewer_mode_the_author_pushed_github_is_ahead_of_the_head_ref() {
+    let sd = sd();
+    sd.following(&[]);
+    let theirs = sd.author_pushes("more");
+    sd.edit_fixture("review/7", &format!(r#".data.repository.pullRequests.nodes[0].headRefOid = "{theirs}""#));
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".fresh"), "false");
+    assert_has(&r.field(".stale[]"), &[&format!("PR #7's head is not at GitHub's {}", &theirs[..7])]);
+    sd.fetch_pr_head();
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".fresh"), "true");
+    assert_eq!(r.field_c("[.push.ahead, .push.behind]"), "[0,1]");
+}
+
+#[test]
+fn reviewer_mode_a_force_push_is_behind_and_ahead_never_foreign() {
+    let sd = sd();
+    sd.following(&[]);
+    sd.git_in("other", &["commit", "-q", "--amend", "--allow-empty", "-m", "their fix, amended"]);
+    sd.git_in("other", &["push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"]);
+    let theirs = sd.git_in("other", &["rev-parse", "HEAD"]);
+    sd.edit_fixture("review/7", &format!(r#".data.repository.pullRequests.nodes[0].headRefOid = "{theirs}""#));
+    sd.fetch_pr_head();
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c("[.push.ahead, .push.behind, .push.diverged, .push.remote_ours]"), "[1,1,true,null]");
+    assert_lacks(&r.keys(), "foreign");
+}
+
+#[test]
+fn reviewer_mode_github_review_is_the_viewers_last_submitted_one_and_whether_its_of_head() {
+    let sd = sd();
+    sd.following(&[]);
+    let head = sd.git(&["rev-parse", "HEAD"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".review.github"), "null");
+    let reviews = [
+        review_of("r1", "me", "CHANGES_REQUESTED", "0123456"),
+        review_of("r2", "someone", "APPROVED", &head),
+        review_of("r3", "me", "COMMENTED", &head),
+        review_of("r4", "me", "PENDING", &head),
+    ]
+    .join(", ");
+    sd.edit_fixture("review/7", &format!(".data.repository.pullRequests.nodes[0].reviews.nodes = [{reviews}]"));
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c(".review.github"), format!(r#"{{"sha":"{head}","state":"COMMENTED","at_head":true,"pending":true}}"#));
+    sd.edit_fixture("review/7", ".data.repository.pullRequests.nodes[0].reviews.nodes |= .[:1]");
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c(".review.github"), r#"{"sha":"0123456","state":"CHANGES_REQUESTED","at_head":false,"pending":false}"#);
+}
+
+#[test]
+fn an_authors_branch_has_no_mode_and_no_github_review() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("a.txt", "a");
+    sd.pr_fixture("feat", &[]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c("[.mode, .review.github]"), "[null,null]");
+}
+
+#[test]
+fn reviewer_mode_summary_says_reviewing_and_counts_the_authors_pushes_as_theirs() {
+    let sd = sd();
+    sd.following(&[]);
+    let r = sd.run(&[]);
+    assert!(r.lines()[0].starts_with("https://example/pr/7 open · reviewing"), "{}", r.output);
+    let theirs = sd.author_pushes("more");
+    sd.edit_fixture("review/7", &format!(r#".data.repository.pullRequests.nodes[0].headRefOid = "{theirs}""#));
+    sd.fetch_pr_head();
+    let r = sd.run(&[]);
+    assert_has(r.lines()[0], &["author +1"]);
+    assert_lacks(r.lines()[0], "remote +");
+    sd.git(&["commit", "-q", "--amend", "--allow-empty", "-m", "mine"]);
+    let r = sd.run(&[]);
+    assert_has(r.lines()[0], &["diverged from the PR's head"]);
+    assert_lacks(r.lines()[0], "not ours");
+}
