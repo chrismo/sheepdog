@@ -451,6 +451,40 @@ fn harness_run_a_failed_step_is_logged_with_its_status_and_pis_record_has_no_cos
     );
 }
 
+#[test]
+fn harness_run_a_failed_step_adds_to_the_branchs_failure_record_and_one_that_succeeds_removes_it_242() {
+    let sd = sd();
+    let rec = || -> Value { serde_json::from_str(&sd.git(&["cat-file", "blob", "refs/sheepdog/feat/failed"])).unwrap() };
+    sd.fx("status", "1");
+    sd.fx("out", r#"{"type": "result", "is_error": true, "result": "API Error: 529 overloaded"}"#);
+    sd.step(&[("HARNESS_STEP", "implement")], &STEP);
+    let first = rec();
+    assert_eq!((&first["step"], &first["harness"], &first["count"]), (&json!("implement"), &json!("claude"), &json!(1)));
+    assert_eq!(first["error"], "API Error: 529 overloaded");
+    assert_eq!(first["since"], first["at"]);
+    sd.fx("out", "");
+    sd.step(&[("HARNESS_STEP", "review")], &["pi", "sid2", "new", "30", "do it", "{}"]);
+    let second = rec();
+    assert_eq!((&second["step"], &second["harness"], &second["count"]), (&json!("review"), &json!("pi"), &json!(2)));
+    // pi said nothing on stdout: its stderr's last line
+    assert_eq!(second["error"], r#"{"type":"system","subtype":"init","session_id":"x"}"#);
+    assert_eq!(second["since"], first["since"]);
+    sd.fx_rm("status");
+    sd.fx("out", r#"{"type": "result", "is_error": false, "structured_output": {"ok": true}}"#);
+    let r = sd.step(&[("HARNESS_STEP", "implement")], &STEP);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/failed"]), None);
+}
+
+#[test]
+fn harness_run_a_timed_out_step_records_the_timeout_242() {
+    let sd = sd();
+    sd.fx("hold", "");
+    sd.step(&[("HARNESS_STEP", "implement")], &["claude", "sid1", "new", "1", "do it", "{}"]);
+    let rec: Value = serde_json::from_str(&sd.git(&["cat-file", "blob", "refs/sheepdog/feat/failed"])).unwrap();
+    assert_eq!(rec["error"], "timed out after 1s");
+}
+
 // @test "harness_run: while the step runs, the branch's marker names the step, a live pid and the start time; gone after (#170)"
 #[test]
 fn harness_run_while_the_step_runs_the_branchs_marker_names_the_step_a_live_pid_and_the_start_time_gone_after_170() {

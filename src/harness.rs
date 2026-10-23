@@ -6,7 +6,7 @@
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
-use crate::{config, json, proc, running, time, usage};
+use crate::{config, failed, json, proc, running, time, usage};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
@@ -174,12 +174,21 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         b: &before,
     }));
 
+    let said = if status != 0 { said(h, &out.stdout, &cap_note, spent) } else { String::new() };
     if status != 0 {
         eprint!("{}", tail(&out.stderr, 40));
-        let said = said(h, &out.stdout, &cap_note, spent);
         let said = said.trim_end_matches('\n');
         if !said.is_empty() {
             eprintln!("{}", tail(said, 20));
+        }
+    }
+    if !b.is_empty() {
+        match &result {
+            Ok(rs) if !rs.is_empty() => failed::clear(b),
+            _ => {
+                let name = if s.name.is_empty() { "agent" } else { s.name };
+                failed::record(b, name, h, &failed::why(out.timed_out, &said, &out.stderr, status));
+            }
         }
     }
     result

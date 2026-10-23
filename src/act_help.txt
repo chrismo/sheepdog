@@ -248,7 +248,8 @@ restack options:
 address options:
   --no-publish    stop after the local commit (the agent still runs: tokens);
                   also ci-fix
-  --harness <h>   claude (default) or pi; remembered for the branch (also
+  --harness <h>   claude (default) or pi; remembered for the branch once a
+                  step succeeds, by start before its first step (also
                   start, implement)
 
 Config (sd config show):

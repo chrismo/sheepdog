@@ -479,6 +479,29 @@ fn past_settings_branchbudget_open_pr_is_chrismo_s_too_since_ship_may_describe_1
     assert_eq!(keys(&e![r#".spend = {"usd": 30, "budget": 25}"#, &nopr, r#".parent = {"name": "p", "source": "config", "merged": false, "local": true, "on_remote": false, "unpushed": true, "pr": null}"#, r#".sync = {"target": "p", "default": "main", "behind": null, "up_to_date": null, "conflict": null, "old_base": null}"#]), "ship-parent");
 }
 
+#[test]
+fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_run_steps_still_run_242() {
+    let failed = |n: u32, s: &str| format!(r#".failed = {{"step": "{s}", "harness": "pi", "count": {n}, "since": "T0", "at": "T1", "error": "no quota"}}"#);
+    let three = failed(3, "address");
+    assert_eq!(keys(&e![&three, r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#, ".threads.owed_bot = 2"]), "failed");
+    assert_eq!(step("failed", "who", &e![&three, ".threads.owed_bot = 2"]), "you");
+    assert_eq!(
+        step("failed", "say", &e![&three, ".threads.owed_bot = 2"]),
+        "3 agent steps failed in a row, the last pi address at T1: no quota; fix what fails, then rerun it"
+    );
+    assert_eq!(step("failed", "cmd", &e![&three, ".threads.owed_bot = 2"]), "sd act address");
+    assert_eq!(step("failed", "cmd", &e![&failed(3, "resolve"), ".threads.owed_bot = 2"]), "sd act restack --resolve");
+    // a restack ahead of the agent's steps, and a push after them, stay
+    assert_eq!(keys(&e![&three, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 2"]), "behind failed");
+    assert_eq!(keys(&e![&three, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "failed push");
+    // nothing that spends: no failed step
+    assert_eq!(keys(&e![&three]), "ready");
+    // fewer in a row: the loop retries
+    assert_eq!(keys(&e![&failed(2, "address"), ".threads.owed_bot = 2"]), "bot");
+    // past the budget too: the budget step stands in
+    assert_eq!(keys(&e![&three, r#".spend = {"usd": 30, "budget": 25}"#, ".threads.owed_bot = 2"]), "budget");
+}
+
 // @test "spend unknown (usage.sup unreadable) with a budget: held as if over it (#121)"
 #[test]
 fn spend_unknown_usage_sup_unreadable_with_a_budget_held_as_if_over_it_121() {

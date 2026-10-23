@@ -159,6 +159,20 @@ pub(crate) fn question_state(dir: &str, b: &str, head: &str) -> Result<Option<Va
     Ok(Some(json!({"step": step, "sha": h, "text": text, "at_head": at_head})))
 }
 
+/// The agent steps that failed in a row (#242, src/failed.rs): {step,
+/// harness, count, since, at, error}; None with no record, Err for one that
+/// isn't one.
+fn failed_state(dir: &str, b: &str) -> Result<Option<Value>, ()> {
+    let Some(rec) = blob_record(dir, &format!("refs/sheepdog/{b}/failed")) else { return Ok(None) };
+    let rec = rec?;
+    let s = |k: &str| rec.get(k).and_then(Value::as_str);
+    let (Some(step), Some(h), Some(since), Some(at), Some(error)) = (s("step"), s("harness"), s("since"), s("at"), s("error")) else {
+        return Err(());
+    };
+    let Some(count) = rec.get("count").and_then(Value::as_i64) else { return Err(()) };
+    Ok(Some(json!({"step": step, "harness": h, "count": count, "since": since, "at": at, "error": error})))
+}
+
 // ── GitHub ───────────────────────────────────────────────────────────────────
 
 struct Gh<'a> {
@@ -654,6 +668,7 @@ struct Facts {
     r_findings_at_head: bool,
     review_rounds: Value,
     question: Value,
+    failed: Value,
     flags: Value,
     flags_error: String,
     gh_ok: bool,
@@ -888,6 +903,7 @@ fn assemble(s: &Facts) -> Value {
                "required": s.required, "missing": mi},
         "review": {"local": s.r_local, "bot": bot_pin, "accepted": accepted, "findings": findings},
         "question": s.question,
+        "failed": s.failed,
         "flags": s.flags, "flags_error": jn(&s.flags_error),
         "threads": {"owed_bot": gh(json!(ob.len())),
                     "owed_human": gh(json!(owed.iter().filter(|o| o["kind"] == "human").count())),
@@ -1299,6 +1315,13 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
             Value::Null
         }
     };
+    let failed = match failed_state(dir, branch) {
+        Ok(f) => f.unwrap_or(Value::Null),
+        Err(()) => {
+            errors.push(format!("failed: refs/sheepdog/{branch}/failed isn't a failure record"));
+            Value::Null
+        }
+    };
     let pin = |k: &str| pin_status(dir, branch, k, &head, &target_ref, &old_base, stackless);
     let (r_local, r_bot, r_accepted) = (pin("local"), pin("bot"), pin("accepted"));
 
@@ -1378,6 +1401,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         r_findings_at_head,
         review_rounds,
         question,
+        failed,
         flags,
         flags_error,
         gh_ok,
@@ -1509,6 +1533,7 @@ fn summary(s: &Value) -> String {
             )
         }),
         on(s, "question.at_head").then(|| format!("? {} asks", t(s, "question.step"))),
+        (!at(s, "failed").is_null()).then(|| format!("✗ {} failed", t(s, "failed.count"))),
         if !flags.is_empty() {
             Some(format!("⚑ {} flagged", flags.len()))
         } else if at(s, "flags_error").is_null() {
@@ -1559,6 +1584,17 @@ fn long_lines(s: &Value) -> String {
         for l in t(s, "question.text").split('\n') {
             out.push_str(&format!("     {l}\n"));
         }
+    }
+    if !at(s, "failed").is_null() {
+        out.push_str(&format!(
+            "  ✗  {} agent step{} failed in a row, the last {} {} at {}: {}\n",
+            t(s, "failed.count"),
+            if n(s, "failed.count") == 1.0 { "" } else { "s" },
+            t(s, "failed.harness"),
+            t(s, "failed.step"),
+            t(s, "failed.at"),
+            t(s, "failed.error")
+        ));
     }
     out.push_str(&flag_lines(s));
     if !at(s, "flags_error").is_null() {

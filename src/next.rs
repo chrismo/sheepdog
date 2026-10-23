@@ -42,6 +42,9 @@
 // Not guarded: ship-parent, whose describe spends on the parent; this state
 // has only this branch's spend, so the parent's budget isn't checked here.
 //
+// After FAIL_LIMIT agent steps failed in a row (failed, #242), the agent
+// steps go to chrismo the same way.
+//
 // Field reads follow the SuperDB query this replaced (src/val.rs), and an
 // equality holds only between two present values.
 
@@ -63,16 +66,26 @@ fn step(key: &str, who: &str, say: impl Into<String>, cmd: Option<String>) -> Op
     Some(json!({"key": key, "who": who, "say": say.into(), "cmd": cmd}))
 }
 
-fn spends(budget: &Option<Value>, s: Option<Value>) -> Option<Value> {
-    if budget.is_some() {
-        budget.clone()
+fn spends(hold: &Option<Value>, s: Option<Value>) -> Option<Value> {
+    if hold.is_some() {
+        hold.clone()
     } else {
         s
     }
 }
 
-fn agent(budget: &Option<Value>, key: &str, say: impl Into<String>, cmd: &str) -> Option<Value> {
-    spends(budget, step(key, "agent", say, Some(cmd.into())))
+fn agent(hold: &Option<Value>, key: &str, say: impl Into<String>, cmd: &str) -> Option<Value> {
+    spends(hold, step(key, "agent", say, Some(cmd.into())))
+}
+
+pub const FAIL_LIMIT: f64 = 3.0;
+
+fn rerun(step: &str) -> Option<String> {
+    match step {
+        "resolve" => cmd("sd act restack --resolve"),
+        "implement" | "review" | "address" | "ci-fix" | "describe" => cmd(format!("sd act {step}")),
+        _ => None,
+    }
 }
 
 fn cmd(s: impl Into<String>) -> Option<String> {
@@ -193,7 +206,15 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     } else {
         None
     };
-    let budget = &budget;
+    let hold = budget.or_else(|| {
+        (n("failed.count") >= FAIL_LIMIT).then(|| {
+            json!({"key": "failed", "who": "you", "cmd": rerun(&t("failed.step")), "say": format!(
+                "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it",
+                t("failed.count"), t("failed.harness"), t("failed.step"), t("failed.at"), t("failed.error")
+            )})
+        })
+    });
+    let hold = &hold;
 
     let ci_red = has_pr && is("ci.verdict", "red") && on("ci.for_head") && !to_push;
     let fix_due = fixing && !on("review.findings.declined") && n("review.findings.round") < n("review.findings.cap");
@@ -331,7 +352,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 } else if refused {
                     None
                 } else {
-                    agent(budget, "conflict", format!("restack onto {target} conflicts: resolve it"), "sd act restack --resolve")
+                    agent(hold, "conflict", format!("restack onto {target} conflicts: resolve it"), "sd act restack --resolve")
                 }
             } else {
                 None
@@ -373,7 +394,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 None
             },
             if ci_red && asking != "ci-fix" && !refused {
-                agent(budget, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
+                agent(hold, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else {
                 None
             },
@@ -389,7 +410,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 None
             },
             if open && bot_blocking > 0.0 && asking != "address" && !refused {
-                agent(budget, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address")
+                agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address")
             } else {
                 None
             },
@@ -462,7 +483,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 )
             } else if empty && tasked {
                 if len(g("errors")) == 0 && asking != "implement" {
-                    agent(budget, "implement", format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
+                    agent(hold, "implement", format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
                 } else {
                     None
                 }
@@ -492,7 +513,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 None
             },
             if pr_null && len(g("errors")) == 0 && !parent_unpushed && !ci_held && !empty && !refused {
-                spends(budget, step("open-pr", "run", "ship: push, open a draft PR", cmd("sd act ship")))
+                spends(hold, step("open-pr", "run", "ship: push, open a draft PR", cmd("sd act ship")))
             } else {
                 None
             },
@@ -510,7 +531,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             if open && fixing && (asking == "review-fix" || (refused && fix_due)) {
                 None
             } else if open && fix_due {
-                agent(budget, "review-fix", format!(
+                agent(hold, "review-fix", format!(
                         "fix {} (round {}/{})",
                         plural(g("review.findings.n"), "review finding"),
                         t("review.findings.round"),
@@ -538,7 +559,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                     None if reviewed => "review again: the branch was rewritten since the last review".into(),
                     None => "review the branch's change".into(),
                 };
-                agent(budget, "review", say, "sd act review")
+                agent(hold, "review", say, "sd act review")
             } else {
                 None
             },
@@ -650,15 +671,15 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         ]
     };
 
-    // The first budget step stands in for every agent step; the rest go.
-    let mut seen_budget = false;
+    // The first budget or failed step stands in for every agent step; the rest go.
+    let mut seen_hold = false;
     let mut out: Vec<Value> = Vec::new();
     for st in all.into_iter().flatten() {
-        if st["key"] == "budget" {
-            if seen_budget {
+        if st["key"] == "budget" || st["key"] == "failed" {
+            if seen_hold {
                 continue;
             }
-            seen_budget = true;
+            seen_hold = true;
         }
         out.push(st);
     }
