@@ -216,6 +216,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         "uninstall" => return uninstall(),
         "" => return pass::pass(),
         "refresh" => return pass::refresh(&argv[1..]),
+        "step" => return pass::step(&argv[1..]),
         "vacuum" => match &argv[1..] {
             [] => return pass::vacuum(),
             [o] if o == "--dry-run" => return pass::vacuum_preview(),

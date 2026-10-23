@@ -1,24 +1,26 @@
 // The pass, refresh and vacuum (src/watch_help.txt): sd state every enrolled
 // branch, glyph it, notify per the policy, and keep each branch's state for
-// the next pass; with settings.dispatch, a pass also runs a branch's first
-// step when it's a mechanical one (#267). sd state runs as `sd state`, this
-// binary in a process of its own, so a hung one can be timed out: on purpose
-// not state::observe in-process, as sd act calls it, since the watcher
-// supervises its children with deadlines (#12). So do dispatched steps.
+// the next pass; with settings.dispatch, a pass also launches a branch's
+// first step when it's a mechanical one (#267). sd state runs as `sd state`,
+// this binary in a process of its own, so a hung one can be timed out: on
+// purpose not state::observe in-process, as sd act calls it, since the
+// watcher supervises its children with deadlines (#12).
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
 use crate::git::{self, git, git_input, git_out};
 use crate::json;
 use crate::proc;
+use crate::{failed, running, time};
 use crate::val::{at, on, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The NEXT steps that are ❌: chrismo's to deal with.
 const RED: [&str; 19] = [
@@ -48,6 +50,26 @@ struct Class {
 /// spend tokens describing.
 const DISPATCH: [(&str, &str); 5] =
     [("fetch", "fetch"), ("behind", "restack"), ("push", "push"), ("retarget", "retarget"), ("bot-trigger", "trigger")];
+
+/// How long a launched step past its lease has to end on a TERM before it
+/// gets a KILL: launchd's default exit timeout (comment on #268, 2026-10-23).
+const KILL_AFTER: Duration = Duration::from_secs(5);
+
+/// <sig> to <pid>'s process group, else to <pid> when it leads none.
+fn end(pid: i32, sig: i32) {
+    if pid <= 1 {
+        return;
+    }
+    unsafe {
+        if libc::kill(-pid, sig) != 0 {
+            libc::kill(pid, sig);
+        }
+    }
+}
+
+/// How long a launched step's lease outlasts its own timeout, so the lease
+/// ends only a step that's stuck.
+const GRACE: u64 = 60;
 
 /// The program that is sd <verb>, and the args before its own: sd itself and
 /// <verb>. In a debug build (cargo test's) with <seam> set, that program
@@ -581,9 +603,10 @@ impl Watch {
         (out, true, stop)
     }
 
-    /// Run the branch's first NEXT step when it's one a pass runs: one
-    /// attempt, under the watch timeout. Its output goes to stderr, the job's
-    /// log, and so does its pass line.
+    /// Launch the branch's first NEXT step when it's one a pass runs: one
+    /// attempt, under the watch timeout, waiting only till its lease is
+    /// taken. Its output goes to steps.log in the state dir; its pass line
+    /// to stderr, the job's log.
     fn dispatch(&self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
         let first = at(s, "next").get(0)?;
         if at(first, "who").as_str() != Some("run") {
@@ -595,25 +618,106 @@ impl Watch {
         let switch = git(repo, &["config", "--type=bool", &format!("branch.{b}.sd-dispatch")]);
         let enabled = switch.code == 1 || switch.stdout.trim_end() == "true";
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
-        let busy = !at(s, "session.running").is_null() || on(s, "session.locked");
+        let busy = !at(s, "session.running").is_null()
+            || on(s, "session.locked")
+            || running::lease(repo, b).is_some_and(|l| l.live);
         if !enabled || busy || !may_dispatch(s, key) {
             return None;
         }
-        let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
-        let mut c = Command::new(prog);
-        c.args(pre).args([verb, b]).current_dir(repo);
-        let o = proc::timeout(self.timeout, c, true);
-        eprint!("{}", o.stdout);
-        let how = if o.ok {
-            "ok".to_string()
-        } else if o.timed_out {
-            format!("timed out after {}s", self.timeout)
-        } else {
-            format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+        let msg = match self.launch(repo, verb, b) {
+            Ok(()) => format!("launched sd act {verb}"),
+            Err(e) => format!("couldn't launch sd act {verb}: {e}"),
         };
-        let line = format!("{name}\t{b}\t-\tran sd act {verb}: {how}\n");
+        let line = format!("{name}\t{b}\t-\t{msg}\n");
         eprint!("{}", show(&line));
         Some(line)
+    }
+
+    /// `sd watch step` for <verb> on <b>, in a session of its own, so the
+    /// pass's end and launchd's cleanup of its job leave it running.
+    fn launch(&self, repo: &str, verb: &str, b: &str) -> std::io::Result<()> {
+        let log = fs::OpenOptions::new().create(true).append(true).open(format!("{}/steps.log", self.state))?;
+        let mut c = Command::new(proc::sd_itself()?);
+        c.args(["watch", "step", &self.timeout.to_string(), verb, b])
+            .current_dir(repo)
+            .stdin(Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        unsafe {
+            c.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        if let Some(f) = running::outcome_file(repo, b) {
+            let _ = fs::remove_file(f);
+        }
+        let mut child = c.spawn()?;
+        let pid = child.id().to_string();
+        let t = Instant::now();
+        loop {
+            if running::lease(repo, b).is_some_and(|l| l.pid == pid) {
+                return Ok(());
+            }
+            if t.elapsed() >= Duration::from_secs(5) {
+                end(child.id() as i32, libc::SIGKILL);
+                return Err(std::io::Error::other("it hadn't taken its lease after 5s, so it was ended"));
+            }
+            if let Some(st) = child.try_wait()? {
+                // A quick step can take its lease and end between two looks.
+                let ran = running::outcome_file(repo, b).is_some_and(|f| Path::new(&f).exists());
+                return if ran { Ok(()) } else { Err(std::io::Error::other(format!("it exited {} before taking its lease", proc::code(st)))) };
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// The pass lines for the branch's launched step: how it ended, or that it
+    /// ran past its lease or crashed, both counted in the failure record
+    /// (#242). A marker with no deadline is a step chrismo ran: never ended
+    /// or counted.
+    fn reconcile(&self, repo: &str, name: &str, b: &str) -> String {
+        let line = |msg: &str| {
+            let l = format!("{name}\t{b}\t-\t{msg}\n");
+            eprint!("{}", show(&l));
+            l
+        };
+        // The lease before the outcome: a holder gone by the first read
+        // wrote any outcome it was going to by the second.
+        let lease = running::lease(repo, b);
+        let mut out = String::new();
+        if let Some(f) = running::outcome_file(repo, b) {
+            if let Ok(text) = fs::read_to_string(&f) {
+                let _ = fs::remove_file(&f);
+                out.push_str(&line(text.trim_end()));
+            }
+        }
+        let (Some(l), Some(marker)) = (lease, running::file(repo, b)) else { return out };
+        let Some(deadline) = l.deadline else { return out };
+        let why = if !l.live {
+            out.is_empty().then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
+        } else if time::now_utc().1 > deadline {
+            let pid: i32 = l.pid.parse().unwrap_or(0);
+            end(pid, libc::SIGTERM);
+            let t = Instant::now();
+            while running::lease(repo, b).is_some_and(|l| l.live) && t.elapsed() < KILL_AFTER {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            if running::lease(repo, b).is_some_and(|l| l.live) {
+                end(pid, libc::SIGKILL);
+            }
+            Some(("past its deadline", format!("sd act {}: past its deadline, ended", l.step)))
+        } else {
+            return out;
+        };
+        if running::lease(repo, b).is_some_and(|now| now.pid == l.pid) {
+            let _ = fs::remove_file(&marker);
+        }
+        if let Some((error, msg)) = why {
+            failed::record_in(repo, b, &l.step, "sd", error);
+            out.push_str(&line(&msg));
+        }
+        out
     }
 
     /// Ask GitHub what became of a gone branch's PR: its pass line, and
@@ -757,6 +861,7 @@ impl Watch {
             let wts = worktree_of(&repo);
             for b in &branches {
                 let wt = wts.get(b).map_or("", String::as_str);
+                lines.push_str(&self.reconcile(&repo, &name, b));
                 if stopped {
                     lines.push_str(&std::mem::take(&mut stop_line));
                     lines.push_str(&format!("{name}\t{b}\t-\tnot checked: rate limit\n"));
@@ -811,6 +916,36 @@ pub fn pass() -> ExitCode {
     w.dispatch = config::get_global("settings.dispatch", false).is_ok_and(|v| v == "true");
     w.pass();
     ExitCode::SUCCESS
+}
+
+/// sd watch step <secs> <verb> <branch>, what a pass launches, run in the
+/// branch's repo.
+pub fn step(argv: &[String]) -> ExitCode {
+    let [secs, verb, b] = argv else { die("usage: sd watch step <secs> <verb> <branch>") };
+    let Ok(secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
+    let Some(outcome) = running::outcome_file(".", b) else { die("not in a git repository") };
+    let ran = running::leasing(b, verb, secs + GRACE, || {
+        let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
+        let mut c = Command::new(prog);
+        c.args(pre).args([verb, b]);
+        let o = proc::timeout(secs, c, true);
+        eprint!("{}", o.stdout);
+        let how = if o.ok {
+            "ok".to_string()
+        } else if o.timed_out {
+            let how = format!("timed out after {secs}s");
+            failed::record(b, verb, "sd", &how);
+            how
+        } else if o.stopped {
+            "stopped by a signal".to_string()
+        } else {
+            format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+        };
+        if let Err(e) = fs::write(&outcome, format!("ran sd act {verb}: {how}\n")) {
+            eprintln!("sd watch: can't write {outcome}: {e}");
+        }
+    });
+    if ran.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
 pub fn refresh(argv: &[String]) -> ExitCode {

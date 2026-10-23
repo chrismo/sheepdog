@@ -16,9 +16,12 @@ use common::{assert_has, assert_lacks, assert_match, chomp, jq, output, Run, Sd}
 use regex::Regex;
 use serde_json::Value;
 use sheepdog::next::steps;
+use sheepdog::{running, time};
 use std::fs;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 const SD_STATE: &str = r#"#!/usr/bin/env bash
 b=${@: -1}
@@ -2828,11 +2831,55 @@ impl Sd {
         self.ps_fixture(b, &[&[next.as_str()], more].concat());
     }
 
-    /// The sd act calls the pass made, "<dir> <args>" each; forgets them.
+    /// The sd act calls the pass made, "<dir> <args>" each, once the step
+    /// it launched on feat has ended; forgets them.
     fn acts(&self) -> String {
+        if self.last_pass().contains("\tlaunched sd act") {
+            self.settle("feat");
+        }
         let s = cat(&self.ps("acts"));
         let _ = fs::remove_file(self.ps("acts"));
         s
+    }
+
+    /// <b>'s first step is one a pass doesn't run.
+    fn quiet(&self, b: &str) {
+        self.ps_fixture(b, &[r#".next = [{key: "ci-wait", who: "wait", say: "CI running", cmd: null}]"#]);
+    }
+
+    /// <b>'s running marker in the repo.
+    fn marker(&self, b: &str) -> PathBuf {
+        self.tmp.join(format!("repo/.git/sheepdog/{b}.running"))
+    }
+
+    /// A lease on <b> for push, held by <pid>, ending <secs> from now.
+    fn lease(&self, b: &str, pid: u32, secs: i64) {
+        let (now, ns) = time::now_utc();
+        let end = time::utc((ns / 1_000_000_000) as i64 + secs);
+        let pid = pid.to_string();
+        fs::create_dir_all(self.marker(b).parent().unwrap()).unwrap();
+        fs::write(self.marker(b), format!("{pid} push {now} {}\ndeadline {end}\n", running::proc_start(&pid))).unwrap();
+    }
+
+    /// Waits for the step launched on <b> to end: its outcome written and its
+    /// marker released.
+    fn settle(&self, b: &str) {
+        let outcome = self.tmp.join(format!("repo/.git/sheepdog/{b}.outcome"));
+        let t = Instant::now();
+        while !outcome.exists() || self.marker(b).exists() {
+            assert!(t.elapsed().as_secs() < 15, "the step launched on {b} never ended");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// What the steps the pass launched printed.
+    fn steps_log(&self) -> String {
+        cat(&self.tmp.join("state/steps.log"))
+    }
+
+    /// <b>'s failure record (#242), else "".
+    fn failure(&self, b: &str) -> String {
+        self.git_try(&["cat-file", "blob", &format!("refs/sheepdog/{b}/failed")]).unwrap_or_default()
     }
 }
 
@@ -2846,7 +2893,7 @@ fn dispatch_is_off_by_default() {
 }
 
 #[test]
-fn dispatch_runs_the_first_step_when_its_a_run_step_one_line_each_in_status_and_the_log() {
+fn dispatch_launches_the_first_run_step_and_the_next_pass_reports_how_it_ended_268() {
     let sd = sd();
     sd.dispatching();
     let repo = sd.path("repo");
@@ -2854,9 +2901,18 @@ fn dispatch_runs_the_first_step_when_its_a_run_step_one_line_each_in_status_and_
         sd.first_step("feat", key, &[]);
         let r = sd.pass_run(&[]);
         assert_eq!(r.status, 0, "{key}: {}", r.stderr);
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t🔧\t\nrepo\tfeat\t-\tlaunched sd act {verb}")]);
+        assert_has(&r.stderr, &[&format!("repo  feat  -  launched sd act {verb}")]);
+        sd.settle("feat");
         assert_eq!(sd.acts(), format!("{repo} {verb} feat"), "{key}");
-        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t🔧\t\nrepo\tfeat\t-\tran sd act {verb}: ok")]);
-        assert_has(&r.stderr, &[&format!("did {verb}"), &format!("repo  feat  -  ran sd act {verb}: ok")]);
+        assert_has(&sd.steps_log(), &[&format!("did {verb}")]);
+
+        sd.quiet("feat");
+        let r = sd.pass_run(&[]);
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t-\tran sd act {verb}: ok")]);
+        assert_has(&r.stderr, &[&format!("repo  feat  -  ran sd act {verb}: ok")]);
+        sd.pass();
+        assert_lacks(&sd.last_pass(), "ran sd act");
     }
 }
 
@@ -2868,9 +2924,120 @@ fn dispatch_sd_act_is_this_binarys_own_not_an_sd_act_on_path() {
     sd.dispatching();
     sd.first_step("feat", "push", &[]);
     sd.pass();
+    sd.settle("feat");
     assert_eq!(sd.acts(), "");
+    sd.quiet("feat");
+    sd.pass();
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: ok"]);
     assert_ne!(sd.git(&["ls-remote", "origin", "feat"]), "");
+}
+
+#[test]
+fn dispatch_doesnt_wait_for_the_step_and_its_lease_keeps_the_next_pass_off_the_branch_268() {
+    let sd = sd();
+    sd.dispatching();
+    fs::write(sd.ps("act-sleep"), "3\n").unwrap();
+    sd.first_step("feat", "push", &[]);
+    let t = Instant::now();
+    sd.pass();
+    assert!(t.elapsed().as_secs() < 3, "{:?}", t.elapsed());
+    let lease = cat(&sd.marker("feat"));
+    let lines: Vec<&str> = lease.lines().collect();
+    assert_match(lines[0], r"^\d+ push \S+ ");
+    assert_match(lines[1], r"^deadline \S+$");
+
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts().lines().count(), 1);
+}
+
+#[test]
+fn dispatch_a_step_that_ends_before_taking_its_lease_wasnt_launched_268() {
+    let sd = sd();
+    sd.dispatching();
+    fs::create_dir_all(sd.path("repo/.git")).unwrap();
+    fs::write(sd.path("repo/.git/sheepdog"), "").unwrap();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tcouldn't launch sd act push: it exited 1 before taking its lease"]);
+    assert_eq!(cat(&sd.ps("acts")), "");
+}
+
+#[test]
+fn reconcile_a_launched_step_whose_process_is_gone_with_no_outcome_crashed_268() {
+    let sd = sd();
+    sd.quiet("feat");
+    let mut dead = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+    dead.wait().unwrap();
+    sd.lease("feat", dead.id(), 60);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tsd act push crashed: its process is gone"]);
+    assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"crashed""#]);
+    assert!(!sd.marker("feat").exists());
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "crashed");
+}
+
+/// <sh> in the background of a shell that's gone, so this test isn't its
+/// parent, as the pass isn't a launched step's. Its pid.
+fn orphan(sh: &str) -> u32 {
+    let o = Command::new("sh").args(["-c", &format!("({sh}) >/dev/null 2>&1 & echo $!")]).output().unwrap();
+    String::from_utf8_lossy(&o.stdout).trim().parse().unwrap()
+}
+
+/// Whether <pid> ends within 2s.
+fn ends(pid: u32) -> bool {
+    let t = Instant::now();
+    while Command::new("kill").args(["-0", &pid.to_string()]).stderr(std::process::Stdio::null()).status().unwrap().success() {
+        if t.elapsed().as_secs() >= 2 {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
+#[test]
+fn reconcile_a_launched_step_past_its_deadline_gets_term_then_kill_and_is_counted_268() {
+    let sd = sd();
+    sd.quiet("feat");
+    let holder = orphan("exec sleep 30");
+    sd.lease("feat", holder, -5);
+    let t = Instant::now();
+    sd.pass();
+    assert!(t.elapsed().as_secs() < 4, "{:?}", t.elapsed());
+    assert!(ends(holder));
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tsd act push: past its deadline, ended"]);
+    assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"past its deadline""#]);
+    assert!(!sd.marker("feat").exists());
+
+    let stubborn = orphan(r#"trap "" TERM; exec sleep 30"#);
+    sd.lease("feat", stubborn, -5);
+    sd.pass();
+    assert!(ends(stubborn));
+    assert_has(&sd.failure("feat"), &[r#""count":2"#]);
+}
+
+#[test]
+fn reconcile_leaves_a_live_lease_and_a_step_chrismo_ran_alone_268() {
+    let sd = sd();
+    sd.dispatching();
+    let mut holder = Command::new("sleep").arg("30").process_group(0).spawn().unwrap();
+    sd.lease("feat", holder.id(), 60);
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+    assert!(holder.try_wait().unwrap().is_none());
+    assert!(sd.marker("feat").exists());
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+
+    sd.quiet("feat");
+    let pid = holder.id().to_string();
+    fs::write(sd.marker("feat"), format!("{pid} implement 2026-10-23T00:00:00Z x\n")).unwrap();
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "crashed");
+    assert_eq!(sd.failure("feat"), "");
 }
 
 #[test]
@@ -2987,22 +3154,33 @@ fn dispatch_a_failed_step_is_tried_once_a_pass_and_says_why() {
     fs::write(sd.ps("act-fails"), "refused: no\n").unwrap();
     sd.first_step("feat", "push", &[]);
     sd.pass();
+    sd.settle("feat");
     assert_eq!(sd.acts().lines().count(), 1);
-    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: failed (exit 1): sd act push: refused: no"]);
     sd.pass();
+    assert_has(&sd.last_pass(), &[
+        "repo\tfeat\t-\tran sd act push: failed (exit 1): sd act push: refused: no",
+        "repo\tfeat\t-\tlaunched sd act push",
+    ]);
+    sd.settle("feat");
     assert_eq!(sd.acts().lines().count(), 1);
+    assert_eq!(sd.failure("feat"), "");
 }
 
 #[test]
-fn dispatch_a_step_past_the_watch_timeout_is_ended() {
+fn dispatch_a_step_past_the_watch_timeout_is_ended_and_counted_268() {
     let sd = sd();
     sd.dispatching();
     fs::write(sd.ps("act-sleep"), "10\n").unwrap();
     sd.first_step("feat", "push", &[]);
     let t = Instant::now();
     sd.pass_env(&[("SHEEPDOG_WATCH_TIMEOUT", "1")]);
+    assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+    sd.settle("feat");
     assert!(t.elapsed().as_secs() < 8, "{:?}", t.elapsed());
+    sd.quiet("feat");
+    sd.pass();
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: timed out after 1s"]);
+    assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"timed out after 1s""#]);
 }
 
 #[test]
