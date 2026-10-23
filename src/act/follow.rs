@@ -102,7 +102,7 @@ pub fn fetch(b: &str, remote: &str) {
     let known = if last.is_empty() { &theirs } else { &last };
     if head != *known && !is_ancestor(".", &head, known) {
         git(".", &["update-ref", "-d", &fetched]);
-        die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {}", pr_head_ref(b)));
+        die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {} && sd act fetch", pr_head_ref(b)));
     }
     let moved = if theirs == head {
         None

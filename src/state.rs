@@ -911,7 +911,13 @@ fn assemble(s: &Facts) -> Value {
     } else {
         let mine: Vec<&Value> = reviews.iter().filter(|r| str_or(at(r, "author.login"), "") == s.viewer).collect();
         let pending = mine.iter().any(|r| at(r, "state").as_str() == Some("PENDING"));
-        match mine.iter().rev().find(|r| !matches!(at(r, "state").as_str(), Some("PENDING" | "DISMISSED"))) {
+        // A lone inline comment or thread reply is a COMMENTED review with no body.
+        let verdict = |r: &Value| match at(r, "state").as_str() {
+            Some("APPROVED" | "CHANGES_REQUESTED") => true,
+            Some("COMMENTED") => !str_or(at(r, "body"), "").trim().is_empty(),
+            _ => false,
+        };
+        match mine.iter().rev().copied().find(|r| verdict(r)) {
             None if !pending => Value::Null,
             None => json!({"sha": null, "state": null, "at_head": false, "pending": true}),
             Some(r) => json!({"sha": at(r, "commit.oid"), "state": at(r, "state"),

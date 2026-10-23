@@ -4175,7 +4175,12 @@ impl Sd {
 
 /// A submitted review of <commit> by <login>, as GitHub lists one.
 fn review_of(id: &str, login: &str, state: &str, commit: &str) -> String {
-    format!(r#"{{id: "{id}", url: "u", state: "{state}", body: "", commit: {{oid: "{commit}"}}, author: {{__typename: "User", login: "{login}"}}}}"#)
+    review_said(id, login, state, commit, "")
+}
+
+/// The same with a top-level body.
+fn review_said(id: &str, login: &str, state: &str, commit: &str, body: &str) -> String {
+    format!(r#"{{id: "{id}", url: "u", state: "{state}", body: "{body}", commit: {{oid: "{commit}"}}, author: {{__typename: "User", login: "{login}"}}}}"#)
 }
 
 #[test]
@@ -4252,7 +4257,7 @@ fn reviewer_mode_github_review_is_the_viewers_last_submitted_one_and_whether_its
     let reviews = [
         review_of("r1", "me", "CHANGES_REQUESTED", "0123456"),
         review_of("r2", "someone", "APPROVED", &head),
-        review_of("r3", "me", "COMMENTED", &head),
+        review_said("r3", "me", "COMMENTED", &head, "a few questions"),
         review_of("r4", "me", "PENDING", &head),
     ]
     .join(", ");
@@ -4266,6 +4271,19 @@ fn reviewer_mode_github_review_is_the_viewers_last_submitted_one_and_whether_its
     sd.edit_fixture("review/7", ".data.repository.pullRequests.nodes[0].reviews.nodes |= .[:1]");
     let r = sd.state(&[]);
     assert_eq!(r.field_c(".review.github"), r#"{"sha":"0123456","state":"CHANGES_REQUESTED","at_head":false,"pending":false}"#);
+}
+
+// GitHub makes a review of each lone inline comment or thread reply:
+// COMMENTED, no body. Replying isn't reviewing.
+#[test]
+fn reviewer_mode_a_thread_reply_isnt_a_review_of_head() {
+    let sd = sd();
+    sd.following(&[]);
+    let head = sd.git(&["rev-parse", "HEAD"]);
+    let reviews = [review_of("r1", "me", "CHANGES_REQUESTED", "0123456"), review_of("r2", "me", "COMMENTED", &head)].join(", ");
+    sd.edit_fixture("review/7", &format!(".data.repository.pullRequests.nodes[0].reviews.nodes = [{reviews}]"));
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c("[.review.github.sha, .review.github.at_head]"), r#"["0123456",false]"#);
 }
 
 #[test]
