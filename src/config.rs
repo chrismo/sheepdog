@@ -15,7 +15,7 @@ Usage:
   sd config set   [--global | --repo | --branch <b>] [--json] <path> <value>
   sd config unset [--global | --repo | --branch <b>] <path>
   sd config show  [--no-branch] [<branch>]
-  sd config explain [--no-branch] [--json] [<path> [<branch>]]
+  sd config explain [--no-branch] [--branch <b>] [--json] [<path>]
   sd config files [--no-branch] [<branch>]
   sd config init  --global [--force]
   sd config init  [--force] [<branch>]
@@ -76,7 +76,7 @@ Notes:
     layers and defaults it overrides; a null hides the layers below it. Then,
     for no <path> or one under harness, harnesses or steps, each step's
     harness, model and effort as step resolves them. --json: {keys, steps};
-    "" as <path> to name a <branch> for every key
+    --branch <b> explains another branch's file
 "#;
 
 fn defaults() -> Value {
@@ -844,7 +844,7 @@ fn cli(argv: &[String]) -> Res<String> {
         "-h" | "--help" => return Ok(HELP.into()),
         "get" => &["--no-branch", "--json"],
         "files" | "show" => &["--no-branch"],
-        "explain" => &["--no-branch", "--json"],
+        "explain" => &["--no-branch", "--json", "--branch"],
         "step" => &["--harness"],
         "init" => &["--force", "--global"],
         "set" => &["--global", "--repo", "--branch", "--json"],
@@ -891,10 +891,13 @@ fn cli(argv: &[String]) -> Res<String> {
             get(".", arg(0), arg(1), has("--no-branch"), has("--json"))
         }
         "explain" => {
-            if n > 2 {
-                needs(verb, "at most a <path> and a <branch>");
+            if n > 1 {
+                needs(verb, "at most a <path>");
             }
-            explain(".", arg(0), arg(1), has("--no-branch"), has("--json"))
+            if has("--no-branch") && has("--branch") {
+                return err("explain takes at most one of --no-branch and --branch");
+            }
+            explain(".", arg(0), &branch_opt, has("--no-branch"), has("--json"))
         }
         "files" | "show" => {
             if n > 1 {

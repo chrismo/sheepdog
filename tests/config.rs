@@ -2434,13 +2434,21 @@ fn explain_no_branch_and_a_named_branch() {
     sd.write_branch("feat", r#"{"settings":{"verify":"feat"}}"#);
     sd.write_branch("other", r#"{"settings":{"verify":"other"}}"#);
     assert_eq!(sd.out(&["explain", "settings.verify"]), "settings.verify = feat  [branch; overrides global, defaults]");
-    assert_eq!(sd.out(&["explain", "settings.verify", "other"]), "settings.verify = other  [branch; overrides global, defaults]");
+    assert_eq!(sd.out(&["explain", "--branch", "other", "settings.verify"]), "settings.verify = other  [branch; overrides global, defaults]");
     assert_eq!(sd.out(&["explain", "--no-branch", "settings.verify"]), "settings.verify = global  [global; overrides defaults]");
+}
+
+#[test]
+fn explain_branch_option_with_no_path_explains_every_key_for_that_branch() {
+    let sd = Sd::new();
+    sd.write_branch("other", r#"{"settings":{"verify":"other"}}"#);
+    let out = sd.out(&["explain", "--branch", "other"]);
+    assert!(out.lines().any(|l| l == "settings.verify = other  [branch; overrides defaults]"), "{out}");
 }
 
 #[test]
 fn explain_is_in_the_help() {
     let sd = Sd::new();
     let help = sd.ok(&["--help"]);
-    assert!(help.contains("sd config explain [--no-branch] [--json] [<path> [<branch>]]"), "{help}");
+    assert!(help.contains("sd config explain [--no-branch] [--branch <b>] [--json] [<path>]"), "{help}");
 }
