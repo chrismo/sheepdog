@@ -675,6 +675,9 @@ impl Watch {
             eprint!("{}", show(&l));
             l
         };
+        // The lease before the outcome: a holder gone by the first read
+        // wrote any outcome it was going to by the second.
+        let lease = running::lease(repo, b);
         let mut out = String::new();
         if let Some(f) = running::outcome_file(repo, b) {
             if let Ok(text) = fs::read_to_string(&f) {
@@ -682,7 +685,7 @@ impl Watch {
                 out.push_str(&line(text.trim_end()));
             }
         }
-        let (Some(l), Some(marker)) = (running::lease(repo, b), running::file(repo, b)) else { return out };
+        let (Some(l), Some(marker)) = (lease, running::file(repo, b)) else { return out };
         let Some(deadline) = l.deadline else { return out };
         let why = if !l.live {
             out.is_empty().then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))

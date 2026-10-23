@@ -41,7 +41,7 @@ pub fn state(dir: &str, b: &str) -> Option<Value> {
 }
 
 /// state, of the marker at <f>. A dead holder's lease is left for the
-/// watcher's reconcile to report.
+/// watcher's reconcile to report; unreconciled, the next step overwrites it.
 fn state_at(f: &str) -> Value {
     let Some(l) = lease_at(f) else { return Value::Null };
     if l.live {
