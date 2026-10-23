@@ -2,7 +2,7 @@ sd act - verbs that change a branch's PR.
 
 Usage:
   sd act start    [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]
-  sd act implement [--harness <h>] [<branch>]
+  sd act implement [--force] [--harness <h>] [<branch>]
   sd act enroll   [<branch>]
   sd act unenroll [<branch>]
   sd act forget   [--remove] [<branch>]
@@ -16,7 +16,7 @@ Usage:
   sd act verify   [<branch>]
   sd act autofix  [<branch>]
   sd act ci-fix   [--force] [--no-publish] [--harness <h>] [<branch>]
-  sd act review   [--accept] [<branch>]
+  sd act review   [--force] [--accept] [<branch>]
   sd act describe [<branch>]
   sd act ship     [--force] [<branch>]
   sd act trigger  [--force] [<branch>]
@@ -55,7 +55,10 @@ Verbs:
             leaves the edits uncommitted, for chrismo to answer in the
             session (sd act attach). Review findings recorded on HEAD (sd
             act review) go into the prompt, each answered on its own (see
-            review). Spends tokens
+            review). Refuses, at zero tokens, a branch already ahead of its
+            target with no findings to fix: NEXT offers implement only
+            before the branch's first commit (#241).
+            Spends tokens
   enroll    mark the branch for sd watch, and register this repo; for a
             stacked PR, store its parent and base before a merge erases them
             (or warn that git can't find the base, and how to pin it);
@@ -164,7 +167,9 @@ Verbs:
             edited tests) are printed on stderr for chrismo, whatever the
             verdict; never a gate. Not stored with the record or the pin:
             sd state recomputes them from base..HEAD on every call, so they
-            outlive stderr and never go stale. Spends tokens.
+            outlive stderr and never go stale. Refuses, at zero tokens, a
+            HEAD the local review already covers (sd state's local ✓: at
+            HEAD, or the same change rebased) (#241). Spends tokens.
             --accept: pin accepted at HEAD instead, reviewing nothing (HEAD
             is reviewed enough), record the bot trigger it followed
             (branch.<b>.sd-accepted-after), and drop the findings. It
@@ -233,6 +238,8 @@ inputs would only give up again, so it stops for chrismo too.
   address         run even if the branch is unpushed, diverged or taken over
   restack, push, ship   run even if taken over
   implement, review, describe   the same
+  implement       run though the branch is already ahead of its target
+  review          review again a HEAD the local review already covers
   attach          take over a lock another attach still holds
   ci-fix          run again on a red the agent already called flaky
   implement, address, ci-fix   run though the agent's question stands

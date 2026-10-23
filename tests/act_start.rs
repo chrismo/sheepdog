@@ -641,7 +641,7 @@ fn implement_mints_the_branchs_session_and_stores_it_a_second_run_resumes_it() {
     assert!(!sid.is_empty());
     assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "claude");
     assert!(sd.has_word("--session-id"));
-    sd.ok(&["implement"]);
+    sd.ok(&["implement", "--force"]);
     assert!(sd.has_word("--resume"));
     assert!(sd.has_word(&sid));
 }
@@ -1195,7 +1195,7 @@ fn implement_findings_on_an_older_head_stay_out_of_the_prompt() {
     sd.started(TASK);
     sd.findings_at("HEAD", "1");
     sd.git(&["commit", "-q", "--allow-empty", "-m", "later"]);
-    sd.ok(&["implement"]);
+    sd.ok(&["implement", "--force"]);
     assert_lacks(&sd.prompt(), "b should be B");
 }
 
@@ -1227,6 +1227,30 @@ fn implement_needs_input_prints_the_question_leaves_the_edits_uncommitted_nonzer
     assert!(!sd.porcelain().is_empty());
     assert_eq!(sd.subject(), "init");
     assert_eq!(sd.question(r#".step + " " + .text"#), "implement Which file?");
+}
+
+#[test]
+fn implement_on_a_branch_ahead_of_its_target_refuses_at_zero_tokens_unless_force_241() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.ok(&["implement"]);
+    sd.rm("claude.args");
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["nothing to implement: feat-x is already 1 commit ahead of main; --force to implement its task anyway"]);
+    assert!(!sd.ran("claude.args"));
+    sd.ok(&["implement", "--force"]);
+    assert!(sd.ran("claude.args"));
+}
+
+#[test]
+fn implement_a_review_fix_round_still_runs_once_the_task_is_done_241() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.ok(&["implement"]);
+    sd.findings_at("HEAD", "1");
+    sd.ok(&["implement"]);
+    assert_has(&sd.prompt(), &["b should be B"]);
 }
 
 // @test "implement: with its question standing, a rerun refuses before the agent runs; an ack lets it (#167)"

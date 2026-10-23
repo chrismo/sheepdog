@@ -1,6 +1,7 @@
 // review (A8), and review --accept: verify, then the local reviewer over the
 // branch's own change, base..HEAD. Clean pins local; findings that block are
-// recorded for the review-fix round and nothing is pinned.
+// recorded for the review-fix round and nothing is pinned. A HEAD the local
+// review already covers is refused, at zero tokens, unless --force (#241).
 
 use super::commands::{status, step_timeout, verify_run};
 use super::{attached_check, cfg, die, no_base_why, plural, state_json};
@@ -79,6 +80,10 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     let head = rev(".", &format!("refs/heads/{b}"));
     if accepting {
         return accept(b, &head, &base);
+    }
+    // Covered as NEXT has it: at HEAD, or the same change rebased (#241).
+    if !force && matches!(t(&s, "review.local.status").as_str(), "covered" | "rewritten-same") {
+        die(format!("local review already covers {}; --force to review again", short(&head)));
     }
     if let Err(cmd) = verify_run(&wt, b) {
         die(format!("verify failed ({cmd}); not reviewing"));
