@@ -17,10 +17,12 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, jq, spawn, Sd};
+use sheepdog::running::proc_start;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 const GH: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FX/gh.calls"
@@ -373,6 +375,32 @@ fn the_branchs_running_marker_lasts_the_whole_step_both_verifies_included_then_i
     assert_eq!(during.lines().count(), 2);
     assert!(during.lines().all(|l| l.split(' ').nth(1) == Some("ci-fix")), "{during}");
     assert!(!Path::new(&marker).exists());
+}
+
+// @test "another live step's marker refuses the run: the way out is named, the holder's marker is untouched, no agent runs (#177)"
+#[test]
+fn another_live_steps_marker_refuses_the_run_and_is_left_alone_177() {
+    let sd = sd();
+    let marker = sd.path("repo/.git/sheepdog/feat.running");
+    fs::create_dir_all(sd.tmp.join("repo/.git/sheepdog")).unwrap();
+    let mut holder = spawn(Command::new("sleep").arg("30"));
+    let pid = holder.id().to_string();
+    let theirs = format!("{pid} implement 2026-10-18T14:03:00Z {}\n", proc_start(&pid));
+    fs::write(&marker, &theirs).unwrap();
+    let r = sd.run(&["ci-fix"]);
+    let after = fs::read_to_string(&marker);
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    assert_ne!(r.status, 0);
+    assert_has(
+        &r.output,
+        &[
+            &format!("implement is running on feat (pid {pid}, since 2026-10-18T14:03:00Z)"),
+            &format!("kill {pid}, or remove {marker}"),
+        ],
+    );
+    assert!(!sd.ran("claude.args"));
+    assert_eq!(after.unwrap(), theirs);
 }
 
 // @test "logs that can't be fetched are skipped, not fatal"
