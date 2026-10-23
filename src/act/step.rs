@@ -193,21 +193,26 @@ pub fn question_ask(b: &str, wt: &str, step: &str, text: &str) {
 /// it said it had. Recorded as a question of kind gave-up (#254); dies with
 /// <msg>.
 pub fn give_up(b: &str, wt: &str, step: &str, text: &str, msg: String) -> ! {
-    record_question(b, wt, step, text, "gave-up");
-    die(format!("{msg}\n{}", question_say(b)))
+    if record_question(b, wt, step, text, "gave-up") {
+        die(format!("{msg}\n{}", question_say(b)))
+    }
+    die(msg)
 }
 
-fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str) {
+/// false, having warned, when it couldn't be recorded.
+fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str) -> bool {
     let head = rev(".", &format!("refs/heads/{b}"));
     let recorded = worktree_mark(wt).filter(|_| !head.is_empty()).is_some_and(|mark| {
         let rec = question_record(&head, step, &mark, text, kind);
         let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
-        let msg = format!("sd act {step}: needs input");
+        let did = if kind == "gave-up" { "gave up" } else { "needs input" };
+        let msg = format!("sd act {step}: {did}");
         obj.ok && git(".", &["update-ref", "-m", &msg, &format!("refs/sheepdog/{b}/question"), &strip_nl(obj.stdout)]).ok
     });
     if !recorded {
         eprintln!("sd act: warning: couldn't record the question on {b}, so NEXT won't show it");
     }
+    recorded
 }
 
 pub fn question_say(b: &str) -> String {

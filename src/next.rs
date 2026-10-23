@@ -20,9 +20,9 @@
 // other step should touch it (#170).
 //
 // An agent step's question standing at HEAD (sd state's question, #167; a
-// give-up is one too, #254) is
-// chrismo's question step, with the human items; the step that asked
-// (asking: implement, review-fix, address, ci-fix) goes until it's answered.
+// give-up is one too, #254) is chrismo's question step, with the human
+// items; the step that asked (asking: implement, review-fix, address,
+// ci-fix) goes until it's answered.
 // Once it no longer stands, uncommitted edits are chrismo's (#178): the
 // steps that refuse them (ci-red, bot, review-fix, review, open-pr, and
 // restack's behind and conflict) give way to one dirty step, as the empty
