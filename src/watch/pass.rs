@@ -649,12 +649,19 @@ impl Watch {
                 Ok(())
             });
         }
+        if let Some(f) = running::outcome_file(repo, b) {
+            let _ = fs::remove_file(f);
+        }
         let mut child = c.spawn()?;
         let pid = child.id().to_string();
         let t = Instant::now();
         loop {
-            if running::lease(repo, b).is_some_and(|l| l.pid == pid) || t.elapsed() >= Duration::from_secs(5) {
+            if running::lease(repo, b).is_some_and(|l| l.pid == pid) {
                 return Ok(());
+            }
+            if t.elapsed() >= Duration::from_secs(5) {
+                end(child.id() as i32, libc::SIGKILL);
+                return Err(std::io::Error::other("it hadn't taken its lease after 5s, so it was ended"));
             }
             if let Some(st) = child.try_wait()? {
                 // A quick step can take its lease and end between two looks.
@@ -703,7 +710,9 @@ impl Watch {
         } else {
             return out;
         };
-        let _ = fs::remove_file(&marker);
+        if running::lease(repo, b).is_some_and(|now| now.pid == l.pid) {
+            let _ = fs::remove_file(&marker);
+        }
         if let Some((error, msg)) = why {
             failed::record_in(repo, b, &l.step, "sd", error);
             out.push_str(&line(&msg));

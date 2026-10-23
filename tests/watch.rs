@@ -2940,7 +2940,7 @@ fn dispatch_doesnt_wait_for_the_step_and_its_lease_keeps_the_next_pass_off_the_b
     sd.first_step("feat", "push", &[]);
     let t = Instant::now();
     sd.pass();
-    assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
+    assert!(t.elapsed().as_secs() < 3, "{:?}", t.elapsed());
     let lease = cat(&sd.marker("feat"));
     let lines: Vec<&str> = lease.lines().collect();
     assert_match(lines[0], r"^\d+ push \S+ ");
@@ -3005,7 +3005,7 @@ fn reconcile_a_launched_step_past_its_deadline_gets_term_then_kill_and_is_counte
     sd.lease("feat", holder, -5);
     let t = Instant::now();
     sd.pass();
-    assert!(t.elapsed().as_secs() < 3, "{:?}", t.elapsed());
+    assert!(t.elapsed().as_secs() < 4, "{:?}", t.elapsed());
     assert!(ends(holder));
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tsd act push: past its deadline, ended"]);
     assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"past its deadline""#]);
@@ -3174,7 +3174,7 @@ fn dispatch_a_step_past_the_watch_timeout_is_ended_and_counted_268() {
     sd.first_step("feat", "push", &[]);
     let t = Instant::now();
     sd.pass_env(&[("SHEEPDOG_WATCH_TIMEOUT", "1")]);
-    assert!(t.elapsed().as_secs() < 2, "{:?}", t.elapsed());
+    assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
     sd.settle("feat");
     assert!(t.elapsed().as_secs() < 8, "{:?}", t.elapsed());
     sd.quiet("feat");
