@@ -1188,7 +1188,6 @@ fn dirty_no_step_while_the_question_stands_the_edits_are_the_agent_s_the_worktre
     assert_eq!(keys(&e![r#".ci.verdict = "pending""#, ".push.dirty = true"]), "ci-wait");
 }
 
-
 // ── reviewer mode: a teammate's PR, followed (#250) ──────────────────────────
 
 /// A followed PR at its head, reviewed by no one yet.
@@ -1244,12 +1243,13 @@ fn reviewer_mode_submitted_on_head_waits_on_the_author() {
 
 #[test]
 fn reviewer_mode_the_author_pushed_fetch_it_before_reviewing() {
-    let stale = e![".fresh = false", r#".stale = ["PR #7's head is not at GitHub's abc1234"]"#];
+    let stale = e![".fresh = false", ".push.author_pushed = true"];
     assert_eq!(keys(&e![REVIEWING, &stale]), "fetch");
     assert_eq!(step("fetch", "who", &e![REVIEWING, &stale]), "run");
     assert_eq!(step("fetch", "say", &e![REVIEWING, &stale]), "the author pushed: take it");
     assert_eq!(step("fetch", "cmd", &e![REVIEWING, &stale]), "sd act fetch");
     assert_eq!(keys(&e![REVIEWING, ".push.behind = 2"]), "fetch");
+    assert_eq!(step("fetch", "say", &e![REVIEWING, ".fresh = false"]), "fetch: GitHub is ahead of your remote refs");
     assert_eq!(keys(&e![REVIEWING, ".push.behind = 1 | .push.ahead = 1 | .push.diverged = true"]), "fetch");
 }
 
@@ -1286,6 +1286,12 @@ fn reviewer_mode_merged_or_closed_forget_the_branch() {
 #[test]
 fn reviewer_mode_errors_are_listed_first() {
     assert_eq!(keys(&e![REVIEWING, r#".errors = ["gh (review/7): GitHub has no PR #7"]"#]), "errors review");
+}
+
+#[test]
+fn reviewer_mode_failed_agent_steps_hand_the_review_to_chrismo() {
+    let failed = r#".failed = {count: 3, step: "review", harness: "claude", at: "2026-10-23T10:00:00Z", error: "boom"}"#;
+    assert_eq!(keys(&e![REVIEWING, failed]), "failed");
 }
 
 #[test]

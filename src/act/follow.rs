@@ -20,7 +20,7 @@ pub const REVIEWER: &str = "reviewer";
 
 /// Refused on a reviewer's branch.
 pub const AUTHORS: &[&str] =
-    &["implement", "address", "ci-fix", "restack", "retarget", "push", "ship", "describe", "trigger", "answer"];
+    &["implement", "address", "ci-fix", "restack", "retarget", "push", "ship", "describe", "trigger", "answer", "autofix"];
 
 pub fn reviewing(b: &str) -> bool {
     git_out(".", &["config", "--get", &format!("branch.{b}.sd-mode")]).as_deref() == Some(REVIEWER)
@@ -38,11 +38,13 @@ fn pr_head_ref(b: &str) -> String {
 /// base; the head's SHA.
 fn fetch_pr(b: &str, n: &str, remote: &str) -> String {
     let pr_head = pr_head_ref(b);
-    let f = git(".", &["fetch", "--quiet", remote, &format!("+refs/pull/{n}/head:{pr_head}")]);
+    let pull = format!("refs/pull/{n}/head");
+    let ls = git(".", &["ls-remote", remote, &pull]);
+    if ls.ok && ls.stdout.trim().is_empty() {
+        die(format!("no PR #{n} on {remote}"));
+    }
+    let f = git(".", &["fetch", "--quiet", remote, &format!("+{pull}:{pr_head}")]);
     if !f.ok {
-        if f.stderr.contains("couldn't find remote ref") {
-            die(format!("no PR #{n} on {remote}"));
-        }
         eprint!("{}", f.stderr);
         die(format!("fetch from {remote} failed"));
     }
@@ -64,7 +66,7 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
         die(format!("{b} already exists"));
     }
     let pr_head = fetch_pr(b, n, remote);
-    git_or_die(&["worktree", "add", "-b", b, &dst, &pr_head], "git worktree add");
+    // Before the worktree, so a failure leaves nothing a rerun trips on.
     for (k, v) in [("sd-pr", n), ("sd-mode", REVIEWER)] {
         let o = git(".", &["config", &format!("branch.{b}.{k}"), v]);
         if !o.ok {
@@ -72,6 +74,7 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
             std::process::exit(o.code);
         }
     }
+    git_or_die(&["worktree", "add", "-b", b, &dst, &pr_head], "git worktree add");
     enroll_mark(b);
     eprintln!("enrolled {b}");
     let rc = if start_hook(&src, &dst, b) { 0 } else { 1 };

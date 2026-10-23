@@ -681,6 +681,7 @@ struct Facts {
     ahead: i64,
     push_behind: i64,
     diverged: bool,
+    author_pushed: Value,
     remote_ours: Value,
     theirs: Value,
     remote_made: Value,
@@ -933,7 +934,7 @@ fn assemble(s: &Facts) -> Value {
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
                  "undone": s.undone},
-        "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged,
+        "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "held": s.held},
         "fresh": if s.gh_ok && s.parent_ok { json!(s.stale.is_empty()) } else { Value::Null },
@@ -1318,6 +1319,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     // GitHub's head an older value of the remote ref (its ancestor, or in its
     // reflog after a force-push) is GitHub behind a push, not the ref (#246).
     let (mut stale, mut lag) = (Vec::new(), Vec::new());
+    let mut author_pushed = if reviewer { json!(false) } else { Value::Null };
     for (p, name) in [(&pr, branch), (&parent_pr, parent.as_str())] {
         if at(p, "state").as_str() == Some("OPEN") {
             if let Some(gh_sha) = at(p, "headRefOid").as_str().filter(|s| !s.is_empty()) {
@@ -1326,6 +1328,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
                 if reviewer && name == branch {
                     if gh_sha != remote_sha {
                         let short = &gh_sha[..7.min(gh_sha.len())];
+                        author_pushed = json!(true);
                         stale.push(format!("PR #{}'s head is not at GitHub's {short}", text(at(p, "number"))));
                     }
                 } else if gh_sha != r_sha {
@@ -1454,6 +1457,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         ahead,
         push_behind,
         diverged,
+        author_pushed,
         remote_ours,
         theirs,
         remote_made,

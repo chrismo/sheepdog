@@ -4208,7 +4208,7 @@ fn reviewer_mode_the_remote_is_the_prs_head_ref_not_a_remote_branch() {
     sd.following(&[]);
     let r = sd.state(&[]);
     assert_eq!(r.field(".push.remote_sha"), sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]));
-    assert_eq!(r.field_c("[.push.ahead, .push.behind, .push.remote_ours, .push.theirs]"), "[0,0,null,null]");
+    assert_eq!(r.field_c("[.push.ahead, .push.behind, .push.remote_ours, .push.theirs, .push.author_pushed]"), "[0,0,null,null,false]");
     assert_eq!(r.field(".fresh"), "true");
 }
 
@@ -4220,6 +4220,7 @@ fn reviewer_mode_the_author_pushed_github_is_ahead_of_the_head_ref() {
     sd.edit_fixture("review/7", &format!(r#".data.repository.pullRequests.nodes[0].headRefOid = "{theirs}""#));
     let r = sd.state(&[]);
     assert_eq!(r.field(".fresh"), "false");
+    assert_eq!(r.field(".push.author_pushed"), "true");
     assert_has(&r.field(".stale[]"), &[&format!("PR #7's head is not at GitHub's {}", &theirs[..7])]);
     sd.fetch_pr_head();
     let r = sd.state(&[]);
@@ -4270,7 +4271,7 @@ fn an_authors_branch_has_no_mode_and_no_github_review() {
     sd.commit("a.txt", "a");
     sd.pr_fixture("feat", &[]);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c("[.mode, .review.github]"), "[null,null]");
+    assert_eq!(r.field_c("[.mode, .review.github, .push.author_pushed]"), "[null,null,null]");
 }
 
 #[test]

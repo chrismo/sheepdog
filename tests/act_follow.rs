@@ -107,7 +107,7 @@ fn a_reviewers_branch_refuses_the_authors_verbs() {
     let sd = sd();
     sd.ok(&["follow", "7"]);
     let head = sd.git(&["rev-parse", "review/7"]);
-    for verb in ["implement", "address", "ci-fix", "restack", "retarget", "push", "ship", "describe", "trigger"] {
+    for verb in ["implement", "address", "ci-fix", "restack", "retarget", "push", "ship", "describe", "trigger", "autofix"] {
         let r = sd.run(&[verb, "review/7"]);
         assert_ne!(r.status, 0, "{verb}");
         assert_has(&r.output, &[&format!("review/7 is a PR you're reviewing (sd act follow): sd act {verb} is the author's")]);
@@ -195,6 +195,18 @@ fn fetch_refuses_commits_on_the_branch_that_arent_the_authors() {
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["review/7 has commits the PR never had"]);
     assert_eq!(sd.git(&["rev-parse", "HEAD"]), mine);
+}
+
+#[test]
+fn fetch_moves_a_followed_branch_checked_out_nowhere() {
+    let mut sd = sd();
+    sd.followed();
+    sd.cd("repo");
+    sd.git(&["worktree", "remove", &sd.path("review-7")]);
+    let theirs = sd.author_pushes("more", false);
+    let r = sd.run(&["fetch", "review/7"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git(&["rev-parse", "review/7"]), theirs);
 }
 
 #[test]

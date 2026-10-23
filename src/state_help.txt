@@ -8,7 +8,8 @@ Reports, for <branch> (default: the current one):
             (branch.<b>.sd-mode), else null (#250). Its PR is the stored
             number alone, never discovered; its push block compares HEAD to
             the PR's head as fetched (refs/sheepdog/<b>/pr-head), never
-            judged ours or theirs; and NEXT has a list of its own: fetch the
+            judged ours or theirs, and push.author_pushed says GitHub's head
+            is past it; and NEXT has a list of its own: fetch the
             author's pushes, review, then chrismo submits on GitHub
   pr        the branch's PR (an open one wins over closed/merged)
   parent    sd-parent config, else the PR base, else the default branch;

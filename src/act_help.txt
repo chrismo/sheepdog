@@ -67,7 +67,7 @@ Verbs:
             setup hook run, as start does; records the PR and reviewer mode
             (.sd-mode), enrolls. A reviewer's branch refuses the author's
             verbs: implement, address, ci-fix, restack, retarget, push, ship,
-            describe, trigger, answer. stdout is only the worktree's path
+            describe, trigger, answer, autofix. stdout is only the worktree's path
   fetch     a followed PR's head (A1): the author's pushes, force-pushes
             too, fetched and the branch reset to them. Refuses uncommitted
             changes, or commits on the branch that no fetched head had

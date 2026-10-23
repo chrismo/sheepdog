@@ -725,7 +725,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
 }
 
 /// A followed PR's steps (#250).
-fn reviewer(s: &Value, budget: &Option<Value>, again: String) -> Vec<Option<Value>> {
+fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>> {
     let g = |p: &str| at(s, p);
     let on = |p: &str| val::on(s, p);
     let n = |p: &str| val::n(s, p);
@@ -736,7 +736,7 @@ fn reviewer(s: &Value, budget: &Option<Value>, again: String) -> Vec<Option<Valu
     // chrismo's (sd act fetch refuses them).
     let yours = open && n("push.ahead") > 0.0 && n("push.behind") == 0.0;
     let dirty = open && on("push.dirty");
-    let pushed = n("push.behind") > 0.0 || sj(g("stale"), "\n").contains("PR #");
+    let pushed = n("push.behind") > 0.0 || on("push.author_pushed");
     let fetch = open && !yours && !dirty && (g("fresh") == &Value::Bool(false) || pushed);
     let current = open && !yours && !fetch;
     let submitted = on("review.github.at_head");
@@ -791,7 +791,7 @@ fn reviewer(s: &Value, budget: &Option<Value>, again: String) -> Vec<Option<Valu
             None
         },
         if current && !dirty && !submitted && !local {
-            agent(budget, "review", again, "sd act review")
+            agent(hold, "review", again, "sd act review")
         } else {
             None
         },
