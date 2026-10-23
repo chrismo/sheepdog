@@ -381,6 +381,16 @@ fn the_same_change_rebased_is_covered_too_241() {
 }
 
 #[test]
+fn a_rewrite_that_changes_the_change_is_reviewed_241() {
+    let sd = sd();
+    sd.review();
+    sd.write("file.txt", "a\nb\nC\n");
+    sd.git(&["commit", "-q", "--amend", "-a", "--no-edit"]);
+    sd.review();
+    assert_eq!(sd.pin("local"), sd.rev("HEAD"));
+}
+
+#[test]
 fn a_commit_past_the_local_review_is_reviewed_241() {
     let sd = sd();
     sd.review();

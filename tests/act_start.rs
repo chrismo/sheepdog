@@ -1237,7 +1237,7 @@ fn implement_on_a_branch_ahead_of_its_target_refuses_at_zero_tokens_unless_force
     sd.rm("claude.args");
     let r = sd.run(&["implement"]);
     assert_ne!(r.status, 0);
-    assert_has(&r.output, &["nothing to implement: feat-x is 1 commit ahead of main, so its task is done; --force to implement it again"]);
+    assert_has(&r.output, &["nothing to implement: feat-x is already 1 commit ahead of main; --force to implement its task anyway"]);
     assert!(!sd.ran("claude.args"));
     sd.ok(&["implement", "--force"]);
     assert!(sd.ran("claude.args"));

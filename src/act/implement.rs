@@ -1,8 +1,8 @@
 // implement (J0) and its review-fix rounds: the agent works the recorded
 // task, or the local review's open findings about HEAD, in the branch's
 // session; the pipeline commits its edits, then runs verify. A branch already
-// ahead of its target, with no findings to fix, has its task done: refused,
-// at zero tokens, unless --force (#241).
+// ahead of its target, with no findings to fix, is refused at zero tokens
+// unless --force (#241).
 
 use super::commands::{status, verify_autofix};
 use super::hold::hold_since;
@@ -217,7 +217,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let ahead = at(&s, "sync.ahead").as_u64().unwrap_or(0);
     if ahead > 0 && !fixing && !answering && !a.force {
         die(format!(
-            "nothing to implement: {b} is {} ahead of {}, so its task is done; --force to implement it again",
+            "nothing to implement: {b} is already {} ahead of {}; --force to implement its task anyway",
             plural(ahead as usize, "commit"),
             t(&s, "sync.target")
         ));

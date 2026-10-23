@@ -56,7 +56,8 @@ Verbs:
             session (sd act attach). Review findings recorded on HEAD (sd
             act review) go into the prompt, each answered on its own (see
             review). Refuses, at zero tokens, a branch already ahead of its
-            target with no findings to fix: its task is done (#241).
+            target with no findings to fix: NEXT offers implement only
+            before the branch's first commit (#241).
             Spends tokens
   enroll    mark the branch for sd watch, and register this repo; for a
             stacked PR, store its parent and base before a merge erases them
@@ -237,7 +238,7 @@ inputs would only give up again, so it stops for chrismo too.
   address         run even if the branch is unpushed, diverged or taken over
   restack, push, ship   run even if taken over
   implement, review, describe   the same
-  implement       run though the branch is ahead of its target (its task done)
+  implement       run though the branch is already ahead of its target
   review          review again a HEAD the local review already covers
   attach          take over a lock another attach still holds
   ci-fix          run again on a red the agent already called flaky
