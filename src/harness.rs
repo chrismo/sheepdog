@@ -91,8 +91,10 @@ impl Step<'_> {
 /// Every step appends a record to usage.sup. The harness's stderr (claude
 /// can put protocol JSON there) shows only when the step fails, and then all
 /// at once: nothing streams while it runs. While it runs, the branch's
-/// running marker says so, for sd state (#170).
-pub fn run_step(s: &Step) -> Result<Ran, i32> {
+/// running marker says so, for sd state (#170). A step the harness's usage
+/// limit stopped isn't a failure (#269): it says so, with the reset, and
+/// leaves the failure record (#242) as it was.
+pub fn run_step(s: &Step) -> Result<Ran, Stop> {
     let b = match s.branch {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
         b => b.to_string(),
@@ -100,8 +102,22 @@ pub fn run_step(s: &Step) -> Result<Ran, i32> {
     if b.is_empty() {
         return agent(s, &b);
     }
-    running::during(&b, s.label(), || agent(s, &b)).unwrap_or(Err(1))
+    running::during(&b, s.label(), || agent(s, &b)).unwrap_or(Err(Stop::Failed(1)))
 }
+
+pub enum Stop {
+    Failed(i32),
+    Limit(Limit),
+}
+
+pub struct Limit {
+    pub said: String,
+    /// As time::utc writes it.
+    pub resets: Option<String>,
+}
+
+/// sysexits' EX_TEMPFAIL: sd harness run's exit status and usage.sup's.
+pub const LIMIT_STATUS: i32 = 75;
 
 /// A step's result objects, and the session it ran in.
 pub struct Ran {
@@ -116,7 +132,7 @@ impl Ran {
     }
 }
 
-fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
+fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let (h, minted) = (s.harness, s.session);
     // Only the first line, as bash's read -ra took it.
     let args = t(s.settings, "args");
@@ -130,11 +146,11 @@ fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
                     eprintln!("sd config: {l}");
                 }
                 eprintln!("sd config failed");
-                1
+                Stop::Failed(1)
             })?;
             let (flags, c, note) = step_cap(&budget, &extra).map_err(|e| {
                 eprintln!("{e}");
-                1
+                Stop::Failed(1)
             })?;
             typed.extend(flags);
             (cap, cap_note) = (c, note);
@@ -151,7 +167,7 @@ fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
         }
         _ => {
             eprintln!("unknown harness: {h} (claude or pi)");
-            return Err(1);
+            return Err(Stop::Failed(1));
         }
     };
     c.args(&typed).args(&extra);
@@ -177,13 +193,20 @@ fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
         (true, "claude") => claude_result(&out.stdout).ok_or(1),
         (true, _) => objects(&fenced(&out.stdout)).ok_or(1),
     };
-    let status = result.as_ref().map_or_else(|c| *c, |_| 0);
-
     let o = match objects(&out.stdout) {
         Some(mut os) if h == "claude" && os.len() == 1 => os.remove(0),
         _ => Value::Null,
     };
     let sid = ran_in(h, minted, &o);
+    let limit = usage_limit(h, &o).map(|said| Limit {
+        said,
+        resets: transcript(h, &sid).and_then(|f| fs::read(f).ok()).and_then(|t| limit_resets(&String::from_utf8_lossy(&t))),
+    });
+    let status = match (&limit, &result) {
+        (Some(_), _) => LIMIT_STATUS,
+        (_, Err(c)) => *c,
+        _ => 0,
+    };
     let (now, repo, after) = (time::now_utc().0, main_worktree("."), tally(h, &sid));
     usage::append(&usage::record(&usage::Step {
         time: &now,
@@ -203,6 +226,11 @@ fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
         b: &before,
     }));
 
+    if let Some(l) = limit {
+        let resets = l.resets.as_ref().map(|r| format!(" (resets {r})")).unwrap_or_default();
+        eprintln!("sd: {} stopped on {h}'s usage limit, not counted as a failure: {}{resets}", s.label(), l.said);
+        return Err(Stop::Limit(l));
+    }
     let said = if status != 0 { said(h, &out.stdout, &cap_note, spent) } else { String::new() };
     if status != 0 {
         eprint!("{}", tail(&out.stderr, 40));
@@ -216,7 +244,30 @@ fn agent(s: &Step, b: &str) -> Result<Ran, i32> {
     } else if !b.is_empty() {
         failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status));
     }
-    result.map(|results| Ran { results, session: sid })
+    result.map(|results| Ran { results, session: sid }).map_err(Stop::Failed)
+}
+
+/// claude's words when its result is a usage limit's refusal: api_error
+/// usage_limit_reached (2.1.309), or 2.1.301's wording. A 429 alone is a
+/// throttle. pi's is unchecked (#269).
+fn usage_limit(h: &str, o: &Value) -> Option<String> {
+    if h != "claude" || !on(o, "is_error") {
+        return None;
+    }
+    let said = t(o, "result");
+    if t(o, "api_error") == "usage_limit_reached" {
+        return Some(if said.is_empty() { "usage_limit_reached".to_string() } else { said });
+    }
+    (said.starts_with("You've hit your") && said.contains("limit")).then_some(said)
+}
+
+/// claude's result doesn't carry the reset as a time; its transcript does.
+fn limit_resets(transcript: &str) -> Option<String> {
+    let v: Value = transcript.lines().rev().filter(|l| l.contains("usage_limit_reached")).find_map(|l| serde_json::from_str(l).ok())?;
+    ["apiErrorParams.rate_limit_info.resetsAt", "quotaLimits.resetsAt"]
+        .iter()
+        .find_map(|p| at(&v, p).as_i64())
+        .map(time::utc)
 }
 
 /// The session the step ran in: <minted>, unless claude reports another,
@@ -553,7 +604,8 @@ pub fn run(argv: &[String]) -> ExitCode {
                     }
                     ExitCode::SUCCESS
                 }
-                Err(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+                Err(Stop::Failed(code)) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+                Err(Stop::Limit(_)) => ExitCode::from(LIMIT_STATUS as u8),
             }
         }
         _ => usage_exit(),
@@ -639,6 +691,39 @@ mod tests {
         assert_eq!(said("claude", r#"{"is_error":false,"subtype":"success","result":""}"#, "", 0.0), "");
         assert_eq!(said("claude", "Error: unknown option --bogus\n", "", 0.0), "Error: unknown option --bogus\n");
         assert_eq!(said("pi", "{\"a\": 1}", "", 0.0), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn usage_limit_is_claudes_error_result_typed_usage_limit_reached_or_in_the_words_it_gave_269() {
+        let said = "You've hit your session limit · resets 12:20am (America/Chicago)";
+        let observed = json!({"type": "result", "subtype": "success", "is_error": true, "result": said});
+        assert_eq!(usage_limit("claude", &observed).as_deref(), Some(said));
+        let weekly = json!({"is_error": true, "result": "You've hit your weekly limit · resets Mon 12:00am"});
+        assert!(usage_limit("claude", &weekly).is_some());
+        let typed = json!({"is_error": true, "api_error": "usage_limit_reached", "result": "Limit reached"});
+        assert_eq!(usage_limit("claude", &typed).as_deref(), Some("Limit reached"));
+        let untold = json!({"is_error": true, "api_error": "usage_limit_reached", "result": ""});
+        assert_eq!(usage_limit("claude", &untold).as_deref(), Some("usage_limit_reached"));
+
+        assert_eq!(usage_limit("claude", &json!({"is_error": true, "api_error_status": 429, "result": "Request rejected (429)"})), None);
+        assert_eq!(usage_limit("claude", &json!({"is_error": true, "api_error_status": 400, "result": "Credit balance is too low"})), None);
+        assert_eq!(usage_limit("claude", &json!({"is_error": false, "result": said})), None);
+        assert_eq!(usage_limit("pi", &observed), None);
+        assert_eq!(usage_limit("claude", &Value::Null), None);
+    }
+
+    #[test]
+    fn limit_resets_is_the_last_usage_limit_entrys_reset_in_the_transcript_269() {
+        let entry = |at: i64| {
+            format!(r#"{{"type":"assistant","message":{{"model":"<synthetic>"}},"apiError":"usage_limit_reached","apiErrorParams":{{"rate_limit_info":{{"resetsAt":{at}}}}}}}"#)
+        };
+        let text = format!("{}\n{{\"type\":\"user\"}}\n{}\n", entry(1_792_110_000), entry(1_792_128_000));
+        assert_eq!(limit_resets(&text).as_deref(), Some("2026-10-16T05:20:00Z"));
+        let quota = r#"{"type":"assistant","apiError":"usage_limit_reached","quotaLimits":{"resetsAt":1792128000}}"#;
+        assert_eq!(limit_resets(quota).as_deref(), Some("2026-10-16T05:20:00Z"));
+        assert_eq!(limit_resets(r#"{"type":"assistant","apiError":"usage_limit_reached"}"#), None);
+        assert_eq!(limit_resets("{\"type\":\"user\"}\n"), None);
+        assert_eq!(limit_resets(""), None);
     }
 
     #[test]
