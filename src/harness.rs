@@ -175,6 +175,7 @@ fn agent(s: &Step, b: &str) -> Result<Vec<Value>, i32> {
         ms: t0.elapsed().as_millis() as i64,
         cap,
         prev: spent,
+        stopped: out.stopped,
         o: &o,
         a: &after,
         b: &before,

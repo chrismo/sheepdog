@@ -139,6 +139,8 @@ pub struct Step<'a> {
     pub cap: f64,
     /// session_total before the step.
     pub prev: f64,
+    /// sd ended the step on a HUP, INT or TERM to sd (proc::Out's stopped).
+    pub stopped: bool,
     /// claude's result object; null for none, and for pi.
     pub o: &'a Value,
     /// The harness's tally after the step and before it.
@@ -151,11 +153,14 @@ pub struct Step<'a> {
 /// most it could spend, and marked estimated; with no cap its cost is
 /// unknown (null), and still marked. Its session total is unknown, so the
 /// next step's cost counts from the last one known, and may count the
-/// killed step's real spend again.
+/// killed step's real spend again. A step stopped by a signal to sd isn't
+/// charged (#177): a Ctrl-C a few seconds in would count the whole cap
+/// against branchBudget. Its cost is unknown (null) and not estimated; a
+/// resume's running total counts its spend in the next step's cost.
 pub fn record(s: &Step) -> String {
     let claude = s.harness == "claude";
     let (o, a, b) = (s.o, s.a, s.b);
-    let unseen = claude && o.is_null() && n(a, "entries") > n(b, "entries");
+    let unseen = claude && o.is_null() && !s.stopped && n(a, "entries") > n(b, "entries");
     let gained = |k: &str| at(a, k).as_f64().map(|x| x - n(b, k));
     let u = if claude && !o.is_null() {
         json!({"cost": step_cost(n(o, "total_cost_usd"), s.prev), "total": at(o, "total_cost_usd"),
@@ -235,11 +240,22 @@ mod tests {
              r#"{time:2026-10-16T20:41:00Z,repo:"/r",branch:"feat",step:"implement",harness:"pi",session:"s3",mode:"new",status:1,cost_usd:null,total_cost_usd:null,estimated:false,input:null,cache_create:null,cache_read:null,output:null,duration_ms:null,turns:null,context:null}"#),
         ];
         for (time, repo, branch, step, harness, session, mode, status, ms, cap, prev, o, a, b, want) in &rows {
-            let s = Step { time, repo, branch, step, harness, session, mode, status: *status, ms: *ms, cap: *cap, prev: *prev, o, a, b };
+            let s = Step { time, repo, branch, step, harness, session, mode, status: *status, ms: *ms, cap: *cap, prev: *prev, stopped: false, o, a, b };
             assert_eq!(record(&s), *want);
             // And sd state reads it back.
             assert!(sup_record(want).is_some());
         }
+    }
+
+    #[test]
+    fn a_step_sd_ended_on_a_signal_isnt_charged_its_cap_as_a_timeout_is_177() {
+        let (a, b) = (json!({"entries": 3, "context": 900}), json!({"entries": 1, "context": 100}));
+        let step = |status, stopped| {
+            record(&Step { time: "2026-10-23T00:00:00Z", repo: "/r", branch: "feat", step: "implement", harness: "claude", session: "s",
+                           mode: "new", status, ms: 17000, cap: 5.0, prev: 0.0, stopped, o: &Value::Null, a: &a, b: &b })
+        };
+        assert!(step(124, false).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(143, true).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
     }
 
     #[test]

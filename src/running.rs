@@ -7,6 +7,7 @@ use crate::{git, proc, time};
 use serde_json::{json, Value};
 use std::fs;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, MutexGuard, Once, PoisonError};
 
 pub fn file(dir: &str, b: &str) -> Option<String> {
     let common = git::common_dir(dir)?;
@@ -63,15 +64,51 @@ fn free(marker: &str, b: &str) -> bool {
     if s.is_null() || s["pid"] == json!(std::process::id()) {
         return true;
     }
-    let (step, pid, since) = (t(&s, "step"), t(&s, "pid"), t(&s, "since"));
-    eprintln!("{step} is running on {b} (pid {pid}, since {since}): not starting another agent step");
+    eprintln!("{}", refusal(&s, b, marker));
     false
+}
+
+fn refusal(s: &Value, b: &str, marker: &str) -> String {
+    let (step, pid, since) = (t(s, "step"), t(s, "pid"), t(s, "since"));
+    format!(
+        "{step} is running on {b} (pid {pid}, since {since}): not starting another agent step. \
+         If it's hung: kill {pid}, or remove {marker}"
+    )
+}
+
+/// The markers this process holds, and the line it wrote to each.
+static HELD: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+fn held() -> MutexGuard<'static, Vec<(String, String)>> {
+    HELD.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Removes <marker> unless another step has written its own there since.
+fn release(marker: &str, line: &str) {
+    if fs::read_to_string(marker).is_ok_and(|l| l == line) {
+        let _ = fs::remove_file(marker);
+    }
+}
+
+extern "C" {
+    fn atexit(f: extern "C" fn()) -> i32;
+}
+
+/// process::exit (act's die) runs no destructors and skips the end of
+/// deferring_signals, so at exit the markers are released, then sd ends of
+/// a signal it got during the step, not as an ordinary failure (#177).
+extern "C" fn at_exit() {
+    for (marker, line) in held().drain(..) {
+        release(&marker, &line);
+    }
+    proc::die_of_caught();
 }
 
 /// <f> under <b>'s marker, naming <step>; None, and <f> not run, when another
 /// live step holds it. A marker holding keeps (RUNNING_HELD) is left
-/// alone. A HUP, INT or TERM ends <f>'s agent at once (proc::timeout), but
-/// the marker is removed before sd dies of it.
+/// alone. A HUP, INT or TERM ends <f>'s agent at once (proc::timeout), and
+/// sd dies of it once <f> is done. The marker is removed however sd ends,
+/// short of a KILL.
 pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     let Some(marker) = file(".", b) else {
         eprintln!("sd: no running marker for {b}: not in a git repository");
@@ -82,8 +119,7 @@ pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
 
 /// during, for a step whose commit and verify come after its harness step:
 /// RUNNING_HELD=<b> is exported while <f> runs, so the
-/// step's harness step and children (verify) run under this marker. A step
-/// that dies takes its pid with it, and sd state clears the marker.
+/// step's harness step and children (verify) run under this marker.
 pub fn holding<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     during(b, step, || {
         std::env::set_var("RUNNING_HELD", b);
@@ -103,16 +139,20 @@ fn during_at<T>(marker: &str, b: &str, step: &str, f: impl FnOnce() -> T) -> Opt
     }
     let pid = std::process::id().to_string();
     let line = format!("{pid} {step} {} {}\n", time::now_utc().0, proc_start(&pid));
+    static AT_EXIT: Once = Once::new();
+    AT_EXIT.call_once(|| unsafe {
+        atexit(at_exit);
+    });
     proc::deferring_signals(|| {
         let dir = marker.rsplit_once('/').map_or("", |(d, _)| d);
         if let Err(e) = fs::create_dir_all(dir).and_then(|()| fs::write(marker, &line)) {
             eprintln!("sd: can't write the running marker {marker}: {e}");
             return None;
         }
+        held().push((marker.to_string(), line.clone()));
         let out = f();
-        if fs::read_to_string(marker).is_ok_and(|l| l == line) {
-            let _ = fs::remove_file(marker);
-        }
+        held().retain(|(m, l)| !(m == marker && *l == line));
+        release(marker, &line);
         Some(out)
     })
 }
@@ -196,6 +236,16 @@ mod tests {
         fs::write(&f, format!("{me} implement 2026-10-18T14:03:00Z Thu Jan 1 00:00:00 1970\n")).unwrap();
         assert!(state_at(path(&f)).is_null());
         assert!(!f.exists());
+    }
+
+    #[test]
+    fn the_refusal_names_the_way_out_177() {
+        let s = json!({"step": "address", "pid": 42, "since": "2026-10-22T00:00:00Z"});
+        assert_eq!(
+            refusal(&s, "feat", "/r/.git/sheepdog/feat.running"),
+            "address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not starting another agent step. \
+             If it's hung: kill 42, or remove /r/.git/sheepdog/feat.running"
+        );
     }
 
     #[test]
