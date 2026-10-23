@@ -63,7 +63,8 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     chrismo: unnotified, an unattended loop stalls there unseen (#76)
 Not notified:
   closed: chrismo closed it
-  errors stale: ⚠️ sd state can't be sure, so what was notified carries over
+  errors stale gh-wait: ⚠️ sd state can't be sure, so what was notified
+    carries over; gh-wait is GitHub not yet showing a push (#246)
   reset-dirty take: chrismo is mid-change on the branch: no sheepdog step
     resets pushed commits away, so the reset and the edits with it are
     chrismo's; the 🔧 glyph shows it

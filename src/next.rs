@@ -7,7 +7,9 @@
 //
 // Ordering of the loop's own steps, after what blocks everything (stale refs,
 // human items): restack, agent fixes, one push, then review and wait; the push
-// leads because every push restarts CI (#79 Design record).
+// leads because every push restarts CI (#79 Design record). GitHub behind the
+// remote refs, a push it hasn't seen yet (sd state's lag), is a wait where
+// stale refs are a fetch (#246).
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -289,6 +291,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                     "fetch: GitHub is ahead of your remote refs, so the steps below may be wrong",
                     cmd(format!("git fetch --prune {remote}")),
                 )
+            } else {
+                None
+            },
+            if open && len(g("lag")) > 0 {
+                step("gh-wait", "wait", "GitHub hasn't seen the push yet, so the steps below may be wrong", None)
             } else {
                 None
             },

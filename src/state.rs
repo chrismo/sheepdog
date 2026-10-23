@@ -668,6 +668,7 @@ struct Facts {
     dirty: Value,
     held: Value,
     stale: Vec<String>,
+    lag: Vec<String>,
     r_local: Value,
     r_bot: Value,
     r_accepted: Value,
@@ -905,6 +906,7 @@ fn assemble(s: &Facts) -> Value {
                  "held": s.held},
         "fresh": if s.gh_ok && s.parent_ok { json!(s.stale.is_empty()) } else { Value::Null },
         "stale": s.stale,
+        "lag": s.lag,
         "ci": {"sha": at(c, "oid"), "for_head": if c.is_null() { Value::Null } else { json!(at(c, "oid").as_str() == Some(&s.head)) },
                "verdict": verdict, "failing": names("fail"), "blocked": names("blocked"), "pending": names("pending"),
                "required": s.required, "missing": mi},
@@ -1274,12 +1276,24 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     }
 
     // ── freshness ──
-    let mut stale: Vec<String> = Vec::new();
+    // GitHub's head an older value of the remote ref (its ancestor, or in its
+    // reflog after a force-push) is GitHub behind a push, not the ref (#246).
+    let (mut stale, mut lag) = (Vec::new(), Vec::new());
     for (p, name) in [(&pr, branch), (&parent_pr, parent.as_str())] {
         if at(p, "state").as_str() == Some("OPEN") {
             if let Some(gh_sha) = at(p, "headRefOid").as_str().filter(|s| !s.is_empty()) {
-                if gh_sha != rev(dir, &format!("refs/remotes/{remote}/{name}")) {
-                    stale.push(format!("{remote}/{name} is not at GitHub's {}", &gh_sha[..7.min(gh_sha.len())]));
+                let r = format!("refs/remotes/{remote}/{name}");
+                let r_sha = rev(dir, &r);
+                if gh_sha != r_sha {
+                    let short = &gh_sha[..7.min(gh_sha.len())];
+                    let older = !r_sha.is_empty()
+                        && (is_ancestor(dir, gh_sha, &r_sha)
+                            || git_out(dir, &["reflog", "show", "--format=%H", &r]).unwrap_or_default().lines().any(|l| l == gh_sha));
+                    if older {
+                        lag.push(format!("GitHub's {name} is at {short}, behind {remote}/{name}"));
+                    } else {
+                        stale.push(format!("{remote}/{name} is not at GitHub's {short}"));
+                    }
                 }
             }
         }
@@ -1401,6 +1415,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         dirty,
         held,
         stale,
+        lag,
         r_local,
         r_bot,
         r_accepted,
@@ -1443,12 +1458,18 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     // Before NEXT says ready, the PR's base on the remote: GitHub's CLEAN can
     // lag a base that just moved (#169). So too before a first step that spends
     // tokens or triggers the bot, on a head a restack would rewrite (#182); with
-    // no PR, the base is the target. One ls-remote, only for those first steps;
-    // a failure or timeout leaves it unchecked. A moved base is stale, and NEXT
-    // is asked again.
+    // no PR, the base is the target. And before blocked on GitHub's DIRTY: with no
+    // conflict here, the base likelier moved than GitHub is wrong (#246). One
+    // ls-remote, only for those first steps; a failure or timeout leaves it
+    // unchecked. A moved base is stale, and NEXT is asked again.
     let first = arr(&steps).first().cloned().unwrap_or(json!({"key": "", "who": ""}));
     let fk = str_or(&first["key"], "");
-    let due = first["who"] == "agent" || fk == "open-pr" || fk == "bot-trigger" || (arr(&steps).len() == 1 && fk == "ready");
+    let alone = arr(&steps).len() == 1;
+    let due = first["who"] == "agent"
+        || fk == "open-pr"
+        || fk == "bot-trigger"
+        || (alone && fk == "ready")
+        || (alone && fk == "blocked" && at(&state, "pr.merge_state").as_str() == Some("DIRTY"));
     if due {
         let rb = first_of(&state, "pr.base", "sync.target");
         if let Some(rb) = rb.as_str().filter(|r| !r.is_empty()) {
@@ -1550,6 +1571,7 @@ fn summary(s: &Value) -> String {
         },
         on(s, "session.locked").then(|| "locked".to_string()),
         (at(s, "fresh") == &Value::Bool(false)).then(|| "⚠ stale: fetch".to_string()),
+        (!arr(at(s, "lag")).is_empty()).then(|| "⏳ GitHub lagging".to_string()),
         (!arr(at(s, "errors")).is_empty()).then(|| format!("⚠ {} error(s)", arr(at(s, "errors")).len())),
     ];
     parts.into_iter().flatten().collect::<Vec<_>>().join(" · ")

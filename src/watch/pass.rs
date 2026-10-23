@@ -61,7 +61,7 @@ fn classify(s: &Value) -> Class {
     let k: Vec<&str> = next.iter().map(|x| at(x, "key").as_str().unwrap_or("")).collect();
     let red: Vec<Value> = next.iter().filter(|x| at(x, "key").as_str().is_some_and(|k| RED.contains(&k))).map(reason).collect();
     let waiting = !next.iter().any(|x| at(x, "who").as_str().is_some_and(|w| w != "wait"));
-    let unsure = k.contains(&"errors") || k.contains(&"stale");
+    let unsure = k.contains(&"errors") || k.contains(&"stale") || k.contains(&"gh-wait");
     let (glyph, reasons, note) = match k.as_slice() {
         [] => ("⚠️", vec![], Some("sd state gave no next steps")),
         ["running"] => ("🤖", vec![], None),
@@ -283,7 +283,7 @@ fn unsure_why(note: Option<&str>, s: &Value) -> String {
         return n.into();
     }
     let mut all: Vec<&Value> = vec![];
-    for k in ["errors", "stale"] {
+    for k in ["errors", "stale", "lag"] {
         match at(s, k) {
             Value::Null => {}
             Value::Array(a) => all.extend(a),
@@ -929,7 +929,7 @@ mod tests {
 
     #[test]
     fn classify_errors_or_stale_is_unsure() {
-        for k in ["errors", "stale"] {
+        for k in ["errors", "stale", "gh-wait"] {
             let c = of(&[step(k, "you"), step("ci-wait", "wait")]);
             assert_eq!((c.glyph, c.carry, c.reasons.len()), ("⚠️", true, 0), "{k}");
         }
@@ -985,6 +985,7 @@ mod tests {
     fn unsure_why_is_the_note_else_errors_and_stale_else_unreadable() {
         assert_eq!(unsure_why(Some("n"), &json!({"errors": ["e"]})), "n");
         assert_eq!(unsure_why(None, &json!({"errors": ["e1", "e2"], "stale": ["s"]})), "e1; e2; s");
+        assert_eq!(unsure_why(None, &json!({"errors": [], "stale": [], "lag": ["l"]})), "l");
         assert_eq!(unsure_why(None, &json!({"errors": [{"odd": 1}]})), "its reasons couldn't be read");
         assert_eq!(unsure_why(None, &json!({"errors": "e"})), "its reasons couldn't be read");
     }

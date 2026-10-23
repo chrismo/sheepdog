@@ -281,6 +281,17 @@ fn stale_refs_fetch_mechanically() {
     assert_eq!(step("stale", "say", &e![".fresh = false"]), "fetch: GitHub is ahead of your remote refs, so the steps below may be wrong");
 }
 
+// @test "GitHub behind the remote refs: wait for it, not fetch (#246)"
+#[test]
+fn github_behind_the_remote_refs_wait_for_it_not_fetch_246() {
+    let lag = r#".lag = ["GitHub's feat is at 1111111, behind origin/feat"]"#;
+    assert_eq!(keys(&e![lag, ".push.ahead = 1"]), "gh-wait push");
+    assert_eq!(step("gh-wait", "who", &e![lag]), "wait");
+    assert_eq!(step("gh-wait", "cmd", &e![lag]), "null");
+    assert_eq!(step("gh-wait", "say", &e![lag]), "GitHub hasn't seen the push yet, so the steps below may be wrong");
+    assert_eq!(keys(&e![".lag = []"]), "ready");
+}
+
 // @test "a push that isn't ours: chrismo looks, and no push is suggested"
 #[test]
 fn a_push_that_isn_t_ours_chrismo_looks_and_no_push_is_suggested() {
