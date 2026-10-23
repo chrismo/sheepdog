@@ -1,4 +1,5 @@
-sd watch - observe-only pass over every enrolled branch.
+sd watch - a pass over every enrolled branch: observe it, and with
+settings.dispatch run its mechanical steps.
 
 Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | status | install | uninstall]
 
@@ -11,6 +12,7 @@ Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | stat
              a branch -D), and the cached state of branches no longer
              enrolled. For one that is gone too (gh pr merge --delete-branch
              takes its enrollment), its PR's merge is notified if it wasn't.
+             With settings.dispatch, also runs steps (Dispatch, below)
   refresh    the same check for one branch (default: the current one), now:
              fetch its repo, glyph, notify, cache its state. Not a pass: other
              branches and glyphs are left alone and status still shows the
@@ -98,6 +100,23 @@ notifies, once; one for no local branch is only a pass line. sd watch vacuum
 doesn't wait for the clock, vacuumAfter 0 included, but counts only these
 reasons and skips a branch sd state is unsure of, as a pass does.
 
+Dispatch (#267): off unless settings.dispatch is true (sd config set
+--global --json settings.dispatch true); branch.<b>.sd-dispatch false turns
+it off for one branch. A pass then runs a branch's first NEXT step when it
+is one of these run steps, as sd act <verb> <branch> from the repo: fetch,
+behind (restack), push, retarget, bot-trigger (trigger). One attempt per
+branch per pass, under SHEEPDOG_WATCH_TIMEOUT; the next pass sees what it
+did. Only on a PR the viewer (gh's login) authored with no one else's
+commits on the remote: none this copy never had, none taken and reset away.
+fetch, a followed PR's, runs whoever wrote the PR: it refuses when the
+branch has commits of chrismo's. Not while sd state reports errors or is
+unsure, or after the rate limit stops the pass; never on refresh or vacuum.
+The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
+ship-parent, open-pr) and every agent step stay chrismo's. The step's
+output goes to stderr (the job's launchd.log), then its pass line, also in
+status: ran sd act <verb>: ok, failed (exit <n>): <its last line>, or
+timed out after <n>s.
+
 GitHub's rate limit: a pass checks no more branches after one whose sd
 state found less than settings.rateLimitFloor GraphQL points left (default
 250), or had a call refused for the rate limit. Status says so with the
@@ -107,10 +126,11 @@ runs. refresh checks its one branch either way.
 
 Env:    SHEEPDOG_STATE_DIR (~/.local/state/sheepdog), STATUS_DIR (~/.claude/tab-status)
         LOCAL_BIN (~/.local/bin): where install finds the sd link the job runs
-        SHEEPDOG_WATCH_TIMEOUT (120): seconds a fetch or sd state may take
+        SHEEPDOG_WATCH_TIMEOUT (120): seconds a fetch, sd state or a
+        dispatched step may take
 Config: read as sd config does, no branch file (global file over
         built-in defaults): settings.notify, .interval, .remote, .vacuumAfter,
-        .rateLimitFloor. .remote is read from inside each repo, so that
+        .rateLimitFloor, .dispatch. .remote is read from inside each repo, so that
         repo's file (sd config set --repo) can set it.
         notify — shell command, run with <title> <message> appended
         (default: a macOS notification)

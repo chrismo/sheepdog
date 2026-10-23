@@ -45,7 +45,8 @@ Layers (top wins; sd config files prints the paths):
             reviewRounds 3,
             botTimeout 3600 (seconds to wait on the review bot), interval
             300, vacuumAfter 604800, rateLimitFloor 250 (GraphQL points
-            under which sd watch stops a pass), replyPrefix "🤖 ";
+            under which sd watch stops a pass), dispatch false (sd watch
+            runs no steps), replyPrefix "🤖 ";
             protectedPaths none (unset: .sheepdog/protected-paths in the
             base commit, else the CI config dirs, sd act --help); the other
             settings empty
@@ -63,9 +64,10 @@ Notes:
   - files are typed: an unknown key or a bad value is an error naming the
     file and path; a number may be quoted ("1800", as set writes it without
     --json); forkLimit, reviewRounds, interval and rateLimitFloor are whole
-    numbers; get prints a value as written; remote is global or repo file
-    only; interval, notify, vacuumAfter and rateLimitFloor are global-file
-    only; a repo file takes everything else a branch file does
+    numbers; dispatch is true or false (set it with --json); get prints a
+    value as written; remote is global or repo file only; interval, notify,
+    vacuumAfter, rateLimitFloor and dispatch are global-file only; a repo
+    file takes everything else a branch file does
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -85,7 +87,7 @@ fn defaults() -> Value {
         "settings": {
             "remote": "origin", "stepTimeout": 1800, "stepBudget": 5, "branchBudget": 25,
             "forkLimit": 100000, "reviewRounds": 3, "botTimeout": 3600, "interval": 300,
-            "vacuumAfter": 604800, "rateLimitFloor": 250, "replyPrefix": "🤖 ",
+            "vacuumAfter": 604800, "rateLimitFloor": 250, "dispatch": false, "replyPrefix": "🤖 ",
             "verify": "", "autofix": "", "localReview": "", "botCommand": "", "notify": "",
             "reviewPrompt": "", "implementPrompt": "", "reviewFixPrompt": "", "describePrompt": "",
             "addressPrompt": "", "resolvePrompt": "", "ciFixPrompt": "",
@@ -162,7 +164,7 @@ const SETTINGS: &[(&str, Ty)] = &[
 const GLOBAL_OR_REPO: &[(&str, Ty)] = &[("remote", Ty::Str)];
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
     ("interval", Ty::Whole), ("notify", Ty::Str),
-    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
+    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole), ("dispatch", Ty::Bool),
 ];
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),

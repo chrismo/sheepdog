@@ -1854,6 +1854,16 @@ fn validate_rate_limit_floor_can_only_be_set_in_the_global_file_as_whole_points(
 }
 
 #[test]
+fn validate_dispatch_can_only_be_set_in_the_global_file_as_true_or_false() {
+    global_file_only("dispatch", r#"{"settings":{"dispatch":true}}"#);
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"dispatch":"yes"}}"#);
+    let r = sd.run(&["get", "settings.dispatch"]);
+    assert_eq!(r.status, 1);
+    assert!(r.output.ends_with(r#"settings.dispatch: expected true or false, got "yes""#), "{}", r.output);
+}
+
+#[test]
 fn validate_null_is_allowed_anywhere_to_clear_an_inherited_key() {
     let sd = Sd::new();
     sd.write_global(GLOBAL);
@@ -1933,6 +1943,7 @@ fn defaults_every_pipeline_setting_has_one_when_nothing_is_set() {
     assert_eq!(sd.out(&["get", "settings.interval"]), "300");
     assert_eq!(sd.out(&["get", "settings.vacuumAfter"]), "604800");
     assert_eq!(sd.out(&["get", "settings.rateLimitFloor"]), "250");
+    assert_eq!(sd.out(&["get", "settings.dispatch"]), "false");
     assert_eq!(sd.stdout(&["get", "settings.replyPrefix"]), "🤖 \n");
 }
 
@@ -2149,7 +2160,7 @@ fn repo_remote_gits_remote_pushdefault_plays_no_part() {
 fn repo_set_repo_refuses_a_global_only_key_and_leaves_the_file_alone() {
     let sd = Sd::new();
     sd.write_repo(r#"{"settings":{"verify":"make"}}"#);
-    for key in ["interval", "notify", "vacuumAfter", "rateLimitFloor"] {
+    for key in ["interval", "notify", "vacuumAfter", "rateLimitFloor", "dispatch"] {
         let r = sd.run(&["set", "--repo", &format!("settings.{key}"), "60"]);
         assert_eq!(r.status, 1, "{key}");
         assert_eq!(
@@ -2375,6 +2386,7 @@ fn explain_lists_every_key_the_typed_tables_define() {
         "settings.flags.testFiles",
         "settings.remote",
         "settings.rateLimitFloor",
+        "settings.dispatch",
     ] {
         assert!(paths.iter().any(|x| x == p), "no {p}: {paths:?}");
     }

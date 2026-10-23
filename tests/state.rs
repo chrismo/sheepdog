@@ -600,6 +600,19 @@ fn pr_merge_gate_merge_state_review_decision_and_whos_requested() {
     assert_eq!(r.field(r#"[.next[].key] | any(. == "review-wait") and all(. != "ready")"#), "true");
 }
 
+#[test]
+fn pr_author_and_viewer_say_whose_pr_it_is_267() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("a.txt", "a");
+    sd.pr_fixture("feat", &[r#".author = {login: "alice"}"#]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c("{author: .pr.author, viewer}"), r#"{"author":"alice","viewer":"me"}"#);
+    sd.git(&["switch", "-qc", "solo"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c("{pr, viewer}"), r#"{"pr":null,"viewer":"me"}"#);
+}
+
 // @test "an open PR is preferred over a newer closed one for the same branch"
 #[test]
 fn an_open_pr_is_preferred_over_a_newer_closed_one_for_the_same_branch() {
