@@ -153,14 +153,19 @@ pub fn guidance_base(b: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Whether <cmd> is only plain words, safe to put in a permission rule as is.
+pub fn plain_words(cmd: &str) -> bool {
+    let plain = Regex::new(r"^[A-Za-z0-9_./:=@+-]+( [A-Za-z0-9_./:=@+-]+)*$").expect("a fixed pattern compiles");
+    plain.is_match(cmd)
+}
+
 /// What the agent may run beyond reading and read-only git (Claude Code
 /// permission rules): settings.verify when it's plain words (a rule's * is a
 /// wildcard), and settings.implementAllow's.
 pub fn agent_rules(b: &str) -> Vec<String> {
     let verify = cfg("settings.verify", b);
-    let plain = Regex::new(r"^[A-Za-z0-9_./:=@+-]+( [A-Za-z0-9_./:=@+-]+)*$").expect("a fixed pattern compiles");
     let mut rules: Vec<String> = Vec::new();
-    if plain.is_match(&verify) {
+    if plain_words(&verify) {
         rules.push(format!("Bash({verify})"));
     }
     rules.extend(cfg("settings.implementAllow", b).lines().filter(|r| !r.is_empty()).map(str::to_string));

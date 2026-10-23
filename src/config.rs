@@ -521,17 +521,25 @@ fn probe<'a>(doc: &'a Value, path: &[&str]) -> Probe<'a> {
 }
 
 /// The effective value at <path>, the layer it came from, and the lower
-/// layers it hides. <layers> run top to bottom; a null hides everything below
-/// it, so the default shows.
-fn trace(layers: &[(&'static str, &Value)], dflt: &Value, path: &[&str]) -> (Option<Value>, &'static str, Vec<&'static str>) {
+/// layers it hides, and the layer whose null reset it to the default, if one
+/// did. <layers> run top to bottom; a null hides everything below it, so the
+/// default shows.
+struct Traced {
+    value: Option<Value>,
+    source: &'static str,
+    hidden: Vec<&'static str>,
+    reset_by: Option<&'static str>,
+}
+
+fn trace(layers: &[(&'static str, &Value)], dflt: &Value, path: &[&str]) -> Traced {
     let mut won: Option<(&'static str, Value)> = None;
-    let mut cut = false;
+    let mut cut: Option<&'static str> = None;
     let mut hidden = Vec::new();
     for (name, doc) in layers {
         match probe(doc, path) {
-            Probe::Set(v) if won.is_none() && !cut => won = Some((*name, v.clone())),
+            Probe::Set(v) if won.is_none() && cut.is_none() => won = Some((*name, v.clone())),
             Probe::Set(_) => hidden.push(*name),
-            Probe::Null if won.is_none() => cut = true,
+            Probe::Null if won.is_none() => cut = cut.or(Some(*name)),
             _ => {}
         }
     }
@@ -544,16 +552,17 @@ fn trace(layers: &[(&'static str, &Value)], dflt: &Value, path: &[&str]) -> (Opt
             if d.is_some() {
                 hidden.push("defaults");
             }
-            (Some(v), name, hidden)
+            Traced { value: Some(v), source: name, hidden, reset_by: None }
         }
-        (None, Some(d)) => (Some(d), "defaults", hidden),
-        (None, None) => (None, "unset", hidden),
+        (None, Some(d)) => Traced { value: Some(d), source: "defaults", hidden, reset_by: cut },
+        (None, None) => Traced { value: None, source: "unset", hidden, reset_by: None },
     }
 }
 
 fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
-    let mut keys = Vec::new();
-    key_paths(Ty::Obj(CONFIG), "", &mut keys);
+    let mut all = Vec::new();
+    key_paths(Ty::Obj(CONFIG), "", &mut all);
+    let mut keys = all.clone();
     if !path.is_empty() {
         segments(path)?;
         keys.retain(|k| k == path || k.starts_with(&format!("{path}.")));
@@ -564,26 +573,52 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
     let [g, r, bj] = layer_docs(dir, b, no_branch)?;
     let dflt = defaults();
     let layers = [("branch", &bj), ("repo", &r), ("global", &g)];
-    let traced: Vec<_> = keys
-        .iter()
-        .map(|k| {
-            let segs: Vec<&str> = k.split('.').collect();
-            (k.as_str(), trace(&layers, &dflt, &segs))
-        })
-        .collect();
+    let trace_key = |k: &str| trace(&layers, &dflt, &k.split('.').collect::<Vec<_>>());
+    let traced: Vec<_> = keys.iter().map(|k| (k.as_str(), trace_key(k))).collect();
 
-    let root = path.split('.').next().unwrap_or("");
-    let with_steps = path.is_empty() || ["harness", "harnesses", "steps"].contains(&root);
+    let segs: Vec<&str> = path.split('.').collect();
+    let with_steps = path.is_empty() || ["harness", "harnesses", "steps"].contains(&segs[0]);
+    let only_step = if segs[0] == "steps" { segs.get(1).copied().filter(|s| STEPS.contains(s)) } else { None };
     let merged = merge(&[&g, &r, &bj], false);
-    let steps: Vec<(&str, Value)> =
-        if with_steps { STEPS.iter().map(|s| (*s, resolve_step(&merged, s, "").0)).collect() } else { vec![] };
+    let all_steps: Vec<(&str, Value)> = STEPS.iter().map(|s| (*s, resolve_step(&merged, s, "").0)).collect();
+    let steps: Vec<(&str, Value)> = if with_steps {
+        all_steps.iter().filter(|(s, _)| only_step.is_none_or(|o| o == *s)).cloned().collect()
+    } else {
+        vec![]
+    };
+
+    let text_of = |k: &str| trace_key(k).value.and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    let verify = text_of("settings.verify");
+    let mut warnings: Vec<(&str, String)> = Vec::new();
+    if verify.is_empty() {
+        warnings.push((
+            "settings.verify",
+            "settings.verify is empty: the agent steps can't build or run the tests, and `sd act verify` checks nothing; set it with `sd config set --repo settings.verify '<command>'`".into(),
+        ));
+    } else if !crate::act::plain_words(&verify)
+        && text_of("settings.implementAllow").is_empty()
+        && all_steps.iter().any(|(_, v)| v.get("harness").and_then(Value::as_str) == Some("claude"))
+    {
+        warnings.push((
+            "settings.implementAllow",
+            "settings.verify isn't plain words and settings.implementAllow is empty, so the Claude agent isn't allowed to run verify itself; add a Claude Code permission rule for it to settings.implementAllow".into(),
+        ));
+    }
+    warnings.retain(|(k, _)| all.iter().any(|a| a == k) && keys.iter().any(|x| x == k));
 
     if as_json {
         let ks: Vec<Value> = traced
             .iter()
-            .map(|(k, (v, src, over))| json!({"path": k, "value": v, "source": src, "overrides": over}))
+            .map(|(k, t)| {
+                let mut o = json!({"path": k, "value": t.value, "source": t.source, "overrides": t.hidden});
+                if let Some(by) = t.reset_by {
+                    o["resetBy"] = json!(by);
+                }
+                o
+            })
             .collect();
-        let mut out = json!({ "keys": ks });
+        let ws: Vec<Value> = warnings.iter().map(|(k, m)| json!({"path": k, "message": m})).collect();
+        let mut out = json!({ "keys": ks, "warnings": ws });
         if with_steps {
             let field = |v: &Value, f: &str| v.get(f).cloned().unwrap_or(Value::Null);
             out["steps"] = Value::Object(
@@ -600,8 +635,8 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
     }
 
     let mut out = String::new();
-    for (k, (v, src, over)) in &traced {
-        let Some(v) = v else {
+    for (k, t) in &traced {
+        let Some(v) = &t.value else {
             out += &format!("{k} (unset)\n");
             continue;
         };
@@ -609,11 +644,19 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             Value::String(s) if s.is_empty() => "\"\"".to_string(),
             v => line(v),
         };
-        let hides = if over.is_empty() { String::new() } else { format!("; overrides {}", over.join(", ")) };
+        let src = match t.reset_by {
+            Some(by) => format!("{}, reset by {by}", t.source),
+            None => t.source.to_string(),
+        };
+        let hides = if t.hidden.is_empty() { String::new() } else { format!("; overrides {}", t.hidden.join(", ")) };
         out += &format!("{k} = {shown}  [{src}{hides}]\n");
     }
     if with_steps {
-        let cell = |v: &Value, f: &str| v.get(f).map_or("-".to_string(), line);
+        let cell = |v: &Value, f: &str| match v.get(f) {
+            None => "-".to_string(),
+            Some(Value::String(s)) if s.is_empty() => "-".to_string(),
+            Some(v) => line(v),
+        };
         let rows: Vec<[String; 4]> = steps
             .iter()
             .map(|(s, v)| [s.to_string(), cell(v, "harness"), cell(v, "model"), cell(v, "effort")])
@@ -627,6 +670,9 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             out += cells.join("  ").trim_end();
             out += "\n";
         }
+    }
+    for (_, m) in &warnings {
+        out += &format!("warning: {m}\n");
     }
     Ok(out)
 }
