@@ -97,6 +97,11 @@ pub fn patch_id(dir: &str, a: &str, b: &str) -> String {
     p.stdout.split(' ').next().unwrap_or("").trim_end_matches('\n').to_string()
 }
 
+/// A followed PR's head as last fetched (#250).
+pub fn pr_head_ref(b: &str) -> String {
+    format!("refs/sheepdog/{b}/pr-head")
+}
+
 pub fn show_ref(dir: &str, r: &str) -> bool {
     git_ok(dir, &["show-ref", "-q", "--verify", r])
 }

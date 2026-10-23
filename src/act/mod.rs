@@ -7,6 +7,7 @@ mod bookkeeping;
 mod ci_fix;
 mod commands;
 mod describe;
+mod follow;
 mod github;
 mod hold;
 mod implement;
@@ -70,6 +71,8 @@ pub struct Args {
     pub positionals: Vec<String>,
     pub task: String,
     pub answer: String,
+    /// follow's <number>.
+    pub pr: String,
 }
 
 pub fn parse(argv: &[String]) -> Result<Args, String> {
@@ -119,6 +122,13 @@ impl Args {
                 return Err("usage: sd act answer [--force] <text> [<branch>]".into());
             }
             (self.answer, self.branch) = (self.positionals[0].clone(), second);
+        }
+        if verb == "follow" {
+            if n != 1 || self.positionals[0].is_empty() || !self.positionals[0].bytes().all(|c| c.is_ascii_digit()) {
+                return Err("usage: sd act follow <number>".into());
+            }
+            self.pr = self.positionals[0].clone();
+            self.branch = follow::branch(&self.pr);
         }
         let one_verb = [(self.accept, "--accept", "review"), (self.remove, "--remove", "forget"), (self.question, "--question", "ack")];
         for (set, flag, only) in one_verb {
@@ -248,6 +258,9 @@ pub fn run(argv: &[String]) -> ExitCode {
         die("detached HEAD; name a branch");
     }
     lock_sweep(&b);
+    if follow::AUTHORS.contains(&verb.as_str()) && follow::reviewing(&b) {
+        die(format!("{b} is a PR you're reviewing (sd act follow): sd act {verb} is the author's"));
+    }
     match verb.as_str() {
         "push" => push::push(&b, &remote, a.force),
         "verify" => commands::verify(&b),
@@ -264,6 +277,8 @@ pub fn run(argv: &[String]) -> ExitCode {
         "review" => review::review(&b, &remote, a.accept, a.force),
         "attach" => attach::attach(&b, &a.harness, a.force),
         "start" => return ExitCode::from(u8::try_from(start::start(&b, &remote, &a)).unwrap_or(1)),
+        "fetch" => follow::fetch(&b, &remote),
+        "follow" => return ExitCode::from(u8::try_from(follow::follow(&b, &a.pr, &remote)).unwrap_or(1)),
         "implement" => implement::implement(&b, &a),
         "address" => address::address(&b, &remote, &a),
         "describe" => describe::describe(&b, &remote, &a),

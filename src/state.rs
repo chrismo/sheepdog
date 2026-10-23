@@ -44,7 +44,7 @@ const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!, $co
         first: comments(first: 1) { nodes { author { __typename login } url body } }
         last: comments(last: 1) { nodes { author { __typename login } } }
       } }
-      reviews(last: 50) { nodes { id url state body createdAt submittedAt author { __typename login } } }
+      reviews(last: 50) { nodes { id url state body createdAt submittedAt commit { oid } author { __typename login } } }
       comments(last: 50) { nodes { id url body createdAt author { __typename login } } }
     }
   }
@@ -300,6 +300,24 @@ impl Gh<'_> {
             Call::Gone => {
                 self.errors.push(format!("gh ({b}): GitHub has no PR #{pick}, which it just listed"));
                 Err(())
+            }
+            Call::Failed => Err(()),
+        }
+    }
+
+    /// A followed PR (#250): by its stored number alone, whatever its head is
+    /// called; never discovered, never unset. Err when gh failed.
+    fn followed_pr(&mut self, b: &str) -> Result<Value, ()> {
+        let n = git_out(self.dir, &["config", "--get", &format!("branch.{b}.sd-pr")]).unwrap_or_default();
+        if n.is_empty() {
+            self.errors.push(format!("{b} is followed (reviewer mode) but has no branch.{b}.sd-pr"));
+            return Ok(Value::Null);
+        }
+        match self.fetch(b, &n, false) {
+            Call::Ok => Ok(self.pr()),
+            Call::Gone => {
+                self.errors.push(format!("gh ({b}): GitHub has no PR #{n}"));
+                Ok(Value::Null)
             }
             Call::Failed => Err(()),
         }
@@ -638,6 +656,7 @@ fn owed_item(id: &Value, ty: &str, path: Value, line: Value, outdated: Value, ki
 }
 
 struct Facts {
+    reviewer: bool,
     branch: String,
     head: String,
     task: String,
@@ -662,6 +681,7 @@ struct Facts {
     ahead: i64,
     push_behind: i64,
     diverged: bool,
+    author_pushed: Value,
     remote_ours: Value,
     theirs: Value,
     remote_made: Value,
@@ -886,6 +906,24 @@ fn assemble(s: &Facts) -> Value {
         json!({"sha": at(f, "head"), "round": at(f, "round"), "n": blocking.len(), "at_head": s.r_findings_at_head,
                "declined": declined, "cap": s.review_rounds, "items": at(f, "findings")})
     };
+    let github = if !s.reviewer || !s.gh_ok {
+        Value::Null
+    } else {
+        let mine: Vec<&Value> = reviews.iter().filter(|r| str_or(at(r, "author.login"), "") == s.viewer).collect();
+        let pending = mine.iter().any(|r| at(r, "state").as_str() == Some("PENDING"));
+        // A lone inline comment or thread reply is a COMMENTED review with no body.
+        let verdict = |r: &Value| match at(r, "state").as_str() {
+            Some("APPROVED" | "CHANGES_REQUESTED") => true,
+            Some("COMMENTED") => !str_or(at(r, "body"), "").trim().is_empty(),
+            _ => false,
+        };
+        match mine.iter().rev().copied().find(|r| verdict(r)) {
+            None if !pending => Value::Null,
+            None => json!({"sha": null, "state": null, "at_head": false, "pending": true}),
+            Some(r) => json!({"sha": at(r, "commit.oid"), "state": at(r, "state"),
+                              "at_head": at(r, "commit.oid").as_str() == Some(&s.head), "pending": pending}),
+        }
+    };
     let prefix = format!("refs/sheepdog/{}/", s.branch);
     let refs: Map<String, Value> = s
         .refs
@@ -895,13 +933,14 @@ fn assemble(s: &Facts) -> Value {
     let jn = |x: &str| nn(x);
     json!({
         "branch": s.branch, "head": s.head, "task": jn(&s.task),
+        "mode": if s.reviewer { json!("reviewer") } else { Value::Null },
         "pr": pr_out,
         "parent": {"name": s.parent, "source": s.parent_source, "merged": s.parent_merged, "local": s.parent_local,
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
                  "undone": s.undone},
-        "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged,
+        "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "held": s.held},
         "fresh": if s.gh_ok && s.parent_ok { json!(s.stale.is_empty()) } else { Value::Null },
@@ -910,7 +949,7 @@ fn assemble(s: &Facts) -> Value {
         "ci": {"sha": at(c, "oid"), "for_head": if c.is_null() { Value::Null } else { json!(at(c, "oid").as_str() == Some(&s.head)) },
                "verdict": verdict, "failing": names("fail"), "blocked": names("blocked"), "pending": names("pending"),
                "required": s.required, "missing": mi},
-        "review": {"local": s.r_local, "bot": bot_pin, "accepted": accepted, "findings": findings},
+        "review": {"local": s.r_local, "bot": bot_pin, "accepted": accepted, "findings": findings, "github": github},
         "question": s.question,
         "failed": s.failed,
         "flags": s.flags, "flags_error": jn(&s.flags_error),
@@ -1036,11 +1075,13 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let ignore_body = compile_all(&raw_json(&ignore_body_text))
         .ok_or_else(|| fail(format!("botIgnoreBody has an invalid regex: {ignore_body_text}")))?;
 
+    let reviewer = cfg("sd-mode") == "reviewer";
     let mut gh = Gh { dir, resp: Value::Null, errors: Vec::new(), rl_cost: None, rl_remaining: Value::Null, rl_reset: String::new(), rl_limited: false };
 
     // ── O1 PR, O2 parent ──
     let (mut pr, mut viewer, mut default_branch, mut gh_ok) = (Value::Null, String::new(), String::new(), false);
-    if let Ok(p) = gh.lookup_pr(branch, false) {
+    let found = if reviewer { gh.followed_pr(branch) } else { gh.lookup_pr(branch, false) };
+    if let Ok(p) = found {
         gh_ok = true;
         pr = p;
         viewer = str_or(at(&gh.resp, "data.viewer.login"), "").to_string();
@@ -1229,7 +1270,10 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     }
 
     // ── O4 local vs remote ──
-    let remote_sha = rev(dir, &format!("refs/remotes/{remote}/{branch}"));
+    // A followed PR's remote is its head as fetched: the author's, so never
+    // judged ours or theirs (#250).
+    let remote_ref = if reviewer { git::pr_head_ref(branch) } else { format!("refs/remotes/{remote}/{branch}") };
+    let remote_sha = rev(dir, &remote_ref);
     let (mut remote_ours, mut diverged, mut push_behind, mut theirs) = (Value::Null, false, 0i64, Value::Null);
     let ahead;
     if remote_sha.is_empty() {
@@ -1238,6 +1282,8 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         ahead = count(dir, &[&format!("{remote_sha}..{head}")]);
         push_behind = count(dir, &[&format!("{head}..{remote_sha}")]);
         diverged = ahead > 0 && push_behind > 0;
+    }
+    if !remote_sha.is_empty() && !reviewer {
         let reflog = git_out(dir, &["reflog", "show", "--format=%H", &format!("refs/heads/{branch}")]).unwrap_or_default();
         if reflog.lines().any(|l| l == remote_sha) {
             remote_ours = json!(true);
@@ -1279,13 +1325,25 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     // GitHub's head an older value of the remote ref (its ancestor, or in its
     // reflog after a force-push) is GitHub behind a push, not the ref (#246).
     let (mut stale, mut lag) = (Vec::new(), Vec::new());
+    let mut author_pushed = if reviewer { json!(false) } else { Value::Null };
     for (p, name) in [(&pr, branch), (&parent_pr, parent.as_str())] {
+        // A followed PR's base isn't this branch's to restack onto.
+        if reviewer && name != branch {
+            continue;
+        }
         if at(p, "state").as_str() == Some("OPEN") {
             if let Some(gh_sha) = at(p, "headRefOid").as_str().filter(|s| !s.is_empty()) {
+                let short = &gh_sha[..7.min(gh_sha.len())];
+                if reviewer {
+                    if gh_sha != remote_sha {
+                        author_pushed = json!(true);
+                        stale.push(format!("PR #{}'s head is not at GitHub's {short}", text(at(p, "number"))));
+                    }
+                    continue;
+                }
                 let r = format!("refs/remotes/{remote}/{name}");
                 let r_sha = rev(dir, &r);
                 if gh_sha != r_sha {
-                    let short = &gh_sha[..7.min(gh_sha.len())];
                     let older = !r_sha.is_empty()
                         && (is_ancestor(dir, gh_sha, &r_sha)
                             || git_out(dir, &["reflog", "show", "--format=%H", &r]).unwrap_or_default().lines().any(|l| l == gh_sha));
@@ -1388,6 +1446,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         branch: branch.into(),
         head: head.clone(),
         task: cfg("sd-task"),
+        reviewer,
         pr,
         parent,
         parent_source,
@@ -1409,6 +1468,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         ahead,
         push_behind,
         diverged,
+        author_pushed,
         remote_ours,
         theirs,
         remote_made,
@@ -1510,12 +1570,14 @@ fn summary(s: &Value) -> String {
     let pr = at(s, "pr");
     let f = at(s, "review.findings");
     let flags = arr(at(s, "flags"));
+    let reviewer = t(s, "mode") == "reviewer";
     let parts: Vec<Option<String>> = vec![
         Some(if pr.is_null() {
             "no PR".into()
         } else {
             format!("{} {}", t(pr, "url"), if on(pr, "draft") { "draft".into() } else { t(pr, "state").to_lowercase() })
         }),
+        reviewer.then(|| "reviewing".to_string()),
         on(s, "parent.merged").then(|| format!("parent merged → {}", t(s, "sync.target"))),
         (at(s, "sync.up_to_date") == &Value::Bool(false)).then(|| {
             format!("↓{} {}{}", t(s, "sync.behind"), t(s, "sync.target"), if on(s, "sync.conflict") { " (conflict)" } else { "" })
@@ -1525,6 +1587,8 @@ fn summary(s: &Value) -> String {
             None
         } else if at(s, "push.remote_sha").is_null() {
             Some(if n(s, "push.ahead") > 0.0 { format!("{} unpushed", t(s, "push.ahead")) } else { "not pushed".into() })
+        } else if on(s, "push.diverged") && reviewer {
+            Some("diverged from the PR's head".into())
         } else if on(s, "push.diverged") {
             Some(format!("diverged from remote{}", if on(s, "push.remote_ours") { "" } else { " (not ours)" }))
         } else if n(s, "push.ahead") > 0.0 {
@@ -1533,7 +1597,11 @@ fn summary(s: &Value) -> String {
             None
         },
         (!at(s, "push.remote_sha").is_null() && !on(s, "push.diverged") && n(s, "push.behind") > 0.0).then(|| {
-            format!("remote +{}{}", t(s, "push.behind"), if on(s, "push.remote_ours") { " (reset away here)" } else { "" })
+            if reviewer {
+                format!("author +{}", t(s, "push.behind"))
+            } else {
+                format!("remote +{}{}", t(s, "push.behind"), if on(s, "push.remote_ours") { " (reset away here)" } else { "" })
+            }
         }),
         (!pr.is_null()).then(|| {
             let failing = arr(at(s, "ci.failing"));

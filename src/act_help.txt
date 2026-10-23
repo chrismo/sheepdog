@@ -3,6 +3,8 @@ sd act - verbs that change a branch's PR.
 Usage:
   sd act start    [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]
   sd act implement [--force] [--harness <h>] [<branch>]
+  sd act follow   <number>
+  sd act fetch    [<branch>]
   sd act enroll   [<branch>]
   sd act unenroll [<branch>]
   sd act forget   [--remove] [<branch>]
@@ -59,6 +61,18 @@ Verbs:
             target with no findings to fix: NEXT offers implement only
             before the branch's first commit (#241).
             Spends tokens
+  follow   a teammate's PR <number>, to review it (#250): its head
+            (refs/pull/<number>/head, a fork's PR too) on the branch
+            review/<number>, in a worktree beside the main one with the
+            setup hook run, as start does; records the PR and reviewer mode
+            (.sd-mode), enrolls. A reviewer's branch refuses the author's
+            verbs: implement, address, ci-fix, restack, retarget, push, ship,
+            describe, trigger, answer, autofix. stdout is only the worktree's path
+  fetch     a followed PR's head (A1): the author's pushes, force-pushes
+            too, fetched and the branch reset to them. Refuses uncommitted
+            changes, or commits on the branch that no fetched head had: the
+            last head fetched is what it checks against, so commits on a head
+            the author has since rewritten look like the author's
   enroll    mark the branch for sd watch, and register this repo; for a
             stacked PR, store its parent and base before a merge erases them
             (or warn that git can't find the base, and how to pin it);
@@ -277,7 +291,8 @@ Config (sd config show):
             commit, kebab-cased, else the shipped lib/prompts/<step>.md)
   harness   model, effort, provider (pi), args
 
-State (git config): branch.<b>.sheepdog, .sd-task, .sd-parent, .sd-session,
+State (git config): branch.<b>.sheepdog, .sd-task, .sd-parent, .sd-pr, .sd-mode
+(reviewer: sd act follow's), .sd-session,
 .sd-harness, .sd-handled, .sd-lock ("<pid>@<host> <time>" while attached),
 .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),

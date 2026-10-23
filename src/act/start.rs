@@ -37,7 +37,7 @@ fn start_point(remote: &str, b: &str) -> Option<String> {
 /// this runs from, so a stack built with cd "$(sd act start ...)" stays in one
 /// place; a slash in the branch name would make directories, so it becomes a
 /// dash (#85).
-fn destination(main: &str, b: &str) -> String {
+pub(super) fn destination(main: &str, b: &str) -> String {
     let parent = main.rsplit_once('/').map_or(".", |(p, _)| if p.is_empty() { "/" } else { p });
     format!("{}/{}", parent.trim_end_matches('/'), b.replace('/', "-"))
 }
@@ -56,7 +56,7 @@ fn code(st: std::io::Result<ExitStatus>) -> i32 {
 /// The repo's setup hook in the new worktree, as wt-new runs it:
 /// $GIT_COMMON_DIR/worktree-setup, else git config wt.setup. All its output
 /// goes to stderr. false when it failed.
-fn start_hook(src: &str, dst: &str, b: &str) -> bool {
+pub(super) fn start_hook(src: &str, dst: &str, b: &str) -> bool {
     let script = format!("{}/worktree-setup", common_dir(".").unwrap_or_default());
     let mut c = if executable(Path::new(&script)) {
         eprintln!("sd act: running {script}");
@@ -81,12 +81,17 @@ fn start_hook(src: &str, dst: &str, b: &str) -> bool {
 
 /// git, its output on stderr as git writes it (so in git's order); dies
 /// saying <what> failed.
-fn git_or_die(args: &[&str], what: &str) {
-    let mut c = Command::new("git");
-    c.args(args);
-    if code(on_stderr(c)) != 0 {
+pub(super) fn git_or_die(args: &[&str], what: &str) {
+    if !git_on_stderr(args) {
         die(format!("{what} failed"));
     }
+}
+
+/// git, its output on stderr as git writes it; false when it failed.
+pub(super) fn git_on_stderr(args: &[&str]) -> bool {
+    let mut c = Command::new("git");
+    c.args(args);
+    code(on_stderr(c)) == 0
 }
 
 /// implement in the new worktree, in its own process as bash's subshell had

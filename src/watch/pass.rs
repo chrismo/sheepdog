@@ -20,9 +20,10 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The NEXT steps that are ❌: chrismo's to deal with.
-const RED: [&str; 17] = [
+const RED: [&str; 19] = [
     "ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "question",
     "restack-undone", "bot-silent", "budget", "failed", "ci-config", "nothing", "default", "dirty", "read",
+    "submit", "yours",
 ];
 
 /// What sd state's next steps mean to the pass. carry: sd state is unsure,
@@ -925,6 +926,14 @@ mod tests {
             assert_eq!(glyph(&[step(k, "you")]), "❌", "{k}");
         }
         assert!(RED.contains(&"failed"));
+    }
+
+    #[test]
+    fn classify_a_followed_prs_turns_are_chrismos_or_the_authors_250() {
+        assert_eq!(glyph(&[step("submit", "you")]), "❌");
+        assert_eq!(glyph(&[step("yours", "you")]), "❌");
+        assert_eq!(glyph(&[step("author-wait", "wait")]), "⏳");
+        assert_eq!(glyph(&[step("fetch", "run")]), "🔧");
     }
 
     #[test]

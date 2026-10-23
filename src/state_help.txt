@@ -4,6 +4,13 @@ Usage: sd state [--json | --long] [<branch>]
 
 Reports, for <branch> (default: the current one):
   task      the recorded task (branch.<b>.sd-task), else null
+  mode      reviewer for a teammate's PR followed with sd act follow
+            (branch.<b>.sd-mode), else null (#250). Its PR is the stored
+            number alone, never discovered; its push block compares HEAD to
+            the PR's head as fetched (refs/sheepdog/<b>/pr-head), never
+            judged ours or theirs, and push.author_pushed says GitHub's head
+            is past it; and NEXT has a list of its own: fetch the
+            author's pushes, review, then chrismo submits on GitHub
   pr        the branch's PR (an open one wins over closed/merged)
   parent    sd-parent config, else the PR base, else the default branch;
             whether it exists here and on the remote (a parent only here
@@ -42,6 +49,11 @@ Reports, for <branch> (default: the current one):
             review.accepted also has after (the bot's triggered when sd act
             review --accept pinned it; null with no trigger then, or for a
             pin made by hand)
+            review.github, for a followed PR: the viewer's last submitted
+            verdict (approved, changes requested, or commented with a
+            top-level body; a lone inline comment or thread reply isn't
+            one), {sha (the commit it reviewed), state, at_head, pending
+            (one is pending too)}; null with none, or when gh fails
   question  an agent step's needs-input, or its give-up (kind gave-up,
             else ask; #254) (refs/sheepdog/<b>/question, see
             sd act ack): {step, kind, sha, text, at_head}; at_head while HEAD and
