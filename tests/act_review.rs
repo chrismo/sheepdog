@@ -467,3 +467,13 @@ exit 1
     assert_has(&r.output, &["review stopped on claude's usage limit"]);
     assert_eq!(sd.pin("local"), "");
 }
+
+#[test]
+fn review_a_custom_reviewer_exiting_75_pauses_agent_steps_too_269() {
+    let sd = sd();
+    sd.script(&sd.tmp.join("reviewer"), "#!/usr/bin/env bash\necho \"my reviewer: out of quota\" >&2\nexit 75\n");
+    let r = sd.run(&["review"]);
+    assert_eq!(r.status, 75, "{}", r.output);
+    let limit = fs::read_to_string(sd.tmp.join("state/limit")).unwrap();
+    assert_match(&limit, &format!(r"^\S+Z {}: exited 75\n$", regex::escape(&sd.path("reviewer"))));
+}
