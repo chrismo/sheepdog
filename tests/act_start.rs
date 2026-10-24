@@ -1519,3 +1519,21 @@ fn implement_the_agent_failing_is_nonzero_and_names_the_session() {
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["implement step failed"]);
 }
+
+/// A claude stopped by its session limit (#269): the result claude -p printed on 2026-10-16.
+const CLAUDE_AT_ITS_LIMIT: &str = r#"#!/usr/bin/env bash
+echo '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You'"'"'ve hit your session limit · resets 12:20am (America/Chicago)","total_cost_usd":0,"num_turns":1}'
+exit 1
+"#;
+
+#[test]
+fn implement_an_agent_stopped_on_its_usage_limit_exits_75_and_isnt_counted_a_failure_269() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.fake("claude", CLAUDE_AT_ITS_LIMIT);
+    let r = sd.run(&["implement"]);
+    assert_eq!(r.status, 75, "{}", r.output);
+    assert_has(&r.output, &["implement stopped on claude's usage limit"]);
+    assert_eq!(sd.git_status(&["cat-file", "-e", "refs/sheepdog/feat-x/failed"]), 128);
+    assert!(sd.tmp.join("state/limit").exists());
+}

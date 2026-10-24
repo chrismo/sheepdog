@@ -1,5 +1,5 @@
 sd watch - a pass over every enrolled branch: observe it, and with
-settings.dispatch run its mechanical steps.
+settings.dispatch run its steps, mechanical and agent.
 
 Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | status | install | uninstall]
 
@@ -104,25 +104,36 @@ Dispatch (#267): off unless settings.dispatch is true (sd config set
 --global --json settings.dispatch true); branch.<b>.sd-dispatch false turns
 it off for one branch. A pass then launches a branch's first NEXT step when
 it is one of these run steps, as sd act <verb> <branch> from the repo: fetch,
-behind (restack), push, retarget, bot-trigger (trigger). One attempt per
-branch per pass, under SHEEPDOG_WATCH_TIMEOUT; the next pass sees what it
-did. Only on a PR the viewer (gh's login) authored with no one else's
-commits on the remote: none this copy never had, none taken and reset away.
+behind (restack), push, retarget, bot-trigger (trigger); or one of these
+agent steps (#269): implement, review-fix (implement), review, bot
+(address), ci-red (ci-fix), conflict (restack --resolve). One attempt per
+branch per pass, under SHEEPDOG_WATCH_TIMEOUT, an agent step under three
+times the branch's settings.stepTimeout (verify, the agent, verify again)
+plus that; the next pass sees what it did. Only on a PR the viewer (gh's
+login) authored with no one else's commits on the remote: none this copy
+never had, none taken and reset away.
 fetch, a followed PR's, runs whoever wrote the PR: it refuses when the
 branch has commits of chrismo's. Not while sd state reports errors or is
 unsure, an agent step runs or the session is attached, or after the rate
-limit stops the pass; never on refresh or vacuum.
+limit stops the pass; never on refresh or vacuum. An agent step isn't
+launched, and the pass line says why, while settings.agentSteps (default 2;
+0 runs none) launched agent steps are running across every registered repo,
+or while a usage limit holds: an agent step that stops on its harness's
+limit, launched or run by hand, writes limit in SHEEPDOG_STATE_DIR, and no
+agent step starts before its reset (an hour, when the harness gave none).
+Mechanical steps run either way.
 The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
-ship-parent, open-pr) and every agent step stay chrismo's.
+ship-parent, open-pr) stay chrismo's.
 
 Launched steps (#268): the pass doesn't wait for one. It runs as sd watch
-step <secs> <verb> <branch>, in a session of its own (launchd's cleanup of
+step <secs> <step> <branch>, in a session of its own (launchd's cleanup of
 the job never signals it), holding the branch's running marker as a lease:
 the marker's second line, deadline <time>, is the step's timeout plus 60s.
 Its output goes to steps.log in SHEEPDOG_STATE_DIR. The pass's line, also
 in status, is launched sd act <verb>; the next pass reports how it ended:
 ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
-<n>s, or stopped by a signal. Each pass first reconciles every branch's
+<n>s, stopped on a usage limit (exit 75, not counted), or stopped by a
+signal. Each pass first reconciles every branch's
 lease: one past its deadline gets TERM to its process group, KILL 5s later
 if it's still there; one whose process is gone with no outcome crashed.
 Either counts in the failure record (refs/sheepdog/<b>/failed, harness sd),
@@ -139,10 +150,10 @@ runs. refresh checks its one branch either way.
 Env:    SHEEPDOG_STATE_DIR (~/.local/state/sheepdog), STATUS_DIR (~/.claude/tab-status)
         LOCAL_BIN (~/.local/bin): where install finds the sd link the job runs
         SHEEPDOG_WATCH_TIMEOUT (120): seconds a fetch, sd state or a
-        dispatched step may take
+        dispatched mechanical step may take
 Config: read as sd config does, no branch file (global file over
         built-in defaults): settings.notify, .interval, .remote, .vacuumAfter,
-        .rateLimitFloor, .dispatch. .remote is read from inside each repo, so that
-        repo's file (sd config set --repo) can set it.
+        .rateLimitFloor, .dispatch, .agentSteps. .remote is read from inside
+        each repo, so that repo's file (sd config set --repo) can set it.
         notify — shell command, run with <title> <message> appended
         (default: a macOS notification)

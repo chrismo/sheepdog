@@ -5,6 +5,7 @@ pub mod git;
 pub mod guidance;
 pub mod harness;
 pub mod json;
+pub mod limit;
 pub mod next;
 pub mod proc;
 pub mod review_local;

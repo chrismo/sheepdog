@@ -223,6 +223,12 @@ Verbs:
             sd state's mechanics go on. A lock whose process is gone from
             this host is stale, and every sd act verb clears it first
 
+Usage limits (#269): a verb whose agent step stopped on its harness's
+usage limit exits 75, isn't counted in the failure record, and writes limit
+in SHEEPDOG_STATE_DIR, so sd watch starts no agent step before the reset.
+sd act review passes its reviewer's 75 through: a custom one's pauses
+them for an hour, unless a limit already holds.
+
 CI config hold (#124): when the commit of an agent step that edits
 (implement and its review-fix rounds, address, ci-fix, restack --resolve)
 touches a protected path, the branch is held: address, ci-fix and ship

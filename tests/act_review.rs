@@ -450,3 +450,42 @@ fn a_second_review_of_the_same_head_keeps_the_round_its_findings_start_unanswere
     sd.review();
     assert_eq!(sd.findings_rec("[.round, .findings[0].action]"), "[1,null]");
 }
+
+#[test]
+fn review_the_default_reviewers_agent_stopped_on_its_usage_limit_exits_75_269() {
+    let sd = sd();
+    sd.unset_global("settings.localReview");
+    sd.fake(
+        "claude",
+        r#"#!/usr/bin/env bash
+echo '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You'"'"'ve hit your session limit · resets 12:20am (America/Chicago)","total_cost_usd":0,"num_turns":1}'
+exit 1
+"#,
+    );
+    let r = sd.run(&["review"]);
+    assert_eq!(r.status, 75, "{}", r.output);
+    assert_has(&r.output, &["review stopped on claude's usage limit"]);
+    assert_eq!(sd.pin("local"), "");
+}
+
+#[test]
+fn review_a_custom_reviewer_exiting_75_pauses_agent_steps_too_269() {
+    let sd = sd();
+    sd.script(&sd.tmp.join("reviewer"), "#!/usr/bin/env bash\necho \"my reviewer: out of quota\" >&2\nexit 75\n");
+    let r = sd.run(&["review"]);
+    assert_eq!(r.status, 75, "{}", r.output);
+    let limit = fs::read_to_string(sd.tmp.join("state/limit")).unwrap();
+    assert_match(&limit, &format!(r"^\S+Z reviewer: {} exited 75\n$", regex::escape(&sd.path("reviewer"))));
+}
+
+#[test]
+fn review_a_reviewer_exiting_75_leaves_a_limit_that_already_holds_269() {
+    let sd = sd();
+    let soon = sheepdog::time::utc((sheepdog::time::now_utc().1 / 1_000_000_000) as i64 + 600);
+    fs::create_dir_all(sd.tmp.join("state")).unwrap();
+    let line = format!("{soon} claude: You've hit your session limit\n");
+    fs::write(sd.tmp.join("state/limit"), &line).unwrap();
+    sd.script(&sd.tmp.join("reviewer"), "#!/usr/bin/env bash\nexit 75\n");
+    assert_eq!(sd.run(&["review"]).status, 75);
+    assert_eq!(fs::read_to_string(sd.tmp.join("state/limit")).unwrap(), line);
+}

@@ -893,6 +893,9 @@ fn harness_run_a_claude_step_that_hits_its_usage_limit_says_so_and_isnt_counted_
     assert_lacks(&r.stderr, r#""subtype":"init""#);
     assert_eq!(rec(), failed, "the failure record is left as it was");
     assert_eq!(sd.usage_last(&["step", "status"]), "review|75");
+    let limit = sd.tmp.join("state/limit");
+    assert_eq!(fs::read_to_string(&limit).unwrap(), "2026-10-16T05:20:00Z claude: You've hit your session limit · resets 12:20am (America/Chicago)\n");
+    fs::remove_file(&limit).unwrap();
 
     fs::remove_file(&t).unwrap();
     sd.fx("out", &LIMIT.replace("(America/Chicago)", "(America/Chicago)\\nSee your plan"));
@@ -901,4 +904,9 @@ fn harness_run_a_claude_step_that_hits_its_usage_limit_says_so_and_isnt_counted_
     assert_lacks(&r.stderr, "resets 20");
     assert_lacks(&r.stderr, "See your plan");
     assert_eq!(rec(), failed);
+    let (_, now) = sheepdog::time::now_utc();
+    let resets = fs::read_to_string(&limit).unwrap();
+    let at = sheepdog::time::epoch_ns(resets.split(' ').next().unwrap()).unwrap();
+    let hour = 3_600_000_000_000;
+    assert!((now + hour - 5_000_000_000..=now + hour + 5_000_000_000).contains(&at), "no reset given: an hour from now ({resets})");
 }
