@@ -22,7 +22,7 @@ pub fn holding() -> Option<String> {
 /// write, in <dir>. A pause that already ends later stands.
 fn write_in(dir: &str, harness: &str, said: &str, resets: Option<&str>) {
     let now = (time::now_utc().1 / 1_000_000_000) as i64;
-    let at = resets.map_or_else(|| time::utc(now + UNKNOWN_RESET), str::to_string);
+    let at = resets.filter(|r| time::epoch_ns(r).is_some()).map_or_else(|| time::utc(now + UNKNOWN_RESET), str::to_string);
     if holding_in(dir).is_some_and(|l| reset(&l) >= time::epoch_ns(&at)) {
         return;
     }
@@ -65,6 +65,17 @@ mod tests {
         let further = time::utc(now + 9000);
         write_in(&dir, "pi", "daily", Some(&further));
         assert_eq!(holding_in(&dir), Some(format!("{further} pi: daily")));
+        let _ = fs::remove_dir_all(&*dir);
+    }
+
+    #[test]
+    fn write_a_reset_that_doesnt_parse_is_an_unknown_one_269() {
+        let dir = std::env::temp_dir().join(format!("sd-limit-test-parse-{}", std::process::id()));
+        let dir = dir.to_string_lossy();
+        write_in(&dir, "claude", "session", Some("12:20am"));
+        let at = holding_in(&dir).and_then(|l| reset(&l)).expect("a pause");
+        let hour = 3_600_000_000_000;
+        assert!((at - time::now_utc().1 - hour).abs() < 5_000_000_000);
         let _ = fs::remove_dir_all(&*dir);
     }
 }
