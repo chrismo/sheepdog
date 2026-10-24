@@ -227,7 +227,7 @@ Usage limits (#269): a verb whose agent step stopped on its harness's
 usage limit exits 75, isn't counted in the failure record, and writes limit
 in SHEEPDOG_STATE_DIR, so sd watch starts no agent step before the reset.
 sd act review passes its reviewer's 75 through: a custom one's pauses
-them for an hour, unless a limit already holds longer.
+them for an hour, unless a limit already holds.
 
 CI config hold (#124): when the commit of an agent step that edits
 (implement and its review-fix rounds, address, ci-fix, restack --resolve)

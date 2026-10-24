@@ -115,7 +115,9 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
         if o.code != harness::LIMIT_STATUS {
             std::process::exit(1);
         }
-        limit::write(&reviewer, "exited 75", None);
+        if limit::holding().is_none() {
+            limit::write(&reviewer, "exited 75", None);
+        }
         std::process::exit(o.code);
     }
     let Some(Value::Array(findings)) = one_value(&o.stdout) else {

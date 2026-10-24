@@ -477,3 +477,15 @@ fn review_a_custom_reviewer_exiting_75_pauses_agent_steps_too_269() {
     let limit = fs::read_to_string(sd.tmp.join("state/limit")).unwrap();
     assert_match(&limit, &format!(r"^\S+Z {}: exited 75\n$", regex::escape(&sd.path("reviewer"))));
 }
+
+#[test]
+fn review_a_reviewer_exiting_75_leaves_a_limit_that_already_holds_269() {
+    let sd = sd();
+    let soon = sheepdog::time::utc((sheepdog::time::now_utc().1 / 1_000_000_000) as i64 + 600);
+    fs::create_dir_all(sd.tmp.join("state")).unwrap();
+    let line = format!("{soon} claude: You've hit your session limit\n");
+    fs::write(sd.tmp.join("state/limit"), &line).unwrap();
+    sd.script(&sd.tmp.join("reviewer"), "#!/usr/bin/env bash\nexit 75\n");
+    assert_eq!(sd.run(&["review"]).status, 75);
+    assert_eq!(fs::read_to_string(sd.tmp.join("state/limit")).unwrap(), line);
+}
