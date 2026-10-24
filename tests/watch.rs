@@ -3339,3 +3339,20 @@ fn dispatch_a_launched_step_that_stopped_on_a_usage_limit_says_so_and_isnt_count
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: stopped on a usage limit"]);
     assert_eq!(sd.failure("feat"), "");
 }
+
+#[test]
+fn dispatch_an_agent_step_launched_earlier_in_the_pass_counts_toward_the_cap_269() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"dispatch":true,"agentSteps":1}}"#);
+    fs::write(sd.ps("act-sleep"), "3\n").unwrap();
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.first_agent_step("feat", "review");
+    sd.first_agent_step("other", "review");
+    sd.pass();
+    let pass = sd.last_pass();
+    assert_eq!(pass.matches("\tlaunched sd act review").count(), 1, "{pass}");
+    assert_eq!(pass.matches("\tnot launching sd act review: 1 agent step running, settings.agentSteps 1").count(), 1, "{pass}");
+    let launched = if pass.contains("feat\t-\tlaunched") { "feat" } else { "other" };
+    sd.settle(launched);
+}
