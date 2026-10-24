@@ -116,7 +116,7 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
             std::process::exit(1);
         }
         if limit::holding().is_none() {
-            limit::write(&reviewer, "exited 75", None);
+            limit::write("reviewer", &format!("{reviewer} exited 75"), None);
         }
         std::process::exit(o.code);
     }

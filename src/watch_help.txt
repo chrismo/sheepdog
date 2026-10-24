@@ -126,7 +126,7 @@ The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
 ship-parent, open-pr) stay chrismo's.
 
 Launched steps (#268): the pass doesn't wait for one. It runs as sd watch
-step <secs> <verb> <branch>, in a session of its own (launchd's cleanup of
+step <secs> <step> <branch>, in a session of its own (launchd's cleanup of
 the job never signals it), holding the branch's running marker as a lease:
 the marker's second line, deadline <time>, is the step's timeout plus 60s.
 Its output goes to steps.log in SHEEPDOG_STATE_DIR. The pass's line, also

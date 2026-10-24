@@ -475,7 +475,7 @@ fn review_a_custom_reviewer_exiting_75_pauses_agent_steps_too_269() {
     let r = sd.run(&["review"]);
     assert_eq!(r.status, 75, "{}", r.output);
     let limit = fs::read_to_string(sd.tmp.join("state/limit")).unwrap();
-    assert_match(&limit, &format!(r"^\S+Z {}: exited 75\n$", regex::escape(&sd.path("reviewer"))));
+    assert_match(&limit, &format!(r"^\S+Z reviewer: {} exited 75\n$", regex::escape(&sd.path("reviewer"))));
 }
 
 #[test]
