@@ -450,3 +450,20 @@ fn a_second_review_of_the_same_head_keeps_the_round_its_findings_start_unanswere
     sd.review();
     assert_eq!(sd.findings_rec("[.round, .findings[0].action]"), "[1,null]");
 }
+
+#[test]
+fn review_the_default_reviewers_agent_stopped_on_its_usage_limit_exits_75_269() {
+    let sd = sd();
+    sd.unset_global("settings.localReview");
+    sd.fake(
+        "claude",
+        r#"#!/usr/bin/env bash
+echo '{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"You'"'"'ve hit your session limit · resets 12:20am (America/Chicago)","total_cost_usd":0,"num_turns":1}'
+exit 1
+"#,
+    );
+    let r = sd.run(&["review"]);
+    assert_eq!(r.status, 75, "{}", r.output);
+    assert_has(&r.output, &["review stopped on claude's usage limit"]);
+    assert_eq!(sd.pin("local"), "");
+}

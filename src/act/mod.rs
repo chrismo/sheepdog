@@ -30,7 +30,7 @@ const HELP: &str = include_str!("../act_help.txt");
 
 pub fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("sd act: {msg}");
-    std::process::exit(1)
+    std::process::exit(crate::harness::failed_status())
 }
 
 fn or_die<T>(r: Result<T, Vec<String>>) -> T {

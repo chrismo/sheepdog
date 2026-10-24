@@ -8,7 +8,7 @@ use super::{attached_check, cfg, die, no_base_why, plural, state_json};
 use crate::config::one_value;
 use crate::git::{git, git_input, git_out, pin_write, rev, strip_nl, worktree_for};
 use crate::json;
-use crate::proc;
+use crate::{harness, proc};
 use crate::state::flag_lines;
 use crate::val::{at, on, t};
 use serde_json::{json, Value};
@@ -111,7 +111,8 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     let o = proc::timeout_passing_stderr(secs, c);
     eprint!("{}", o.stderr);
     if !o.ok {
-        die(format!("the reviewer failed ({reviewer}); nothing pinned"));
+        eprintln!("sd act: the reviewer failed ({reviewer}); nothing pinned");
+        std::process::exit(if o.code == harness::LIMIT_STATUS { o.code } else { 1 });
     }
     let Some(Value::Array(findings)) = one_value(&o.stdout) else {
         die(format!("the reviewer printed no JSON list ({reviewer})"))

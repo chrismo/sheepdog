@@ -31,11 +31,13 @@ f="$PS_FIXTURES/${b//\//__}.json"
 cat "$f"
 "#;
 
-/// $PS_FIXTURES/act-sleep: seconds to take; act-fails: the refusal to fail with.
+/// $PS_FIXTURES/act-sleep: seconds to take; act-status: the status to exit
+/// with; act-fails: the refusal to fail with.
 const SD_ACT: &str = r#"#!/usr/bin/env bash
 echo "$PWD $*" >> "$PS_FIXTURES/acts"
 [[ -f $PS_FIXTURES/act-sleep ]] && sleep "$(cat "$PS_FIXTURES/act-sleep")"
 echo "did $1"
+[[ -f $PS_FIXTURES/act-status ]] && exit "$(cat "$PS_FIXTURES/act-status")"
 [[ -f $PS_FIXTURES/act-fails ]] || exit 0
 echo "sd act $1: $(cat "$PS_FIXTURES/act-fails")" >&2
 exit 1
@@ -3041,15 +3043,17 @@ fn reconcile_leaves_a_live_lease_and_a_step_chrismo_ran_alone_268() {
 }
 
 #[test]
-fn dispatch_runs_only_the_first_step_and_only_a_run_step() {
+fn dispatch_runs_only_the_first_step_and_only_as_the_one_it_is() {
     let sd = sd();
     sd.dispatching();
     let mine = r#".viewer = "me" | .pr.author = "me""#;
     for next in [
         r#"[{key: "ci-wait", who: "wait", say: "w", cmd: null}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
         r#"[{key: "human", who: "you", say: "h", cmd: null}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
-        r#"[{key: "review", who: "agent", say: "r", cmd: "sd act review"}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
+        r#"[{key: "made-up", who: "agent", say: "m", cmd: "sd act x"}, {key: "push", who: "run", say: "p", cmd: "sd act push"}]"#,
         r#"[{key: "push", who: "you", say: "p", cmd: "sd act push"}]"#,
+        r#"[{key: "push", who: "agent", say: "p", cmd: "sd act push"}]"#,
+        r#"[{key: "review", who: "run", say: "r", cmd: "sd act review"}]"#,
     ] {
         sd.ps_fixture("feat", &[mine, &format!(".next = {next}")]);
         sd.pass();
@@ -3203,4 +3207,135 @@ fn dispatch_neither_refresh_nor_vacuum_runs_steps() {
     sd.ok(&["refresh"]);
     sd.ok(&["vacuum"]);
     assert_eq!(sd.acts(), "");
+}
+
+// ── the loop, slice 3: a pass runs agent steps (#269) ───────────────────────
+
+impl Sd {
+    /// <b>'s first NEXT step is the agent step <key>, on a PR the viewer authored.
+    fn first_agent_step(&self, b: &str, key: &str) {
+        let next = format!(
+            r#".viewer = "me" | .pr.author = "me" | .next = [{{key: "{key}", who: "agent", say: "say {key}", cmd: "sd act x"}}]"#
+        );
+        self.ps_fixture(b, &[next.as_str()]);
+    }
+
+    /// A launched lease on <b>, for <step>, held by <pid> for <secs> more.
+    fn lease_for(&self, b: &str, step: &str, pid: u32, secs: i64) {
+        self.lease(b, pid, secs);
+        let m = cat(&self.marker(b)).replacen(" push ", &format!(" {step} "), 1);
+        fs::write(self.marker(b), m + "\n").unwrap();
+    }
+
+    /// $SHEEPDOG_STATE_DIR/limit: a usage limit that resets <secs> from now.
+    fn limit(&self, secs: i64) {
+        let (_, ns) = time::now_utc();
+        let at = time::utc((ns / 1_000_000_000) as i64 + secs);
+        fs::create_dir_all(self.tmp.join("state")).unwrap();
+        fs::write(self.tmp.join("state/limit"), format!("{at} claude: You've hit your session limit\n")).unwrap();
+    }
+}
+
+#[test]
+fn dispatch_launches_the_agent_steps_too_269() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    for (key, args) in [
+        ("implement", "implement"),
+        ("review-fix", "implement"),
+        ("review", "review"),
+        ("bot", "address"),
+        ("ci-red", "ci-fix"),
+        ("conflict", "restack --resolve"),
+    ] {
+        sd.first_agent_step("feat", key);
+        sd.pass();
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t-\tlaunched sd act {args}")]);
+        assert_eq!(sd.acts(), format!("{repo} {args} feat"), "{key}");
+        sd.quiet("feat");
+        sd.pass();
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t-\tran sd act {args}: ok")]);
+    }
+}
+
+#[test]
+fn dispatch_an_agent_steps_lease_covers_verify_the_agent_and_verify_again_under_steptimeout_269() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"dispatch":true,"stepTimeout":100}}"#);
+    fs::write(sd.ps("act-sleep"), "2\n").unwrap();
+    sd.first_agent_step("feat", "review");
+    sd.pass_env(&[("SHEEPDOG_WATCH_TIMEOUT", "7")]);
+    let lease = running::lease(&sd.path("repo"), "feat").expect("a lease");
+    assert_eq!(lease.step, "review");
+    let (_, now) = time::now_utc();
+    let left = (lease.deadline.unwrap() - now) / 1_000_000_000;
+    assert!((360..=368).contains(&left), "3 x 100 + 7 + 60 grace, less the time since: {left}s");
+    sd.settle("feat");
+}
+
+#[test]
+fn dispatch_agent_steps_stop_at_settings_agentsteps_counted_across_repos_mechanical_ones_dont_269() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"dispatch":true,"agentSteps":1}}"#);
+    sd.git(&["branch", "other"]);
+    let held = orphan("sleep 30");
+    sd.lease_for("other", "implement", held, 600);
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1"]);
+    assert_eq!(sd.acts(), "");
+
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act push"]);
+    sd.settle("feat");
+    let _ = sd.acts();
+
+    unsafe { libc::kill(held as i32, libc::SIGKILL) };
+    assert!(ends(held));
+    let _ = fs::remove_file(sd.marker("other"));
+    sd.write_cfg(r#"{"settings":{"dispatch":true,"agentSteps":0}}"#);
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: settings.agentSteps 0"]);
+    assert_eq!(sd.acts(), "");
+}
+
+#[test]
+fn dispatch_a_usage_limit_holds_agent_steps_till_its_reset_not_mechanical_ones_269() {
+    let sd = sd();
+    sd.dispatching();
+    sd.limit(600);
+    sd.first_agent_step("feat", "implement");
+    sd.pass();
+    assert_match(&sd.last_pass(), r"repo\tfeat\t-\tnot launching sd act implement: claude's usage limit, till \S+Z");
+    assert_eq!(sd.acts(), "");
+
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act push"]);
+    sd.settle("feat");
+    let _ = sd.acts();
+
+    sd.limit(-1);
+    sd.first_agent_step("feat", "implement");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act implement"]);
+    assert!(!sd.tmp.join("state/limit").exists(), "a limit past its reset is removed");
+    sd.settle("feat");
+}
+
+#[test]
+fn dispatch_a_launched_step_that_stopped_on_a_usage_limit_says_so_and_isnt_counted_269() {
+    let sd = sd();
+    sd.dispatching();
+    fs::write(sd.ps("act-status"), "75\n").unwrap();
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    sd.settle("feat");
+    sd.quiet("feat");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: stopped on a usage limit"]);
+    assert_eq!(sd.failure("feat"), "");
 }

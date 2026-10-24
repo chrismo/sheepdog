@@ -70,6 +70,16 @@ pub fn lease(dir: &str, b: &str) -> Option<Lease> {
     lease_at(&file(dir, b)?)
 }
 
+/// Every branch's marker in the repo at <dir>.
+pub fn leases(dir: &str) -> Vec<Lease> {
+    let Some(common) = git::common_dir(dir) else { return vec![] };
+    let files = fs::read_dir(format!("{common}/sheepdog")).into_iter().flatten().flatten();
+    files
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".running"))
+        .filter_map(|e| lease_at(&e.path().to_string_lossy()))
+        .collect()
+}
+
 fn lease_at(f: &str) -> Option<Lease> {
     let text = fs::read_to_string(f).ok()?;
     let mut lines = text.lines();
