@@ -6,13 +6,14 @@
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
-use crate::{config, failed, json, proc, running, time, usage};
+use crate::{config, failed, json, limit, proc, running, time, usage};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 // Denied whatever the caller's tool lists allow: the pipeline commits, pushes
@@ -93,8 +94,9 @@ impl Step<'_> {
 /// at once: nothing streams while it runs. While it runs, the branch's
 /// running marker says so, for sd state (#170). A step the harness's usage
 /// limit stopped isn't a failure (#269): it says so, with the reset, and
-/// leaves the failure record (#242) as it was. The verbs still take any Err
-/// as their step failing: they say so after the limit's line, and exit 1.
+/// leaves the failure record (#242) as it was, and it pauses sd watch's agent
+/// steps till the reset (crate::limit). The verbs still take any Err as their
+/// step failing: they say so after the limit's line, and exit LIMIT_STATUS.
 pub fn run_step(s: &Step) -> Result<Ran, Stop> {
     let b = match s.branch {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
@@ -117,8 +119,21 @@ pub struct Limit {
     pub resets: Option<String>,
 }
 
-/// sysexits' EX_TEMPFAIL: sd harness run's exit status and usage.sup's.
+/// sysexits' EX_TEMPFAIL: sd harness run's exit status and usage.sup's, and
+/// any verb's whose agent step stopped on a usage limit.
 pub const LIMIT_STATUS: i32 = 75;
+
+static LIMITED: AtomicBool = AtomicBool::new(false);
+
+/// The status a verb fails with: LIMIT_STATUS once one of its steps stopped
+/// on a usage limit, else 1.
+pub fn failed_status() -> i32 {
+    if LIMITED.load(Ordering::Relaxed) {
+        LIMIT_STATUS
+    } else {
+        1
+    }
+}
 
 /// A step's result objects, and the session it ran in.
 pub struct Ran {
@@ -231,6 +246,8 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         let resets = l.resets.as_ref().map(|r| format!(" (resets {r})")).unwrap_or_default();
         let said = l.said.lines().next().unwrap_or_default();
         eprintln!("sd: {} stopped on {h}'s usage limit, not counted as a failure: {said}{resets}", s.label());
+        limit::write(h, said, l.resets.as_deref());
+        LIMITED.store(true, Ordering::Relaxed);
         return Err(Stop::Limit(l));
     }
     let said = if status != 0 { said(h, &out.stdout, &cap_note, spent) } else { String::new() };

@@ -29,7 +29,7 @@ const SCHEMA: &str = r#"{"type": "object", "required": ["findings"],
 
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("sd review-local: {msg}");
-    std::process::exit(1)
+    std::process::exit(harness::failed_status())
 }
 
 fn or_die<T>(r: Result<T, Vec<String>>) -> T {

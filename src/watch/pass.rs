@@ -1,17 +1,18 @@
 // The pass, refresh and vacuum (src/watch_help.txt): sd state every enrolled
 // branch, glyph it, notify per the policy, and keep each branch's state for
 // the next pass; with settings.dispatch, a pass also launches a branch's
-// first step when it's a mechanical one (#267). sd state runs as `sd state`,
-// this binary in a process of its own, so a hung one can be timed out: on
-// purpose not state::observe in-process, as sd act calls it, since the
-// watcher supervises its children with deadlines (#12).
+// first step when it's one a pass runs, mechanical (#267) or an agent's
+// (#269). sd state runs as `sd state`, this binary in a process of its own,
+// so a hung one can be timed out: on purpose not state::observe in-process,
+// as sd act calls it, since the watcher supervises its children with
+// deadlines (#12).
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
 use crate::git::{self, git, git_input, git_out};
 use crate::json;
 use crate::proc;
-use crate::{failed, running, time};
+use crate::{failed, harness, limit, running, time};
 use crate::val::{at, on, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -44,12 +45,34 @@ struct Class {
     note: Option<&'static str>,
 }
 
-/// The run steps a pass runs (#267), by NEXT key, with the sd act verb each
-/// is. Not stale (the pass has just fetched), merged (forget --remove deletes
-/// the worktree), draft, ci-rerun, or ship-parent and open-pr, which may
-/// spend tokens describing.
-const DISPATCH: [(&str, &str); 5] =
-    [("fetch", "fetch"), ("behind", "restack"), ("push", "push"), ("retarget", "retarget"), ("bot-trigger", "trigger")];
+/// The steps a pass runs, by NEXT key, with the step each is: the run steps
+/// (#267), and the agent steps (#269), whose step is the running marker's.
+/// Not stale (the pass has just fetched), merged (forget --remove deletes the
+/// worktree), draft, ci-rerun, or ship-parent and open-pr, which may spend
+/// tokens describing.
+const DISPATCH: [(&str, &str); 11] = [
+    ("fetch", "fetch"),
+    ("behind", "restack"),
+    ("push", "push"),
+    ("retarget", "retarget"),
+    ("bot-trigger", "trigger"),
+    ("implement", "implement"),
+    ("review-fix", "implement"),
+    ("review", "review"),
+    ("bot", "address"),
+    ("ci-red", "ci-fix"),
+    ("conflict", "resolve"),
+];
+
+const AGENT_STEPS: [&str; 5] = ["implement", "review", "address", "ci-fix", "resolve"];
+
+fn act_args(step: &str) -> Vec<&str> {
+    if step == "resolve" {
+        vec!["restack", "--resolve"]
+    } else {
+        vec![step]
+    }
+}
 
 /// How long a launched step past its lease has to end on a TERM before it
 /// gets a KILL: launchd's default exit timeout (comment on #268, 2026-10-23).
@@ -371,6 +394,8 @@ struct Watch {
     vacuum: Option<String>,
     /// settings.dispatch, for a pass: run a branch's first step (#267).
     dispatch: bool,
+    /// settings.agentSteps: how many agent steps may run at once (#269).
+    agent_steps: u64,
     /// The .pr files and the glyph index rows written.
     written: Vec<String>,
     glyphs: String,
@@ -387,6 +412,7 @@ impl Watch {
             rate_stop: false,
             vacuum: None,
             dispatch: false,
+            agent_steps: 0,
             written: vec![],
             glyphs: String::new(),
         }
@@ -609,11 +635,12 @@ impl Watch {
     /// to stderr, the job's log.
     fn dispatch(&self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
         let first = at(s, "next").get(0)?;
-        if at(first, "who").as_str() != Some("run") {
+        let key = at(first, "key").as_str()?;
+        let step = DISPATCH.iter().find(|(k, _)| *k == key)?.1;
+        let agent = AGENT_STEPS.contains(&step);
+        if at(first, "who").as_str() != Some(if agent { "agent" } else { "run" }) {
             return None;
         }
-        let key = at(first, "key").as_str()?;
-        let verb = DISPATCH.iter().find(|(k, _)| *k == key)?.1;
         // Unset (exit 1) is on; a value git can't read as a bool (128) is off.
         let switch = git(repo, &["config", "--type=bool", &format!("branch.{b}.sd-dispatch")]);
         let enabled = switch.code == 1 || switch.stdout.trim_end() == "true";
@@ -624,21 +651,47 @@ impl Watch {
         if !enabled || busy || !may_dispatch(s, key) {
             return None;
         }
-        let msg = match self.launch(repo, verb, b) {
-            Ok(()) => format!("launched sd act {verb}"),
-            Err(e) => format!("couldn't launch sd act {verb}: {e}"),
+        let verb = act_args(step).join(" ");
+        let msg = match agent.then(|| self.held()).flatten() {
+            Some(why) => format!("not launching sd act {verb}: {why}"),
+            None => match self.launch(repo, step, b) {
+                Ok(()) => format!("launched sd act {verb}"),
+                Err(e) => format!("couldn't launch sd act {verb}: {e}"),
+            },
         };
         let line = format!("{name}\t{b}\t-\t{msg}\n");
         eprint!("{}", show(&line));
         Some(line)
     }
 
-    /// `sd watch step` for <verb> on <b>, in a session of its own, so the
+    /// Why an agent step isn't launched now: settings.agentSteps of them
+    /// already running, in any registered repo, or a usage limit till its
+    /// reset (crate::limit).
+    fn held(&self) -> Option<String> {
+        if self.agent_steps == 0 {
+            return Some("settings.agentSteps 0".into());
+        }
+        let running = registered()
+            .iter()
+            .flat_map(|r| running::leases(r))
+            .filter(|l| l.live && l.deadline.is_some() && AGENT_STEPS.contains(&l.step.as_str()))
+            .count() as u64;
+        if running >= self.agent_steps {
+            let n = if running == 1 { "1 agent step".into() } else { format!("{running} agent steps") };
+            return Some(format!("{n} running, settings.agentSteps {}", self.agent_steps));
+        }
+        let line = limit::holding()?;
+        let (at, said) = line.split_once(' ').unwrap_or((&line, ""));
+        let harness = said.split_once(':').map_or(said, |(h, _)| h);
+        Some(format!("{harness}'s usage limit, till {at}"))
+    }
+
+    /// `sd watch step` for <step> on <b>, in a session of its own, so the
     /// pass's end and launchd's cleanup of its job leave it running.
-    fn launch(&self, repo: &str, verb: &str, b: &str) -> std::io::Result<()> {
+    fn launch(&self, repo: &str, step: &str, b: &str) -> std::io::Result<()> {
         let log = fs::OpenOptions::new().create(true).append(true).open(format!("{}/steps.log", self.state))?;
         let mut c = Command::new(proc::sd_itself()?);
-        c.args(["watch", "step", &self.timeout.to_string(), verb, b])
+        c.args(["watch", "step", &self.timeout.to_string(), step, b])
             .current_dir(repo)
             .stdin(Stdio::null())
             .stdout(log.try_clone()?)
@@ -817,6 +870,7 @@ impl Watch {
         // A config failure is reported per repo by fetch, which then skips it.
         self.vacuum_after = global_num("settings.vacuumAfter");
         self.rate_floor = global_num("settings.rateLimitFloor");
+        self.agent_steps = global_num("settings.agentSteps") as u64;
         let mut lines = String::new();
         let (mut stopped, mut stop_line) = (false, String::new());
         let mut skipped: Vec<(String, String)> = vec![];
@@ -921,24 +975,42 @@ pub fn pass() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// sd watch step <secs> <verb> <branch>, what a pass launches, run in the
+/// An agent step's timeout, from the branch's settings.stepTimeout: verify,
+/// the agent and verify again each take up to that, and <secs> covers the
+/// rest. stepTimeout 0 is none.
+fn agent_secs(b: &str, secs: u64) -> u64 {
+    match config::get_text("settings.stepTimeout", b, false).ok().and_then(|t| t.parse::<u64>().ok()) {
+        Some(0) => u64::from(u32::MAX),
+        Some(t) => 3 * t + secs,
+        None => secs,
+    }
+}
+
+/// sd watch step <secs> <step> <branch>, what a pass launches, run in the
 /// branch's repo.
 pub fn step(argv: &[String]) -> ExitCode {
-    let [secs, verb, b] = argv else { die("usage: sd watch step <secs> <verb> <branch>") };
-    let Ok(secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
+    let [secs, step, b] = argv else { die("usage: sd watch step <secs> <step> <branch>") };
+    let Ok(mut secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
     let Some(outcome) = running::outcome_file(".", b) else { die("not in a git repository") };
-    let ran = running::leasing(b, verb, secs + GRACE, || {
+    if AGENT_STEPS.contains(&step.as_str()) {
+        secs = agent_secs(b, secs);
+    }
+    let args = act_args(step);
+    let verb = args.join(" ");
+    let ran = running::leasing(b, step, secs + GRACE, || {
         let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
         let mut c = Command::new(prog);
-        c.args(pre).args([verb, b]);
+        c.args(pre).args(&args).arg(b);
         let o = proc::timeout(secs, c, true);
         eprint!("{}", o.stdout);
         let how = if o.ok {
             "ok".to_string()
         } else if o.timed_out {
             let how = format!("timed out after {secs}s");
-            failed::record(b, verb, "sd", &how);
+            failed::record(b, step, "sd", &how);
             how
+        } else if o.code == harness::LIMIT_STATUS {
+            limit::holding().map_or("stopped on a usage limit".into(), |l| format!("stopped on a usage limit: {l}"))
         } else if o.stopped {
             "stopped by a signal".to_string()
         } else {
