@@ -56,7 +56,8 @@ Layers (top wins; sd config files prints the paths):
 Notes:
   - null in a file removes the key; a default still applies
   - a key sheepdog renamed (settings.dispatch is now settings.autoRun) is
-    moved to its new name the next time its file is read
+    moved to its new name the next time its file is read, or dropped if
+    the file already has the new name
   - get prints strings raw, lists one per line, objects as JSON (--json: all)
   - exit 3: no value and no default. exit 1: an error
   - <branch> defaults to the current one; --no-branch skips the branch file
@@ -464,9 +465,10 @@ fn layer(file: &str, kind: Option<Layer>) -> Res<Value> {
         .filter(Value::is_object);
     let Some(mut doc) = doc else { return err(format!("not a JSON object: {file}")) };
     let renamed = rename_old_keys(&mut doc);
-    if !renamed.is_empty() && write_file(file, &doc).is_ok() {
+    if !renamed.is_empty() {
+        let unsaved = if write_file(file, &doc).is_ok() { "" } else { " (couldn't update the file)" };
         for r in renamed {
-            eprintln!("sd config: {file}: {r}");
+            eprintln!("sd config: {file}: {r}{unsaved}");
         }
     }
     if let Some(kind) = kind {
@@ -965,7 +967,7 @@ fn rename_old_keys(doc: &mut Value) -> Vec<String> {
         }
         let v = remove(doc, &old_segs).expect("looked up");
         if lookup(doc, &new_segs).is_some() {
-            done.push(format!("dropped {old} ({new} is set)"));
+            done.push(format!("dropped {old} (the file has {new})"));
         } else {
             put(doc, &new_segs, v);
             done.push(format!("renamed {old} to {new}"));

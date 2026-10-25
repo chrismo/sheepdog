@@ -1934,10 +1934,11 @@ fn a_renamed_key_set_under_both_names_keeps_the_new_one() {
     let sd = Sd::new();
     sd.write_branch("feat", r#"{"settings":{"autoRun":false,"dispatch":true}}"#);
     let r = sd.run(&["get", "settings.autoRun"]);
+    assert_eq!(r.status, 0);
     assert_eq!(
         r.output,
         format!(
-            "sd config: {}: dropped settings.dispatch (settings.autoRun is set)\nfalse",
+            "sd config: {}: dropped settings.dispatch (the file has settings.autoRun)\nfalse",
             sd.branch_file("feat").display()
         )
     );
