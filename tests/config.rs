@@ -2432,6 +2432,8 @@ fn explain_an_unknown_key_fails() {
     assert_eq!(r.output, "sd config: unknown key: settings.nope");
     let r = sd.run(&["explain", "settings.autorun"]);
     assert_eq!(r.output, "sd config: unknown key: settings.autorun (did you mean settings.autoRun?)");
+    let r = sd.run(&["explain", "Steps.Address"]);
+    assert_eq!(r.output, "sd config: unknown key: Steps.Address (did you mean steps.address?)");
 }
 
 #[test]

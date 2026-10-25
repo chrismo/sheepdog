@@ -640,7 +640,8 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
         segments(path)?;
         keys.retain(|k| k == path || k.starts_with(&format!("{path}.")));
         if keys.is_empty() {
-            return err(format!("unknown key: {path}{}", did_you_mean(path, all)));
+            let sections = all.iter().flat_map(|k| k.match_indices('.').map(|(i, _)| k[..i].to_string()));
+            return err(format!("unknown key: {path}{}", did_you_mean(path, sections.chain(all.clone()))));
         }
     }
     let [g, r, bj] = layer_docs(dir, b, no_branch)?;
