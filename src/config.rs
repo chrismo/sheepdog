@@ -167,17 +167,18 @@ const SETTINGS: &[(&str, Ty)] = &[
 ];
 // The watcher's settings: it reads no branch file for these, and reads
 // remote alone from inside each repo.
-/// Keys renamed after they shipped: reading a file moves the old key to the
-/// new one (the new one wins if both are set) and rewrites the file, so an
-/// update doesn't turn every read into "unknown key".
-const RENAMED: &[(&str, &str)] = &[("settings.dispatch", "settings.autoRun")];
-
 const GLOBAL_OR_REPO: &[(&str, Ty)] = &[("remote", Ty::Str)];
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
     ("interval", Ty::Whole), ("notify", Ty::Str),
     ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
     ("agentSteps", Ty::Whole),
 ];
+
+/// Keys renamed after they shipped: reading a file moves the old key to the
+/// new one (the new one wins if both are set) and rewrites the file, so an
+/// update doesn't turn every read into "unknown key".
+const RENAMED: &[(&str, &str)] = &[("settings.dispatch", "settings.autoRun")];
+
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
     ("harnesses", Ty::Obj(HARNESS_BLOCKS)),
@@ -332,6 +333,11 @@ fn merge(layers: &[&Value], drop_nulls: bool) -> Value {
 }
 
 /// Missing or null parents become objects.
+/// Whether a parent of <path> holds something other than an object or null.
+fn blocked(doc: &Value, path: &[String]) -> bool {
+    (1..path.len()).any(|i| lookup(doc, &path[..i]).is_some_and(|p| !p.is_null() && !p.is_object()))
+}
+
 fn put(doc: &mut Value, path: &[String], v: Value) {
     let mut cur = doc;
     for seg in &path[..path.len() - 1] {
@@ -460,7 +466,7 @@ fn layer(file: &str, kind: Option<Layer>) -> Res<Value> {
     let renamed = rename_old_keys(&mut doc);
     if !renamed.is_empty() && write_file(file, &doc).is_ok() {
         for r in renamed {
-            eprintln!("sd config: {file}: renamed {r}");
+            eprintln!("sd config: {file}: {r}");
         }
     }
     if let Some(kind) = kind {
@@ -913,10 +919,8 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
         Value::String(value.to_string())
     };
     let mut doc = layer(file, None)?;
-    for i in 1..segs.len() {
-        if lookup(&doc, &segs[..i]).is_some_and(|p| !p.is_null() && !p.is_object()) {
-            return err(format!("couldn't set {path} in {file}: a parent isn't an object"));
-        }
+    if blocked(&doc, &segs) {
+        return err(format!("couldn't set {path} in {file}: a parent isn't an object"));
     }
     put(&mut doc, &segs, v);
     write(file, kind, &doc)
@@ -949,15 +953,23 @@ fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {
     cur.as_object_mut()?.shift_remove(last.as_ref())
 }
 
+/// A move that can't be made (a hand-edited parent that isn't an object) is
+/// skipped, leaving the old key for validation to refuse.
 fn rename_old_keys(doc: &mut Value) -> Vec<String> {
     let mut done = Vec::new();
     for (old, new) in RENAMED {
-        let Some(v) = remove(doc, &old.split('.').collect::<Vec<_>>()) else { continue };
+        let old_segs: Vec<&str> = old.split('.').collect();
         let new_segs: Vec<String> = new.split('.').map(String::from).collect();
-        if lookup(doc, &new_segs).is_none() {
-            put(doc, &new_segs, v);
+        if lookup(doc, &old_segs).is_none() || blocked(doc, &new_segs) {
+            continue;
         }
-        done.push(format!("{old} to {new}"));
+        let v = remove(doc, &old_segs).expect("looked up");
+        if lookup(doc, &new_segs).is_some() {
+            done.push(format!("dropped {old} ({new} is set)"));
+        } else {
+            put(doc, &new_segs, v);
+            done.push(format!("renamed {old} to {new}"));
+        }
     }
     done
 }

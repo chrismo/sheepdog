@@ -1933,7 +1933,14 @@ fn a_renamed_key_in_a_file_is_moved_to_its_new_name_and_the_file_rewritten() {
 fn a_renamed_key_set_under_both_names_keeps_the_new_one() {
     let sd = Sd::new();
     sd.write_branch("feat", r#"{"settings":{"autoRun":false,"dispatch":true}}"#);
-    assert_eq!(sd.out(&["get", "settings.autoRun"]), "false");
+    let r = sd.run(&["get", "settings.autoRun"]);
+    assert_eq!(
+        r.output,
+        format!(
+            "sd config: {}: dropped settings.dispatch (settings.autoRun is set)\nfalse",
+            sd.branch_file("feat").display()
+        )
+    );
     assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"settings":{"autoRun":false}}"#);
 }
 
