@@ -33,8 +33,9 @@ Examples:
   sd config files                                  where the files are
 
 Layers (top wins; sd config files prints the paths):
-  branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees
-  repo      <main repo>/.git/sheepdog.json, shared by every branch and
+  branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees;
+            deleted once the branch is (by sd watch's pass, unenroll, forget)
+  repo    <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,

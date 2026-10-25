@@ -79,11 +79,11 @@ Verbs:
             with no PR and no sd-parent, store the branch it was made from by
             a plain git branch (#94), or say why git can't pick one (a tie,
             or a parent that moved on) and store nothing
-  unenroll  clear the mark
+  unenroll  clear the mark; once the branch is gone, delete its sd config
+            branch file too (#283)
   forget    the branch is done (merged, abandoned): unenroll it and delete
             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
-            and its stored description; its sd config branch file too once
-            the branch is gone (#283). --remove, once its PR merged: also
+            and its stored description. --remove, once its PR merged: also
             remove its worktree and delete the branch, which ends sd state's
             merged step (#153). Refuses, changing nothing, unless the PR
             merged with the branch's tip in it, and when the worktree has

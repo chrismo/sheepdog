@@ -119,6 +119,11 @@ pub fn record_lineage(b: &str, state: &Value, remote: &str) -> Result<(), String
 
 pub fn unenroll(b: &str) {
     unset(&["config", "--unset", &format!("branch.{b}.sheepdog")]);
+    if !git::branch_exists(b) {
+        if let Some(f) = crate::config::branch_config_file(".", b) {
+            let _ = std::fs::remove_file(f);
+        }
+    }
 }
 
 /// Die unless forget --remove may take <b> and its worktree: the PR merged
@@ -197,11 +202,6 @@ pub fn forget(b: &str, remove: bool) {
     must(git_input(".", &["update-ref", "--stdin"], Some(pins.as_bytes())));
     if let Some(f) = crate::config::describe_file(".", b) {
         let _ = std::fs::remove_file(f);
-    }
-    if !git::branch_exists(b) {
-        if let Some(f) = crate::config::branch_config_file(".", b) {
-            let _ = std::fs::remove_file(f);
-        }
     }
     println!("forgot {b}");
 }

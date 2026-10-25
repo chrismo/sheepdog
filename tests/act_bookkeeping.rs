@@ -321,18 +321,39 @@ fn forget_remove_a_merged_branchs_worktree_is_removed_and_the_branch_deleted_153
     assert_eq!(sd.config("branch.feat.sheepdog"), "");
 }
 
-// @test "forget --remove: the deleted branch's config file goes too, and a live branch's stays (#283)"
+// @test "forget --remove: the deleted branch's config file goes too (#283)"
 #[test]
-fn forget_remove_the_deleted_branchs_config_file_goes_too_and_a_live_branchs_stays_283() {
+fn forget_remove_the_deleted_branchs_config_file_goes_too_283() {
     let mut sd = sd();
     sd.merged_wt();
     let dir = sd.tmp.join("repo/.git/sheepdog");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("feat.json"), "{}\n").unwrap();
-    fs::write(dir.join("main.json"), "{}\n").unwrap();
     assert_eq!(sd.run(&["forget", "--remove"]).status, 0);
     assert!(!dir.join("feat.json").exists());
-    assert!(dir.join("main.json").exists());
+}
+
+// @test "forget: a branch that still exists keeps its config file (#283)"
+#[test]
+fn forget_a_branch_that_still_exists_keeps_its_config_file_283() {
+    let sd = sd();
+    fs::create_dir_all(sd.cwd.join(".git/sheepdog")).unwrap();
+    sd.write(".git/sheepdog/feat.json", "{}\n");
+    assert_eq!(sd.run(&["forget"]).status, 0);
+    assert!(sd.cwd.join(".git/sheepdog/feat.json").exists());
+}
+
+// @test "unenroll: a branch that's gone loses its config file (#283)"
+#[test]
+fn unenroll_a_branch_thats_gone_loses_its_config_file_283() {
+    let sd = sd();
+    fs::create_dir_all(sd.cwd.join(".git/sheepdog")).unwrap();
+    sd.write(".git/sheepdog/gone.json", "{}\n");
+    sd.write(".git/sheepdog/feat.json", "{}\n");
+    assert_eq!(sd.run(&["unenroll", "gone"]).status, 0);
+    assert!(!sd.cwd.join(".git/sheepdog/gone.json").exists());
+    assert_eq!(sd.run(&["unenroll"]).status, 0);
+    assert!(sd.cwd.join(".git/sheepdog/feat.json").exists());
 }
 
 // @test "forget --remove: a merged branch checked out nowhere is deleted"
