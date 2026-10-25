@@ -392,7 +392,8 @@ struct Watch {
     rate_stop: bool,
     /// sd watch vacuum's lines, when one runs.
     vacuum: Option<String>,
-    /// A pass, not a refresh: may run a branch's first step (#267).
+    /// The job's pass, not refresh or vacuum: may run a branch's first step
+    /// (#267).
     dispatch: bool,
     /// settings.agentSteps: how many agent steps may run at once (#269).
     agent_steps: u64,

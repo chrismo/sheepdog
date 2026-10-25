@@ -1857,7 +1857,12 @@ fn validate_rate_limit_floor_can_only_be_set_in_the_global_file_as_whole_points(
 fn validate_auto_run_is_true_or_false_in_any_file_and_a_branch_overrides_the_global() {
     let sd = Sd::new();
     sd.write_global(r#"{"settings":{"autoRun":false}}"#);
+    sd.write_repo(r#"{"settings":{"autoRun":true}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoRun", "feat"]), "true");
+    sd.write_branch("feat", r#"{"settings":{"autoRun":false}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoRun", "feat"]), "false");
     sd.write_branch("feat", r#"{"settings":{"autoRun":true}}"#);
+    sd.write_repo("{}");
     assert_eq!(sd.out(&["get", "settings.autoRun", "feat"]), "true");
     sd.write_branch("feat", r#"{"settings":{"autoRun":"yes"}}"#);
     let r = sd.run(&["get", "settings.autoRun", "feat"]);
