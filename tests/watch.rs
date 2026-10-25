@@ -2758,17 +2758,12 @@ fn config_git_config_sheepdog_notify_is_not_read() {
     assert_eq!(sd.notified(), "repo feat|ready to merge");
 }
 
-// @test "config: a branch file in the working directory does not steer the watcher"
+// @test "config: a branch file's notify does not steer the watcher"
 #[test]
-fn config_a_branch_file_in_the_working_directory_does_not_steer_the_watcher() {
+fn config_a_branch_files_notify_does_not_steer_the_watcher() {
     let sd = sd();
     sd.write_cfg(&format!(r#"{{"settings":{{"notify":"{}"}}}}"#, sd.path("fakebin/notify")));
-    fs::create_dir_all(sd.tmp.join("repo/.git/sheepdog")).unwrap();
-    fs::write(
-        sd.tmp.join("repo/.git/sheepdog/feat.json"),
-        format!("{{\"settings\":{{\"notify\":\"{}\"}}}}\n", sd.path("fakebin/missing")),
-    )
-    .unwrap();
+    sd.branch_cfg("feat", &format!(r#"{{"settings":{{"notify":"{}"}}}}"#, sd.path("fakebin/missing")));
     sd.ps_fixture("feat", &[]);
     sd.ok(&[]);
     assert_eq!(sd.notified(), "repo feat|ready to merge");
@@ -2861,9 +2856,16 @@ fn rate_limit_vacuum_skips_the_branches_the_pass_didnt_check_and_says_so() {
 // ── the loop, slice 1: a pass runs mechanical steps (#267) ──────────────────
 
 impl Sd {
-    /// sd watch with settings.dispatch on.
+    /// sd watch with settings.autoRun on.
     fn dispatching(&self) {
-        self.write_cfg(r#"{"settings":{"dispatch":true}}"#);
+        self.write_cfg(r#"{"settings":{"autoRun":true}}"#);
+    }
+
+    /// <b>'s branch file in the repo: <json>. A plain name: no / to encode.
+    fn branch_cfg(&self, b: &str, json: &str) {
+        let dir = self.path("repo/.git/sheepdog");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(format!("{dir}/{b}.json"), json).unwrap();
     }
 
     /// <b>'s first NEXT step is the run step <key>, on a PR the viewer
@@ -3154,23 +3156,35 @@ fn dispatch_fetches_a_followed_pr_whoever_wrote_it() {
 }
 
 #[test]
-fn dispatch_a_branch_turned_off_is_left_alone() {
+fn dispatch_a_branch_turned_off_in_its_file_is_left_alone() {
     let sd = sd();
     sd.dispatching();
-    sd.git(&["config", "branch.feat.sd-dispatch", "false"]);
+    sd.branch_cfg("feat", r#"{"settings":{"autoRun":false}}"#);
     sd.first_step("feat", "push", &[]);
     sd.pass();
     assert_eq!(sd.acts(), "");
-    sd.git(&["config", "branch.feat.sd-dispatch", "true"]);
+    sd.branch_cfg("feat", "{}");
     sd.pass();
     assert_eq!(sd.acts(), format!("{} push feat", sd.path("repo")));
 }
 
 #[test]
-fn dispatch_a_branch_with_an_unreadable_switch_is_left_alone() {
+fn dispatch_a_branch_turned_on_in_its_file_runs_with_autorun_off_globally() {
+    let sd = sd();
+    sd.write_cfg("{}");
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+    sd.branch_cfg("feat", r#"{"settings":{"autoRun":true}}"#);
+    sd.pass();
+    assert_eq!(sd.acts(), format!("{} push feat", sd.path("repo")));
+}
+
+#[test]
+fn dispatch_a_branch_whose_file_doesnt_read_is_left_alone() {
     let sd = sd();
     sd.dispatching();
-    sd.git(&["config", "branch.feat.sd-dispatch", "maybe"]);
+    sd.branch_cfg("feat", r#"{"settings":{"autoRun":"maybe"}}"#);
     sd.first_step("feat", "push", &[]);
     sd.pass();
     assert_eq!(sd.acts(), "");
@@ -3304,7 +3318,7 @@ fn dispatch_launches_the_agent_steps_too_269() {
 #[test]
 fn dispatch_an_agent_steps_lease_covers_verify_the_agent_and_verify_again_under_steptimeout_269() {
     let sd = sd();
-    sd.write_cfg(r#"{"settings":{"dispatch":true,"stepTimeout":100}}"#);
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"stepTimeout":100}}"#);
     fs::write(sd.ps("act-sleep"), "2\n").unwrap();
     sd.first_agent_step("feat", "review");
     sd.pass_env(&[("SHEEPDOG_WATCH_TIMEOUT", "7")]);
@@ -3319,7 +3333,7 @@ fn dispatch_an_agent_steps_lease_covers_verify_the_agent_and_verify_again_under_
 #[test]
 fn dispatch_agent_steps_stop_at_settings_agentsteps_counted_across_repos_mechanical_ones_dont_269() {
     let sd = sd();
-    sd.write_cfg(r#"{"settings":{"dispatch":true,"agentSteps":1}}"#);
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
     sd.git(&["branch", "other"]);
     let held = orphan("sleep 30");
     sd.lease_for("other", "implement", held, 600);
@@ -3337,7 +3351,7 @@ fn dispatch_agent_steps_stop_at_settings_agentsteps_counted_across_repos_mechani
     unsafe { libc::kill(held as i32, libc::SIGKILL) };
     assert!(ends(held));
     let _ = fs::remove_file(sd.marker("other"));
-    sd.write_cfg(r#"{"settings":{"dispatch":true,"agentSteps":0}}"#);
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":0}}"#);
     sd.first_agent_step("feat", "review");
     sd.pass();
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: settings.agentSteps 0"]);
@@ -3385,7 +3399,7 @@ fn dispatch_a_launched_step_that_stopped_on_a_usage_limit_says_so_and_isnt_count
 #[test]
 fn dispatch_an_agent_step_launched_earlier_in_the_pass_counts_toward_the_cap_269() {
     let sd = sd();
-    sd.write_cfg(r#"{"settings":{"dispatch":true,"agentSteps":1}}"#);
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
     fs::write(sd.ps("act-sleep"), "3\n").unwrap();
     sd.git(&["branch", "other"]);
     sd.enroll("other");

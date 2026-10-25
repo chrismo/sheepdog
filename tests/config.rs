@@ -1854,13 +1854,29 @@ fn validate_rate_limit_floor_can_only_be_set_in_the_global_file_as_whole_points(
 }
 
 #[test]
-fn validate_dispatch_can_only_be_set_in_the_global_file_as_true_or_false() {
-    global_file_only("dispatch", r#"{"settings":{"dispatch":true}}"#);
+fn validate_auto_run_is_true_or_false_in_any_file_and_a_branch_overrides_the_global() {
     let sd = Sd::new();
-    sd.write_global(r#"{"settings":{"dispatch":"yes"}}"#);
-    let r = sd.run(&["get", "settings.dispatch"]);
+    sd.write_global(r#"{"settings":{"autoRun":false}}"#);
+    sd.write_repo(r#"{"settings":{"autoRun":true}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoRun", "feat"]), "true");
+    sd.write_branch("feat", r#"{"settings":{"autoRun":false}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoRun", "feat"]), "false");
+    sd.write_branch("feat", r#"{"settings":{"autoRun":true}}"#);
+    sd.write_repo("{}");
+    assert_eq!(sd.out(&["get", "settings.autoRun", "feat"]), "true");
+    sd.write_branch("feat", r#"{"settings":{"autoRun":"yes"}}"#);
+    let r = sd.run(&["get", "settings.autoRun", "feat"]);
     assert_eq!(r.status, 1);
-    assert!(r.output.ends_with(r#"settings.dispatch: expected true or false, got "yes""#), "{}", r.output);
+    assert!(r.output.ends_with(r#"settings.autoRun: expected true or false, got "yes""#), "{}", r.output);
+}
+
+#[test]
+fn validate_the_old_dispatch_key_is_unknown() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"dispatch":true}}"#);
+    let r = sd.run(&["get", "settings.remote"]);
+    assert_eq!(r.status, 1);
+    assert!(r.output.contains("settings.dispatch: unknown key"), "{}", r.output);
 }
 
 #[test]
@@ -1943,7 +1959,7 @@ fn defaults_every_pipeline_setting_has_one_when_nothing_is_set() {
     assert_eq!(sd.out(&["get", "settings.interval"]), "300");
     assert_eq!(sd.out(&["get", "settings.vacuumAfter"]), "604800");
     assert_eq!(sd.out(&["get", "settings.rateLimitFloor"]), "250");
-    assert_eq!(sd.out(&["get", "settings.dispatch"]), "false");
+    assert_eq!(sd.out(&["get", "settings.autoRun"]), "false");
     assert_eq!(sd.stdout(&["get", "settings.replyPrefix"]), "🤖 \n");
 }
 
@@ -2160,7 +2176,7 @@ fn repo_remote_gits_remote_pushdefault_plays_no_part() {
 fn repo_set_repo_refuses_a_global_only_key_and_leaves_the_file_alone() {
     let sd = Sd::new();
     sd.write_repo(r#"{"settings":{"verify":"make"}}"#);
-    for key in ["interval", "notify", "vacuumAfter", "rateLimitFloor", "dispatch"] {
+    for key in ["interval", "notify", "vacuumAfter", "rateLimitFloor", "agentSteps"] {
         let r = sd.run(&["set", "--repo", &format!("settings.{key}"), "60"]);
         assert_eq!(r.status, 1, "{key}");
         assert_eq!(
@@ -2386,7 +2402,7 @@ fn explain_lists_every_key_the_typed_tables_define() {
         "settings.flags.testFiles",
         "settings.remote",
         "settings.rateLimitFloor",
-        "settings.dispatch",
+        "settings.autoRun",
     ] {
         assert!(paths.iter().any(|x| x == p), "no {p}: {paths:?}");
     }

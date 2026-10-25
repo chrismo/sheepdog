@@ -46,9 +46,9 @@ Layers (top wins; sd config files prints the paths):
             reviewRounds 3,
             botTimeout 3600 (seconds to wait on the review bot), interval
             300, vacuumAfter 604800, rateLimitFloor 250 (GraphQL points
-            under which sd watch stops a pass), dispatch false (sd watch
-            runs no steps), agentSteps 2 (agent steps sd watch runs at
-            once; 0 runs none), replyPrefix "🤖 ";
+            under which sd watch stops a pass), autoRun false (sd watch
+            runs none of a branch's steps), agentSteps 2 (agent steps sd
+            watch runs at once; 0 runs none), replyPrefix "🤖 ";
             protectedPaths none (unset: .sheepdog/protected-paths in the
             base commit, else the CI config dirs, sd act --help); the other
             settings empty
@@ -66,11 +66,11 @@ Notes:
   - files are typed: an unknown key or a bad value is an error naming the
     file and path; a number may be quoted ("1800", as set writes it without
     --json); forkLimit, reviewRounds, interval, rateLimitFloor and
-    agentSteps are whole numbers; dispatch is true or false (set it with
+    agentSteps are whole numbers; autoRun is true or false (set it with
     --json); get prints a value as written; remote is global or repo file
-    only; interval, notify, vacuumAfter, rateLimitFloor, dispatch and
-    agentSteps are global-file only; a repo file takes everything else a
-    branch file does
+    only; interval, notify, vacuumAfter, rateLimitFloor and agentSteps are
+    global-file only; a repo file takes everything else a branch file
+    does
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -90,7 +90,7 @@ fn defaults() -> Value {
         "settings": {
             "remote": "origin", "stepTimeout": 1800, "stepBudget": 5, "branchBudget": 25,
             "forkLimit": 100000, "reviewRounds": 3, "botTimeout": 3600, "interval": 300,
-            "vacuumAfter": 604800, "rateLimitFloor": 250, "dispatch": false, "agentSteps": 2, "replyPrefix": "🤖 ",
+            "vacuumAfter": 604800, "rateLimitFloor": 250, "autoRun": false, "agentSteps": 2, "replyPrefix": "🤖 ",
             "verify": "", "autofix": "", "localReview": "", "botCommand": "", "notify": "",
             "reviewPrompt": "", "implementPrompt": "", "reviewFixPrompt": "", "describePrompt": "",
             "addressPrompt": "", "resolvePrompt": "", "ciFixPrompt": "",
@@ -154,7 +154,7 @@ const SETTINGS: &[(&str, Ty)] = &[
     ("stepTimeout", Ty::Num), ("stepBudget", Ty::Num), ("branchBudget", Ty::Num),
     ("forkLimit", Ty::Whole), ("reviewRounds", Ty::Whole), ("replyPrefix", Ty::Str),
     ("verify", Ty::Str), ("autofix", Ty::Str), ("localReview", Ty::Str), ("botCommand", Ty::Str),
-    ("botTimeout", Ty::Num),
+    ("botTimeout", Ty::Num), ("autoRun", Ty::Bool),
     ("reviewPrompt", Ty::Str), ("implementPrompt", Ty::Str), ("reviewFixPrompt", Ty::Str),
     ("describePrompt", Ty::Str), ("addressPrompt", Ty::Str), ("resolvePrompt", Ty::Str),
     ("ciFixPrompt", Ty::Str),
@@ -162,12 +162,12 @@ const SETTINGS: &[(&str, Ty)] = &[
     ("implementAllow", Ty::List), ("protectedPaths", Ty::List),
     ("flags", Ty::Obj(FLAGS)),
 ];
-// The watcher's settings: it reads no branch file, and reads remote alone
-// from inside each repo.
+// The watcher's settings: it reads no branch file for these, and reads
+// remote alone from inside each repo.
 const GLOBAL_OR_REPO: &[(&str, Ty)] = &[("remote", Ty::Str)];
 const GLOBAL_ONLY: &[(&str, Ty)] = &[
     ("interval", Ty::Whole), ("notify", Ty::Str),
-    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole), ("dispatch", Ty::Bool),
+    ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
     ("agentSteps", Ty::Whole),
 ];
 const CONFIG: &[(&str, Ty)] = &[
