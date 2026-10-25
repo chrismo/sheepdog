@@ -2758,9 +2758,9 @@ fn config_git_config_sheepdog_notify_is_not_read() {
     assert_eq!(sd.notified(), "repo feat|ready to merge");
 }
 
-// @test "config: a branch file in the working directory does not steer the watcher"
+// @test "config: a branch file's notify does not steer the watcher"
 #[test]
-fn config_a_branch_file_in_the_working_directory_does_not_steer_the_watcher() {
+fn config_a_branch_files_notify_does_not_steer_the_watcher() {
     let sd = sd();
     sd.write_cfg(&format!(r#"{{"settings":{{"notify":"{}"}}}}"#, sd.path("fakebin/notify")));
     sd.branch_cfg("feat", &format!(r#"{{"settings":{{"notify":"{}"}}}}"#, sd.path("fakebin/missing")));
