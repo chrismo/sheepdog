@@ -1916,12 +1916,25 @@ fn validate_auto_run_is_true_or_false_in_any_file_and_a_branch_overrides_the_glo
 }
 
 #[test]
-fn validate_the_old_dispatch_key_is_unknown() {
+fn a_renamed_key_in_a_file_is_moved_to_its_new_name_and_the_file_rewritten() {
     let sd = Sd::new();
-    sd.write_global(r#"{"settings":{"dispatch":true}}"#);
-    let r = sd.run(&["get", "settings.remote"]);
-    assert_eq!(r.status, 1);
-    assert!(r.output.contains("settings.dispatch: unknown key"), "{}", r.output);
+    sd.write_global(r#"{"settings":{"verify":"make","dispatch":true}}"#);
+    let r = sd.run(&["get", "settings.autoRun"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: renamed settings.dispatch to settings.autoRun\ntrue", sd.cfg_s())
+    );
+    assert_eq!(compact(&file_json(sd.cfg())), r#"{"settings":{"verify":"make","autoRun":true}}"#);
+    assert_eq!(sd.run(&["get", "settings.autoRun"]).output, "true");
+}
+
+#[test]
+fn a_renamed_key_set_under_both_names_keeps_the_new_one() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"settings":{"autoRun":false,"dispatch":true}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoRun"]), "false");
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"settings":{"autoRun":false}}"#);
 }
 
 #[test]
