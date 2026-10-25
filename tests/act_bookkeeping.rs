@@ -343,17 +343,20 @@ fn forget_a_branch_that_still_exists_keeps_its_config_file_283() {
     assert!(sd.cwd.join(".git/sheepdog/feat.json").exists());
 }
 
-// @test "unenroll: a branch that's gone loses its config file (#283)"
+// @test "unenroll: a branch that's gone loses its config and describe files (#283)"
 #[test]
-fn unenroll_a_branch_thats_gone_loses_its_config_file_283() {
+fn unenroll_a_branch_thats_gone_loses_its_config_and_describe_files_283() {
     let sd = sd();
     fs::create_dir_all(sd.cwd.join(".git/sheepdog")).unwrap();
-    sd.write(".git/sheepdog/gone.json", "{}\n");
-    sd.write(".git/sheepdog/feat.json", "{}\n");
+    for f in ["gone.json", "gone.describe.json", "feat.json", "feat.describe.json"] {
+        sd.write(&format!(".git/sheepdog/{f}"), "{}\n");
+    }
     assert_eq!(sd.run(&["unenroll", "gone"]).status, 0);
     assert!(!sd.cwd.join(".git/sheepdog/gone.json").exists());
+    assert!(!sd.cwd.join(".git/sheepdog/gone.describe.json").exists());
     assert_eq!(sd.run(&["unenroll"]).status, 0);
     assert!(sd.cwd.join(".git/sheepdog/feat.json").exists());
+    assert!(sd.cwd.join(".git/sheepdog/feat.describe.json").exists());
 }
 
 // @test "forget --remove: a merged branch checked out nowhere is deleted"

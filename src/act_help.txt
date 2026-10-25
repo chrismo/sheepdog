@@ -80,7 +80,7 @@ Verbs:
             a plain git branch (#94), or say why git can't pick one (a tie,
             or a parent that moved on) and store nothing
   unenroll  clear the mark; once the branch is gone, delete its sd config
-            branch file too (#283)
+            branch file and stored description too (#283)
   forget    the branch is done (merged, abandoned): unenroll it and delete
             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
             and its stored description. --remove, once its PR merged: also

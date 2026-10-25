@@ -120,7 +120,7 @@ pub fn record_lineage(b: &str, state: &Value, remote: &str) -> Result<(), String
 pub fn unenroll(b: &str) {
     unset(&["config", "--unset", &format!("branch.{b}.sheepdog")]);
     if !git::branch_exists(b) {
-        if let Some(f) = crate::config::branch_config_file(".", b) {
+        for f in [crate::config::branch_config_file(".", b), crate::config::describe_file(".", b)].into_iter().flatten() {
             let _ = std::fs::remove_file(f);
         }
     }

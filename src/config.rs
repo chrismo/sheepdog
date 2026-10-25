@@ -35,7 +35,7 @@ Examples:
 Layers (top wins; sd config files prints the paths):
   branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees;
             deleted once the branch is (by sd watch's pass, unenroll, forget)
-  repo    <main repo>/.git/sheepdog.json, shared by every branch and
+  repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
@@ -370,9 +370,9 @@ pub fn describe_file(dir: &str, b: &str) -> Option<String> {
 }
 
 /// The branch and describe files in $GIT_COMMON_DIR/sheepdog that no local
-/// branch owns, as sheepdog/<file>, sorted; deleted unless <dry>. Matched
-/// against each branch's own names, never decoded: x__y.describe.json may
-/// be x/y's or x__y's.
+/// branch owns, as sheepdog/<file>, sorted; unless <dry>, deleted, and only
+/// those deleted returned. Matched against each branch's own names, never
+/// decoded: x__y.describe.json may be x/y's or x__y's.
 pub fn sweep_branch_files(dir: &str, dry: bool) -> Vec<String> {
     let Some(common) = git::common_dir(dir) else { return vec![] };
     let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
@@ -389,9 +389,7 @@ pub fn sweep_branch_files(dir: &str, dry: bool) -> Vec<String> {
         .collect();
     gone.sort();
     if !dry {
-        for f in &gone {
-            let _ = fs::remove_file(format!("{common}/sheepdog/{f}"));
-        }
+        gone.retain(|f| fs::remove_file(format!("{common}/sheepdog/{f}")).is_ok());
     }
     gone.into_iter().map(|f| format!("sheepdog/{f}")).collect()
 }
