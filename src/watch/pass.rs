@@ -1,6 +1,6 @@
 // The pass, refresh and vacuum (src/watch_help.txt): sd state every enrolled
 // branch, glyph it, notify per the policy, and keep each branch's state for
-// the next pass; with settings.dispatch, a pass also launches a branch's
+// the next pass; with settings.autoRun, a pass also launches a branch's
 // first step when it's one a pass runs, mechanical (#267) or an agent's
 // (#269). sd state runs as `sd state`, this binary in a process of its own,
 // so a hung one can be timed out: on purpose not state::observe in-process,
@@ -392,7 +392,7 @@ struct Watch {
     rate_stop: bool,
     /// sd watch vacuum's lines, when one runs.
     vacuum: Option<String>,
-    /// settings.dispatch, for a pass: run a branch's first step (#267).
+    /// A pass, not a refresh: may run a branch's first step (#267).
     dispatch: bool,
     /// settings.agentSteps: how many agent steps may run at once (#269).
     agent_steps: u64,
@@ -641,9 +641,8 @@ impl Watch {
         if at(first, "who").as_str() != Some(if agent { "agent" } else { "run" }) {
             return None;
         }
-        // Unset (exit 1) is on; a value git can't read as a bool (128) is off.
-        let switch = git(repo, &["config", "--type=bool", &format!("branch.{b}.sd-dispatch")]);
-        let enabled = switch.code == 1 || switch.stdout.trim_end() == "true";
+        // A file that doesn't read is off.
+        let enabled = config::get_text_in(repo, "settings.autoRun", b, false).is_ok_and(|v| v == "true");
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
         let busy = !at(s, "session.running").is_null()
             || on(s, "session.locked")
@@ -970,7 +969,7 @@ impl Watch {
 
 pub fn pass() -> ExitCode {
     let mut w = Watch::new();
-    w.dispatch = config::get_global("settings.dispatch", false).is_ok_and(|v| v == "true");
+    w.dispatch = true;
     w.pass();
     ExitCode::SUCCESS
 }
