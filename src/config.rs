@@ -369,24 +369,23 @@ pub fn describe_file(dir: &str, b: &str) -> Option<String> {
     git::common_dir(dir).map(|common| format!("{common}/sheepdog/{}", describe_file_name(b)))
 }
 
-/// The branch and describe files in $GIT_COMMON_DIR/sheepdog that no local
-/// branch owns, as sheepdog/<file>, sorted; unless <dry>, deleted, and only
-/// those deleted returned. Matched against each branch's own names, never
-/// decoded: x__y.describe.json may be x/y's or x__y's.
+/// Every *.json in $GIT_COMMON_DIR/sheepdog that no local branch owns as its
+/// branch or describe file, as sheepdog/<file>, sorted; unless <dry>,
+/// deleted, and only those deleted returned. Any other .json kept there
+/// would be deleted too. Matched against each branch's own names, never
+/// decoded: x__y.describe.json may be x/y's or x__y's. The directory is read
+/// before the branches, so a branch made in between keeps its new file.
 pub fn sweep_branch_files(dir: &str, dry: bool) -> Vec<String> {
     let Some(common) = git::common_dir(dir) else { return vec![] };
+    let Ok(entries) = fs::read_dir(format!("{common}/sheepdog")) else { return vec![] };
+    let files: Vec<String> = entries.flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
     let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
     if !heads.ok {
         return vec![];
     }
     let owned: std::collections::HashSet<String> =
         heads.stdout.lines().flat_map(|b| [branch_file_name(b), describe_file_name(b)]).collect();
-    let Ok(entries) = fs::read_dir(format!("{common}/sheepdog")) else { return vec![] };
-    let mut gone: Vec<String> = entries
-        .flatten()
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|f| f.ends_with(".json") && !owned.contains(f))
-        .collect();
+    let mut gone: Vec<String> = files.into_iter().filter(|f| f.ends_with(".json") && !owned.contains(f)).collect();
     gone.sort();
     if !dry {
         gone.retain(|f| fs::remove_file(format!("{common}/sheepdog/{f}")).is_ok());
