@@ -1930,6 +1930,36 @@ fn a_renamed_key_in_a_file_is_moved_to_its_new_name_and_the_file_rewritten() {
 }
 
 #[test]
+fn a_renamed_key_moves_over_a_null_new_name() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"autoRun":null,"dispatch":true}}"#);
+    assert_eq!(sd.run(&["get", "settings.autoRun"]).status, 0);
+    assert_eq!(compact(&file_json(sd.cfg())), r#"{"settings":{"autoRun":true}}"#);
+}
+
+#[test]
+fn a_renamed_key_in_a_file_that_cant_be_rewritten_still_reads_and_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let sd = Sd::new();
+    let before = r#"{"settings":{"dispatch":true}}"#;
+    sd.write_global(before);
+    let dir = sd.cfg().parent().unwrap().to_path_buf();
+    let mode = fs::metadata(&dir).unwrap().permissions().mode();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(mode & !0o222)).unwrap();
+    let r = sd.run(&["get", "settings.autoRun"]);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(
+        r.output,
+        format!(
+            "sd config: {}: renamed settings.dispatch to settings.autoRun (couldn't update the file)\ntrue",
+            sd.cfg_s()
+        )
+    );
+    assert_eq!(fs::read_to_string(sd.cfg()).unwrap(), format!("{before}\n"));
+}
+
+#[test]
 fn a_renamed_key_set_under_both_names_keeps_the_new_one() {
     let sd = Sd::new();
     sd.write_branch("feat", r#"{"settings":{"autoRun":false,"dispatch":true}}"#);

@@ -333,11 +333,6 @@ fn merge(layers: &[&Value], drop_nulls: bool) -> Value {
     out
 }
 
-/// Whether a parent of <path> holds something other than an object or null.
-fn blocked(doc: &Value, path: &[String]) -> bool {
-    (1..path.len()).any(|i| lookup(doc, &path[..i]).is_some_and(|p| !p.is_null() && !p.is_object()))
-}
-
 /// Missing or null parents become objects.
 fn put(doc: &mut Value, path: &[String], v: Value) {
     let mut cur = doc;
@@ -921,8 +916,10 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
         Value::String(value.to_string())
     };
     let mut doc = layer(file, None)?;
-    if blocked(&doc, &segs) {
-        return err(format!("couldn't set {path} in {file}: a parent isn't an object"));
+    for i in 1..segs.len() {
+        if lookup(&doc, &segs[..i]).is_some_and(|p| !p.is_null() && !p.is_object()) {
+            return err(format!("couldn't set {path} in {file}: a parent isn't an object"));
+        }
     }
     put(&mut doc, &segs, v);
     write(file, kind, &doc)
@@ -955,18 +952,13 @@ fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {
     cur.as_object_mut()?.shift_remove(last.as_ref())
 }
 
-/// A move that can't be made (a hand-edited parent that isn't an object) is
-/// skipped, leaving the old key for validation to refuse.
 fn rename_old_keys(doc: &mut Value) -> Vec<String> {
     let mut done = Vec::new();
     for (old, new) in RENAMED {
         let old_segs: Vec<&str> = old.split('.').collect();
         let new_segs: Vec<String> = new.split('.').map(String::from).collect();
-        if lookup(doc, &old_segs).is_none() || blocked(doc, &new_segs) {
-            continue;
-        }
-        let v = remove(doc, &old_segs).expect("looked up");
-        if lookup(doc, &new_segs).is_some() {
+        let Some(v) = remove(doc, &old_segs) else { continue };
+        if lookup(doc, &new_segs).is_some_and(|n| !n.is_null()) {
             done.push(format!("dropped {old} (the file has {new})"));
         } else {
             put(doc, &new_segs, v);
