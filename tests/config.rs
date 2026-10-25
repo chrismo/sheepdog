@@ -1114,18 +1114,61 @@ fn set_a_missing_branch_fails() {
 }
 
 #[test]
-fn set_values_are_strings_by_default_keeping_spaces_and_emoji() {
+fn set_a_string_key_keeps_its_value_as_written_spaces_emoji_and_all() {
     let sd = Sd::new();
-    sd.run(&["set", "settings.replyPrefix", "🤖 "]);
+    sd.ok(&["set", "settings.replyPrefix", "🤖 "]);
+    sd.ok(&["set", "settings.verify", "true"]);
+    sd.ok(&["set", "settings.botCommand", "900"]);
     assert_eq!(
-        compact(&file_json(sd.branch_file("feat"))["settings"]["replyPrefix"]),
-        r#""🤖 ""#
+        compact(&file_json(sd.branch_file("feat"))["settings"]),
+        r#"{"replyPrefix":"🤖 ","verify":"true","botCommand":"900"}"#
     );
-    sd.run(&["set", "settings.stepTimeout", "900"]);
+}
+
+#[test]
+fn set_converts_a_boolean_or_number_key_by_its_type_without_json() {
+    let sd = Sd::new();
+    sd.ok(&["set", "settings.autoRun", "false"]);
+    sd.ok(&["set", "settings.stepTimeout", "900"]);
+    sd.ok(&["set", "settings.stepBudget", "2.5"]);
+    sd.ok(&["set", "harnesses.claude.useApiKey", "true"]);
+    sd.ok(&["set", "--global", "settings.agentSteps", "0"]);
     assert_eq!(
-        compact(&file_json(sd.branch_file("feat"))["settings"]["stepTimeout"]),
-        r#""900""#
+        compact(&file_json(sd.branch_file("feat"))),
+        r#"{"settings":{"autoRun":false,"stepTimeout":900,"stepBudget":2.5},"harnesses":{"claude":{"useApiKey":true}}}"#
     );
+    assert_eq!(compact(&file_json(sd.cfg())["settings"]["agentSteps"]), "0");
+}
+
+#[test]
+fn set_a_value_its_key_type_refuses_names_the_type_and_writes_nothing() {
+    let sd = Sd::new();
+    for (k, v, want) in [
+        ("settings.autoRun", "yes", r#"expected true or false, got "yes""#),
+        ("settings.forkLimit", "2.5", "expected a whole number of 0 or more, got 2.5"),
+        ("settings.stepTimeout", "-1", "expected a number of 0 or more, got -1"),
+    ] {
+        let r = sd.run(&["set", k, v]);
+        assert_eq!(r.status, 1, "{k} {v}");
+        assert!(r.output.ends_with(&format!("{k}: {want}")), "{}", r.output);
+    }
+    assert!(!sd.branch_file("feat").exists());
+}
+
+#[test]
+fn set_a_key_cased_wrong_is_unknown_and_names_the_key_it_meant() {
+    let sd = Sd::new();
+    let r = sd.run(&["set", "settings.autorun", "true"]);
+    assert_eq!(r.status, 1);
+    assert!(
+        r.output.ends_with("settings.autorun: unknown key (did you mean settings.autoRun?)"),
+        "{}",
+        r.output
+    );
+    let r = sd.run(&["set", "Harnesses.claude.model", "opus"]);
+    assert!(r.output.ends_with("Harnesses: unknown key (did you mean harnesses?)"), "{}", r.output);
+    let r = sd.run(&["set", "settings.nope", "x"]);
+    assert!(r.output.ends_with("settings.nope: unknown key"), "{}", r.output);
 }
 
 #[test]
@@ -2387,6 +2430,8 @@ fn explain_an_unknown_key_fails() {
     let r = sd.run(&["explain", "settings.nope"]);
     assert_eq!(r.status, 1);
     assert_eq!(r.output, "sd config: unknown key: settings.nope");
+    let r = sd.run(&["explain", "settings.autorun"]);
+    assert_eq!(r.output, "sd config: unknown key: settings.autorun (did you mean settings.autoRun?)");
 }
 
 #[test]
