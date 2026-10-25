@@ -2763,12 +2763,7 @@ fn config_git_config_sheepdog_notify_is_not_read() {
 fn config_a_branch_file_in_the_working_directory_does_not_steer_the_watcher() {
     let sd = sd();
     sd.write_cfg(&format!(r#"{{"settings":{{"notify":"{}"}}}}"#, sd.path("fakebin/notify")));
-    fs::create_dir_all(sd.tmp.join("repo/.git/sheepdog")).unwrap();
-    fs::write(
-        sd.tmp.join("repo/.git/sheepdog/feat.json"),
-        format!("{{\"settings\":{{\"notify\":\"{}\"}}}}\n", sd.path("fakebin/missing")),
-    )
-    .unwrap();
+    sd.branch_cfg("feat", &format!(r#"{{"settings":{{"notify":"{}"}}}}"#, sd.path("fakebin/missing")));
     sd.ps_fixture("feat", &[]);
     sd.ok(&[]);
     assert_eq!(sd.notified(), "repo feat|ready to merge");
@@ -2866,7 +2861,7 @@ impl Sd {
         self.write_cfg(r#"{"settings":{"autoRun":true}}"#);
     }
 
-    /// <b>'s branch file in the repo: <json>.
+    /// <b>'s branch file in the repo: <json>. A plain name: no / to encode.
     fn branch_cfg(&self, b: &str, json: &str) {
         let dir = self.path("repo/.git/sheepdog");
         fs::create_dir_all(&dir).unwrap();

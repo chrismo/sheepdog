@@ -115,12 +115,12 @@ launches a branch's first NEXT step when it is one of these run steps, as sd
 act <verb> <branch> from the repo: fetch, behind (restack), push, retarget,
 bot-trigger (trigger); or one of these agent steps (#269): implement,
 review-fix (implement), review, bot (address), ci-red (ci-fix), conflict
-(restack --resolve). One attempt per
-branch per pass, under SHEEPDOG_WATCH_TIMEOUT, an agent step under three
-times the branch's settings.stepTimeout (verify, the agent, verify again)
-plus that; the next pass sees what it did. Only on a PR the viewer (gh's
-login) authored with no one else's commits on the remote: none this copy
-never had, none taken and reset away.
+(restack --resolve). One attempt per branch per pass, under
+SHEEPDOG_WATCH_TIMEOUT, an agent step under three times the branch's
+settings.stepTimeout (verify, the agent, verify again) plus that; the next
+pass sees what it did. Only on a PR the viewer (gh's login) authored with no
+one else's commits on the remote: none this copy never had, none taken and
+reset away.
 fetch, a followed PR's, runs whoever wrote the PR: it refuses when the
 branch has commits of chrismo's. Not while sd state reports errors or is
 unsure, an agent step runs or the session is attached, or after the rate
