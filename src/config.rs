@@ -332,12 +332,12 @@ fn merge(layers: &[&Value], drop_nulls: bool) -> Value {
     out
 }
 
-/// Missing or null parents become objects.
 /// Whether a parent of <path> holds something other than an object or null.
 fn blocked(doc: &Value, path: &[String]) -> bool {
     (1..path.len()).any(|i| lookup(doc, &path[..i]).is_some_and(|p| !p.is_null() && !p.is_object()))
 }
 
+/// Missing or null parents become objects.
 fn put(doc: &mut Value, path: &[String], v: Value) {
     let mut cur = doc;
     for seg in &path[..path.len() - 1] {
