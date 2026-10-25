@@ -24,7 +24,8 @@ Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | stat
              for vacuumAfter, even when it is 0, so an open PR's branch that
              no worktree holds goes too: prints each one unenrolled and its
              reason, and each one sd state is unsure of, skipped, and why.
-             It doesn't notify its own unenrolls.
+             It doesn't notify its own unenrolls. It also prints each
+             branch file it deletes (see Branch files below).
              --dry-run: what vacuum would do, judged from each branch's last
              saved check (one where sd state failed isn't saved; nothing is
              fetched or changed), and when a pass would unenroll it
@@ -99,6 +100,12 @@ acts on that clock, and a new reason restarts it. Each timed unenroll
 notifies, once; one for no local branch is only a pass line. sd watch vacuum
 doesn't wait for the clock, vacuumAfter 0 included, but counts only these
 reasons and skips a branch sd state is unsure of, as a pass does.
+
+Branch files (#283): each pass deletes, in every registered repo, the files
+in $GIT_COMMON_DIR/sheepdog that no local branch owns: a branch's sd config
+file (<branch>.json) and its stored description (<branch>.describe.json),
+which a branch -D leaves behind. A branch that exists keeps both, enrolled
+or not. Only vacuum prints them; vacuum --dry-run lists them.
 
 Dispatch (#267): off unless settings.dispatch is true (sd config set
 --global --json settings.dispatch true); branch.<b>.sd-dispatch false turns

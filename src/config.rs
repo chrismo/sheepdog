@@ -33,7 +33,8 @@ Examples:
   sd config files                                  where the files are
 
 Layers (top wins; sd config files prints the paths):
-  branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees
+  branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees;
+            deleted once the branch is (by sd watch's pass, unenroll, forget)
   repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
@@ -345,10 +346,51 @@ fn repo_file(dir: &str) -> Option<String> {
     git::common_dir(dir).map(|common| format!("{common}/sheepdog.json"))
 }
 
+fn branch_file_name(b: &str) -> String {
+    format!("{}.json", b.replace('%', "%25").replace('/', "%2F"))
+}
+
+fn describe_file_name(b: &str) -> String {
+    format!("{}.describe.json", b.replace('/', "__"))
+}
+
 fn branch_file(dir: &str, b: &str) -> Res<String> {
-    let Some(common) = git::common_dir(dir) else { return err("not a git repository") };
-    let name = b.replace('%', "%25").replace('/', "%2F");
-    Ok(format!("{common}/sheepdog/{name}.json"))
+    branch_config_file(dir, b).map_or_else(|| err("not a git repository"), Ok)
+}
+
+/// <b>'s branch layer; None outside a repo.
+pub fn branch_config_file(dir: &str, b: &str) -> Option<String> {
+    git::common_dir(dir).map(|common| format!("{common}/sheepdog/{}", branch_file_name(b)))
+}
+
+/// Where sd act describe stores <b>'s description, beside its branch file;
+/// None outside a repo.
+pub fn describe_file(dir: &str, b: &str) -> Option<String> {
+    git::common_dir(dir).map(|common| format!("{common}/sheepdog/{}", describe_file_name(b)))
+}
+
+/// Every *.json in $GIT_COMMON_DIR/sheepdog that no local branch owns as its
+/// branch or describe file, as sheepdog/<file>, sorted; unless <dry>,
+/// deleted, and only those deleted returned. Any other .json kept there
+/// would be deleted too. Matched against each branch's own names, never
+/// decoded: x__y.describe.json may be x/y's or x__y's. The directory is read
+/// before the branches, so a branch made in between keeps its new file.
+pub fn sweep_branch_files(dir: &str, dry: bool) -> Vec<String> {
+    let Some(common) = git::common_dir(dir) else { return vec![] };
+    let Ok(entries) = fs::read_dir(format!("{common}/sheepdog")) else { return vec![] };
+    let files: Vec<String> = entries.flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+    let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
+    if !heads.ok {
+        return vec![];
+    }
+    let owned: std::collections::HashSet<String> =
+        heads.stdout.lines().flat_map(|b| [branch_file_name(b), describe_file_name(b)]).collect();
+    let mut gone: Vec<String> = files.into_iter().filter(|f| f.ends_with(".json") && !owned.contains(f)).collect();
+    gone.sort();
+    if !dry {
+        gone.retain(|f| fs::remove_file(format!("{common}/sheepdog/{f}")).is_ok());
+    }
+    gone.into_iter().map(|f| format!("sheepdog/{f}")).collect()
 }
 
 fn branch_arg(b: &str) -> Res<String> {

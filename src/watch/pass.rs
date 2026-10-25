@@ -826,6 +826,9 @@ impl Watch {
             }
             let name = basename(&repo).to_string();
             sweep_pins(&repo);
+            for f in config::sweep_branch_files(&repo, false) {
+                self.log(&name, "-", &format!("deleted {f}: no local branch"));
+            }
             let mut branches = vec![];
             for b in enrolled(&repo) {
                 if git::branch_in(&repo, &b) {
@@ -1042,6 +1045,9 @@ pub fn vacuum_preview() -> ExitCode {
             continue;
         }
         let name = basename(&repo);
+        for f in config::sweep_branch_files(&repo, true) {
+            out.push_str(&format!("{name}\t-\t{f}: no local branch: vacuum deletes it, as does the next pass\n"));
+        }
         for b in enrolled(&repo) {
             if !git::branch_in(&repo, &b) {
                 out.push_str(&format!("{name}\t{b}\tno local branch: vacuum unenrolls it, as does the next pass\n"));

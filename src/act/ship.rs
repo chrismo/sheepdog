@@ -4,7 +4,7 @@
 
 use super::bookkeeping::{enroll, record_lineage};
 use super::commands::status;
-use super::describe::{self, describe_run, stored};
+use super::describe::{describe_run, stored};
 use super::hold::hold_gate;
 use super::push::push_branch;
 use super::restack::{parent_to_default, state};
@@ -130,7 +130,7 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
     }
     let head = rev(".", &format!("refs/heads/{b}"));
     let target = t(&s, "sync.target");
-    let kept = describe::file(b).and_then(|f| std::fs::read_to_string(f).ok());
+    let kept = crate::config::describe_file(".", b).and_then(|f| std::fs::read_to_string(f).ok());
     let desc = match kept.and_then(|text| stored(&text, &head, &target)) {
         Some(d) => d,
         None => {
