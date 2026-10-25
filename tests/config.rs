@@ -1166,8 +1166,10 @@ fn set_a_key_cased_wrong_is_unknown_and_names_the_key_it_meant() {
         r.output
     );
     let r = sd.run(&["set", "Harnesses.claude.model", "opus"]);
+    assert_eq!(r.status, 1);
     assert!(r.output.ends_with("Harnesses: unknown key (did you mean harnesses?)"), "{}", r.output);
     let r = sd.run(&["set", "settings.nope", "x"]);
+    assert_eq!(r.status, 1);
     assert!(r.output.ends_with("settings.nope: unknown key"), "{}", r.output);
 }
 
