@@ -195,8 +195,13 @@ pub fn forget(b: &str, remove: bool) {
     unenroll(b);
     let pins = must(git(".", &["for-each-ref", "--format=delete %(refname)", &format!("refs/sheepdog/{b}/")])).stdout;
     must(git_input(".", &["update-ref", "--stdin"], Some(pins.as_bytes())));
-    if let Some(f) = super::describe::file(b) {
+    if let Some(f) = crate::config::describe_file(".", b) {
         let _ = std::fs::remove_file(f);
+    }
+    if !git::branch_exists(b) {
+        if let Some(f) = crate::config::branch_config_file(".", b) {
+            let _ = std::fs::remove_file(f);
+        }
     }
     println!("forgot {b}");
 }

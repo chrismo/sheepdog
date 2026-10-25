@@ -425,6 +425,48 @@ fn the_sweep_keeps_the_pins_of_a_branch_that_exists_but_isnt_enrolled() {
     assert!(!sd.refs("refs/sheepdog/parked/").is_empty());
 }
 
+// @test "a pass deletes the branch config and describe files whose branch no longer exists (#283)"
+#[test]
+fn a_pass_deletes_the_branch_config_and_describe_files_whose_branch_no_longer_exists_283() {
+    let sd = sd();
+    sd.git(&["branch", "a/b"]);
+    sd.git(&["branch", "x__y"]);
+    let dir = sd.tmp.join("repo/.git/sheepdog");
+    fs::create_dir_all(&dir).unwrap();
+    let kept = ["feat.json", "feat.describe.json", "a%2Fb.json", "a__b.describe.json", "x__y.json", "x__y.describe.json", "gone.running"];
+    let swept = ["gone.json", "gone.describe.json", "also%2Fgone.json", "also__gone.describe.json"];
+    for f in kept.iter().chain(&swept) {
+        fs::write(dir.join(f), "{}\n").unwrap();
+    }
+    sd.ps_fixture("feat", &[]);
+    sd.pass();
+    for f in kept {
+        assert!(dir.join(f).exists(), "{f} was deleted");
+    }
+    for f in swept {
+        assert!(!dir.join(f).exists(), "{f} was kept");
+    }
+}
+
+// @test "vacuum says which branch files it deleted; --dry-run lists them and deletes none (#283)"
+#[test]
+fn vacuum_says_which_branch_files_it_deleted_dry_run_lists_them_and_deletes_none_283() {
+    let sd = sd();
+    let dir = sd.tmp.join("repo/.git/sheepdog");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("gone.json"), "{}\n").unwrap();
+    fs::write(dir.join("feat.json"), "{}\n").unwrap();
+    sd.ps_fixture("feat", &[]);
+    let r = sd.run(&["vacuum", "--dry-run"]);
+    assert_has(&r.output, &["repo  -  sheepdog/gone.json: no local branch: vacuum deletes it, as does the next pass"]);
+    assert_lacks(&r.output, "feat.json");
+    assert!(dir.join("gone.json").exists());
+    let r = sd.run(&["vacuum"]);
+    assert_has(&r.output, &["repo  -  deleted sheepdog/gone.json: no local branch"]);
+    assert!(!dir.join("gone.json").exists());
+    assert!(dir.join("feat.json").exists());
+}
+
 // @test "glyph: CI red or blocked, conflict, human items, foreign push are ❌"
 #[test]
 fn glyph_ci_red_or_blocked_conflict_human_items_foreign_push_are() {

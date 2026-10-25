@@ -321,6 +321,20 @@ fn forget_remove_a_merged_branchs_worktree_is_removed_and_the_branch_deleted_153
     assert_eq!(sd.config("branch.feat.sheepdog"), "");
 }
 
+// @test "forget --remove: the deleted branch's config file goes too, and a live branch's stays (#283)"
+#[test]
+fn forget_remove_the_deleted_branchs_config_file_goes_too_and_a_live_branchs_stays_283() {
+    let mut sd = sd();
+    sd.merged_wt();
+    let dir = sd.tmp.join("repo/.git/sheepdog");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("feat.json"), "{}\n").unwrap();
+    fs::write(dir.join("main.json"), "{}\n").unwrap();
+    assert_eq!(sd.run(&["forget", "--remove"]).status, 0);
+    assert!(!dir.join("feat.json").exists());
+    assert!(dir.join("main.json").exists());
+}
+
 // @test "forget --remove: a merged branch checked out nowhere is deleted"
 #[test]
 fn forget_remove_a_merged_branch_checked_out_nowhere_is_deleted() {

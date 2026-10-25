@@ -8,7 +8,7 @@ use super::restack::state;
 use super::review::short;
 use super::step::{step_session, step_store};
 use super::{attached_check, die, no_base_why, Args};
-use crate::git::{self, git_out, rev, worktree_for};
+use crate::git::{git_out, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::json;
@@ -24,12 +24,6 @@ const DESCRIBE_CONTRACT: &str = "You are read-only here; look at the worktree wh
 
 const DESCRIBE_SCHEMA: &str = r#"{"type": "object", "required": ["title", "body"],
  "properties": {"title": {"type": "string", "minLength": 1}, "body": {"type": "string"}}}"#;
-
-/// Where the branch's description is stored, a / in its name made __; None
-/// outside a repo.
-pub fn file(b: &str) -> Option<String> {
-    git::common_dir(".").map(|dir| format!("{dir}/sheepdog/{}.describe.json", b.replace('/', "__")))
-}
 
 /// The prompt's line on what the PR targets (sync.target, the base ship
 /// sets), so the body doesn't describe a merged parent as pending (#105).
@@ -111,7 +105,7 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
     };
     let rec = record(&head, &t(s, "sync.target"), &result).unwrap_or_else(|| die(format!("the {h} describe step returned no title")));
     step_store(b, &ss, &ran);
-    let f = file(b).unwrap_or_else(|| die("can't find the repo's git directory"));
+    let f = crate::config::describe_file(".", b).unwrap_or_else(|| die("can't find the repo's git directory"));
     let dir = Path::new(&f).parent().unwrap_or(Path::new("."));
     if let Err(e) = fs::create_dir_all(dir).and_then(|_| fs::write(&f, json::to_string(&rec) + "\n")) {
         die(format!("can't write {f}: {e}"));
