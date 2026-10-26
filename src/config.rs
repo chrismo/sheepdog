@@ -27,6 +27,8 @@ Examples:
   sd config set --repo settings.remote fork        every branch of this repo
   sd config set --json settings.botLogin '["marge"]'
   sd config unset steps.address.harness            inherit it again
+  sd config set --repo profiles.billing.settings.verify 'make -C apps/billing test'
+  sd config set profile billing                    this branch takes that profile
   sd config show                                   everything, merged
   sd config explain                                every key, its layer, each step's harness
   sd config explain settings.verify                one key (or a section, e.g. steps.address)
@@ -35,6 +37,9 @@ Examples:
 Layers (top wins; sd config files prints the paths):
   branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees;
             deleted once the branch is (by sd watch's pass, unenroll, forget)
+  profile   profiles.<name> in the global and repo files, the repo's merged
+            over the global's, for the name (or list of names, the later
+            winning) the top profile key in any file picks (#74)
   repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
@@ -74,6 +79,8 @@ Notes:
     only; interval, notify, vacuumAfter, rateLimitFloor and agentSteps are
     global-file only; a repo file takes everything else a branch file
     does
+  - a profile holds what a branch file may; profiles are defined in the
+    global or repo file only; picking one no file defines is an error
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -85,7 +92,8 @@ Notes:
     layers and defaults it overrides; a null hides the layers below it. Then,
     for no <path> or one under harness, harnesses or steps, each step's
     harness, model and effort as step resolves them. --json: {keys, steps};
-    --branch <b> explains another branch's file
+    --branch <b> explains another branch's file. A profile's definition
+    shows only for profiles or a path under it
 "#;
 
 fn defaults() -> Value {
@@ -122,6 +130,9 @@ enum Ty {
     Enum(&'static [&'static str]),
     Obj(&'static [(&'static str, Ty)]),
     Settings,
+    /// Named entries of these fields, each checked as if in a branch file.
+    Map(&'static [(&'static str, Ty)]),
+    Names,
 }
 
 // A step is a sd act verb that runs an agent: add new ones here.
@@ -180,11 +191,21 @@ const GLOBAL_ONLY: &[(&str, Ty)] = &[
 /// update doesn't turn every read into "unknown key".
 const RENAMED: &[(&str, &str)] = &[("settings.dispatch", "settings.autoRun")];
 
+// A profile (#74) is a layer just under the branch file, so it holds what
+// a branch file does, less the profile keys.
+const PROFILE: &[(&str, Ty)] = &[
+    ("harness", Ty::Enum(HARNESSES)),
+    ("harnesses", Ty::Obj(HARNESS_BLOCKS)),
+    ("steps", Ty::Obj(STEP_BLOCKS)),
+    ("settings", Ty::Settings),
+];
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
     ("harnesses", Ty::Obj(HARNESS_BLOCKS)),
     ("steps", Ty::Obj(STEP_BLOCKS)),
     ("settings", Ty::Settings),
+    ("profile", Ty::Names),
+    ("profiles", Ty::Map(PROFILE)),
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -220,6 +241,21 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
         Ty::Bool => v.is_boolean(),
         Ty::List => v.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
         Ty::Enum(syms) => v.as_str().is_some_and(|s| syms.contains(&s)),
+        Ty::Names => v.is_string() || v.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
+        Ty::Map(fields) => match v.as_object() {
+            Some(m) => {
+                for (name, body) in m {
+                    let p = format!("{path}.{name}");
+                    if name_ok(name) {
+                        check(body, Ty::Obj(fields), &p, Layer::Branch, out);
+                    } else {
+                        out.push((p, "not a profile name (letters, digits, - and _)".into()));
+                    }
+                }
+                true
+            }
+            None => false,
+        },
         Ty::Obj(_) | Ty::Settings => match v.as_object() {
             Some(m) => {
                 let at = |k: &str| if path.is_empty() { k.to_string() } else { format!("{path}.{k}") };
@@ -246,7 +282,10 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
 fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
     let find = |fields: &[(&str, Ty)]| fields.iter().find(|(name, _)| *name == k).map(|&(_, t)| t);
     match ty {
-        Ty::Obj(fields) => find(fields).ok_or("unknown key"),
+        Ty::Obj(fields) => match find(fields) {
+            Some(Ty::Map(_)) if layer == Layer::Branch => Err("global or repo file only"),
+            t => t.ok_or("unknown key"),
+        },
         _ => match (find(SETTINGS), find(GLOBAL_OR_REPO), find(GLOBAL_ONLY)) {
             (Some(t), _, _) => Ok(t),
             (_, Some(t), _) if layer != Layer::Branch => Ok(t),
@@ -268,10 +307,16 @@ fn fields_of(ty: Ty) -> Vec<(&'static str, Ty)> {
 
 /// The type <path> holds in a <layer> file, if the tables define it there.
 fn key_type(segs: &[String], layer: Layer) -> Option<Ty> {
-    segs.iter().try_fold(Ty::Obj(CONFIG), |ty, k| match ty {
-        Ty::Obj(_) | Ty::Settings => field(ty, k, layer).ok(),
+    let (ty, _) = segs.iter().try_fold((Ty::Obj(CONFIG), layer), |(ty, layer), k| match ty {
+        Ty::Map(fields) => Some((Ty::Obj(fields), Layer::Branch)),
+        Ty::Obj(_) | Ty::Settings => field(ty, k, layer).ok().map(|t| (t, layer)),
         _ => None,
-    })
+    })?;
+    Some(ty)
+}
+
+fn name_ok(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
 }
 
 /// Keys are case-sensitive; this names the one <path> differs from by case.
@@ -290,7 +335,8 @@ fn expected(ty: Ty) -> String {
         Ty::Bool => "true or false".into(),
         Ty::List => "a list of strings".into(),
         Ty::Enum(syms) => format!("one of {}", syms.join(", ")),
-        Ty::Obj(_) | Ty::Settings => "an object".into(),
+        Ty::Names => "a name or a list of names".into(),
+        Ty::Obj(_) | Ty::Settings | Ty::Map(_) => "an object".into(),
     }
 }
 
@@ -480,27 +526,87 @@ fn checked(doc: &Value, kind: Layer, file: &str) -> Res<()> {
     Err(Fail::Error(ps.into_iter().map(|p| format!("{file}: {p}")).collect()))
 }
 
-/// The global file with the repo file and then the branch file merged over
-/// it, nulls kept.
+/// Every layer merged, nulls kept.
 fn files(dir: &str, b: &str, no_branch: bool) -> Res<Value> {
-    let [g, r, bj] = layer_docs(dir, b, no_branch)?;
-    Ok(merge(&[&g, &r, &bj], false))
+    Ok(merge_docs(&layer_docs(dir, b, no_branch)?))
 }
 
-/// The global, repo and branch files as written, each {} when missing.
-fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<[Value; 3]> {
+fn merge_docs(docs: &[(String, Value)]) -> Value {
+    merge(&docs.iter().map(|(_, d)| d).collect::<Vec<_>>(), false)
+}
+
+/// The layers bottom to top, named as explain shows them: the global and
+/// repo files as written ({} when missing), the profiles they and the branch
+/// file select, in order, then the branch file.
+fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<Vec<(String, Value)>> {
     let b = match (no_branch, b) {
         (true, _) => String::new(),
         (false, "") => git::current_branch(dir).unwrap_or_default(),
         (false, b) => b.to_string(),
     };
-    let g = layer(&global_file(), Some(Layer::Global))?;
-    let r = match repo_file(dir) {
-        Some(f) => layer(&f, Some(Layer::Repo))?,
+    let gf = global_file();
+    let rf = repo_file(dir);
+    let bf = if b.is_empty() { None } else { Some(branch_file(dir, &b)?) };
+    let g = layer(&gf, Some(Layer::Global))?;
+    let r = match &rf {
+        Some(f) => layer(f, Some(Layer::Repo))?,
         None => json!({}),
     };
-    let bj = if b.is_empty() { json!({}) } else { layer(&branch_file(dir, &b)?, Some(Layer::Branch))? };
-    Ok([g, r, bj])
+    let bj = match &bf {
+        Some(f) => layer(f, Some(Layer::Branch))?,
+        None => json!({}),
+    };
+    let defs = profile_defs(&[&g, &r]);
+    let picked = merge(&[&g, &r, &bj], false);
+    let names: Vec<String> = match lookup(&picked, &["profile"]) {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
+        _ => vec![],
+    };
+    let mut profiles = Vec::new();
+    for n in names {
+        let Some(p) = defs.get(&n) else {
+            let by = [(bf.as_deref(), &bj), (rf.as_deref(), &r), (Some(gf.as_str()), &g)]
+                .into_iter()
+                .find(|(_, d)| lookup(d, &["profile"]).is_some())
+                .and_then(|(f, _)| f)
+                .unwrap_or_default();
+            let mut known: Vec<&str> = defs.keys().map(String::as_str).collect();
+            known.sort();
+            let known = if known.is_empty() { "none defined".into() } else { format!("defined: {}", known.join(", ")) };
+            return err(format!("{by}: profile: no such profile {n} ({known})"));
+        };
+        profiles.push((format!("profile {n}"), p.clone()));
+    }
+    let mut docs = vec![("global".to_string(), g), ("repo".to_string(), r)];
+    docs.extend(profiles);
+    docs.push(("branch".to_string(), bj));
+    Ok(docs)
+}
+
+/// Each profile <docs> define, a higher file's definition merged over a
+/// lower one's; a null undefines.
+fn profile_defs(docs: &[&Value]) -> Map<String, Value> {
+    let mut defs = Map::new();
+    for doc in docs {
+        match lookup(doc, &["profiles"]) {
+            Some(Value::Object(m)) => {
+                for (n, p) in m {
+                    let low = defs.shift_remove(n);
+                    if p.is_object() {
+                        let p = match low {
+                            Some(low) => merge(&[&low, p], false),
+                            None => p.clone(),
+                        };
+                        defs.insert(n.clone(), p);
+                    }
+                }
+            }
+            Some(Value::Null) => defs.clear(),
+            _ => {}
+        }
+    }
+    defs
 }
 
 fn with_defaults(files: &Value) -> Value {
@@ -508,10 +614,7 @@ fn with_defaults(files: &Value) -> Value {
 }
 
 fn segments(path: &str) -> Res<Vec<String>> {
-    let ok = !path.is_empty()
-        && path.split('.').all(|s| {
-            !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        });
+    let ok = !path.is_empty() && path.split('.').all(name_ok);
     if !ok {
         return err(format!("invalid path: '{path}' (dotted names, e.g. harnesses.claude.model)"));
     }
@@ -615,20 +718,20 @@ fn probe<'a>(doc: &'a Value, path: &[&str]) -> Probe<'a> {
 /// default shows.
 struct Traced {
     value: Option<Value>,
-    source: &'static str,
-    hidden: Vec<&'static str>,
-    reset_by: Option<&'static str>,
+    source: String,
+    hidden: Vec<String>,
+    reset_by: Option<String>,
 }
 
-fn trace(layers: &[(&'static str, &Value)], dflt: &Value, path: &[&str]) -> Traced {
-    let mut won: Option<(&'static str, Value)> = None;
-    let mut cut: Option<&'static str> = None;
+fn trace(layers: &[(String, Value)], dflt: &Value, path: &[&str]) -> Traced {
+    let mut won: Option<(&str, Value)> = None;
+    let mut cut: Option<&str> = None;
     let mut hidden = Vec::new();
     for (name, doc) in layers {
         match probe(doc, path) {
-            Probe::Set(v) if won.is_none() && cut.is_none() => won = Some((*name, v.clone())),
-            Probe::Set(_) => hidden.push(*name),
-            Probe::Null if won.is_none() => cut = cut.or(Some(*name)),
+            Probe::Set(v) if won.is_none() && cut.is_none() => won = Some((name, v.clone())),
+            Probe::Set(_) => hidden.push(name.clone()),
+            Probe::Null if won.is_none() => cut = cut.or(Some(name)),
             _ => {}
         }
     }
@@ -636,21 +739,30 @@ fn trace(layers: &[(&'static str, &Value)], dflt: &Value, path: &[&str]) -> Trac
         Probe::Set(v) => Some(v.clone()),
         _ => None,
     };
+    let reset_by = cut.map(str::to_string);
     match (won, default) {
         (Some((name, v)), d) => {
             if d.is_some() {
-                hidden.push("defaults");
+                hidden.push("defaults".into());
             }
-            Traced { value: Some(v), source: name, hidden, reset_by: None }
+            Traced { value: Some(v), source: name.into(), hidden, reset_by: None }
         }
-        (None, Some(d)) => Traced { value: Some(d), source: "defaults", hidden, reset_by: cut },
-        (None, None) => Traced { value: None, source: "unset", hidden, reset_by: None },
+        (None, Some(d)) => Traced { value: Some(d), source: "defaults".into(), hidden, reset_by },
+        (None, None) => Traced { value: None, source: "unset".into(), hidden, reset_by: None },
     }
 }
 
 fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
+    let docs = layer_docs(dir, b, no_branch)?;
     let mut all = Vec::new();
     key_paths(Ty::Obj(CONFIG), "", &mut all);
+    all.retain(|k| k != "profiles");
+    if path.split('.').next() == Some("profiles") {
+        let mut ls = Vec::new();
+        let defs = Value::Object(profile_defs(&[&docs[0].1, &docs[1].1]));
+        leaves(&defs, &mut vec!["profiles".to_string()], &mut ls);
+        all.extend(ls.into_iter().map(|(k, _)| k.join(".")));
+    }
     let mut keys = all.clone();
     if !path.is_empty() {
         segments(path)?;
@@ -660,16 +772,15 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             return err(format!("unknown key: {path}{}", did_you_mean(path, sections.chain(all.clone()))));
         }
     }
-    let [g, r, bj] = layer_docs(dir, b, no_branch)?;
     let dflt = defaults();
-    let layers = [("branch", &bj), ("repo", &r), ("global", &g)];
+    let layers: Vec<(String, Value)> = docs.iter().rev().cloned().collect();
     let trace_key = |k: &str| trace(&layers, &dflt, &k.split('.').collect::<Vec<_>>());
     let traced: Vec<_> = keys.iter().map(|k| (k.as_str(), trace_key(k))).collect();
 
     let segs: Vec<&str> = path.split('.').collect();
-    let with_steps = path.is_empty() || ["harness", "harnesses", "steps"].contains(&segs[0]);
+    let with_steps = path.is_empty() || ["harness", "harnesses", "steps", "profile"].contains(&segs[0]);
     let only_step = if segs[0] == "steps" { segs.get(1).copied().filter(|s| STEPS.contains(s)) } else { None };
-    let merged = merge(&[&g, &r, &bj], false);
+    let merged = merge_docs(&docs);
     let all_steps: Vec<(&str, Value)> = STEPS.iter().map(|s| (*s, resolve_step(&merged, s, "").0)).collect();
     let steps: Vec<(&str, Value)> = if with_steps {
         all_steps.iter().filter(|(s, _)| only_step.is_none_or(|o| o == *s)).cloned().collect()
@@ -708,7 +819,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             .iter()
             .map(|(k, t)| {
                 let mut o = json!({"path": k, "value": t.value, "source": t.source, "overrides": t.hidden});
-                if let Some(by) = t.reset_by {
+                if let Some(by) = &t.reset_by {
                     o["resetBy"] = json!(by);
                 }
                 o
@@ -741,7 +852,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             Value::String(s) if s.is_empty() => "\"\"".to_string(),
             v => line(v),
         };
-        let src = match t.reset_by {
+        let src = match &t.reset_by {
             Some(by) => format!("{}, reset by {by}", t.source),
             None => t.source.to_string(),
         };
