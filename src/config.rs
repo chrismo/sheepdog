@@ -64,17 +64,18 @@ Notes:
     --branch, at most one of them
   - init (no --global) writes empty blocks: a branch file holds only overrides
   - files are typed: an unknown key or a bad value is an error naming the
-    file and path; a number may be quoted ("1800", as set writes it without
-    --json); forkLimit, reviewRounds, interval, rateLimitFloor and
-    agentSteps are whole numbers; autoRun is true or false (set it with
-    --json); get prints a value as written; remote is global or repo file
+    file and path; keys are case-sensitive; a number may be quoted
+    ("1800"); forkLimit, reviewRounds, interval, rateLimitFloor and
+    agentSteps are whole numbers; autoRun and useApiKey are true or false;
+    get prints a value as written; remote is global or repo file
     only; interval, notify, vacuumAfter, rateLimitFloor and agentSteps are
     global-file only; a repo file takes everything else a branch file
     does
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
-  - set values are strings; --json takes a number, list, object or null
+  - set writes a value as its key's type (true or false, a number, else a
+    string); --json takes any JSON: a list, an object, null
   - step: the harness's block, with the step's block for it laid over it
   - explain: each key (all the typed tables define; <path> picks one key or
     a section) with its value and the layer it came from, marking the lower
@@ -212,11 +213,15 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
         Ty::Enum(syms) => v.as_str().is_some_and(|s| syms.contains(&s)),
         Ty::Obj(_) | Ty::Settings => match v.as_object() {
             Some(m) => {
+                let at = |k: &str| if path.is_empty() { k.to_string() } else { format!("{path}.{k}") };
                 for (k, kv) in m {
-                    let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                    let p = at(k);
                     match field(ty, k, layer) {
                         Ok(t) => check(kv, t, &p, layer, out),
-                        Err(problem) => out.push((p, problem.into())),
+                        Err(problem) => {
+                            let hint = did_you_mean(&p, fields_of(ty).into_iter().map(|(n, _)| at(n)));
+                            out.push((p, format!("{problem}{hint}")));
+                        }
                     }
                 }
                 true
@@ -242,6 +247,30 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
             _ => Err("unknown key"),
         },
     }
+}
+
+fn fields_of(ty: Ty) -> Vec<(&'static str, Ty)> {
+    match ty {
+        Ty::Obj(fields) => fields.to_vec(),
+        Ty::Settings => [SETTINGS, GLOBAL_OR_REPO, GLOBAL_ONLY].concat(),
+        _ => Vec::new(),
+    }
+}
+
+/// The type <path> holds in a <layer> file, if the tables define it there.
+fn key_type(segs: &[String], layer: Layer) -> Option<Ty> {
+    segs.iter().try_fold(Ty::Obj(CONFIG), |ty, k| match ty {
+        Ty::Obj(_) | Ty::Settings => field(ty, k, layer).ok(),
+        _ => None,
+    })
+}
+
+/// Keys are case-sensitive; this names the one <path> differs from by case.
+fn did_you_mean(path: &str, keys: impl IntoIterator<Item = String>) -> String {
+    keys.into_iter()
+        .find(|k| k != path && k.eq_ignore_ascii_case(path))
+        .map(|k| format!(" (did you mean {k}?)"))
+        .unwrap_or_default()
 }
 
 fn expected(ty: Ty) -> String {
@@ -533,14 +562,11 @@ fn show(b: &str, no_branch: bool) -> Res<String> {
 
 /// Every key the typed tables define, as dotted paths in table order.
 fn key_paths(ty: Ty, prefix: &str, out: &mut Vec<String>) {
-    let fields = match ty {
-        Ty::Obj(fields) => fields.to_vec(),
-        Ty::Settings => [SETTINGS, GLOBAL_OR_REPO, GLOBAL_ONLY].concat(),
-        _ => {
-            out.push(prefix.to_string());
-            return;
-        }
-    };
+    let fields = fields_of(ty);
+    if fields.is_empty() {
+        out.push(prefix.to_string());
+        return;
+    }
     for (k, t) in fields {
         let p = if prefix.is_empty() { k.to_string() } else { format!("{prefix}.{k}") };
         key_paths(t, &p, out);
@@ -614,7 +640,8 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
         segments(path)?;
         keys.retain(|k| k == path || k.starts_with(&format!("{path}.")));
         if keys.is_empty() {
-            return err(format!("unknown key: {path}"));
+            let sections = all.iter().flat_map(|k| k.match_indices('.').map(|(i, _)| k[..i].to_string()));
+            return err(format!("unknown key: {path}{}", did_you_mean(path, sections.chain(all.clone()))));
         }
     }
     let [g, r, bj] = layer_docs(dir, b, no_branch)?;
@@ -864,6 +891,8 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
             Some(v) => v,
             None => return err(format!("not one JSON value: {value}")),
         }
+    } else if let Some(v) = typed(key_type(&segs, kind), value) {
+        v
     } else {
         if value.chars().any(|c| c.is_control() && !matches!(c, '\n' | '\t' | '\r')) {
             return err("control characters aren't supported in a value");
@@ -878,6 +907,17 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
     }
     put(&mut doc, &segs, v);
     write(file, kind, &doc)
+}
+
+/// <value> as the boolean or number its key's type is; None leaves it a
+/// string, which validation refuses if the type does.
+fn typed(ty: Option<Ty>, value: &str) -> Option<Value> {
+    let v = one_value(value)?;
+    match ty? {
+        Ty::Bool if v.is_boolean() => Some(v),
+        Ty::Num | Ty::Whole if v.is_number() => Some(v),
+        _ => None,
+    }
 }
 
 fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {

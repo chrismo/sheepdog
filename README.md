@@ -49,7 +49,7 @@ Needs on `PATH`: `cargo` to build (https://rustup.rs), `git` and `gh`.
 Claude steps run with `ANTHROPIC_API_KEY` unset, so `claude -p` uses the
 claude.ai login (an exported key would override it, and a key in a shell rc is
 often not the one to bill). To bill the key instead, set
-`harnesses.claude.useApiKey` to `true` (`sd config set --global --json
+`harnesses.claude.useApiKey` to `true` (`sd config set --global
 harnesses.claude.useApiKey true`). pi can't use the claude.ai login, so it
 keeps the key, or runs on the provider its block names.
 

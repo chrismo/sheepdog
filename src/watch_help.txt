@@ -108,11 +108,11 @@ which a branch -D leaves behind. A branch that exists keeps both, enrolled
 or not. Only vacuum prints them; vacuum --dry-run lists them.
 
 Dispatch (#267): off unless the branch's settings.autoRun is true. It layers
-like any setting: sd config set --global --json settings.autoRun true turns
-it on everywhere, and on a branch, sd config set --json settings.autoRun
-false turns it off there (true turns it on with the global off). A pass then
-launches a branch's first NEXT step when it is one of these run steps, as sd
-act <verb> <branch> from the repo: fetch, behind (restack), push, retarget,
+like any setting: sd config set --global settings.autoRun true turns it on
+everywhere, and on a branch, sd config set settings.autoRun false turns it
+off there (true turns it on with the global off). A pass then launches a
+branch's first NEXT step when it is one of these run steps, as sd act
+<verb> <branch> from the repo: fetch, behind (restack), push, retarget,
 bot-trigger (trigger); or one of these agent steps (#269): implement,
 review-fix (implement), review, bot (address), ci-red (ci-fix), conflict
 (restack --resolve). One attempt per branch per pass, under
