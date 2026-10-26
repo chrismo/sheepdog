@@ -55,6 +55,9 @@ Layers (top wins; sd config files prints the paths):
 
 Notes:
   - null in a file removes the key; a default still applies
+  - a key sheepdog renamed (settings.dispatch is now settings.autoRun) is
+    moved to its new name the next time its file is read, or dropped if
+    the file already has the new name
   - get prints strings raw, lists one per line, objects as JSON (--json: all)
   - exit 3: no value and no default. exit 1: an error
   - <branch> defaults to the current one; --no-branch skips the branch file
@@ -171,6 +174,12 @@ const GLOBAL_ONLY: &[(&str, Ty)] = &[
     ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
     ("agentSteps", Ty::Whole),
 ];
+
+/// Keys renamed after they shipped: reading a file moves the old key to the
+/// new one (the new one wins if both are set) and rewrites the file, so an
+/// update doesn't turn every read into "unknown key".
+const RENAMED: &[(&str, &str)] = &[("settings.dispatch", "settings.autoRun")];
+
 const CONFIG: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
     ("harnesses", Ty::Obj(HARNESS_BLOCKS)),
@@ -449,7 +458,14 @@ fn layer(file: &str, kind: Option<Layer>) -> Res<Value> {
         .ok()
         .and_then(|t| one_value(&t))
         .filter(Value::is_object);
-    let Some(doc) = doc else { return err(format!("not a JSON object: {file}")) };
+    let Some(mut doc) = doc else { return err(format!("not a JSON object: {file}")) };
+    let renamed = rename_old_keys(&mut doc);
+    if !renamed.is_empty() {
+        let unsaved = if write_file(file, &doc).is_ok() { "" } else { " (couldn't update the file)" };
+        for r in renamed {
+            eprintln!("sd config: {file}: {r}{unsaved}");
+        }
+    }
     if let Some(kind) = kind {
         checked(&doc, kind, file)?;
     }
@@ -923,15 +939,33 @@ fn typed(ty: Option<Ty>, value: &str) -> Option<Value> {
 fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {
     let segs = segments(path)?;
     let mut doc = layer(file, None)?;
-    let (last, parent) = segs.split_last().expect("a path has a segment");
-    let mut cur = Some(&mut doc);
-    for seg in parent {
-        cur = cur.and_then(|c| c.as_object_mut()?.get_mut(seg));
-    }
-    if let Some(m) = cur.and_then(Value::as_object_mut) {
-        m.shift_remove(last);
-    }
+    remove(&mut doc, &segs);
     write(file, kind, &doc)
+}
+
+fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {
+    let (last, parent) = path.split_last()?;
+    let mut cur = doc;
+    for seg in parent {
+        cur = cur.as_object_mut()?.get_mut(seg.as_ref())?;
+    }
+    cur.as_object_mut()?.shift_remove(last.as_ref())
+}
+
+fn rename_old_keys(doc: &mut Value) -> Vec<String> {
+    let mut done = Vec::new();
+    for (old, new) in RENAMED {
+        let old_segs: Vec<&str> = old.split('.').collect();
+        let new_segs: Vec<String> = new.split('.').map(String::from).collect();
+        let Some(v) = remove(doc, &old_segs) else { continue };
+        if lookup(doc, &new_segs).is_some_and(|n| !n.is_null()) {
+            done.push(format!("dropped {old} (the file has {new})"));
+        } else {
+            put(doc, &new_segs, v);
+            done.push(format!("renamed {old} to {new}"));
+        }
+    }
+    done
 }
 
 /// A branch file holds only overrides, so its skeleton has no harness.
