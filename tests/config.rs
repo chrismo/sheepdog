@@ -2733,6 +2733,15 @@ fn profile_a_dangling_repo_pick_fails_a_branchs_reads_whatever_the_branch_picks(
 }
 
 #[test]
+fn profile_a_dangling_repo_pick_fails_a_read_with_no_branch_of_a_key_no_profile_holds() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profile":"gone","profiles":{"billing":{}}}"#);
+    let r = sd.run(&["get", "--no-branch", "settings.interval"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile gone (defined: billing)", sd.rf()));
+}
+
+#[test]
 fn profile_a_null_in_a_profile_resets_the_key_to_its_default() {
     let sd = Sd::new();
     sd.write_repo(r#"{"settings":{"stepTimeout":900},
