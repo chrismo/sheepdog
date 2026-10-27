@@ -2875,21 +2875,6 @@ fn profile_set_refuses_a_pick_no_file_defines_and_leaves_the_file_as_it_was() {
 }
 
 #[test]
-fn profile_unset_refuses_to_remove_a_definition_another_branch_picks() {
-    let sd = Sd::new();
-    sd.write_repo(PROFILES);
-    sd.write_branch("main", r#"{"profile":"billing"}"#);
-    let r = sd.run(&["unset", "--repo", "profiles.billing"]);
-    assert_eq!(r.status, 1);
-    assert_eq!(
-        r.output,
-        format!("sd config: {}: profile: no such profile billing (defined: frontier)", sd.bf("main"))
-    );
-    assert_eq!(compact(&file_json(sd.repo_file())), compact(&json(PROFILES)));
-    sd.ok(&["unset", "--repo", "profiles.frontier"]);
-}
-
-#[test]
 fn profile_the_global_file_may_not_pick_one() {
     let sd = Sd::new();
     sd.write_global(r#"{"profile":"billing","profiles":{"billing":{}}}"#);
@@ -2910,7 +2895,7 @@ fn profile_explain_profiles_with_none_defined_prints_nothing() {
 }
 
 #[test]
-fn profile_a_write_is_refused_only_for_a_dangling_pick_it_adds() {
+fn profile_a_branch_already_dangling_blocks_no_other_write() {
     let sd = Sd::new();
     sd.write_repo(PROFILES);
     sd.write_branch("main", r#"{"profile":"gone"}"#);
@@ -2922,27 +2907,58 @@ fn profile_a_write_is_refused_only_for_a_dangling_pick_it_adds() {
 }
 
 #[test]
-fn profile_a_global_write_is_checked_against_the_repos_sd_watch_tracks() {
-    let sd = Sd::new();
-    sd.write_global(r#"{"profiles":{"shared":{"settings":{"verify":"make"}}}}"#);
-    let other = sd.path("other");
-    sd.git(&["init", "-q", &other]);
-    fs::write(format!("{other}/.git/sheepdog.json"), r#"{"profile":"shared"}"#).unwrap();
-    sd.git(&["config", "--global", "--add", "sheepdog.repo", &other]);
-    let r = sd.run(&["unset", "--global", "profiles.shared"]);
-    assert_eq!(r.status, 1);
-    assert_eq!(
-        r.output,
-        format!("sd config: {other}/.git/sheepdog.json: profile: no such profile shared (none defined)")
-    );
-    assert_eq!(raw(&file_json(sd.cfg())["profiles"]["shared"]["settings"]["verify"]), "make");
-}
-
-#[test]
 fn profile_defining_a_new_profile_is_no_new_failure_for_a_branch_already_dangling() {
     let sd = Sd::new();
     sd.write_repo(PROFILES);
     sd.write_branch("main", r#"{"profile":"gone"}"#);
     sd.ok(&["set", "--repo", "profiles.newone.settings.verify", "x"]);
     assert_eq!(raw(&file_json(sd.repo_file())["profiles"]["newone"]["settings"]["verify"]), "x");
+}
+
+#[test]
+fn profile_set_refuses_a_repo_pick_no_file_defines() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profiles":{"billing":{}}}"#);
+    let r = sd.run(&["set", "--repo", "profile", "biling"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile biling (defined: billing)", sd.rf()));
+    sd.ok(&["set", "--repo", "profile", "billing"]);
+}
+
+#[test]
+fn profile_removing_a_definition_a_branch_picks_fails_that_branchs_reads() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"billing"}"#);
+    sd.ok(&["unset", "--repo", "profiles.billing"]);
+    let r = sd.run(&["get", "settings.verify", "main"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile billing (defined: frontier)", sd.bf("main"))
+    );
+}
+
+#[test]
+fn profile_a_read_names_every_profile_no_file_defines() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":["gone","billing","lost"]}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile gone, lost (defined: billing, frontier)", sd.bf("feat"))
+    );
+}
+
+#[test]
+fn profile_explain_profiles_works_while_a_pick_dangles_and_a_typo_is_still_unknown() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":"gone"}"#);
+    assert_eq!(sd.out(&["explain", "profiles"]).lines().count(), 5);
+    let r = sd.run(&["explain", "settings.verfy"]);
+    assert_eq!(r.status, 1);
+    assert!(r.output.starts_with("sd config: unknown key: settings.verfy"), "{}", r.output);
 }

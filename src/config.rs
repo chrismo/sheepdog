@@ -81,9 +81,8 @@ Notes:
     global-file only; a repo file takes everything else a branch file
     does
   - a profile holds what a branch file may; profiles are defined in the
-    global or repo file only; picking one no file defines is an error, and
-    set/unset refuse a write that newly leaves this repo, a branch of it
-    or (a global write) a repo sd watch tracks picking one
+    global or repo file only; a pick of a profile no file defines is an
+    error on read, and set refuses to write one
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -541,53 +540,62 @@ fn merge_docs(docs: &[(String, Value)]) -> Value {
     merge(&docs.iter().map(|(_, d)| d).collect::<Vec<_>>(), false)
 }
 
-/// The layers bottom to top, named as explain shows them: the global and
-/// repo files as written ({} when missing), the profiles they and the branch
-/// file select, in order, then the branch file.
-fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<Vec<(String, Value)>> {
+/// The global, repo and branch files as written, each {} when missing, and
+/// their paths.
+struct Files {
+    g: Value,
+    r: Value,
+    b: Value,
+    rf: Option<String>,
+    bf: Option<String>,
+}
+
+fn read_files(dir: &str, b: &str, no_branch: bool) -> Res<Files> {
     let b = match (no_branch, b) {
         (true, _) => String::new(),
         (false, "") => git::current_branch(dir).unwrap_or_default(),
         (false, b) => b.to_string(),
     };
-    let gf = global_file();
     let rf = repo_file(dir);
     let bf = if b.is_empty() { None } else { Some(branch_file(dir, &b)?) };
-    let g = layer(&gf, Some(Layer::Global))?;
-    let r = match &rf {
-        Some(f) => layer(f, Some(Layer::Repo))?,
-        None => json!({}),
-    };
-    let bj = match &bf {
-        Some(f) => layer(f, Some(Layer::Branch))?,
-        None => json!({}),
-    };
-    let defs = profile_defs(&[&g, &r]);
-    let picked = merge(&[&g, &r, &bj], false);
-    let names: Vec<String> = match lookup(&picked, &["profile"]) {
+    let read = |f: &Option<String>, kind| f.as_deref().map_or(Ok(json!({})), |f| layer(f, Some(kind)));
+    Ok(Files { g: layer(&global_file(), Some(Layer::Global))?, r: read(&rf, Layer::Repo)?, b: read(&bf, Layer::Branch)?, rf, bf })
+}
+
+/// The layers bottom to top, named as explain shows them: the global and
+/// repo files, the profiles the repo and branch files pick, in order, then
+/// the branch file.
+fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<Vec<(String, Value)>> {
+    let f = read_files(dir, b, no_branch)?;
+    let defs = profile_defs(&[&f.g, &f.r]);
+    // The top file that picks wins whole, so it's the one to name.
+    let (by, pick) = if lookup(&f.b, &["profile"]).is_some() { (&f.bf, &f.b) } else { (&f.rf, &f.r) };
+    let names = picked(pick);
+    defined(by.as_deref().unwrap_or_default(), &names, &defs)?;
+    let mut docs = vec![("global".to_string(), f.g), ("repo".to_string(), f.r)];
+    docs.extend(names.into_iter().map(|n| (format!("profile {n}"), defs[&n].clone())));
+    docs.push(("branch".to_string(), f.b));
+    Ok(docs)
+}
+
+/// The profile names <doc> picks, in order.
+fn picked(doc: &Value) -> Vec<String> {
+    match lookup(doc, &["profile"]) {
         Some(Value::String(s)) => vec![s.clone()],
         Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(str::to_string).collect(),
         _ => vec![],
-    };
-    let mut profiles = Vec::new();
-    for n in names {
-        let Some(p) = defs.get(&n) else {
-            let by = [(bf.as_deref(), &bj), (rf.as_deref(), &r), (Some(gf.as_str()), &g)]
-                .into_iter()
-                .find(|(_, d)| lookup(d, &["profile"]).is_some())
-                .and_then(|(f, _)| f)
-                .unwrap_or_default();
-            let mut known: Vec<&str> = defs.keys().map(String::as_str).collect();
-            known.sort();
-            let known = if known.is_empty() { "none defined".into() } else { format!("defined: {}", known.join(", ")) };
-            return err(format!("{by}: profile: no such profile {n} ({known})"));
-        };
-        profiles.push((format!("profile {n}"), p.clone()));
     }
-    let mut docs = vec![("global".to_string(), g), ("repo".to_string(), r)];
-    docs.extend(profiles);
-    docs.push(("branch".to_string(), bj));
-    Ok(docs)
+}
+
+fn defined(file: &str, names: &[String], defs: &Map<String, Value>) -> Res<()> {
+    let missing: Vec<&str> = names.iter().filter(|n| !defs.contains_key(*n)).map(String::as_str).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let mut known: Vec<&str> = defs.keys().map(String::as_str).collect();
+    known.sort();
+    let known = if known.is_empty() { "none defined".into() } else { format!("defined: {}", known.join(", ")) };
+    err(format!("{file}: profile: no such profile {} ({known})", missing.join(", ")))
 }
 
 /// Each profile <docs> define, a higher file's definition merged over a
@@ -759,15 +767,18 @@ fn trace(layers: &[(String, Value)], dflt: &Value, path: &[&str]) -> Traced {
 }
 
 fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
-    let docs = layer_docs(dir, b, no_branch)?;
     let mut all = Vec::new();
     key_paths(Ty::Obj(CONFIG), "", &mut all);
     all.retain(|k| k != "profiles");
-    if path.split('.').next() == Some("profiles") {
+    // The definitions alone, so they show while a pick is broken.
+    let defs_only = path.split('.').next() == Some("profiles");
+    let mut files = None;
+    if defs_only {
+        let f = read_files(dir, b, no_branch)?;
         let mut ls = Vec::new();
-        let defs = Value::Object(profile_defs(&[&docs[0].1, &docs[1].1]));
-        leaves(&defs, &mut vec!["profiles".to_string()], &mut ls);
+        leaves(&Value::Object(profile_defs(&[&f.g, &f.r])), &mut vec!["profiles".to_string()], &mut ls);
         all.extend(ls.into_iter().map(|(k, _)| k.join(".")));
+        files = Some(f);
     }
     let mut keys = all.clone();
     if !path.is_empty() {
@@ -778,6 +789,10 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             return err(format!("unknown key: {path}{}", did_you_mean(path, sections.chain(all.clone()))));
         }
     }
+    let docs = match files {
+        Some(f) => vec![("global".to_string(), f.g), ("repo".to_string(), f.r)],
+        None => layer_docs(dir, b, no_branch)?,
+    };
     let dflt = defaults();
     let layers: Vec<(String, Value)> = docs.iter().rev().cloned().collect();
     let trace_key = |k: &str| trace(&layers, &dflt, &k.split('.').collect::<Vec<_>>());
@@ -995,79 +1010,30 @@ fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
     Ok((branch_file(".", &b)?, Layer::Branch))
 }
 
-/// A write to a profile key that makes a read fail is undone: a pick no
-/// file defines fails every read for its branch, sd watch's included.
-fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
+/// A pick must name defined profiles: one that doesn't fails every read for
+/// its branch.
+fn write(file: &str, kind: Layer, doc: &Value) -> Res<()> {
     checked(doc, kind, file)?;
-    if !matches!(segs[0].as_str(), "profile" | "profiles") {
-        return write_file(file, doc);
+    let names = picked(doc);
+    if !names.is_empty() {
+        let g = layer(&global_file(), Some(Layer::Global))?;
+        let r = match kind {
+            Layer::Repo => doc.clone(),
+            _ => repo_file(".").map_or(Ok(json!({})), |f| layer(&f, Some(Layer::Repo)))?,
+        };
+        defined(file, &names, &profile_defs(&[&g, &r]))?;
     }
-    let repos = repos_reading(kind);
-    let before = failing_reads(&repos);
-    let old = fs::read_to_string(file).ok();
-    write_file(file, doc)?;
-    // A dangling pick's message lists the defined profiles, which this
-    // write may change; it is the same failure.
-    let what = |e: &String| e.split(" (defined: ").next().unwrap_or_default().replace(" (none defined)", "");
-    let was: Vec<String> = before.iter().map(what).collect();
-    let mut new: Vec<String> = failing_reads(&repos).into_iter().filter(|e| !was.contains(&what(e))).collect();
-    if new.is_empty() {
-        return Ok(());
-    }
-    let undone = match old {
-        Some(text) => write_text(file, &text),
-        None => fs::remove_file(file).map_err(|e| Fail::Error(vec![e.to_string()])),
-    };
-    if let Err(Fail::Error(e)) = undone {
-        new.push(format!("couldn't undo the write to {file}: {}", e.join("; ")));
-    }
-    Err(Fail::Error(new))
-}
-
-/// The repos a <kind> file's write reaches: this one, and for the global
-/// file every repo sd watch tracks.
-fn repos_reading(kind: Layer) -> Vec<String> {
-    let mut dirs = vec![".".to_string()];
-    if kind == Layer::Global {
-        let tracked = git::git(".", &["config", "--global", "--get-all", "sheepdog.repo"]);
-        dirs.extend(tracked.stdout.lines().map(str::to_string));
-    }
-    dirs
-}
-
-/// The errors reading <dirs> hits, with no branch and as each local branch
-/// with a branch file.
-fn failing_reads(dirs: &[String]) -> Vec<String> {
-    let mut out = Vec::new();
-    for dir in dirs {
-        let mut reads = vec![(String::new(), true)];
-        let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
-        if heads.ok {
-            let filed = |b: &&str| branch_config_file(dir, b).is_some_and(|f| Path::new(&f).exists());
-            reads.extend(heads.stdout.lines().filter(filed).map(|b| (b.to_string(), false)));
-        }
-        for (b, no_branch) in reads {
-            if let Err(Fail::Error(lines)) = layer_docs(dir, &b, no_branch) {
-                out.extend(lines);
-            }
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
+    write_file(file, doc)
 }
 
 fn write_file(file: &str, doc: &Value) -> Res<()> {
-    write_text(file, &(serde_json::to_string_pretty(doc).expect("a Value serializes") + "\n"))
-}
-
-fn write_text(file: &str, text: &str) -> Res<()> {
     let fail = |e: std::io::Error| Fail::Error(vec![format!("couldn't update {file}: {e}")]);
     let p = Path::new(file);
     if let Some(dir) = p.parent() {
         fs::create_dir_all(dir).map_err(fail)?;
     }
     let tmp = format!("{file}.{}", std::process::id());
+    let text = serde_json::to_string_pretty(doc).expect("a Value serializes") + "\n";
     fs::File::create(&tmp)
         .and_then(|mut f| f.write_all(text.as_bytes()))
         .and_then(|_| fs::rename(&tmp, p))
@@ -1099,7 +1065,7 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
         }
     }
     put(&mut doc, &segs, v);
-    write(file, kind, &doc, &segs)
+    write(file, kind, &doc)
 }
 
 /// <value> as the boolean or number its key's type is; None leaves it a
@@ -1117,7 +1083,7 @@ fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {
     let segs = segments(path)?;
     let mut doc = layer(file, None)?;
     remove(&mut doc, &segs);
-    write(file, kind, &doc, &segs)
+    write(file, kind, &doc)
 }
 
 fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {
