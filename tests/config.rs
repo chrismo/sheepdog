@@ -2856,3 +2856,55 @@ fn profile_explain_profiles_lists_the_definitions_and_their_layer() {
     );
     assert_eq!(sd.out(&["explain", "profiles"]).lines().count(), 5);
 }
+
+#[test]
+fn profile_set_refuses_a_pick_no_file_defines_and_leaves_the_file_as_it_was() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"settings":{"verify":"mine"}}"#);
+    let r = sd.run(&["set", "profile", "fronteir"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile fronteir (defined: billing, frontier)", sd.bf("feat"))
+    );
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"settings":{"verify":"mine"}}"#);
+    let r = sd.run(&["set", "--branch", "main", "profile", "fronteir"]);
+    assert_eq!(r.status, 1);
+    assert!(!sd.branch_file("main").exists());
+}
+
+#[test]
+fn profile_unset_refuses_to_remove_a_definition_another_branch_picks() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"billing"}"#);
+    let r = sd.run(&["unset", "--repo", "profiles.billing"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile billing (defined: frontier)", sd.bf("main"))
+    );
+    assert_eq!(compact(&file_json(sd.repo_file())), compact(&json(PROFILES)));
+    sd.ok(&["unset", "--repo", "profiles.frontier"]);
+}
+
+#[test]
+fn profile_the_global_file_may_not_pick_one() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profile":"billing","profiles":{"billing":{}}}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: repo or branch file only", sd.cfg_s()));
+    sd.write_global(r#"{"profiles":{"billing":{}}}"#);
+    let r = sd.run(&["set", "--global", "profile", "billing"]);
+    assert_eq!(r.status, 1);
+    sd.ok(&["set", "--repo", "profile", "billing"]);
+}
+
+#[test]
+fn profile_explain_profiles_with_none_defined_prints_nothing() {
+    let sd = Sd::new();
+    let r = sd.run(&["explain", "profiles"]);
+    assert_eq!((r.status, r.output.as_str()), (0, ""));
+}

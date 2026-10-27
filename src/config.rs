@@ -39,7 +39,8 @@ Layers (top wins; sd config files prints the paths):
             deleted once the branch is (by sd watch's pass, unenroll, forget)
   profile   profiles.<name> in the global and repo files, the repo's merged
             over the global's, for the name (or list of names, the later
-            winning) the top profile key in any file picks (#74)
+            winning) the top profile key picks, in the branch or repo file
+            (#74); a repo file's pick lies over that repo file too
   repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
@@ -80,7 +81,8 @@ Notes:
     global-file only; a repo file takes everything else a branch file
     does
   - a profile holds what a branch file may; profiles are defined in the
-    global or repo file only; picking one no file defines is an error
+    global or repo file only; picking one no file defines is an error, and
+    set/unset refuse a write that would leave a branch picking one
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -284,6 +286,9 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
     match ty {
         Ty::Obj(fields) => match find(fields) {
             Some(Ty::Map(_)) if layer == Layer::Branch => Err("global or repo file only"),
+            // Profiles differ by repo; a global pick would break the repos
+            // that don't define it.
+            Some(Ty::Names) if layer == Layer::Global => Err("repo or branch file only"),
             t => t.ok_or("unknown key"),
         },
         _ => match (find(SETTINGS), find(GLOBAL_OR_REPO), find(GLOBAL_ONLY)) {
@@ -767,7 +772,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
     if !path.is_empty() {
         segments(path)?;
         keys.retain(|k| k == path || k.starts_with(&format!("{path}.")));
-        if keys.is_empty() {
+        if keys.is_empty() && path != "profiles" {
             let sections = all.iter().flat_map(|k| k.match_indices('.').map(|(i, _)| k[..i].to_string()));
             return err(format!("unknown key: {path}{}", did_you_mean(path, sections.chain(all.clone()))));
         }
@@ -989,9 +994,39 @@ fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
     Ok((branch_file(".", &b)?, Layer::Branch))
 }
 
-fn write(file: &str, kind: Layer, doc: &Value) -> Res<()> {
+/// A write to a profile key that leaves a branch picking a profile no file
+/// defines is undone: every read for that branch would fail.
+fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
     checked(doc, kind, file)?;
-    write_file(file, doc)
+    let old = fs::read_to_string(file).ok();
+    write_file(file, doc)?;
+    if !segs[0].starts_with("profile") {
+        return Ok(());
+    }
+    let picks = picks_resolve(".");
+    if picks.is_err() {
+        let _ = match old {
+            Some(text) => fs::write(file, text),
+            None => fs::remove_file(file),
+        };
+    }
+    picks
+}
+
+/// Every local branch with a branch file, and <dir> with none, picks only
+/// profiles the files define.
+fn picks_resolve(dir: &str) -> Res<()> {
+    layer_docs(dir, "", true)?;
+    let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
+    if !heads.ok {
+        return Ok(());
+    }
+    for b in heads.stdout.lines() {
+        if branch_config_file(dir, b).is_some_and(|f| Path::new(&f).exists()) {
+            layer_docs(dir, b, false)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_file(file: &str, doc: &Value) -> Res<()> {
@@ -1033,7 +1068,7 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
         }
     }
     put(&mut doc, &segs, v);
-    write(file, kind, &doc)
+    write(file, kind, &doc, &segs)
 }
 
 /// <value> as the boolean or number its key's type is; None leaves it a
@@ -1051,7 +1086,7 @@ fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {
     let segs = segments(path)?;
     let mut doc = layer(file, None)?;
     remove(&mut doc, &segs);
-    write(file, kind, &doc)
+    write(file, kind, &doc, &segs)
 }
 
 fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {
