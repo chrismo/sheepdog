@@ -90,15 +90,18 @@ fn plist(prog: &str, interval: &str, path: &str, log: &str) -> String {
     )
 }
 
-/// The job's PATH: <bindir> first unless it's ~/.local/bin, which stays on
-/// PATH anyway (claude's installer links it there).
-fn job_path(home: &str, bindir: &str) -> String {
-    let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
-    if bindir == format!("{home}/.local/bin") {
-        path
-    } else {
-        format!("{bindir}:{path}")
+/// The job's PATH: the <path> install ran with, so the job finds what that
+/// shell does (#295), led by <bindir> unless it's ~/.local/bin, the default;
+/// each dir once, where it first appears.
+fn job_path(home: &str, bindir: &str, path: &str) -> String {
+    let lead = (bindir != format!("{home}/.local/bin")).then_some(bindir);
+    let mut dirs: Vec<&str> = Vec::new();
+    for d in lead.into_iter().chain(path.split(':')) {
+        if !d.is_empty() && !dirs.contains(&d) {
+            dirs.push(d);
+        }
     }
+    dirs.join(":")
 }
 
 fn whole_seconds(s: &str) -> bool {
@@ -136,7 +139,7 @@ fn install() -> ExitCode {
         bindir = absolute(&bindir);
     }
     let mut prog = format!("{bindir}/sd");
-    let path = job_path(&home(), &bindir);
+    let path = job_path(&home(), &bindir, &std::env::var("PATH").unwrap_or_default());
     // Else this sd: the repo's target/release/sd, which bin/sd links to.
     if !executable(Path::new(&prog)) {
         prog = proc::sd_itself().unwrap_or_else(|e| die(format!("can't find sd itself: {e}"))).to_string_lossy().into_owned();
@@ -263,10 +266,15 @@ mod tests {
     }
 
     #[test]
-    fn job_path_leads_with_a_local_bin_that_isnt_the_default() {
-        let base = "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-        assert_eq!(job_path("/h", "/h/.local/bin"), base);
-        assert_eq!(job_path("/h", "/lb"), format!("/lb:{base}"));
+    fn job_path_is_the_path_install_ran_with_led_by_a_local_bin_that_isnt_the_default() {
+        assert_eq!(job_path("/h", "/h/.local/bin", "/a:/b"), "/a:/b");
+        assert_eq!(job_path("/h", "/lb", "/a:/b"), "/lb:/a:/b");
+    }
+
+    #[test]
+    fn job_path_lists_each_dir_once_where_it_first_appears() {
+        assert_eq!(job_path("/h", "/lb", "/a:/lb:/b:/a"), "/lb:/a:/b");
+        assert_eq!(job_path("/h", "/h/.local/bin", "/a::/b:/a:"), "/a:/b");
     }
 
     #[test]

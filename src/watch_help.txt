@@ -30,7 +30,8 @@ Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | stat
              saved check (one where sd state failed isn't saved; nothing is
              fetched or changed), and when a pass would unenroll it
   status     print the last pass
-  install    launchd job: a pass every settings.interval seconds (default 300)
+  install    launchd job: a pass every settings.interval seconds (default 300),
+             on the PATH install ran with (re-run install after changing it)
   uninstall  remove the job
 
 Glyphs: ❌ needs chrismo   ⚠️ state unknown   🔧 work for later   ⏳ waiting (CI, review)
