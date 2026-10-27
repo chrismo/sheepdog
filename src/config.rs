@@ -243,7 +243,11 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
         Ty::Bool => v.is_boolean(),
         Ty::List => v.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
         Ty::Enum(syms) => v.as_str().is_some_and(|s| syms.contains(&s)),
-        Ty::Names => v.is_string() || v.as_array().is_some_and(|a| a.iter().all(Value::is_string)),
+        Ty::Names => match v {
+            Value::String(n) => name_ok(n),
+            Value::Array(a) => a.iter().all(|n| n.as_str().is_some_and(name_ok)),
+            _ => false,
+        },
         Ty::Map(fields) => match v.as_object() {
             Some(m) => {
                 for (name, body) in m {
@@ -1010,12 +1014,12 @@ fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
     Ok((branch_file(".", &b)?, Layer::Branch))
 }
 
-/// A pick must name defined profiles: one that doesn't fails every read for
-/// its branch.
-fn write(file: &str, kind: Layer, doc: &Value) -> Res<()> {
+/// A write to a pick must name defined profiles: one that doesn't fails
+/// every read for its branch.
+fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
     checked(doc, kind, file)?;
     let names = picked(doc);
-    if !names.is_empty() {
+    if segs[0] == "profile" && !names.is_empty() {
         let g = layer(&global_file(), Some(Layer::Global))?;
         let r = match kind {
             Layer::Repo => doc.clone(),
@@ -1065,7 +1069,7 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
         }
     }
     put(&mut doc, &segs, v);
-    write(file, kind, &doc)
+    write(file, kind, &doc, &segs)
 }
 
 /// <value> as the boolean or number its key's type is; None leaves it a
@@ -1083,7 +1087,7 @@ fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {
     let segs = segments(path)?;
     let mut doc = layer(file, None)?;
     remove(&mut doc, &segs);
-    write(file, kind, &doc)
+    write(file, kind, &doc, &segs)
 }
 
 fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {

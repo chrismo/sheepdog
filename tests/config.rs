@@ -2962,3 +2962,23 @@ fn profile_explain_profiles_works_while_a_pick_dangles_and_a_typo_is_still_unkno
     assert_eq!(r.status, 1);
     assert!(r.output.starts_with("sd config: unknown key: settings.verfy"), "{}", r.output);
 }
+
+#[test]
+fn profile_only_a_write_to_the_pick_is_checked() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"profile":"gone"}"#);
+    sd.ok(&["set", "settings.verify", "make check"]);
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"profile":"gone","settings":{"verify":"make check"}}"#);
+}
+
+#[test]
+fn profile_a_pick_names_only_what_a_profile_could_be_named() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"profile":["billing",""]}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!(r#"sd config: {}: profile: expected a name or a list of names, got ["billing",""]"#, sd.bf("feat"))
+    );
+}
