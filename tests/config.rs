@@ -2937,3 +2937,12 @@ fn profile_a_global_write_is_checked_against_the_repos_sd_watch_tracks() {
     );
     assert_eq!(raw(&file_json(sd.cfg())["profiles"]["shared"]["settings"]["verify"]), "make");
 }
+
+#[test]
+fn profile_defining_a_new_profile_is_no_new_failure_for_a_branch_already_dangling() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"gone"}"#);
+    sd.ok(&["set", "--repo", "profiles.newone.settings.verify", "x"]);
+    assert_eq!(raw(&file_json(sd.repo_file())["profiles"]["newone"]["settings"]["verify"]), "x");
+}

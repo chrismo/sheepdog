@@ -1006,16 +1006,20 @@ fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
     let before = failing_reads(&repos);
     let old = fs::read_to_string(file).ok();
     write_file(file, doc)?;
-    let mut new: Vec<String> = failing_reads(&repos).into_iter().filter(|e| !before.contains(e)).collect();
+    // A dangling pick's message lists the defined profiles, which this
+    // write may change; it is the same failure.
+    let what = |e: &String| e.split(" (defined: ").next().unwrap_or_default().replace(" (none defined)", "");
+    let was: Vec<String> = before.iter().map(what).collect();
+    let mut new: Vec<String> = failing_reads(&repos).into_iter().filter(|e| !was.contains(&what(e))).collect();
     if new.is_empty() {
         return Ok(());
     }
     let undone = match old {
-        Some(text) => fs::write(file, text),
-        None => fs::remove_file(file),
+        Some(text) => write_text(file, &text),
+        None => fs::remove_file(file).map_err(|e| Fail::Error(vec![e.to_string()])),
     };
-    if let Err(e) = undone {
-        new.push(format!("couldn't undo the write to {file}: {e}"));
+    if let Err(Fail::Error(e)) = undone {
+        new.push(format!("couldn't undo the write to {file}: {}", e.join("; ")));
     }
     Err(Fail::Error(new))
 }
@@ -1054,13 +1058,16 @@ fn failing_reads(dirs: &[String]) -> Vec<String> {
 }
 
 fn write_file(file: &str, doc: &Value) -> Res<()> {
+    write_text(file, &(serde_json::to_string_pretty(doc).expect("a Value serializes") + "\n"))
+}
+
+fn write_text(file: &str, text: &str) -> Res<()> {
     let fail = |e: std::io::Error| Fail::Error(vec![format!("couldn't update {file}: {e}")]);
     let p = Path::new(file);
     if let Some(dir) = p.parent() {
         fs::create_dir_all(dir).map_err(fail)?;
     }
     let tmp = format!("{file}.{}", std::process::id());
-    let text = serde_json::to_string_pretty(doc).expect("a Value serializes") + "\n";
     fs::File::create(&tmp)
         .and_then(|mut f| f.write_all(text.as_bytes()))
         .and_then(|_| fs::rename(&tmp, p))
