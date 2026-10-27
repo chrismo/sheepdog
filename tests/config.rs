@@ -2685,15 +2685,22 @@ fn profile_a_branchs_profile_lies_over_the_repo_file_and_the_branch_file_over_it
 }
 
 #[test]
-fn profile_selected_in_the_repo_file_applies_to_every_branch_and_a_branchs_replaces_it() {
+fn profile_a_repo_files_pick_lies_under_the_repo_file_and_a_branchs_pick_over_both() {
     let sd = Sd::new();
-    sd.write_global(r#"{"profiles":{"billing":{"settings":{"verify":"billing-test"}},
+    sd.write_global(r#"{"profiles":{"home":{"settings":{"verify":"home-test","autofix":"home-fmt","stepTimeout":900}},
                                     "ledger":{"settings":{"verify":"ledger-test"}}}}"#);
-    sd.write_repo(r#"{"profile":"billing","settings":{"verify":"make lint"}}"#);
-    assert_eq!(sd.out(&["get", "settings.verify"]), "billing-test");
-    assert_eq!(sd.out(&["get", "--no-branch", "settings.verify"]), "billing-test");
+    sd.write_repo(r#"{"profile":"home","settings":{"autofix":"repo-fmt"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "home-test");
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.verify"]), "home-test");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "repo-fmt");
     sd.write_branch("feat", r#"{"profile":"ledger"}"#);
     assert_eq!(sd.out(&["get", "settings.verify"]), "ledger-test");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "repo-fmt");
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "900");
+    let out = sd.out(&["explain", "settings"]);
+    let has = |l: &str| assert!(out.lines().any(|x| x == l), "no line {l:?}: {out}");
+    has("settings.verify = ledger-test  [profile ledger; overrides profile home, defaults]");
+    has("settings.autofix = repo-fmt  [repo; overrides profile home, defaults]");
 }
 
 #[test]
@@ -2708,13 +2715,21 @@ fn profile_in_a_list_a_later_profile_wins() {
 }
 
 #[test]
-fn profile_a_null_selection_selects_none() {
+fn profile_a_null_branch_pick_leaves_the_repo_files_pick() {
     let sd = Sd::new();
     sd.write_repo(r#"{"profile":"billing","profiles":{"billing":{"settings":{"verify":"billing-test"}}}}"#);
-    assert_eq!(sd.out(&["get", "settings.verify"]), "billing-test");
     sd.write_branch("feat", r#"{"profile":null}"#);
-    let r = sd.run(&["get", "settings.verify"]);
-    assert_eq!((r.status, r.output.as_str()), (0, ""));
+    assert_eq!(sd.out(&["get", "settings.verify"]), "billing-test");
+}
+
+#[test]
+fn profile_a_dangling_repo_pick_fails_a_branchs_reads_whatever_the_branch_picks() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profile":"gone","profiles":{"billing":{}}}"#);
+    sd.write_branch("feat", r#"{"profile":"billing"}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile gone (defined: billing)", sd.rf()));
 }
 
 #[test]

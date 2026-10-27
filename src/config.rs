@@ -38,11 +38,11 @@ Layers (top wins; sd config files prints the paths):
   branch    <main repo>/.git/sheepdog/<branch>.json, shared by all worktrees;
             deleted once the branch is (by sd watch's pass, unenroll, forget)
   profile   profiles.<name> in the global and repo files, the repo's merged
-            over the global's, for the name (or list of names, the later
-            winning) the top profile key picks, in the branch or repo file
-            (#74); a repo file's pick lies over that repo file too
+            over the global's, for each name (or list of names, the later
+            winning) the branch file's profile key picks (#74)
   repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
+  profile   the same, for the names the repo file's profile key picks
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
             stepBudget 5 (USD per claude step; 0 is no cap), branchBudget
@@ -84,8 +84,8 @@ Notes:
     global or repo file only; a pick of a profile no file defines is an
     error on every read, naming the file that picks it. set refuses to
     write such a pick, but nothing else is checked: unset profiles.<name>
-    that a file still picks breaks its reads, and so does unset profile in
-    a branch file when it uncovers a repo file's dangling pick
+    that a file still picks breaks its reads. A branch's pick adds to the
+    repo's: both apply, each under the file that picks it
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -196,8 +196,8 @@ const GLOBAL_ONLY: &[(&str, Ty)] = &[
 /// update doesn't turn every read into "unknown key".
 const RENAMED: &[(&str, &str)] = &[("settings.dispatch", "settings.autoRun")];
 
-// A profile (#74) is a layer just under the branch file, so it holds what
-// a branch file does, less the profile keys.
+// A profile (#74) is a layer just under the file that picks it, so it holds
+// what a branch file does, less the profile keys.
 const PROFILE: &[(&str, Ty)] = &[
     ("harness", Ty::Enum(HARNESSES)),
     ("harnesses", Ty::Obj(HARNESS_BLOCKS)),
@@ -571,19 +571,19 @@ fn read_files(dir: &str, b: &str, no_branch: bool) -> Res<Files> {
     Ok(Files { g: layer(&global_file(), Some(Layer::Global))?, r: read(&rf, Layer::Repo)?, b: read(&bf, Layer::Branch)?, rf, bf })
 }
 
-/// The layers bottom to top, named as explain shows them: the global and
-/// repo files, the profiles the repo and branch files pick, in order, then
-/// the branch file.
+/// The layers bottom to top, named as explain shows them: the global file,
+/// the profiles the repo file picks, the repo file, the profiles the branch
+/// file picks, the branch file.
 fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<Vec<(String, Value)>> {
     let f = read_files(dir, b, no_branch)?;
     let defs = profile_defs(&[&f.g, &f.r]);
-    // The top file that picks wins whole, so it's the one to name.
-    let (by, pick) = if lookup(&f.b, &["profile"]).is_some() { (&f.bf, &f.b) } else { (&f.rf, &f.r) };
-    let names = picked(pick);
-    defined(by.as_deref().unwrap_or_default(), &names, &defs)?;
-    let mut docs = vec![("global".to_string(), f.g), ("repo".to_string(), f.r)];
-    docs.extend(names.into_iter().map(|n| (format!("profile {n}"), defs[&n].clone())));
-    docs.push(("branch".to_string(), f.b));
+    let mut docs = vec![("global".to_string(), f.g)];
+    for (name, file, doc) in [("repo", &f.rf, f.r), ("branch", &f.bf, f.b)] {
+        let names = picked(&doc);
+        defined(file.as_deref().unwrap_or_default(), &names, &defs)?;
+        docs.extend(names.into_iter().map(|n| (format!("profile {n}"), defs[&n].clone())));
+        docs.push((name.to_string(), doc));
+    }
     Ok(docs)
 }
 
