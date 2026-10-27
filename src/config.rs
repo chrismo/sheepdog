@@ -82,7 +82,9 @@ Notes:
     does
   - a profile holds what a branch file may; profiles are defined in the
     global or repo file only; a pick of a profile no file defines is an
-    error on read, and set refuses to write one
+    error on every read, naming the file that picks it. set refuses to
+    write such a pick, but editing or removing a definition isn't checked:
+    unset profiles.<name> that a file still picks breaks its reads
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
