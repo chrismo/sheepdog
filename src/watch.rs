@@ -92,8 +92,11 @@ fn plist(prog: &str, interval: &str, path: &str, log: &str) -> String {
 
 /// The job's PATH: the <path> install ran with, so the job finds what that
 /// shell does (#295), led by <bindir> unless it's ~/.local/bin, the default;
-/// each dir once, where it first appears.
+/// each dir once, where it first appears. With no <path> to copy, the dirs
+/// claude, gh and git usually live in.
 fn job_path(home: &str, bindir: &str, path: &str) -> String {
+    let usual = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+    let path = if path.split(':').all(str::is_empty) { &usual } else { path };
     let lead = (bindir != format!("{home}/.local/bin")).then_some(bindir);
     let mut dirs: Vec<&str> = Vec::new();
     for d in lead.into_iter().chain(path.split(':')) {
@@ -275,6 +278,13 @@ mod tests {
     fn job_path_lists_each_dir_once_where_it_first_appears() {
         assert_eq!(job_path("/h", "/lb", "/a:/lb:/b:/a"), "/lb:/a:/b");
         assert_eq!(job_path("/h", "/h/.local/bin", "/a::/b:/a:"), "/a:/b");
+    }
+
+    #[test]
+    fn job_path_with_no_path_to_copy_falls_back_to_the_usual_dirs() {
+        let base = "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+        assert_eq!(job_path("/h", "/h/.local/bin", ""), base);
+        assert_eq!(job_path("/h", "/lb", ":"), format!("/lb:{base}"));
     }
 
     #[test]
