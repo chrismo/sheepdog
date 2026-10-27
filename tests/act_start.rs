@@ -622,6 +622,53 @@ fn start_leaves_the_harness_of_a_branch_that_has_a_session_242() {
     assert_eq!(sd.git(&["config", "branch.feat-x.sd-harness"]), "claude");
 }
 
+#[test]
+fn start_profile_is_in_the_branch_file_before_implement_so_its_first_verify_is_the_profiles_293() {
+    let sd = sd();
+    sd.write_global(
+        r#"{"settings": {"verify": "echo default >> \"$FX/verify.out\""},
+            "profiles": {"billing": {"settings": {"verify": "echo billing >> \"$FX/verify.out\""}}}}"#,
+    );
+    let r = sd.run_sep(&["start", "--profile", "billing", "feat-x", "add c"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(chomp(&sd.verb_ok("config", &["get", "--json", "profile", "feat-x"])), r#""billing""#);
+    assert_has(&sd.prompt(), &["echo billing"]);
+    assert_eq!(sd.fx("verify.out"), "billing");
+}
+
+#[test]
+fn start_profile_twice_writes_a_list_the_later_winning_293() {
+    let sd = sd();
+    sd.write_global(
+        r#"{"profiles": {"a": {"settings": {"verify": "echo a-verify"}}, "b": {"settings": {"verify": "echo b-verify"}}}}"#,
+    );
+    let r = sd.run_sep(&["start", "--no-implement", "--profile", "a", "--profile", "b", "feat-x"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(chomp(&sd.verb_ok("config", &["get", "--json", "profile", "feat-x"])), r#"["a","b"]"#);
+    assert_eq!(chomp(&sd.verb_ok("config", &["get", "settings.verify", "feat-x"])), "echo b-verify");
+}
+
+#[test]
+fn start_an_unknown_profile_exits_1_naming_it_and_makes_no_worktree_293() {
+    let sd = sd();
+    sd.write_global(r#"{"profiles": {"billing": {"settings": {"verify": "echo billing-verify"}}}}"#);
+    let r = sd.run(&["start", "--profile", "nope", "feat-x", "a task"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["no such profile nope"]);
+    assert!(!sd.tmp.join("feat-x").exists());
+    assert_ne!(sd.git_status(&["rev-parse", "-q", "--verify", "refs/heads/feat-x"]), 0);
+    assert!(!sd.ran("claude.args"));
+}
+
+#[test]
+fn profile_belongs_to_sd_act_start_only_293() {
+    let mut sd = sd();
+    sd.started(TASK);
+    let r = sd.run(&["implement", "--profile", "billing"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["--profile is for sd act start only"]);
+}
+
 // @test "implement: the prompt carries the task and the verify command"
 #[test]
 fn implement_the_prompt_carries_the_task_and_the_verify_command() {

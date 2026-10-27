@@ -1,13 +1,15 @@
 // start (A0): a worktree beside the main one on the branch, the task, parent
 // and base recorded, the branch enrolled; then implement. stdout is only the
-// worktree's path.
+// worktree's path. --profile picks the branch's config profiles (#74, #293),
+// checked before anything is made.
 //
 // Duplicates agent-rig's wt-new (#14), hook locations and branch resolution
 // included, so a repo set up for new_wt needs nothing more. Placement differs
 // (#85): beside the main worktree, not beside the current one.
 
 use super::bookkeeping::enroll_mark;
-use super::{die, Args};
+use super::{die, or_die, Args};
+use crate::config::set_branch_profile;
 use crate::git::{common_dir, git, git_ok, git_out, main_worktree, rev, show_ref};
 use crate::proc::{self, executable};
 use std::io::stderr;
@@ -122,6 +124,9 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     if Path::new(&dst).exists() {
         die(format!("{dst} already exists"));
     }
+    if !a.profiles.is_empty() {
+        or_die(set_branch_profile(b, &a.profiles, true));
+    }
     let f = git(".", &["fetch", "--quiet", "--prune", remote]);
     eprint!("{}", f.stderr);
     if !f.ok {
@@ -172,6 +177,10 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     let session = git_out(".", &["config", "--get", &format!("branch.{b}.sd-session")]);
     if !a.harness.is_empty() && session.is_none() {
         set(&["config", &format!("branch.{b}.sd-harness"), &a.harness]);
+    }
+    // Before implement too, whose first verify is the profile's (#293).
+    if !a.profiles.is_empty() {
+        or_die(set_branch_profile(b, &a.profiles, false));
     }
     if !base.is_empty() {
         set(&["update-ref", "-m", "sd act start", &format!("refs/sheepdog/{b}/base"), &base]);

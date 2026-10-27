@@ -1022,17 +1022,47 @@ fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
 /// A write to a pick must name defined profiles: one that doesn't fails
 /// every read for its branch.
 fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
-    checked(doc, kind, file)?;
-    let names = picked(doc);
-    if segs[0] == "profile" && !names.is_empty() {
-        let g = layer(&global_file(), Some(Layer::Global))?;
-        let r = match kind {
-            Layer::Repo => doc.clone(),
-            _ => repo_file(".").map_or(Ok(json!({})), |f| layer(&f, Some(Layer::Repo)))?,
-        };
-        defined(file, &names, &profile_defs(&[&g, &r]))?;
+    if segs[0] == "profile" {
+        pick_ok(file, kind, doc)?;
+    } else {
+        checked(doc, kind, file)?;
     }
     write_file(file, doc)
+}
+
+fn pick_ok(file: &str, kind: Layer, doc: &Value) -> Res<()> {
+    checked(doc, kind, file)?;
+    let names = picked(doc);
+    if names.is_empty() {
+        return Ok(());
+    }
+    let g = layer(&global_file(), Some(Layer::Global))?;
+    let r = match kind {
+        Layer::Repo => doc.clone(),
+        _ => repo_file(".").map_or(Ok(json!({})), |f| layer(&f, Some(Layer::Repo)))?,
+    };
+    defined(file, &names, &profile_defs(&[&g, &r]))
+}
+
+/// <names> as <b>'s profile pick in its branch file, a list for more than
+/// one, as `sd config set --branch <b> profile` writes it; the branch needn't
+/// exist yet. With <dry>, only checked, so sd act start can refuse a name no
+/// file defines before it makes anything (#293). Err is sd config's lines.
+pub fn set_branch_profile(b: &str, names: &[String], dry: bool) -> Result<(), Vec<String>> {
+    stderr_lines((|| {
+        let file = branch_file(".", b)?;
+        let mut doc = layer(&file, None)?;
+        let pick = match names {
+            [one] => json!(one),
+            _ => json!(names),
+        };
+        put(&mut doc, &["profile".to_string()], pick);
+        pick_ok(&file, Layer::Branch, &doc)?;
+        if !dry {
+            write_file(&file, &doc)?;
+        }
+        Ok(())
+    })())
 }
 
 fn write_file(file: &str, doc: &Value) -> Res<()> {

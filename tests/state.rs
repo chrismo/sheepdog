@@ -4140,6 +4140,25 @@ fn summary_no_pr() {
     assert_has(&r.output, &["1 unpushed"]);
 }
 
+#[test]
+fn summary_names_the_profile_in_effect_the_branchs_else_the_repos_293() {
+    let sd = sd();
+    sd.feat();
+    sd.write_global(r#"{"profiles": {"base": {}, "billing": {}, "fast": {}}}"#);
+    let r = sd.run(&[]);
+    assert_lacks(r.lines()[0], "profile");
+    assert_eq!(sd.run(&["--json"]).field_c(".session.profile"), "null");
+
+    sd.write(".git/sheepdog.json", r#"{"profile": "base"}"#);
+    let r = sd.run(&[]);
+    assert!(r.lines()[0].starts_with("no PR · profile base · "), "{}", r.output);
+
+    sd.verb_ok("config", &["set", "--json", "profile", r#"["billing", "fast"]"#]);
+    let r = sd.run(&[]);
+    assert!(r.lines()[0].starts_with("no PR · profile billing, fast · "), "{}", r.output);
+    assert_eq!(sd.run(&["--json"]).field_c(".session.profile"), r#"["billing","fast"]"#);
+}
+
 // @test "summary: a merged PR whose remote branch is gone counts nothing unpushed (#153)"
 #[test]
 fn summary_a_merged_pr_whose_remote_branch_is_gone_counts_nothing_unpushed_153() {
