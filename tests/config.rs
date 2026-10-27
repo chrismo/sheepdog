@@ -2665,3 +2665,359 @@ fn explain_an_empty_model_or_effort_shows_a_dash() {
     let row = out.lines().find(|l| l.starts_with("review ")).unwrap_or_else(|| panic!("no review row: {out}"));
     assert_eq!(row.split_whitespace().collect::<Vec<_>>(), ["review", "claude", "-", "-"]);
 }
+
+// ── profiles: a named set of overrides a branch selects (#74) ───────────────
+
+const PROFILES: &str = r#"{"settings":{"verify":"make lint"},
+  "profiles":{"billing":{"settings":{"verify":"make -C apps/billing test","autofix":"make -C apps/billing fmt"}},
+              "frontier":{"harnesses":{"claude":{"model":"opus","effort":"high"}},
+                          "settings":{"autofix":"frontier-fmt"}}}}"#;
+
+#[test]
+fn profile_a_branchs_profile_lies_over_the_repo_file_and_the_branch_file_over_it() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make lint");
+    sd.write_branch("feat", r#"{"profile":"billing"}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make -C apps/billing test");
+    sd.write_branch("feat", r#"{"profile":"billing","settings":{"verify":"mine"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "mine");
+}
+
+#[test]
+fn profile_a_repo_files_pick_lies_under_the_repo_file_and_a_branchs_pick_over_both() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"home":{"settings":{"verify":"home-test","autofix":"home-fmt","stepTimeout":900}},
+                                    "ledger":{"settings":{"verify":"ledger-test"}}}}"#);
+    sd.write_repo(r#"{"profile":"home","settings":{"autofix":"repo-fmt"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "home-test");
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.verify"]), "home-test");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "repo-fmt");
+    sd.write_branch("feat", r#"{"profile":"ledger"}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "ledger-test");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "repo-fmt");
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "900");
+    let out = sd.out(&["explain", "settings"]);
+    let has = |l: &str| assert!(out.lines().any(|x| x == l), "no line {l:?}: {out}");
+    has("settings.verify = ledger-test  [profile ledger; overrides profile home, defaults]");
+    has("settings.autofix = repo-fmt  [repo; overrides profile home, defaults]");
+}
+
+#[test]
+fn profile_in_a_list_a_later_profile_wins() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":["billing","frontier"]}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make -C apps/billing test");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "frontier-fmt");
+    sd.write_branch("feat", r#"{"profile":["frontier","billing"]}"#);
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "make -C apps/billing fmt");
+}
+
+#[test]
+fn profile_a_null_branch_pick_leaves_the_repo_files_pick() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profile":"billing","profiles":{"billing":{"settings":{"verify":"billing-test"}}}}"#);
+    sd.write_branch("feat", r#"{"profile":null}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "billing-test");
+}
+
+#[test]
+fn profile_a_dangling_repo_pick_fails_a_branchs_reads_whatever_the_branch_picks() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profile":"gone","profiles":{"billing":{}}}"#);
+    sd.write_branch("feat", r#"{"profile":"billing"}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile gone (defined: billing)", sd.rf()));
+}
+
+#[test]
+fn profile_a_dangling_repo_pick_fails_a_read_with_no_branch_of_a_key_no_profile_holds() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profile":"gone","profiles":{"billing":{}}}"#);
+    let r = sd.run(&["get", "--no-branch", "settings.interval"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile gone (defined: billing)", sd.rf()));
+}
+
+#[test]
+fn profile_a_null_in_a_profile_resets_the_key_to_its_default() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"settings":{"stepTimeout":900},
+                      "profiles":{"slow":{"settings":{"stepTimeout":null}}}}"#);
+    sd.write_branch("feat", r#"{"profile":"slow"}"#);
+    assert_eq!(sd.out(&["get", "settings.stepTimeout"]), "1800");
+}
+
+#[test]
+fn profile_step_takes_harness_model_and_effort_from_a_profile() {
+    let sd = Sd::new();
+    sd.write_global(GLOBAL);
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":"frontier"}"#);
+    assert_eq!(sd.get_field("describe", "model"), "opus");
+    assert_eq!(sd.get_field("describe", "effort"), "high");
+    // A step block in a lower layer still beats the profile's harness block,
+    // as it beats the branch file's.
+    assert_eq!(sd.get_field("review", "effort"), "max");
+}
+
+#[test]
+fn profile_the_global_and_repo_definitions_of_one_name_merge_repo_over_global() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"billing":{"settings":{"verify":"g-verify","autofix":"g-fmt"}}}}"#);
+    sd.write_repo(r#"{"profiles":{"billing":{"settings":{"verify":"r-verify"}}}}"#);
+    sd.write_branch("feat", r#"{"profile":"billing"}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "r-verify");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "g-fmt");
+}
+
+#[test]
+fn profile_a_null_in_the_repo_file_undefines_a_global_profile_or_all_of_them() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"billing":{},"frontier":{}}}"#);
+    sd.write_branch("feat", r#"{"profile":"billing"}"#);
+    sd.write_repo(r#"{"profiles":{"billing":null}}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile billing (defined: frontier)", sd.bf("feat")));
+    sd.write_repo(r#"{"profiles":null}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile billing (none defined)", sd.bf("feat")));
+}
+
+#[test]
+fn profile_an_undefined_profile_is_an_error_naming_the_file_that_selected_it() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":["billing","fronteir"]}"#);
+    let r = sd.run(&["get", "settings.verify"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile fronteir (defined: billing, frontier)", sd.bf("feat"))
+    );
+}
+
+#[test]
+fn profile_profiles_are_defined_in_the_global_or_repo_file_only() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"profiles":{"x":{}}}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profiles: global or repo file only", sd.bf("feat")));
+}
+
+#[test]
+fn profile_a_profile_holds_only_what_a_branch_file_may() {
+    let sd = Sd::new();
+    sd.write_global(
+        r#"{"profiles":{"x":{"profile":"y","profiles":{},"settings":{"interval":5,"remote":"fork","verfy":"m"}}}}"#,
+    );
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    let c = sd.cfg_s();
+    assert_eq!(
+        r.lines(),
+        [
+            format!("sd config: {c}: profiles.x.profile: unknown key"),
+            format!("sd config: {c}: profiles.x.profiles: unknown key"),
+            format!("sd config: {c}: profiles.x.settings.interval: not allowed in a profile"),
+            format!("sd config: {c}: profiles.x.settings.remote: not allowed in a profile"),
+            format!("sd config: {c}: profiles.x.settings.verfy: unknown key"),
+        ]
+    );
+}
+
+#[test]
+fn profile_a_profile_name_is_a_path_segment() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"a b":{}}}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profiles.a b: not a profile name (letters, digits, - and _)", sd.cfg_s())
+    );
+}
+
+#[test]
+fn profile_the_selection_is_a_name_or_a_list_of_names() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"profile":3}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: expected a name or a list of names, got 3", sd.bf("feat")));
+}
+
+#[test]
+fn profile_set_selects_one_by_name_and_types_the_keys_inside_a_definition() {
+    let sd = Sd::new();
+    sd.ok(&["set", "--repo", "profiles.billing.settings.stepTimeout", "900"]);
+    sd.ok(&["set", "--repo", "profiles.billing.harnesses.claude.useApiKey", "true"]);
+    sd.ok(&["set", "profile", "billing"]);
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"profile":"billing"}"#);
+    assert_eq!(
+        compact(&file_json(sd.repo_file())),
+        r#"{"profiles":{"billing":{"settings":{"stepTimeout":900},"harnesses":{"claude":{"useApiKey":true}}}}}"#
+    );
+    let r = sd.run(&["set", "--repo", "profiles.billing.settings.interval", "5"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profiles.billing.settings.interval: not allowed in a profile", sd.rf()));
+}
+
+#[test]
+fn profile_explain_names_the_profile_a_key_came_from() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":["billing","frontier"]}"#);
+    let out = sd.out(&["explain"]);
+    let has = |l: &str| assert!(out.lines().any(|x| x == l), "no line {l:?}: {out}");
+    has(r#"profile = ["billing","frontier"]  [branch]"#);
+    has("settings.verify = make -C apps/billing test  [profile billing; overrides repo, defaults]");
+    has("settings.autofix = frontier-fmt  [profile frontier; overrides profile billing, defaults]");
+    assert!(!out.lines().any(|l| l.starts_with("profiles")), "{out}");
+    let row = out.lines().find(|l| l.starts_with("review ")).unwrap_or_else(|| panic!("no review row: {out}"));
+    assert_eq!(row.split_whitespace().collect::<Vec<_>>(), ["review", "claude", "opus", "high"]);
+}
+
+#[test]
+fn profile_explain_profiles_lists_the_definitions_and_their_layer() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"billing":{"settings":{"autofix":"g-fmt"}}}}"#);
+    sd.write_repo(PROFILES);
+    assert_eq!(
+        sd.out(&["explain", "profiles.billing"]),
+        "profiles.billing.settings.autofix = make -C apps/billing fmt  [repo; overrides global]\n\
+         profiles.billing.settings.verify = make -C apps/billing test  [repo]"
+    );
+    assert_eq!(sd.out(&["explain", "profiles"]).lines().count(), 5);
+}
+
+#[test]
+fn profile_set_refuses_a_pick_no_file_defines_and_leaves_the_file_as_it_was() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"settings":{"verify":"mine"}}"#);
+    let r = sd.run(&["set", "profile", "fronteir"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile fronteir (defined: billing, frontier)", sd.bf("feat"))
+    );
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"settings":{"verify":"mine"}}"#);
+    let r = sd.run(&["set", "--branch", "main", "profile", "fronteir"]);
+    assert_eq!(r.status, 1);
+    assert!(!sd.branch_file("main").exists());
+}
+
+#[test]
+fn profile_the_global_file_may_not_pick_one() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profile":"billing","profiles":{"billing":{}}}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: repo or branch file only", sd.cfg_s()));
+    sd.write_global(r#"{"profiles":{"billing":{}}}"#);
+    let r = sd.run(&["set", "--global", "profile", "billing"]);
+    assert_eq!(r.status, 1);
+    sd.ok(&["set", "--repo", "profile", "billing"]);
+}
+
+#[test]
+fn profile_explain_profiles_with_none_defined_prints_nothing() {
+    let sd = Sd::new();
+    let r = sd.run(&["explain", "profiles"]);
+    assert_eq!((r.status, r.output.as_str()), (0, ""));
+}
+
+#[test]
+fn profile_a_branch_already_dangling_blocks_no_other_write() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"gone"}"#);
+    sd.write_branch("feat", r#"{"profile":"lost"}"#);
+    sd.ok(&["set", "--repo", "profiles.billing.settings.verify", "make check"]);
+    sd.ok(&["unset", "profile"]);
+    sd.ok(&["set", "profile", "billing"]);
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"profile":"billing"}"#);
+}
+
+#[test]
+fn profile_defining_a_new_profile_is_no_new_failure_for_a_branch_already_dangling() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"gone"}"#);
+    sd.ok(&["set", "--repo", "profiles.newone.settings.verify", "x"]);
+    assert_eq!(raw(&file_json(sd.repo_file())["profiles"]["newone"]["settings"]["verify"]), "x");
+}
+
+#[test]
+fn profile_set_refuses_a_repo_pick_no_file_defines() {
+    let sd = Sd::new();
+    sd.write_repo(r#"{"profiles":{"billing":{}}}"#);
+    let r = sd.run(&["set", "--repo", "profile", "biling"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile biling (defined: billing)", sd.rf()));
+    sd.ok(&["set", "--repo", "profile", "billing"]);
+}
+
+#[test]
+fn profile_removing_a_definition_a_branch_picks_fails_that_branchs_reads() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"billing"}"#);
+    sd.ok(&["unset", "--repo", "profiles.billing"]);
+    let r = sd.run(&["get", "settings.verify", "main"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile billing (defined: frontier)", sd.bf("main"))
+    );
+}
+
+#[test]
+fn profile_a_read_names_every_profile_no_file_defines() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":["gone","billing","lost"]}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {}: profile: no such profile gone, lost (defined: billing, frontier)", sd.bf("feat"))
+    );
+}
+
+#[test]
+fn profile_explain_profiles_works_while_a_pick_dangles_and_a_typo_is_still_unknown() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("feat", r#"{"profile":"gone"}"#);
+    assert_eq!(sd.out(&["explain", "profiles"]).lines().count(), 5);
+    let r = sd.run(&["explain", "settings.verfy"]);
+    assert_eq!(r.status, 1);
+    assert!(r.output.starts_with("sd config: unknown key: settings.verfy"), "{}", r.output);
+}
+
+#[test]
+fn profile_only_a_write_to_the_pick_is_checked() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"profile":"gone"}"#);
+    sd.ok(&["set", "settings.verify", "make check"]);
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"profile":"gone","settings":{"verify":"make check"}}"#);
+}
+
+#[test]
+fn profile_a_pick_names_only_what_a_profile_could_be_named() {
+    let sd = Sd::new();
+    sd.write_branch("feat", r#"{"profile":["billing",""]}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!(r#"sd config: {}: profile: expected a name or a list of names, got ["billing",""]"#, sd.bf("feat"))
+    );
+}
