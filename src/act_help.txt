@@ -1,7 +1,7 @@
 sd act - verbs that change a branch's PR.
 
 Usage:
-  sd act start    [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]
+  sd act start    [--parent <branch>] [--harness <h>] [--profile <name>]... [--no-implement] <name> [<task>]
   sd act implement [--force] [--harness <h>] [<branch>]
   sd act follow   <number>
   sd act fetch    [<branch>]
@@ -285,6 +285,10 @@ failed step did.
 
 start options:
   --parent <b>    start from <b> (local, else <remote>/<b>) and stack on it
+  --profile <p>   the branch file's profile, written before implement runs;
+                  given more than once, a list, the later winning (sd config
+                  --help). A profile no file defines is refused before the
+                  worktree is made
   --no-implement  stop after the setup; the task is then optional
 
 restack options:

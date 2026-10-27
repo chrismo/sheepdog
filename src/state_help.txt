@@ -81,6 +81,9 @@ Reports, for <branch> (default: the current one):
   bot       the review bot's trigger comment (settings.botCommand), if any,
             and timeout (settings.botTimeout)
   session   pipeline enrollment, harness, session id, takeover lock;
+            profile: the config profile pick in effect (sd config's
+            profile: the branch file's, else the repo file's), a name or a
+            list, else null; the one-liner names it (#293);
             running: the agent step running on the branch, {step, pid,
             since}, from its running marker (src/running.rs), else
             null. While it runs,

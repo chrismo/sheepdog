@@ -66,6 +66,8 @@ pub struct Args {
     pub harness: String,
     pub parent: String,
     pub ids: Vec<String>,
+    /// start's --profile, each one given, in order.
+    pub profiles: Vec<String>,
     /// The last positional (start's <name>, answer's <branch>); empty for the
     /// current branch. unregister's <path>.
     pub branch: String,
@@ -88,11 +90,12 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
             "--resolve" => a.resolve = true,
             "--no-implement" => a.no_implement = true,
             "--question" => a.question = true,
-            o @ ("--parent" | "--harness" | "--id") => {
+            o @ ("--parent" | "--harness" | "--id" | "--profile") => {
                 let v = it.next().ok_or(format!("{o} needs a value"))?.clone();
                 match o {
                     "--parent" => a.parent = v,
                     "--harness" => a.harness = v,
+                    "--profile" => a.profiles.push(v),
                     _ => a.ids.push(v),
                 }
             }
@@ -114,7 +117,7 @@ impl Args {
         let second = self.positionals.get(1).cloned().unwrap_or_default();
         if verb == "start" {
             if !(1..=2).contains(&n) {
-                return Err("usage: sd act start [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]".into());
+                return Err("usage: sd act start [--parent <branch>] [--harness <h>] [--profile <name>]... [--no-implement] <name> [<task>]".into());
             }
             (self.branch, self.task) = (self.positionals[0].clone(), second.clone());
         }
@@ -131,7 +134,12 @@ impl Args {
             self.pr = self.positionals[0].clone();
             self.branch = follow::branch(&self.pr);
         }
-        let one_verb = [(self.accept, "--accept", "review"), (self.remove, "--remove", "forget"), (self.question, "--question", "ack")];
+        let one_verb = [
+            (self.accept, "--accept", "review"),
+            (self.remove, "--remove", "forget"),
+            (self.question, "--question", "ack"),
+            (!self.profiles.is_empty(), "--profile", "start"),
+        ];
         for (set, flag, only) in one_verb {
             if set && verb != only {
                 return Err(format!("{flag} is for sd act {only} only"));
@@ -308,12 +316,13 @@ mod tests {
     fn parse_reads_every_flag_and_the_last_positional_is_the_branch() {
         let a = parse(&argv(&[
             "--force", "--accept", "--remove", "--no-publish", "--resolve", "--no-implement", "--question",
-            "--parent", "p", "--harness", "pi", "--id", "1", "--id", "2", "one", "two",
+            "--parent", "p", "--harness", "pi", "--id", "1", "--id", "2", "--profile", "x", "--profile", "y", "one", "two",
         ]))
         .unwrap();
         assert!(a.force && a.accept && a.remove && a.no_publish && a.resolve && a.no_implement && a.question);
         assert_eq!((a.parent.as_str(), a.harness.as_str()), ("p", "pi"));
         assert_eq!(a.ids, ["1", "2"]);
+        assert_eq!(a.profiles, ["x", "y"]);
         assert_eq!(a.branch, "two");
         assert_eq!(a.positionals, ["one", "two"]);
         assert_eq!(parse(&[]).unwrap(), Args::default());
@@ -324,7 +333,7 @@ mod tests {
         assert_eq!(parse(&argv(&["--nope"])), Err("unknown option: --nope".into()));
         assert_eq!(parse(&argv(&["-"])), Err("unknown option: -".into()));
         assert_eq!(parse(&argv(&["--"])), Err("unknown option: --".into()));
-        for f in ["--parent", "--harness", "--id"] {
+        for f in ["--parent", "--harness", "--id", "--profile"] {
             assert_eq!(parse(&argv(&["feat", f])), Err(format!("{f} needs a value")));
         }
     }
@@ -334,6 +343,8 @@ mod tests {
         assert_eq!(parsed("push", &["--accept"]), Err("--accept is for sd act review only".into()));
         assert_eq!(parsed("enroll", &["--remove"]), Err("--remove is for sd act forget only".into()));
         assert_eq!(parsed("answer", &["--question", "yes"]), Err("--question is for sd act ack only".into()));
+        assert_eq!(parsed("implement", &["--profile", "x"]), Err("--profile is for sd act start only".into()));
+        assert!(parsed("start", &["--profile", "x", "feat"]).is_ok());
         assert!(parsed("review", &["--accept"]).is_ok());
         assert!(parsed("forget", &["--remove"]).is_ok());
         assert!(parsed("ack", &["--question"]).is_ok());
@@ -345,7 +356,7 @@ mod tests {
         assert_eq!((a.branch.as_str(), a.task.as_str()), ("fix-login", "Fix the login"));
         let a = parsed("start", &["fix-login"]).unwrap();
         assert_eq!((a.branch.as_str(), a.task.as_str()), ("fix-login", ""));
-        let usage = "usage: sd act start [--parent <branch>] [--harness <h>] [--no-implement] <name> [<task>]";
+        let usage = "usage: sd act start [--parent <branch>] [--harness <h>] [--profile <name>]... [--no-implement] <name> [<task>]";
         assert_eq!(parsed("start", &[]), Err(usage.into()));
         assert_eq!(parsed("start", &["a", "b", "c"]), Err(usage.into()));
     }

@@ -715,6 +715,7 @@ struct Facts {
     refs: Vec<(String, String)>,
     enrolled: String,
     harness: String,
+    profile: Value,
     session: String,
     lock: String,
     running: Value,
@@ -961,7 +962,7 @@ fn assemble(s: &Facts) -> Value {
                     "info": gh(json!(owed.iter().filter(|o| o["mark"] == "i").count())),
                     "items": owed},
         "bot": {"command": jn(&s.bot_command), "timeout": s.bot_timeout},
-        "session": {"enrolled": s.enrolled == "true", "harness": jn(&s.harness), "id": jn(&s.session),
+        "session": {"enrolled": s.enrolled == "true", "harness": jn(&s.harness), "profile": s.profile, "id": jn(&s.session),
                     "locked": !s.lock.is_empty(), "running": s.running},
         "spend": {"usd": s.spend, "budget": s.branch_budget},
         "stored": {"handled": s.handled, "refs": refs},
@@ -1067,6 +1068,11 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let accepted_after = cfg("sd-accepted-after"); // the bot_triggered review --accept followed (#181)
     let review_rounds = raw_json(&setting("reviewRounds", false)?);
     let branch_budget = raw_json(&setting("branchBudget", true)?);
+    let profile = match config::get_text_in(dir, "profile", branch, true) {
+        Ok(text) => raw_json(&text),
+        Err(lines) if lines.is_empty() => Value::Null,
+        Err(lines) => return Err(config_failed(lines)),
+    };
     let mut errors: Vec<String> = Vec::new();
     let spend = branch_spend(dir, branch).unwrap_or_else(|()| {
         errors.push(format!("usage: can't read {}", usage::file()));
@@ -1502,6 +1508,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         refs,
         enrolled: cfg("sheepdog"),
         harness: cfg("sd-harness"),
+        profile,
         session: cfg("sd-session"),
         lock: cfg("sd-lock"),
         running,
@@ -1578,6 +1585,11 @@ fn summary(s: &Value) -> String {
             format!("{} {}", t(pr, "url"), if on(pr, "draft") { "draft".into() } else { t(pr, "state").to_lowercase() })
         }),
         reviewer.then(|| "reviewing".to_string()),
+        match at(s, "session.profile") {
+            Value::Null => None,
+            p @ Value::Array(_) => Some(format!("profile {}", sj(p, ", "))),
+            p => Some(format!("profile {}", text(p))),
+        },
         on(s, "parent.merged").then(|| format!("parent merged → {}", t(s, "sync.target"))),
         (at(s, "sync.up_to_date") == &Value::Bool(false)).then(|| {
             format!("↓{} {}{}", t(s, "sync.behind"), t(s, "sync.target"), if on(s, "sync.conflict") { " (conflict)" } else { "" })
