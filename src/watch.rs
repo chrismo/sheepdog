@@ -92,15 +92,16 @@ fn plist(prog: &str, interval: &str, path: &str, log: &str) -> String {
 
 /// The job's PATH: the <path> install ran with, so the job finds what that
 /// shell does (#295), led by <bindir> unless it's ~/.local/bin, the default;
-/// each dir once, where it first appears. With no <path> to copy, the dirs
-/// claude, gh and git usually live in.
+/// each dir once, where it first appears. Relative dirs are dropped: launchd
+/// runs the job from /. With no <path> to copy, the dirs claude, gh and git
+/// usually live in.
 fn job_path(home: &str, bindir: &str, path: &str) -> String {
     let usual = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
-    let path = if path.split(':').all(str::is_empty) { &usual } else { path };
+    let path = if path.split(':').any(|d| d.starts_with('/')) { path } else { &usual };
     let lead = (bindir != format!("{home}/.local/bin")).then_some(bindir);
     let mut dirs: Vec<&str> = Vec::new();
     for d in lead.into_iter().chain(path.split(':')) {
-        if !d.is_empty() && !dirs.contains(&d) {
+        if d.starts_with('/') && !dirs.contains(&d) {
             dirs.push(d);
         }
     }
@@ -285,6 +286,12 @@ mod tests {
         let base = "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
         assert_eq!(job_path("/h", "/h/.local/bin", ""), base);
         assert_eq!(job_path("/h", "/lb", ":"), format!("/lb:{base}"));
+        assert_eq!(job_path("/h", "/h/.local/bin", ".:bin"), base);
+    }
+
+    #[test]
+    fn job_path_drops_relative_dirs_since_launchd_runs_jobs_from_root() {
+        assert_eq!(job_path("/h", "/h/.local/bin", ".:/a:bin:node_modules/.bin:/b"), "/a:/b");
     }
 
     #[test]
