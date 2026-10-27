@@ -2908,3 +2908,32 @@ fn profile_explain_profiles_with_none_defined_prints_nothing() {
     let r = sd.run(&["explain", "profiles"]);
     assert_eq!((r.status, r.output.as_str()), (0, ""));
 }
+
+#[test]
+fn profile_a_write_is_refused_only_for_a_dangling_pick_it_adds() {
+    let sd = Sd::new();
+    sd.write_repo(PROFILES);
+    sd.write_branch("main", r#"{"profile":"gone"}"#);
+    sd.write_branch("feat", r#"{"profile":"lost"}"#);
+    sd.ok(&["set", "--repo", "profiles.billing.settings.verify", "make check"]);
+    sd.ok(&["unset", "profile"]);
+    sd.ok(&["set", "profile", "billing"]);
+    assert_eq!(compact(&file_json(sd.branch_file("feat"))), r#"{"profile":"billing"}"#);
+}
+
+#[test]
+fn profile_a_global_write_is_checked_against_the_repos_sd_watch_tracks() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"shared":{"settings":{"verify":"make"}}}}"#);
+    let other = sd.path("other");
+    sd.git(&["init", "-q", &other]);
+    fs::write(format!("{other}/.git/sheepdog.json"), r#"{"profile":"shared"}"#).unwrap();
+    sd.git(&["config", "--global", "--add", "sheepdog.repo", &other]);
+    let r = sd.run(&["unset", "--global", "profiles.shared"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(
+        r.output,
+        format!("sd config: {other}/.git/sheepdog.json: profile: no such profile shared (none defined)")
+    );
+    assert_eq!(raw(&file_json(sd.cfg())["profiles"]["shared"]["settings"]["verify"]), "make");
+}

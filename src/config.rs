@@ -82,7 +82,8 @@ Notes:
     does
   - a profile holds what a branch file may; profiles are defined in the
     global or repo file only; picking one no file defines is an error, and
-    set/unset refuse a write that would leave a branch picking one
+    set/unset refuse a write that newly leaves this repo, a branch of it
+    or (a global write) a repo sd watch tracks picking one
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -994,39 +995,62 @@ fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
     Ok((branch_file(".", &b)?, Layer::Branch))
 }
 
-/// A write to a profile key that leaves a branch picking a profile no file
-/// defines is undone: every read for that branch would fail.
+/// A write to a profile key that makes a read fail is undone: a pick no
+/// file defines fails every read for its branch, sd watch's included.
 fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
     checked(doc, kind, file)?;
+    if !matches!(segs[0].as_str(), "profile" | "profiles") {
+        return write_file(file, doc);
+    }
+    let repos = repos_reading(kind);
+    let before = failing_reads(&repos);
     let old = fs::read_to_string(file).ok();
     write_file(file, doc)?;
-    if !segs[0].starts_with("profile") {
+    let mut new: Vec<String> = failing_reads(&repos).into_iter().filter(|e| !before.contains(e)).collect();
+    if new.is_empty() {
         return Ok(());
     }
-    let picks = picks_resolve(".");
-    if picks.is_err() {
-        let _ = match old {
-            Some(text) => fs::write(file, text),
-            None => fs::remove_file(file),
-        };
+    let undone = match old {
+        Some(text) => fs::write(file, text),
+        None => fs::remove_file(file),
+    };
+    if let Err(e) = undone {
+        new.push(format!("couldn't undo the write to {file}: {e}"));
     }
-    picks
+    Err(Fail::Error(new))
 }
 
-/// Every local branch with a branch file, and <dir> with none, picks only
-/// profiles the files define.
-fn picks_resolve(dir: &str) -> Res<()> {
-    layer_docs(dir, "", true)?;
-    let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
-    if !heads.ok {
-        return Ok(());
+/// The repos a <kind> file's write reaches: this one, and for the global
+/// file every repo sd watch tracks.
+fn repos_reading(kind: Layer) -> Vec<String> {
+    let mut dirs = vec![".".to_string()];
+    if kind == Layer::Global {
+        let tracked = git::git(".", &["config", "--global", "--get-all", "sheepdog.repo"]);
+        dirs.extend(tracked.stdout.lines().map(str::to_string));
     }
-    for b in heads.stdout.lines() {
-        if branch_config_file(dir, b).is_some_and(|f| Path::new(&f).exists()) {
-            layer_docs(dir, b, false)?;
+    dirs
+}
+
+/// The errors reading <dirs> hits, with no branch and as each local branch
+/// with a branch file.
+fn failing_reads(dirs: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for dir in dirs {
+        let mut reads = vec![(String::new(), true)];
+        let heads = git::git(dir, &["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads/"]);
+        if heads.ok {
+            let filed = |b: &&str| branch_config_file(dir, b).is_some_and(|f| Path::new(&f).exists());
+            reads.extend(heads.stdout.lines().filter(filed).map(|b| (b.to_string(), false)));
+        }
+        for (b, no_branch) in reads {
+            if let Err(Fail::Error(lines)) = layer_docs(dir, &b, no_branch) {
+                out.extend(lines);
+            }
         }
     }
-    Ok(())
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn write_file(file: &str, doc: &Value) -> Res<()> {
