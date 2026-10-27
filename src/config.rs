@@ -83,8 +83,9 @@ Notes:
   - a profile holds what a branch file may; profiles are defined in the
     global or repo file only; a pick of a profile no file defines is an
     error on every read, naming the file that picks it. set refuses to
-    write such a pick, but editing or removing a definition isn't checked:
-    unset profiles.<name> that a file still picks breaks its reads
+    write such a pick, but nothing else is checked: unset profiles.<name>
+    that a file still picks breaks its reads, and so does unset profile in
+    a branch file when it uncovers a repo file's dangling pick
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -134,7 +135,7 @@ enum Ty {
     Enum(&'static [&'static str]),
     Obj(&'static [(&'static str, Ty)]),
     Settings,
-    /// Named entries of these fields, each checked as if in a branch file.
+    /// Named entries of these fields, each checked as a profile.
     Map(&'static [(&'static str, Ty)]),
     Names,
 }
@@ -217,6 +218,7 @@ enum Layer {
     Global,
     Repo,
     Branch,
+    Profile,
 }
 
 fn problems(doc: &Value, layer: Layer) -> Vec<String> {
@@ -255,7 +257,7 @@ fn check(v: &Value, ty: Ty, path: &str, layer: Layer, out: &mut Vec<(String, Str
                 for (name, body) in m {
                     let p = format!("{path}.{name}");
                     if name_ok(name) {
-                        check(body, Ty::Obj(fields), &p, Layer::Branch, out);
+                        check(body, Ty::Obj(fields), &p, Layer::Profile, out);
                     } else {
                         out.push((p, "not a profile name (letters, digits, - and _)".into()));
                     }
@@ -299,11 +301,12 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
         },
         _ => match (find(SETTINGS), find(GLOBAL_OR_REPO), find(GLOBAL_ONLY)) {
             (Some(t), _, _) => Ok(t),
-            (_, Some(t), _) if layer != Layer::Branch => Ok(t),
-            (_, Some(_), _) => Err("global or repo file only"),
+            (None, None, None) => Err("unknown key"),
+            (_, Some(t), _) if layer == Layer::Global || layer == Layer::Repo => Ok(t),
             (_, _, Some(t)) if layer == Layer::Global => Ok(t),
-            (_, _, Some(_)) => Err("global file only"),
-            _ => Err("unknown key"),
+            _ if layer == Layer::Profile => Err("not allowed in a profile"),
+            (_, Some(_), _) => Err("global or repo file only"),
+            _ => Err("global file only"),
         },
     }
 }
@@ -319,7 +322,7 @@ fn fields_of(ty: Ty) -> Vec<(&'static str, Ty)> {
 /// The type <path> holds in a <layer> file, if the tables define it there.
 fn key_type(segs: &[String], layer: Layer) -> Option<Ty> {
     let (ty, _) = segs.iter().try_fold((Ty::Obj(CONFIG), layer), |(ty, layer), k| match ty {
-        Ty::Map(fields) => Some((Ty::Obj(fields), Layer::Branch)),
+        Ty::Map(fields) => Some((Ty::Obj(fields), Layer::Profile)),
         Ty::Obj(_) | Ty::Settings => field(ty, k, layer).ok().map(|t| (t, layer)),
         _ => None,
     })?;

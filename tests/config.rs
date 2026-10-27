@@ -2750,6 +2750,21 @@ fn profile_the_global_and_repo_definitions_of_one_name_merge_repo_over_global() 
 }
 
 #[test]
+fn profile_a_null_in_the_repo_file_undefines_a_global_profile_or_all_of_them() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"profiles":{"billing":{},"frontier":{}}}"#);
+    sd.write_branch("feat", r#"{"profile":"billing"}"#);
+    sd.write_repo(r#"{"profiles":{"billing":null}}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile billing (defined: frontier)", sd.bf("feat")));
+    sd.write_repo(r#"{"profiles":null}"#);
+    let r = sd.run(&["show"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output, format!("sd config: {}: profile: no such profile billing (none defined)", sd.bf("feat")));
+}
+
+#[test]
 fn profile_an_undefined_profile_is_an_error_naming_the_file_that_selected_it() {
     let sd = Sd::new();
     sd.write_repo(PROFILES);
@@ -2785,8 +2800,8 @@ fn profile_a_profile_holds_only_what_a_branch_file_may() {
         [
             format!("sd config: {c}: profiles.x.profile: unknown key"),
             format!("sd config: {c}: profiles.x.profiles: unknown key"),
-            format!("sd config: {c}: profiles.x.settings.interval: global file only"),
-            format!("sd config: {c}: profiles.x.settings.remote: global or repo file only"),
+            format!("sd config: {c}: profiles.x.settings.interval: not allowed in a profile"),
+            format!("sd config: {c}: profiles.x.settings.remote: not allowed in a profile"),
             format!("sd config: {c}: profiles.x.settings.verfy: unknown key"),
         ]
     );
@@ -2826,7 +2841,7 @@ fn profile_set_selects_one_by_name_and_types_the_keys_inside_a_definition() {
     );
     let r = sd.run(&["set", "--repo", "profiles.billing.settings.interval", "5"]);
     assert_eq!(r.status, 1);
-    assert_eq!(r.output, format!("sd config: {}: profiles.billing.settings.interval: global file only", sd.rf()));
+    assert_eq!(r.output, format!("sd config: {}: profiles.billing.settings.interval: not allowed in a profile", sd.rf()));
 }
 
 #[test]
