@@ -141,6 +141,11 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
         die(format!("no task: sd act start {b} \"<task>\" (or --no-implement)"));
     }
     let src = git_out(".", &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| die("not inside a worktree"));
+    // Before #252 git worktree add refused it where it was checked out; now
+    // start would use that checkout, so it's refused outright.
+    if start_default(remote).as_deref() == Some(b) {
+        die(format!("{b} is the default branch: start makes a branch off it"));
+    }
     let adopted = worktree_for(".", b);
     if !adopted.is_empty() && !Path::new(&adopted).is_dir() {
         die(format!("{b} is checked out at {adopted}, which is gone: git worktree prune, then start again"));

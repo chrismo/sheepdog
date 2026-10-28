@@ -462,6 +462,21 @@ fn start_refuses_a_worktree_registered_for_the_branch_whose_directory_is_gone_na
     assert_ne!(sd.git_status(&["config", "--get", "branch.feat-x.sd-task"]), 0);
 }
 
+// main is checked out in repo/, the main worktree: start mustn't use it.
+// @test "start: refuses the default branch, and records nothing for it (#252)"
+#[test]
+fn start_refuses_the_default_branch_and_records_nothing_for_it_252() {
+    let sd = sd();
+    let r = sd.run_sep(&["start", "main", "a task"]);
+    assert_ne!(r.status, 0);
+    assert!(r.output.is_empty(), "{}", r.output);
+    assert_has(&r.stderr, &["main is the default branch"]);
+    assert_ne!(sd.git_status(&["config", "--get", "branch.main.sd-task"]), 0);
+    assert_ne!(sd.git_status(&["config", "--get", "branch.main.sheepdog"]), 0);
+    assert!(sd.git(&["for-each-ref", "refs/sheepdog/main/base"]).is_empty());
+    assert!(!sd.ran("claude.args"));
+}
+
 // @test "start: refuses a name git won't take as a branch"
 #[test]
 fn start_refuses_a_name_git_wont_take_as_a_branch() {
