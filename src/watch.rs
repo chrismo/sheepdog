@@ -180,10 +180,22 @@ fn install() -> ExitCode {
     }
     let uid = uid();
     bootout(&uid, LABEL);
-    match Command::new("launchctl").args(["bootstrap", &format!("gui/{uid}"), &plist_file]).status() {
-        Ok(s) if s.success() => {}
-        Ok(s) => return ExitCode::from(s.code().unwrap_or(1) as u8),
-        Err(e) => die(format!("launchctl: {e}")),
+    // bootout can return before removal finishes; bootstrap reports that race as EIO (5).
+    for attempt in 0..=20 {
+        let out = Command::new("launchctl")
+            .args(["bootstrap", &format!("gui/{uid}"), &plist_file])
+            .output()
+            .unwrap_or_else(|e| die(format!("launchctl: {e}")));
+        if out.status.code() == Some(5) && attempt < 20 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            continue;
+        }
+        let _ = std::io::stdout().write_all(&out.stdout);
+        let _ = std::io::stderr().write_all(&out.stderr);
+        if !out.status.success() {
+            return ExitCode::from(out.status.code().unwrap_or(1) as u8);
+        }
+        break;
     }
     println!("installed {plist_file} (every {interval}s)");
     ExitCode::SUCCESS
