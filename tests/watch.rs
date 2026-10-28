@@ -2605,7 +2605,6 @@ fn install_writes_a_valid_plist_and_bootstraps_it() {
     assert_eq!(r.status, 0, "{}", r.output);
     lint(&plist);
     assert_eq!(extract(&plist, "StartInterval"), "300");
-    assert!(extract(&plist, "EnvironmentVariables.PATH").starts_with(&format!("{}/.local/bin:/", sd.path("home"))));
     assert_has(&sd.launchctl(), &[&format!("bootstrap gui/{} {}", uid(), plist.display())]);
 }
 
@@ -2668,19 +2667,51 @@ fn install_with_no_sd_in_local_bin_the_job_runs_this_sd_itself() {
     assert_eq!(extract(&plist, "ProgramArguments.0"), me.display().to_string());
 }
 
-// @test "install: the job runs the sd in LOCAL_BIN, which leads its PATH ahead of ~/.local/bin"
+// The job's PATH is the one install ran with (#295), so the job finds the
+// tools the shell that installed it does.
 #[test]
-fn install_the_job_runs_the_sd_in_local_bin_which_leads_its_path_ahead_of_local_bin() {
+fn install_the_jobs_path_is_the_one_install_ran_with_each_dir_once() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    let plist = sd.setup_launchd();
+    let fakebin = sd.path("fakebin");
+    let path = format!("{fakebin}:/usr/bin:/bin:/opt/x:/usr/bin:{fakebin}");
+    let r = sd.run_env(&[("PATH", &path)], &["install"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(extract(&plist, "EnvironmentVariables.PATH"), format!("{fakebin}:/usr/bin:/bin:/opt/x"));
+}
+
+// The default LOCAL_BIN isn't added: it's on PATH already when it's wanted.
+#[test]
+fn install_the_default_local_bin_is_not_added_to_the_jobs_path() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    let plist = sd.setup_launchd();
+    let path = format!("{}:/usr/bin:/bin", sd.path("fakebin"));
+    let r = sd.run_env(&[("PATH", &path)], &["install"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(extract(&plist, "EnvironmentVariables.PATH"), path);
+}
+
+// @test "install: the job runs the sd in LOCAL_BIN, which leads its PATH"
+#[test]
+fn install_the_job_runs_the_sd_in_local_bin_which_leads_its_path_once() {
     if no_plutil() {
         return;
     }
     let mut sd = sd();
     let plist = sd.setup_launchd();
     let lb = sd.local_bin();
-    let r = sd.run_env(&[("LOCAL_BIN", &lb)], &["install"]);
+    let fakebin = sd.path("fakebin");
+    let path = format!("{fakebin}:/usr/bin:{lb}:/bin:{lb}");
+    let r = sd.run_env(&[("LOCAL_BIN", &lb), ("PATH", &path)], &["install"]);
     assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(extract(&plist, "ProgramArguments.0"), format!("{lb}/sd"));
-    assert!(extract(&plist, "EnvironmentVariables.PATH").starts_with(&format!("{lb}:{}/.local/bin:/", sd.path("home"))));
+    assert_eq!(extract(&plist, "EnvironmentVariables.PATH"), format!("{lb}:{fakebin}:/usr/bin:/bin"));
 }
 
 // @test "install: a relative LOCAL_BIN is made absolute, since launchd runs jobs from /"

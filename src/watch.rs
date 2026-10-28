@@ -90,15 +90,22 @@ fn plist(prog: &str, interval: &str, path: &str, log: &str) -> String {
     )
 }
 
-/// The job's PATH: <bindir> first unless it's ~/.local/bin, which stays on
-/// PATH anyway (claude's installer links it there).
-fn job_path(home: &str, bindir: &str) -> String {
-    let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
-    if bindir == format!("{home}/.local/bin") {
-        path
-    } else {
-        format!("{bindir}:{path}")
+/// The job's PATH: the <path> install ran with, so the job finds what that
+/// shell does (#295), led by <bindir> unless it's ~/.local/bin, the default;
+/// each dir once, where it first appears. Relative dirs are dropped: launchd
+/// runs the job from /. With no <path> to copy, the dirs claude, gh and git
+/// usually live in.
+fn job_path(home: &str, bindir: &str, path: &str) -> String {
+    let usual = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+    let path = if path.split(':').any(|d| d.starts_with('/')) { path } else { &usual };
+    let lead = (bindir != format!("{home}/.local/bin")).then_some(bindir);
+    let mut dirs: Vec<&str> = Vec::new();
+    for d in lead.into_iter().chain(path.split(':')) {
+        if d.starts_with('/') && !dirs.contains(&d) {
+            dirs.push(d);
+        }
     }
+    dirs.join(":")
 }
 
 fn whole_seconds(s: &str) -> bool {
@@ -136,7 +143,7 @@ fn install() -> ExitCode {
         bindir = absolute(&bindir);
     }
     let mut prog = format!("{bindir}/sd");
-    let path = job_path(&home(), &bindir);
+    let path = job_path(&home(), &bindir, &std::env::var("PATH").unwrap_or_default());
     // Else this sd: the repo's target/release/sd, which bin/sd links to.
     if !executable(Path::new(&prog)) {
         prog = proc::sd_itself().unwrap_or_else(|e| die(format!("can't find sd itself: {e}"))).to_string_lossy().into_owned();
@@ -263,10 +270,28 @@ mod tests {
     }
 
     #[test]
-    fn job_path_leads_with_a_local_bin_that_isnt_the_default() {
+    fn job_path_is_the_path_install_ran_with_led_by_a_local_bin_that_isnt_the_default() {
+        assert_eq!(job_path("/h", "/h/.local/bin", "/a:/b"), "/a:/b");
+        assert_eq!(job_path("/h", "/lb", "/a:/b"), "/lb:/a:/b");
+    }
+
+    #[test]
+    fn job_path_lists_each_dir_once_where_it_first_appears() {
+        assert_eq!(job_path("/h", "/lb", "/a:/lb:/b:/a"), "/lb:/a:/b");
+        assert_eq!(job_path("/h", "/h/.local/bin", "/a::/b:/a:"), "/a:/b");
+    }
+
+    #[test]
+    fn job_path_with_no_path_to_copy_falls_back_to_the_usual_dirs() {
         let base = "/h/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
-        assert_eq!(job_path("/h", "/h/.local/bin"), base);
-        assert_eq!(job_path("/h", "/lb"), format!("/lb:{base}"));
+        assert_eq!(job_path("/h", "/h/.local/bin", ""), base);
+        assert_eq!(job_path("/h", "/lb", ":"), format!("/lb:{base}"));
+        assert_eq!(job_path("/h", "/h/.local/bin", ".:bin"), base);
+    }
+
+    #[test]
+    fn job_path_drops_relative_dirs_since_launchd_runs_jobs_from_root() {
+        assert_eq!(job_path("/h", "/h/.local/bin", ".:/a:bin:node_modules/.bin:/b"), "/a:/b");
     }
 
     #[test]
