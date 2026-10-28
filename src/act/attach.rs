@@ -122,8 +122,9 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     };
     let now = get(&key("session"));
     if now != read {
-        // A step's step_store moved it: that session is the branch's now.
-        say(&format!("sd act: {b}'s session moved to {now} during the attach, so {sid} isn't stored\n"));
+        // Someone else, a step's step_store most likely, moved it: theirs stands.
+        let moved = if now.is_empty() { "was unset".to_string() } else { format!("moved to {now}") };
+        say(&format!("sd act: {b}'s session {moved} during the attach, so {sid} isn't stored\n"));
     } else if resume || harness::session_exists(&h, &sid) {
         for (k, v) in [("session", &sid), ("harness", &h)] {
             let o = git(".", &["config", &key(k), v]);

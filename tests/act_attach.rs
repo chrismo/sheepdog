@@ -469,6 +469,7 @@ fn marker(sd: &Sd, holder: u32) -> (String, String) {
     (marker, line)
 }
 
+// @test "attach: refuses while a live agent step holds the running marker; nothing opens, the marker is untouched (#270)"
 #[test]
 fn attach_refuses_while_a_live_step_holds_the_running_marker_270() {
     let sd = sd();
@@ -490,6 +491,7 @@ fn attach_refuses_while_a_live_step_holds_the_running_marker_270() {
     assert_eq!(fs::read_to_string(&marker).unwrap(), line);
 }
 
+// @test "attach --force: takes over a lock, not a running step; the lock goes back (#270)"
 #[test]
 fn attach_force_takes_over_a_lock_but_not_a_running_step_270() {
     let sd = sd();
@@ -504,6 +506,7 @@ fn attach_force_takes_over_a_lock_but_not_a_running_step_270() {
     assert_eq!(fs::read_to_string(&marker).unwrap(), line);
 }
 
+// @test "attach: a dead step's marker doesn't refuse (#270)"
 #[test]
 fn attach_a_dead_steps_marker_doesnt_refuse_270() {
     let sd = sd();
@@ -516,6 +519,7 @@ fn attach_a_dead_steps_marker_doesnt_refuse_270() {
     assert_eq!(sd.lock(), None);
 }
 
+// @test "attach: a session pointer moved during the attach is kept (#270)"
 #[test]
 fn attach_keeps_a_session_pointer_moved_during_the_attach_270() {
     let sd = sd();
@@ -529,6 +533,33 @@ fn attach_keeps_a_session_pointer_moved_during_the_attach_270() {
     assert_eq!(sd.config("branch.feat.sd-session").as_deref(), Some(moved));
     assert_has(&r.stderr, &[&format!("feat's session moved to {moved} during the attach, so {SID} isn't stored")]);
     assert_eq!(sd.lock(), None);
+}
+
+// @test "attach: a new session's pointer, set during the attach, is kept (#270)"
+#[test]
+fn attach_a_new_sessions_pointer_set_during_the_attach_is_kept_270() {
+    let sd = sd();
+    sd.git(&["config", "--unset", "branch.feat.sd-session"]);
+    let moved = "99999999-2222-4333-8444-555555555555";
+    sd.script(
+        &sd.tmp.join("fx/agent"),
+        &format!("#!/usr/bin/env bash\ngit config branch.feat.sd-session {moved}\n"),
+    );
+    let r = sd.run_sep(&["attach"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.config("branch.feat.sd-session").as_deref(), Some(moved));
+    assert_has(&r.stderr, &[&format!("feat's session moved to {moved} during the attach")]);
+}
+
+// @test "attach: a session pointer unset during the attach stays unset, and it says so (#270)"
+#[test]
+fn attach_a_session_pointer_unset_during_the_attach_stays_unset_270() {
+    let sd = sd();
+    sd.script(&sd.tmp.join("fx/agent"), "#!/usr/bin/env bash\ngit config --unset branch.feat.sd-session\n");
+    let r = sd.run_sep(&["attach"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.config("branch.feat.sd-session"), None);
+    assert_has(&r.stderr, &[&format!("feat's session was unset during the attach, so {SID} isn't stored")]);
 }
 
 // ── agent steps while attached ───────────────────────────────────────────────
