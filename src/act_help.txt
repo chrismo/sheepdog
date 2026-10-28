@@ -45,10 +45,13 @@ Verbs:
             branch; else <remote>/<name>, tracked; else new, off the fetched
             default branch or --parent). Runs the repo's setup hook
             there, as wt-new does: $GIT_COMMON_DIR/worktree-setup, else git
-            config wt.setup. Records the task and parent, pins base at a new
-            branch's start point, enrolls; then implement unless
-            --no-implement. stdout is only the worktree's path. Spends
-            tokens unless --no-implement
+            config wt.setup. A worktree that already has <name> checked out,
+            wherever it is, is used as it is: no setup hook. Records the
+            task and parent, pins base at a new branch's start point (an
+            existing branch's tip, when it has no commits past there and no
+            base yet), enrolls; then implement unless --no-implement.
+            stdout is only the worktree's path. Spends tokens unless
+            --no-implement
   implement the agent works the recorded task (J0) in the branch's session;
             the pipeline commits its edits, then runs verify. Claude may run
             only read-only git, the verify command when it's plain words (no

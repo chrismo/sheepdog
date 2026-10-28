@@ -364,6 +364,91 @@ fn start_refuses_when_the_destination_already_exists_and_creates_no_branch() {
     assert_ne!(sd.git_status(&["rev-parse", "-q", "--verify", "refs/heads/feat-x"]), 0);
 }
 
+// new_wt feat-x, then sd act start feat-x (#252): wt-new's worktree, made as
+// wt-new makes it.
+// @test "start: an existing worktree for the branch at start's own destination is used as it is (#252)"
+#[test]
+fn start_an_existing_worktree_for_the_branch_at_starts_own_destination_is_used_as_it_is_252() {
+    let sd = sd();
+    sd.hook(&format!("#!/usr/bin/env bash\ntouch \"{}\"\n", sd.path("hook-ran")));
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("feat-x"), "main"]);
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "a task"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("feat-x"));
+    assert_has(&r.stderr, &[&format!("sd act: feat-x is already checked out at {}; using it", sd.path("feat-x"))]);
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-task"]), "a task");
+    assert_eq!(sd.git(&["config", "branch.feat-x.sheepdog"]), "true");
+    assert_eq!(sd.sha("refs/sheepdog/feat-x/base"), sd.sha("main"));
+    assert!(!sd.tmp.join("hook-ran").exists());
+}
+
+// @test "start: an existing worktree for the branch somewhere else is used where it is (#252)"
+#[test]
+fn start_an_existing_worktree_for_the_branch_somewhere_else_is_used_where_it_is_252() {
+    let sd = sd();
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("elsewhere"), "main"]);
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "a task"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("elsewhere"));
+    assert!(!sd.tmp.join("feat-x").exists());
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-task"]), "a task");
+}
+
+// @test "start: implements in an existing worktree for the branch (#252)"
+#[test]
+fn start_implements_in_an_existing_worktree_for_the_branch_252() {
+    let sd = sd();
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("elsewhere"), "main"]);
+    let r = sd.run_sep(&["start", "feat-x", "add a third line"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("elsewhere"));
+    assert_eq!(sd.fx("claude.cwd"), sd.path("elsewhere"));
+    assert_eq!(sd.git(&["log", "-1", "--format=%s", "feat-x"]), "Add c");
+}
+
+// @test "start: an existing worktree whose branch has commits of its own gets no base (#252)"
+#[test]
+fn start_an_existing_worktree_whose_branch_has_commits_of_its_own_gets_no_base_252() {
+    let sd = sd();
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("feat-x"), "main"]);
+    sd.git_in("feat-x", &["commit", "-q", "--allow-empty", "-m", "mine"]);
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "a task"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert!(sd.git(&["for-each-ref", "refs/sheepdog/feat-x/base"]).is_empty());
+}
+
+// The branch fast-forwards to a moved origin/main between the two: still no
+// commits of its own, but its base was pinned already.
+// @test "start twice: the second uses the first's worktree, rewrites the task and keeps the base (#252)"
+#[test]
+fn start_twice_the_second_uses_the_firsts_worktree_rewrites_the_task_and_keeps_the_base_252() {
+    let sd = sd();
+    sd.ok(&["start", "--no-implement", "feat-x", "first"]);
+    let base = sd.sha("refs/sheepdog/feat-x/base");
+    sd.other_push("main", "moved on");
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git_in("feat-x", &["merge", "-q", "--ff-only", "origin/main"]);
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "second"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("feat-x"));
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-task"]), "second");
+    assert_eq!(sd.sha("refs/sheepdog/feat-x/base"), base);
+}
+
+// @test "start: an existing worktree with uncommitted changes gets the task; implement refuses; stdout is still the path (#252)"
+#[test]
+fn start_an_existing_worktree_with_uncommitted_changes_gets_the_task_implement_refuses_stdout_is_still_the_path_252() {
+    let sd = sd();
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("feat-x"), "main"]);
+    fs::write(sd.tmp.join("feat-x/file.txt"), "changed\n").unwrap();
+    let r = sd.run_sep(&["start", "feat-x", "a task"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(r.output, sd.path("feat-x"));
+    assert_has(&r.stderr, &[&format!("{} has uncommitted changes", sd.path("feat-x"))]);
+    assert_eq!(sd.git(&["config", "branch.feat-x.sd-task"]), "a task");
+    assert!(!sd.ran("claude.args"));
+}
+
 // @test "start: refuses a name git won't take as a branch"
 #[test]
 fn start_refuses_a_name_git_wont_take_as_a_branch() {
