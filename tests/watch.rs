@@ -2608,6 +2608,84 @@ fn install_writes_a_valid_plist_and_bootstraps_it() {
     assert_has(&sd.launchctl(), &[&format!("bootstrap gui/{} {}", uid(), plist.display())]);
 }
 
+#[test]
+fn install_retries_bootstrap_while_the_old_job_is_unloading() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    let plist = sd.setup_launchd();
+    sd.fake(
+        "launchctl",
+        r#"#!/usr/bin/env bash
+echo "$*" >> "$PS_FIXTURES/launchctl"
+[[ $1 == bootstrap ]] || exit 0
+n=$(cat "$PS_FIXTURES/bootstrap-attempts" 2>/dev/null || echo 0)
+n=$((n + 1))
+echo "$n" > "$PS_FIXTURES/bootstrap-attempts"
+if [[ $n -lt 3 ]]; then
+  echo 'Bootstrap failed: 5: Input/output error' >&2
+  exit 5
+fi
+"#,
+    );
+    let r = sd.run(&["install"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["installed", &plist.display().to_string()]);
+    assert_lacks(&r.output, "Bootstrap failed");
+    let calls = sd.launchctl();
+    assert_eq!(calls.lines().filter(|l| l.starts_with("bootout ")).count(), 1);
+    assert_eq!(calls.lines().filter(|l| l.starts_with("bootstrap ")).count(), 3);
+}
+
+#[test]
+fn install_bootstrap_retry_is_bounded_and_keeps_the_error() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    sd.setup_launchd();
+    sd.fake(
+        "launchctl",
+        r#"#!/usr/bin/env bash
+echo "$*" >> "$PS_FIXTURES/launchctl"
+[[ $1 == bootstrap ]] || exit 0
+echo 'Bootstrap failed: 5: Input/output error' >&2
+exit 5
+"#,
+    );
+    let r = sd.run(&["install"]);
+    assert_eq!(r.status, 5, "{}", r.output);
+    assert_eq!(r.output.matches("Bootstrap failed: 5: Input/output error").count(), 1);
+    assert_lacks(&r.output, "installed");
+    let calls = sd.launchctl();
+    assert_eq!(calls.lines().filter(|l| l.starts_with("bootout ")).count(), 1);
+    assert_eq!(calls.lines().filter(|l| l.starts_with("bootstrap ")).count(), 21);
+}
+
+#[test]
+fn install_does_not_retry_other_bootstrap_errors() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    sd.setup_launchd();
+    sd.fake(
+        "launchctl",
+        r#"#!/usr/bin/env bash
+echo "$*" >> "$PS_FIXTURES/launchctl"
+[[ $1 == bootstrap ]] || exit 0
+echo 'Bootstrap failed: 64: Usage error' >&2
+exit 64
+"#,
+    );
+    let r = sd.run(&["install"]);
+    assert_eq!(r.status, 64, "{}", r.output);
+    assert_has(&r.output, &["Bootstrap failed: 64: Usage error"]);
+    assert_lacks(&r.output, "installed");
+    assert_eq!(sd.launchctl().lines().filter(|l| l.starts_with("bootstrap ")).count(), 1);
+}
+
 // @test "install: the plist is readable by its owner only, whatever the umask"
 #[test]
 fn install_the_plist_is_readable_by_its_owner_only_whatever_the_umask() {
