@@ -25,6 +25,7 @@ use crate::proc;
 use crate::val::{at, on, sj, t};
 use serde_json::Value;
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 const HELP: &str = include_str!("../act_help.txt");
 
@@ -181,9 +182,16 @@ pub fn lock_sweep(b: &str) {
     }
 }
 
+/// The lock the agent step started under, as attached_check first saw it:
+/// empty, or the one --force ran over (#270). First, not last: restack
+/// --resolve checks again at each stop, and a lock that came in between
+/// stops isn't the one it started under.
+static STARTED_UNDER: OnceLock<String> = OnceLock::new();
+
 /// An agent step on an attached branch is refused; --force runs it anyway.
 pub fn attached_check(b: &str, doing: &str, force: bool) {
     let lock = git_out(".", &["config", "--get", &format!("branch.{b}.sd-lock")]).unwrap_or_default();
+    STARTED_UNDER.get_or_init(|| lock.clone());
     if lock.is_empty() {
         return;
     }
@@ -191,6 +199,23 @@ pub fn attached_check(b: &str, doing: &str, force: bool) {
         die(format!("not {doing}: attached ({lock}). Exit that session, or --force"));
     }
     eprintln!("sd act: warning: {b} is attached ({lock}); running anyway");
+}
+
+/// "<b> was attached during <step> (<lock>)" when branch.<b>.sd-lock now holds
+/// a live lock the step didn't start under: an attach that came in after
+/// attached_check, or one set by hand (#270). The step checks for itself
+/// before it commits or pushes, so chrismo's TUI edits are never published.
+pub fn attached_during(b: &str, step: &str) -> Option<String> {
+    let lock = git_out(".", &["config", "--get", &format!("branch.{b}.sd-lock")]).unwrap_or_default();
+    let started = STARTED_UNDER.get().map_or("", String::as_str);
+    (!lock.is_empty() && lock != started && !lock_stale(&lock)).then(|| format!("{b} was attached during {step} ({lock})"))
+}
+
+/// attached_during, or die "not <doing>: …; <left>".
+pub fn lock_recheck(b: &str, step: &str, doing: &str, left: &str) {
+    if let Some(why) = attached_during(b, step) {
+        die(format!("not {doing}: {why}; {left}"));
+    }
 }
 
 pub fn plural(n: usize, word: &str) -> String {

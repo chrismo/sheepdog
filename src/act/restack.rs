@@ -218,13 +218,19 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
         }
         let r = Rebase { b, wt: &wt, old_base: &old_base, old_head: &old_head, onto: &onto };
         // Marked running across every stop and continue, not only each agent run (#170).
-        let run = || resolve_conflicts(&r, &a.harness, a.force).inspect_err(|_| rollback(&wt, b, &old_head));
+        let run = || {
+            resolve_conflicts(&r, &a.harness, a.force).inspect_err(|h| {
+                if !h.keep {
+                    rollback(&wt, b, &old_head)
+                }
+            })
+        };
         match running::holding(b, "resolve", run) {
             None => {
                 rollback(&wt, b, &old_head);
                 std::process::exit(1)
             }
-            Some(Err(Halt { why, gave_up: Some(text) })) => resolve_gave_up(b, &wt, &text, why, &onto, &new_base),
+            Some(Err(Halt { why, gave_up: Some(text), .. })) => resolve_gave_up(b, &wt, &text, why, &onto, &new_base),
             Some(Err(Halt { why, .. })) => die(why),
             // Before anything below can die: the resolution is on the branch now.
             Some(Ok(touched)) => hold_after(b, &old_base, &touched),

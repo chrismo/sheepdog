@@ -3,7 +3,9 @@
 // exits, however it exits. While the lock is held, agent steps refuse to run
 // (attached_check); while an agent step holds the branch's running marker,
 // attach refuses, --force or not (#270). A step past attached_check that
-// hasn't written its marker yet when attach looks still runs alongside.
+// hasn't written its marker yet when attach looks still runs alongside, as
+// does one run with --force over the lock; either one checks the lock again
+// before it commits and before it pushes (attached_during), and stops there.
 
 use super::{cfg, die, hostname};
 use crate::git::{git, git_out, worktree_for};

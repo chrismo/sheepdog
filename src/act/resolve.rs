@@ -1,8 +1,11 @@
 // restack --resolve (J1): the rebase has stopped on a conflict, and the agent
 // resolves each stop in the branch's session; the pipeline adds and
 // continues. restack.rs runs it under the branch's running marker, across
-// every stop and continue (#170), and rolls the branch back when it fails.
+// every stop and continue (#170), and rolls the branch back when it fails,
+// unless the branch was attached during the stop: then the rebase is left
+// stopped, with the edits in it (#270).
 
+use super::attached_during;
 use super::step::{agent_rules, step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
@@ -53,20 +56,23 @@ impl Rebase<'_> {
 
 /// Why a resolve stopped. <gave_up>, the question's text, marks a stop the
 /// agent caused, which a rerun onto the same target would repeat (#257).
+/// <keep>: the rebase is left stopped, not rolled back, as the worktree holds
+/// edits from an attach (#270).
 #[derive(Debug, PartialEq)]
 pub struct Halt {
     pub why: String,
     pub gave_up: Option<String>,
+    pub keep: bool,
 }
 
 impl From<String> for Halt {
     fn from(why: String) -> Self {
-        Halt { why, gave_up: None }
+        Halt { why, gave_up: None, keep: false }
     }
 }
 
 fn gave_up(text: String, why: String) -> Halt {
-    Halt { why, gave_up: Some(text) }
+    Halt { why, gave_up: Some(text), keep: false }
 }
 
 struct Stop<'a> {
@@ -201,7 +207,14 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             claude_allow: &allow,
             pi_tools: PI_TOOLS,
         };
-        let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
+        let done = harness::run_step(&step).ok().and_then(Ran::last);
+        // Before anything that rolls back: a rollback would throw the
+        // attached session's edits away along with the agent's.
+        if let Some(why) = attached_during(b, "resolve") {
+            let why = format!("not committing: {why}; the edits are left in {wt}, mid-rebase (git rebase --continue, or --abort)");
+            return Err(Halt { why, gave_up: None, keep: true });
+        }
+        let Some((result, ran)) = done else {
             return Err(format!("the {h} step failed or returned no usable result (session {sid}); {}", r.back()).into());
         };
         step_store(b, &s, &ran);

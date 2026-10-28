@@ -128,6 +128,13 @@ pub fn dead_pid() -> u32 {
     c.id()
 }
 
+/// An attach's branch.<b>.sd-lock, held by <pid> of this host: live while a
+/// Holder's pid runs, stale for dead_pid's.
+pub fn lock_by(pid: u32) -> String {
+    let host = chomp(&String::from_utf8_lossy(&Command::new("hostname").output().unwrap().stdout));
+    format!("{pid}@{host} 2026-10-15T00:00:00Z")
+}
+
 /// <b>'s running marker in the repo whose common git dir is <git>, naming
 /// <step> run by <pid> since 2026-10-18T14:03:00Z; its path.
 pub fn running_marker(git: &Path, b: &str, step: &str, pid: u32) -> PathBuf {

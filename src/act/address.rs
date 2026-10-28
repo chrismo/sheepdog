@@ -6,9 +6,9 @@ use super::commands::{command, status, verify_autofix};
 use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, give_up, guidance_base, question_answered, question_ask, question_gate,
-                  question_say, step_session, step_store};
-use super::{cfg, die, state_json, Args};
+use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, question_answered, question_ask,
+                  question_gate, question_say, step_session, step_store};
+use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
@@ -468,18 +468,10 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     let changed = !status(wt).is_empty();
     let plan = scrubbed(plan(&fs, &result, changed, &theirs));
     if changed {
-        let msg = commit_message(&result);
-        for args in [&["add", "-A"][..], &["commit", "-q", "-m", &msg]] {
-            let g = git(wt, args);
-            print!("{}", g.stdout);
-            eprint!("{}", g.stderr);
-            if !g.ok {
-                die(format!("commit failed; the edits are left in {wt}"));
-            }
-        }
+        commit_edits(b, "address", wt, &commit_message(&result));
     }
     hold_since(b, &gbase, &agent_head);
-    let verified = verify_autofix(wt, b);
+    let verified = verify_autofix(wt, b, "address");
     // The asks stay owed, so the bot step would hand them over again: the
     // question replaces it, recorded on HEAD as verify left it (a push keeps it).
     let lines = report(&plan);
@@ -514,6 +506,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     // A reply-only round commits nothing, unless autofix did.
     let left = if rev(".", &head) == before { "nothing was committed".to_string() } else { format!("the commit is kept in {wt}") };
     pr_gate(&t(&s, "pr.number"), &t(&s, "pr.url"), "address", "pushing or posting", &left);
+    lock_recheck(b, "address", "pushing", &left);
     if let Err(e) = push_branch(b, remote) {
         eprintln!("sd act: {e}");
         die("not pushed, so nothing posted");

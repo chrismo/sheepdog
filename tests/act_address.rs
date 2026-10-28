@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, dead_pid, jq, lock_by, Holder, Sd};
 use std::fs;
 use std::time::Instant;
 
@@ -1051,6 +1051,66 @@ fn the_pr_merged_during_a_reply_only_round_nothing_posted_and_no_commit_claimed_
     assert!(!r.output.contains("the commit is kept"), "{}", r.output);
     assert_eq!(sd.rev("HEAD"), before);
     assert_eq!(sd.gh_ops(), "nodes");
+}
+
+// @test "attached during address: nothing committed, pushed or posted; the edits left, and said (#270)"
+#[test]
+fn attached_during_address_nothing_committed_pushed_or_posted_the_edits_left_and_said_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    let lock = lock_by(attach.pid());
+    sd.agent(&format!("{AGENT_FIXES}git config branch.feat.sd-lock '{lock}'\n"));
+    let (before, remote) = (sd.rev("HEAD"), sd.remote_feat());
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    let wt = sd.path("repo");
+    assert_has(&r.output, &[&format!("not committing: feat was attached during address ({lock}); the edits are left in {wt}")]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_has(&sd.git(&["status", "--porcelain"]), &["file.txt"]);
+    assert_eq!(sd.remote_feat(), remote);
+    assert_eq!(sd.gh_ops(), "nodes");
+}
+
+// @test "attached after address's commit (during verify): nothing pushed or posted, the commit kept (#270)"
+#[test]
+fn attached_after_addresss_commit_during_verify_nothing_pushed_or_posted_the_commit_kept_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    let lock = lock_by(attach.pid());
+    sd.set(&["settings.verify", &format!("git config branch.feat.sd-lock '{lock}'")]);
+    let remote = sd.remote_feat();
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    let wt = sd.path("repo");
+    assert_has(&r.output, &[&format!("not pushing: feat was attached during address ({lock}); the commit is kept in {wt}")]);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), remote);
+    assert_eq!(sd.gh_ops(), "nodes");
+}
+
+// @test "a stale lock set during address doesn't stop it (#270)"
+#[test]
+fn a_stale_lock_set_during_address_doesnt_stop_it_270() {
+    let sd = sd();
+    sd.agent(&format!("{AGENT_FIXES}git config branch.feat.sd-lock '{}'\n", lock_by(dead_pid())));
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
+    assert_eq!(sd.gh_ops(), "nodes addPullRequestReviewThreadReply resolveReviewThread");
+}
+
+// @test "--force over a live lock, the same lock still there: committed, pushed and posted as ever (#270)"
+#[test]
+fn force_over_a_live_lock_the_same_lock_still_there_committed_pushed_and_posted_as_ever_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
+    assert_eq!(sd.gh_ops(), "nodes addPullRequestReviewThreadReply resolveReviewThread");
 }
 
 // @test "the PR's state unreadable before the push: nothing pushed or posted, the commit kept, and why (#270)"

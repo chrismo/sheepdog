@@ -1,7 +1,7 @@
 // verify (A10) and autofix (A11), and implement's and ci-fix's hook into
 // them.
 
-use super::{cfg, die, plural};
+use super::{cfg, die, lock_recheck, plural};
 use crate::git::{git, git_out, worktree_for};
 use crate::proc;
 
@@ -113,7 +113,7 @@ pub fn autofix(b: &str) {
         println!("no settings.autofix configured; nothing to run");
         return;
     }
-    if let Err(cmd) = autofix_run(&wt, b, false, &mut Report::Print) {
+    if let Err(cmd) = autofix_run(&wt, b, None, &mut Report::Print) {
         die(format!("autofix failed ({cmd})"));
     }
 }
@@ -122,9 +122,10 @@ pub fn autofix(b: &str) {
 /// changed: Ok(Some(its short sha)) when it committed, else Ok(None), as when
 /// none is configured.
 /// Err(the command) when it failed, after printing its output's tail; its
-/// changes are left uncommitted to look at, or with <revert> (the hook) put
-/// back, so the next step starts from the commit it knows.
-fn autofix_run(wt: &str, b: &str, revert: bool, r: &mut Report) -> Result<Option<String>, String> {
+/// changes are left uncommitted to look at, or inside agent step <step> (the
+/// hook) put back, so the next step starts from the commit it knows. Inside a
+/// step it rechecks the attach lock before it commits or reverts (#270).
+fn autofix_run(wt: &str, b: &str, step: Option<&str>, r: &mut Report) -> Result<Option<String>, String> {
     let cmd = command("autofix", b);
     if cmd.is_empty() {
         return Ok(None);
@@ -135,9 +136,12 @@ fn autofix_run(wt: &str, b: &str, revert: bool, r: &mut Report) -> Result<Option
     let secs = step_timeout(b);
     let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
     let changed = status(wt).lines().count();
+    let left = format!("autofix's changes are left in {wt}");
     if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
-        if changed > 0 && revert {
+        if let Some(step) = step.filter(|_| changed > 0) {
+            // A revert would throw an attached session's edits away too.
+            lock_recheck(b, step, "reverting", &left);
             for args in [&["reset", "-q", "--hard"][..], &["clean", "-qfd"]] {
                 eprint!("{}", git(wt, args).stderr);
             }
@@ -150,6 +154,9 @@ fn autofix_run(wt: &str, b: &str, revert: bool, r: &mut Report) -> Result<Option
     if changed == 0 {
         r.line(&format!("autofix changed nothing ({cmd})"));
         return Ok(None);
+    }
+    if let Some(step) = step {
+        lock_recheck(b, step, "committing", &left);
     }
     for args in [&["add", "-A"][..], &["commit", "-q", "-m", &format!("autofix: {cmd}")]] {
         let g = git(wt, args);
@@ -168,17 +175,17 @@ fn autofix_run(wt: &str, b: &str, revert: bool, r: &mut Report) -> Result<Option
 /// verify; when it fails, autofix, and when that committed something, verify
 /// again (A11). The zero-token pass after a fix step. A verify that dirtied
 /// the tree is verify's own failure: no autofix. Err is the verify command.
-pub(super) fn verify_autofix(wt: &str, b: &str) -> Result<(), String> {
-    verify_autofix_to(wt, b, &mut Report::Print).0
+pub(super) fn verify_autofix(wt: &str, b: &str, step: &str) -> Result<(), String> {
+    verify_autofix_to(wt, b, step, &mut Report::Print).0
 }
 
 /// verify_autofix, saying so to <r>, and autofix's commit if it made one.
-pub(super) fn verify_autofix_to(wt: &str, b: &str, r: &mut Report) -> (Result<(), String>, Option<String>) {
+pub(super) fn verify_autofix_to(wt: &str, b: &str, step: &str, r: &mut Report) -> (Result<(), String>, Option<String>) {
     let Err(cmd) = verify_to(wt, b, r) else { return (Ok(()), None) };
     if !status(wt).is_empty() {
         return (Err(cmd), None);
     }
-    let Ok(Some(sha)) = autofix_run(wt, b, true, r) else { return (Err(cmd), None) };
+    let Ok(Some(sha)) = autofix_run(wt, b, Some(step), r) else { return (Err(cmd), None) };
     let verified = verify_to(wt, b, r);
     if let Ok(cmd) = &verified {
         r.line(&format!("verify passed after autofix ({cmd})"));
