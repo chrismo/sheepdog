@@ -499,6 +499,22 @@ fn start_parent_a_parent_that_doesnt_exist_is_refused_for_an_existing_worktree_t
     assert_ne!(sd.git_status(&["config", "--get", "branch.feat-x.sd-task"]), 0);
 }
 
+// git switch -c feat-y in the main checkout, then start: on purpose, as
+// sd act implement run there by hand would be. Only the default branch isn't.
+// @test "start: a branch checked out in the main worktree is used there (#252)"
+#[test]
+fn start_a_branch_checked_out_in_the_main_worktree_is_used_there_252() {
+    let sd = sd();
+    sd.hook(&format!("#!/usr/bin/env bash\ntouch \"{}\"\n", sd.path("hook-ran")));
+    sd.git(&["switch", "-qc", "feat-y"]);
+    let r = sd.run_sep(&["start", "--no-implement", "feat-y", "a task"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("repo"));
+    assert_eq!(sd.git(&["config", "branch.feat-y.sd-task"]), "a task");
+    assert!(!sd.tmp.join("feat-y").exists());
+    assert!(!sd.tmp.join("hook-ran").exists());
+}
+
 // main is checked out in repo/, the main worktree: start mustn't use it.
 // @test "start: refuses the default branch, and records nothing for it (#252)"
 #[test]

@@ -4,7 +4,8 @@
 // checked before anything is made.
 //
 // A worktree that already has the branch checked out, wherever it is (new_wt
-// puts it beside the current one), is used as it is (#252): no git worktree
+// puts it beside the current one; the main worktree too, as sd act implement
+// run there would be), is used as it is (#252): no git worktree
 // add, no setup hook, the rest as for a new one. So a second start on a branch
 // just rewrites its task. A branch that was there already gets base pinned at
 // its tip only when none is pinned and it has no commits past its start point.
