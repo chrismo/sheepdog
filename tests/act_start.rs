@@ -462,6 +462,43 @@ fn start_refuses_a_worktree_registered_for_the_branch_whose_directory_is_gone_na
     assert_ne!(sd.git_status(&["config", "--get", "branch.feat-x.sd-task"]), 0);
 }
 
+// new_wt branches off local main, which may be behind origin/main.
+// @test "start: an existing worktree branched off a stale local main gets base there, not at origin/main (#252)"
+#[test]
+fn start_an_existing_worktree_branched_off_a_stale_local_main_gets_base_there_not_at_origin_main_252() {
+    let sd = sd();
+    sd.other_push("main", "moved on");
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("feat-x"), "main"]);
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "a task"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_ne!(sd.sha("main"), sd.sha("origin/main"));
+    assert_eq!(sd.sha("refs/sheepdog/feat-x/base"), sd.sha("main"));
+}
+
+// @test "start: an existing local branch with no worktree, behind the default, gets base at its tip (#252)"
+#[test]
+fn start_an_existing_local_branch_with_no_worktree_behind_the_default_gets_base_at_its_tip_252() {
+    let sd = sd();
+    sd.git(&["branch", "feat-x"]);
+    sd.other_push("main", "moved on");
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "a task"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_ne!(sd.sha("feat-x"), sd.sha("origin/main"));
+    assert_eq!(sd.sha("refs/sheepdog/feat-x/base"), sd.sha("feat-x"));
+}
+
+// @test "start --parent: a parent that doesn't exist is refused for an existing worktree too (#252)"
+#[test]
+fn start_parent_a_parent_that_doesnt_exist_is_refused_for_an_existing_worktree_too_252() {
+    let sd = sd();
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("feat-x"), "main"]);
+    let r = sd.run(&["start", "--no-implement", "--parent", "nope", "feat-x", "a task"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["no such parent branch: nope"]);
+    assert_ne!(sd.git_status(&["config", "--get", "branch.feat-x.sd-task"]), 0);
+}
+
 // main is checked out in repo/, the main worktree: start mustn't use it.
 // @test "start: refuses the default branch, and records nothing for it (#252)"
 #[test]

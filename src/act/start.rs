@@ -8,6 +8,8 @@
 // add, no setup hook, the rest as for a new one. So a second start on a branch
 // just rewrites its task. A branch that was there already gets base pinned at
 // its tip only when none is pinned and it has no commits past its start point.
+// The default branch is refused, as is a registered worktree whose directory
+// is gone: git worktree add refused both before, and start would use them.
 //
 // Duplicates agent-rig's wt-new (#14), hook locations and branch resolution
 // included, so a repo set up for new_wt needs nothing more. Placement differs
@@ -16,7 +18,7 @@
 use super::bookkeeping::enroll_mark;
 use super::{die, or_die, Args};
 use crate::config::set_branch_profile;
-use crate::git::{common_dir, git, git_ok, git_out, main_worktree, rev, show_ref, worktree_for};
+use crate::git::{common_dir, git, git_ok, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for};
 use crate::proc::{self, executable};
 use std::io::stderr;
 use std::os::fd::AsFd;
@@ -185,7 +187,7 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     if base.is_empty() && !show_ref(".", &format!("refs/sheepdog/{b}/base")) {
         if let Ok(from) = &from {
             let tip = rev(".", &format!("refs/heads/{b}"));
-            if !tip.is_empty() && git_ok(".", &["merge-base", "--is-ancestor", &tip, from]) {
+            if !tip.is_empty() && is_ancestor(".", &tip, from) {
                 base = tip;
             }
         }
