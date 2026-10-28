@@ -90,6 +90,29 @@ fn end(pid: i32, sig: i32) {
     }
 }
 
+/// End the launched step holding <l>, <b>'s lease: TERM to its process
+/// group, KILL if it's still there KILL_AFTER later; then release the lease.
+fn stop(repo: &str, b: &str, l: &running::Lease) {
+    let pid: i32 = l.pid.parse().unwrap_or(0);
+    end(pid, libc::SIGTERM);
+    let t = Instant::now();
+    while running::lease(repo, b).is_some_and(|l| l.live) && t.elapsed() < KILL_AFTER {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if running::lease(repo, b).is_some_and(|l| l.live) {
+        end(pid, libc::SIGKILL);
+    }
+    release(repo, b, l);
+}
+
+/// Remove <b>'s running marker if <l> still holds it.
+fn release(repo: &str, b: &str, l: &running::Lease) {
+    let Some(marker) = running::file(repo, b) else { return };
+    if running::lease(repo, b).is_some_and(|now| now.pid == l.pid) {
+        let _ = fs::remove_file(&marker);
+    }
+}
+
 /// How long a launched step's lease outlasts its own timeout, so the lease
 /// ends only a step that's stuck.
 const GRACE: u64 = 60;
@@ -527,6 +550,7 @@ impl Watch {
         };
         let c = classify(&s);
         let title = format!("{name} {b}");
+        let ended = self.end_on_a_dead_pr(repo, name, b, &s);
 
         let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
         if let Some(d) = Path::new(&file).parent() {
@@ -615,6 +639,7 @@ impl Watch {
         self.write_glyph(wt, b, c.glyph);
         let msgs: Vec<String> = c.reasons.iter().map(|r| at(r, "msg")).filter(|m| !m.is_null()).map(text).chain(c.note.map(str::to_string)).collect();
         let mut out = format!("{name}\t{b}\t{}\t{}\n", c.glyph, msgs.join("; "));
+        out.push_str(&ended);
         if let Some(u) = unenrolled {
             if self.vacuum.is_none() {
                 notify(&title, &u);
@@ -628,6 +653,23 @@ impl Watch {
             out.push_str(&self.dispatch(repo, name, b, &s).unwrap_or_default());
         }
         (out, true, stop)
+    }
+
+    /// End the step a pass launched on <b> once its PR has merged or closed
+    /// (#270), as reconcile ends one past its deadline, but not counted: it
+    /// didn't fail. Its edits stay in the worktree. Its pass line, else "".
+    fn end_on_a_dead_pr(&mut self, repo: &str, name: &str, b: &str, s: &Value) -> String {
+        let state = t(s, "pr.state");
+        if state != "MERGED" && state != "CLOSED" {
+            return String::new();
+        }
+        let Some(l) = running::lease(repo, b).filter(|l| l.live && l.deadline.is_some()) else { return String::new() };
+        stop(repo, b, &l);
+        let msg = format!("sd act {}: ended, #{} {}", l.step, t(s, "pr.number"), state.to_lowercase());
+        self.log(name, b, &msg);
+        let line = format!("{name}\t{b}\t-\t{msg}\n");
+        eprint!("{}", show(&line));
+        line
     }
 
     /// Launch the branch's first NEXT step when it's one a pass runs: one
@@ -745,27 +787,17 @@ impl Watch {
                 out.push_str(&line(text.trim_end()));
             }
         }
-        let (Some(l), Some(marker)) = (lease, running::file(repo, b)) else { return out };
+        let Some(l) = lease else { return out };
         let Some(deadline) = l.deadline else { return out };
         let why = if !l.live {
+            release(repo, b, &l);
             out.is_empty().then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
         } else if time::now_utc().1 > deadline {
-            let pid: i32 = l.pid.parse().unwrap_or(0);
-            end(pid, libc::SIGTERM);
-            let t = Instant::now();
-            while running::lease(repo, b).is_some_and(|l| l.live) && t.elapsed() < KILL_AFTER {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            if running::lease(repo, b).is_some_and(|l| l.live) {
-                end(pid, libc::SIGKILL);
-            }
+            stop(repo, b, &l);
             Some(("past its deadline", format!("sd act {}: past its deadline, ended", l.step)))
         } else {
             return out;
         };
-        if running::lease(repo, b).is_some_and(|now| now.pid == l.pid) {
-            let _ = fs::remove_file(&marker);
-        }
         if let Some((error, msg)) = why {
             failed::record_in(repo, b, &l.step, "sd", error);
             out.push_str(&line(&msg));
