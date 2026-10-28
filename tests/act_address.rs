@@ -1037,6 +1037,22 @@ fn the_pr_merged_or_closed_while_the_step_ran_nothing_pushed_or_posted_the_commi
     }
 }
 
+// @test "the PR merged during a reply-only round: nothing posted, and no commit claimed (#270)"
+#[test]
+fn the_pr_merged_during_a_reply_only_round_nothing_posted_and_no_commit_claimed_270() {
+    let sd = sd();
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "done", commit_message: null, summary: "", items: [{id: "T1", action: "reply", reply: "Fine as is."}]}"#);
+    sd.put("pr.state", "MERGED");
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["PR #7 merged during address: not pushing or posting; nothing was committed"]);
+    assert!(!r.output.contains("the commit is kept"), "{}", r.output);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_eq!(sd.gh_ops(), "nodes");
+}
+
 // @test "the PR's state unreadable before the push: nothing pushed or posted, the commit kept, and why (#270)"
 #[test]
 fn the_prs_state_unreadable_before_the_push_nothing_pushed_or_posted_the_commit_kept_and_why_270() {

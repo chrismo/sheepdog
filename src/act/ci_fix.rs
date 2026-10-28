@@ -124,7 +124,7 @@ fn ci_logs(sha: &str) -> String {
 /// open; <kept> says what is left unpushed when the push fails.
 fn publish(b: &str, wt: &str, remote: &str, state: &Value, kept: &str) {
     hold_gate(b, &format!("pushing {b}"), "");
-    pr_gate(&t(state, "pr.number"), &t(state, "pr.url"), "ci-fix", "pushing", wt);
+    pr_gate(&t(state, "pr.number"), &t(state, "pr.url"), "ci-fix", "pushing", &format!("the commit is kept in {wt}"));
     if let Err(e) = push_branch(b, remote) {
         eprintln!("sd act: {e}");
         die(kept);

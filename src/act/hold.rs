@@ -158,18 +158,19 @@ fn refusal(doing: &str, paths: &[String], then: &str) -> String {
 /// Refuse <doing> unless GitHub says PR #<number> (<url>) is still open: one
 /// that merged or closed while <step> ran stays as it is (on merge, a push
 /// would recreate the head branch GitHub deleted). A read that fails refuses
-/// too; the next run retries. The step's commit stays in <wt>.
-pub fn pr_gate(number: &str, url: &str, step: &str, doing: &str, wt: &str) {
+/// too; the next run retries. <left> says what the step leaves behind ("the
+/// commit is kept in <wt>").
+pub fn pr_gate(number: &str, url: &str, step: &str, doing: &str, left: &str) {
     let pr = if url.is_empty() { number } else { url };
     let o = proc::run("gh", &["pr", "view", pr, "--json", "state", "--jq", ".state"], None, None);
     let read = if o.ok { Ok(o.stdout.trim().to_string()) } else { Err(o.stderr.trim().replace('\n', " ")) };
-    if let Some(why) = pr_refusal(number, step, doing, wt, read) {
+    if let Some(why) = pr_refusal(number, step, doing, left, read) {
         die(why);
     }
 }
 
-fn pr_refusal(number: &str, step: &str, doing: &str, wt: &str, read: Result<String, String>) -> Option<String> {
-    let kept = format!("not {doing}; the commit is kept in {wt}");
+fn pr_refusal(number: &str, step: &str, doing: &str, left: &str, read: Result<String, String>) -> Option<String> {
+    let kept = format!("not {doing}; {left}");
     let unread = |why: &str| format!("can't read PR #{number}'s state from GitHub ({why}): {kept}. The next run retries");
     match read.as_deref() {
         Ok("OPEN") => None,
@@ -262,7 +263,7 @@ mod tests {
 
     #[test]
     fn pr_refusal_only_an_open_pr_goes_on_and_an_unread_one_stops_270() {
-        let r = |read| pr_refusal("7", "address", "pushing or posting", "/wt", read);
+        let r = |read| pr_refusal("7", "address", "pushing or posting", "the commit is kept in /wt", read);
         assert_eq!(r(Ok("OPEN".into())), None);
         assert_eq!(
             r(Ok("MERGED".into())).unwrap(),
