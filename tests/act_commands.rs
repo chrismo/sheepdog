@@ -198,6 +198,50 @@ mod verify {
     }
 }
 
+mod running {
+    use super::*;
+    use crate::common::{dead_pid, running_marker, step_refusal, Holder};
+
+    // @test "verify and autofix: refused while a live step holds the running marker; neither command runs (#270)"
+    #[test]
+    fn verify_and_autofix_refused_while_a_live_step_holds_the_running_marker_neither_command_runs_270() {
+        let sd = sd();
+        sd.set_global("settings.verify", "touch ../verify-ran");
+        sd.set_global("settings.autofix", "touch ../autofix-ran; echo d >> file.txt");
+        let head = sd.head_sha();
+        let holder = Holder::new();
+        let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "address", holder.pid());
+        for (verb, doing) in [("verify", "running verify"), ("autofix", "running autofix")] {
+            let r = sd.run(&[verb]);
+            assert_ne!(r.status, 0, "{verb}");
+            assert_has(&r.output, &[&step_refusal("address", "feat", holder.pid(), doing)]);
+            assert!(!sd.tmp.join(format!("{verb}-ran")).exists(), "{verb}");
+        }
+        assert_eq!(sd.head_sha(), head);
+        assert_eq!(sd.git(&["status", "--porcelain"]), "");
+        assert!(marker.exists());
+    }
+
+    // @test "verify and autofix: the step's own child (RUNNING_HELD=<b>) runs them, and a dead holder's marker doesn't refuse (#270)"
+    #[test]
+    fn verify_and_autofix_the_steps_own_child_runs_them_and_a_dead_holders_marker_doesnt_refuse_270() {
+        let holder = Holder::new();
+        for (pid, env) in [(holder.pid(), &[("RUNNING_HELD", "feat")][..]), (dead_pid(), &[])] {
+            let sd = sd();
+            sd.set_global("settings.verify", "touch ../verify-ran");
+            sd.set_global("settings.autofix", "echo d >> file.txt");
+            running_marker(&sd.tmp.join("repo/.git"), "feat", "ci-fix", pid);
+            let r = sd.run_env(env, &["verify"]);
+            assert_eq!(r.status, 0, "{env:?}: {}", r.output);
+            assert!(sd.tmp.join("verify-ran").exists());
+            let head = sd.head_sha();
+            let r = sd.run_env(env, &["autofix"]);
+            assert_eq!(r.status, 0, "{env:?}: {}", r.output);
+            assert_ne!(sd.head_sha(), head);
+        }
+    }
+}
+
 mod autofix {
     use super::*;
 

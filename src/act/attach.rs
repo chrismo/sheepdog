@@ -88,7 +88,7 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     }
     // After the lock, so a step that starts from here refuses (attached_check);
     // --force or not, the lock goes back to what it was.
-    if let Err(e) = running::idle(b, running::lease(".", b).as_ref(), "attaching") {
+    if let Err(e) = running::idle(".", b, "attaching") {
         if get(&key("lock")) == mine {
             match before.as_str() {
                 "" => git(".", &["config", "--unset", &key("lock")]),
