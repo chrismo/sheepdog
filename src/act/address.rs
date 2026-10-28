@@ -471,7 +471,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         commit_edits(b, "address", wt, &commit_message(&result));
     }
     hold_since(b, &gbase, &agent_head);
-    let verified = verify_autofix(wt, b);
+    let verified = verify_autofix(wt, b, "address");
     // The asks stay owed, so the bot step would hand them over again: the
     // question replaces it, recorded on HEAD as verify left it (a push keeps it).
     let lines = report(&plan);

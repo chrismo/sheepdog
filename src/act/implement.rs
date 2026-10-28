@@ -328,7 +328,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let log = git(wt, &["log", "--format=  %h %s", &format!("{before}..{head}")]);
     print!("{}", log.stdout);
     hold_since(b, &gbase, &agent_head);
-    if let Err(cmd) = verify_autofix(wt, b) {
+    if let Err(cmd) = verify_autofix(wt, b, "implement") {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}"));
     }
 }

@@ -197,7 +197,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     } else {
         // Zero tokens first: verify, autofix, verify. A fix there is the whole step.
         let mut vout = String::new();
-        let (verified, commit) = verify_autofix_to(wt, b, &mut Report::Keep(&mut vout));
+        let (verified, commit) = verify_autofix_to(wt, b, "ci-fix", &mut Report::Keep(&mut vout));
         if commit.is_some() {
             print!("{vout}");
             if verified.is_ok() {
@@ -304,7 +304,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     println!("{b}: {summary}");
     print!("{}", git(wt, &["log", "--format=  %h %s", &format!("{before}..{head}")]).stdout);
     hold_since(b, &base, &agent_head);
-    if let Err(cmd) = verify_autofix(wt, b) {
+    if let Err(cmd) = verify_autofix(wt, b, "ci-fix") {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}, nothing pushed"));
     }
     record(b, &sha, "fixed");
