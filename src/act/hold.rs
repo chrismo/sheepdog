@@ -1,8 +1,10 @@
 // The CI config hold (#124): an agent step's commit that touches a protected
-// path isn't pushed until chrismo has looked.
+// path isn't pushed until chrismo has looked. And pr_gate (#270): nothing is
+// pushed or posted onto a PR that merged or closed while the step ran.
 
 use super::{die, repo_remote};
 use crate::git::{git, git_out, is_ancestor, rev};
+use crate::proc;
 
 /// A path covers itself and what's under it.
 const PROTECTED_DEFAULT: [&str; 7] =
@@ -153,6 +155,31 @@ fn refusal(doing: &str, paths: &[String], then: &str) -> String {
     format!("not {doing}: {}{then}", say(paths))
 }
 
+/// Refuse <doing> unless GitHub says PR #<number> (<url>) is still open: one
+/// that merged or closed while <step> ran stays as it is (on merge, a push
+/// would recreate the head branch GitHub deleted). A read that fails refuses
+/// too; the next run retries. The step's commit stays in <wt>.
+pub fn pr_gate(number: &str, url: &str, step: &str, doing: &str, wt: &str) {
+    let pr = if url.is_empty() { number } else { url };
+    let o = proc::run("gh", &["pr", "view", pr, "--json", "state", "--jq", ".state"], None, None);
+    let read = if o.ok { Ok(o.stdout.trim().to_string()) } else { Err(o.stderr.trim().replace('\n', " ")) };
+    if let Some(why) = pr_refusal(number, step, doing, wt, read) {
+        die(why);
+    }
+}
+
+fn pr_refusal(number: &str, step: &str, doing: &str, wt: &str, read: Result<String, String>) -> Option<String> {
+    let kept = format!("not {doing}; the commit is kept in {wt}");
+    let unread = |why: &str| format!("can't read PR #{number}'s state from GitHub ({why}): {kept}. The next run retries");
+    match read.as_deref() {
+        Ok("OPEN") => None,
+        Ok(s @ ("MERGED" | "CLOSED")) => Some(format!("PR #{number} {} during {step}: {kept}", s.to_lowercase())),
+        Ok(s) => Some(unread(&format!("it answered \"{s}\""))),
+        Err(e) if e.is_empty() => Some(unread("gh failed")),
+        Err(e) => Some(unread(e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +258,29 @@ mod tests {
         let paths = strings(&[".rwx/ci.yml"]);
         assert_eq!(refusal("shipping b", &paths, ""), format!("not shipping b: {}", say(&paths)));
         assert_eq!(refusal("pushing b", &paths, "Then this"), format!("not pushing b: {}. Then this", say(&paths)));
+    }
+
+    #[test]
+    fn pr_refusal_only_an_open_pr_goes_on_and_an_unread_one_stops_270() {
+        let r = |read| pr_refusal("7", "address", "pushing or posting", "/wt", read);
+        assert_eq!(r(Ok("OPEN".into())), None);
+        assert_eq!(
+            r(Ok("MERGED".into())).unwrap(),
+            "PR #7 merged during address: not pushing or posting; the commit is kept in /wt"
+        );
+        assert_eq!(r(Ok("CLOSED".into())).unwrap(), "PR #7 closed during address: not pushing or posting; the commit is kept in /wt");
+        assert_eq!(
+            r(Err("HTTP 502".into())).unwrap(),
+            "can't read PR #7's state from GitHub (HTTP 502): not pushing or posting; the commit is kept in /wt. The next run retries"
+        );
+        assert_eq!(
+            r(Err("".into())).unwrap(),
+            "can't read PR #7's state from GitHub (gh failed): not pushing or posting; the commit is kept in /wt. The next run retries"
+        );
+        assert_eq!(
+            r(Ok("".into())).unwrap(),
+            "can't read PR #7's state from GitHub (it answered \"\"): not pushing or posting; the commit is kept in /wt. The next run retries"
+        );
     }
 
     #[test]

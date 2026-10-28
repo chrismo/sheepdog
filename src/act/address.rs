@@ -3,7 +3,7 @@
 // posts its replies and resolves the threads.
 
 use super::commands::{command, status, verify_autofix};
-use super::hold::{hold_gate, hold_since};
+use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, give_up, guidance_base, question_answered, question_ask, question_gate,
@@ -511,6 +511,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     // The plan isn't kept: after the push, the items are still owed, and a
     // second address finds the fix already in (it spends tokens again).
     hold_gate(b, &format!("pushing {b}"), "The replies weren't posted, so the items are still owed: after sd act push, sd act address answers them again, or answer them on GitHub");
+    pr_gate(&t(&s, "pr.number"), &t(&s, "pr.url"), "address", "pushing or posting", wt);
     if let Err(e) = push_branch(b, remote) {
         eprintln!("sd act: {e}");
         die("not pushed, so nothing posted");

@@ -10,7 +10,9 @@
 // Real git (a bare origin and a clone). sd state answers from
 // $FX/states/feat.json (SHEEPDOG_STATE_FIXTURES). Fakes on PATH: gh (REST:
 // commit status from $FX/status.json, check runs from $FX/checks.json, a job's
-// failed log from $FX/gha.log; every call logged to $FX/gh.calls), rwx
+// failed log from $FX/gha.log; the PR's state from $FX/pr.state, OPEN when
+// it's missing, and a failure when $FX/pr-view.fail exists; every call logged
+// to $FX/gh.calls), rwx
 // (results from $FX/rwx-results.json, logs from $FX/rwx.log), claude (runs
 // $FX/agent to edit, prints $FX/result.json, keeps its prompt in
 // $FX/claude.prompt).
@@ -31,6 +33,8 @@ case "$1 $2" in
   "api repos/{owner}/{repo}/commits/"*"/status") src=$FX/status.json ;;
   "api repos/{owner}/{repo}/commits/"*"/check-runs") src=$FX/checks.json ;;
   "run view") cat "$FX/gha.log"; exit ;;
+  "pr view") [[ -f $FX/pr-view.fail ]] && { echo "gh: HTTP 502" >&2; exit 1; }
+             cat "$FX/pr.state" 2>/dev/null || echo OPEN; exit ;;
   *) echo "gh stub: unexpected call: $*" >&2; exit 1 ;;
 esac
 if [[ -n $filter ]]; then jq -r "$filter" "$src"; else cat "$src"; fi   # gh's --jq is jq
@@ -401,6 +405,54 @@ fn another_live_steps_marker_refuses_the_run_and_is_left_alone_177() {
     );
     assert!(!sd.ran("claude.args"));
     assert_eq!(after.unwrap(), theirs);
+}
+
+// @test "the PR merged or closed while the step ran: nothing pushed, the commit kept, and said (#270)"
+#[test]
+fn the_pr_merged_or_closed_while_the_step_ran_nothing_pushed_the_commit_kept_and_said_270() {
+    for state in ["MERGED", "CLOSED"] {
+        let sd = sd();
+        sd.agent(&format!("{AGENT_FIXES}echo {state} > \"$FX/pr.state\"\n"));
+        let before = sd.remote_feat();
+        let r = sd.run(&["ci-fix"]);
+        assert_ne!(r.status, 0, "{state}");
+        let wt = sd.path("repo");
+        assert_has(
+            &r.output,
+            &[&format!("PR #7 {} during ci-fix: not pushing; the commit is kept in {wt}", state.to_lowercase())],
+        );
+        assert_eq!(sd.subject(), "Uppercase three");
+        assert_eq!(sd.remote_feat(), before);
+        assert!(has_line(&sd.fx("gh.calls"), "pr view https://example/pr/7"), "{}", sd.fx("gh.calls"));
+    }
+}
+
+// @test "autofix's commit isn't pushed onto a PR that merged meanwhile (#270)"
+#[test]
+fn autofixs_commit_isnt_pushed_onto_a_pr_that_merged_meanwhile_270() {
+    let sd = sd();
+    sd.set(&["settings.verify", "grep -q THREE file.txt"]);
+    sd.set(&["settings.autofix", "sed -i.bak s/three/THREE/ file.txt && rm file.txt.bak"]);
+    sd.put("pr.state", "MERGED");
+    let before = sd.remote_feat();
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["PR #7 merged during ci-fix: not pushing"]);
+    assert_eq!(sd.subject(), "autofix: sed -i.bak s/three/THREE/ file.txt && rm file.txt.bak");
+    assert_eq!(sd.remote_feat(), before);
+}
+
+// @test "the PR's state unreadable before the push: nothing pushed, the commit kept, and why (#270)"
+#[test]
+fn the_prs_state_unreadable_before_the_push_nothing_pushed_the_commit_kept_and_why_270() {
+    let sd = sd();
+    sd.put("pr-view.fail", "");
+    let before = sd.remote_feat();
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["can't read PR #7's state", "gh: HTTP 502", "not pushing", &format!("the commit is kept in {}", sd.path("repo"))]);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), before);
 }
 
 // @test "logs that can't be fetched are skipped, not fatal"

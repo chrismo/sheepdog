@@ -6,9 +6,12 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, Sd};
+use common::{assert_has, assert_lacks, spawn, Sd};
+use sheepdog::running::proc_start;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::path::Path;
+use std::process::Command;
 
 /// The bats setup: repo (cwd) with one commit on main, feat checked out.
 fn sd() -> Sd {
@@ -437,6 +440,55 @@ fn forget_remove_refuses_with_uncommitted_changes_and_changes_nothing() {
     assert!(sd.has_ref("refs/heads/feat"));
     assert_ne!(sd.pins("feat"), "");
     assert_eq!(sd.config("branch.feat.sheepdog"), "true");
+}
+
+/// feat's running marker, naming the step pid <holder> runs; its path.
+fn marker(sd: &Sd, holder: u32) -> String {
+    let marker = sd.path("repo/.git/sheepdog/feat.running");
+    fs::create_dir_all(sd.tmp.join("repo/.git/sheepdog")).unwrap();
+    let pid = holder.to_string();
+    fs::write(&marker, format!("{pid} address 2026-10-18T14:03:00Z {}\n", proc_start(&pid))).unwrap();
+    marker
+}
+
+// @test "forget --remove: refuses while a live agent step holds the running marker, and changes nothing (#270)"
+#[test]
+fn forget_remove_refuses_while_a_live_step_holds_the_running_marker_and_changes_nothing_270() {
+    let mut sd = sd();
+    sd.merged_wt();
+    let mut holder = spawn(Command::new("sleep").arg("30"));
+    let pid = holder.id();
+    let marker = marker(&sd, pid);
+    let r = sd.run(&["forget", "--remove"]);
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    assert_ne!(r.status, 0);
+    assert_has(
+        &r.output,
+        &[&format!(
+            "address is running on feat (pid {pid}, since 2026-10-18T14:03:00Z): not removing its worktree. \
+             Wait for it to end (sd state shows it), or kill {pid}"
+        )],
+    );
+    assert!(sd.tmp.join("wt").is_dir());
+    assert!(sd.has_ref("refs/heads/feat"));
+    assert_ne!(sd.pins("feat"), "");
+    assert_eq!(sd.config("branch.feat.sheepdog"), "true");
+    assert!(Path::new(&marker).exists());
+}
+
+// @test "forget --remove: a dead step's marker doesn't refuse (#270)"
+#[test]
+fn forget_remove_a_dead_steps_marker_doesnt_refuse_270() {
+    let mut sd = sd();
+    sd.merged_wt();
+    let mut dead = spawn(&mut Command::new("true"));
+    dead.wait().unwrap();
+    marker(&sd, dead.id());
+    let r = sd.run(&["forget", "--remove"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["deleted feat"]);
+    assert!(!sd.tmp.join("wt").is_dir());
 }
 
 // @test "forget --remove: refuses when the branch has commits the merged PR doesn't"

@@ -70,6 +70,18 @@ pub fn lease(dir: &str, b: &str) -> Option<Lease> {
     lease_at(&file(dir, b)?)
 }
 
+/// Whether <doing> may go ahead on <b> under its running marker: not while a
+/// live agent step holds it (#270). attach and forget --remove ask.
+pub fn idle(b: &str, marker: Option<&Lease>, doing: &str) -> Result<(), String> {
+    match marker {
+        Some(l) if l.live => Err(format!(
+            "{} is running on {b} (pid {}, since {}): not {doing}. Wait for it to end (sd state shows it), or kill {}",
+            l.step, l.pid, l.since, l.pid
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Every branch's marker in the repo at <dir>.
 pub fn leases(dir: &str) -> Vec<Lease> {
     let Some(common) = git::common_dir(dir) else { return vec![] };
@@ -315,6 +327,31 @@ mod tests {
             refusal(&s, "feat", "/r/.git/sheepdog/feat.running"),
             "address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not starting another agent step. \
              If it's hung: kill 42, or remove /r/.git/sheepdog/feat.running"
+        );
+    }
+
+    #[test]
+    fn idle_unless_a_live_step_holds_the_marker_in_the_verbs_own_words_270() {
+        let lease = |live| Lease {
+            pid: "42".into(),
+            step: "address".into(),
+            since: "2026-10-22T00:00:00Z".into(),
+            deadline: None,
+            live,
+        };
+        assert_eq!(idle("feat", None, "attaching"), Ok(()));
+        assert_eq!(idle("feat", Some(&lease(false)), "attaching"), Ok(()));
+        assert_eq!(
+            idle("feat", Some(&lease(true)), "attaching"),
+            Err("address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not attaching. \
+                 Wait for it to end (sd state shows it), or kill 42"
+                .into())
+        );
+        assert_eq!(
+            idle("feat", Some(&lease(true)), "removing its worktree"),
+            Err("address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not removing its worktree. \
+                 Wait for it to end (sd state shows it), or kill 42"
+                .into())
         );
     }
 
