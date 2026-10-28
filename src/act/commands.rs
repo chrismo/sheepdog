@@ -124,7 +124,7 @@ pub fn autofix(b: &str) {
 /// Err(the command) when it failed, after printing its output's tail; its
 /// changes are left uncommitted to look at, or inside agent step <step> (the
 /// hook) put back, so the next step starts from the commit it knows. Inside a
-/// step it rechecks the attach lock before it commits (#270).
+/// step it rechecks the attach lock before it commits or reverts (#270).
 fn autofix_run(wt: &str, b: &str, step: Option<&str>, r: &mut Report) -> Result<Option<String>, String> {
     let cmd = command("autofix", b);
     if cmd.is_empty() {
@@ -136,9 +136,12 @@ fn autofix_run(wt: &str, b: &str, step: Option<&str>, r: &mut Report) -> Result<
     let secs = step_timeout(b);
     let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
     let changed = status(wt).lines().count();
+    let left = format!("autofix's changes are left in {wt}");
     if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
-        if changed > 0 && step.is_some() {
+        if let Some(step) = step.filter(|_| changed > 0) {
+            // A revert would throw an attached session's edits away too.
+            lock_recheck(b, step, "reverting", &left);
             for args in [&["reset", "-q", "--hard"][..], &["clean", "-qfd"]] {
                 eprint!("{}", git(wt, args).stderr);
             }
@@ -153,7 +156,7 @@ fn autofix_run(wt: &str, b: &str, step: Option<&str>, r: &mut Report) -> Result<
         return Ok(None);
     }
     if let Some(step) = step {
-        lock_recheck(b, step, "committing", &format!("autofix's changes are left in {wt}"));
+        lock_recheck(b, step, "committing", &left);
     }
     for args in [&["add", "-A"][..], &["commit", "-q", "-m", &format!("autofix: {cmd}")]] {
         let g = git(wt, args);

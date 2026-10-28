@@ -519,6 +519,25 @@ fn attached_during_ci_fixs_autofix_autofix_commits_nothing_its_changes_left_and_
     assert_eq!(sd.remote_feat(), remote);
 }
 
+// @test "attached during ci-fix's failing autofix: nothing reverted, its changes left, and said (#270)"
+#[test]
+fn attached_during_ci_fixs_failing_autofix_nothing_reverted_its_changes_left_and_said_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    let lock = lock_by(attach.pid());
+    sd.set(&["settings.verify", "grep -q THREE file.txt"]);
+    sd.set(&["settings.autofix", &format!("sed -i.bak s/three/THREE/ file.txt && rm file.txt.bak && git config branch.feat.sd-lock '{lock}' && false")]);
+    let (before, remote) = (sd.rev("HEAD"), sd.remote_feat());
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    assert!(!sd.ran("claude.args"));
+    let wt = sd.path("repo");
+    assert_has(&r.output, &[&format!("not reverting: feat was attached during ci-fix ({lock}); autofix's changes are left in {wt}")]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_has(&sd.git(&["status", "--porcelain"]), &["file.txt"]);
+    assert_eq!(sd.remote_feat(), remote);
+}
+
 // @test "the PR's state unreadable before the push: nothing pushed, the commit kept, and why (#270)"
 #[test]
 fn the_prs_state_unreadable_before_the_push_nothing_pushed_the_commit_kept_and_why_270() {
