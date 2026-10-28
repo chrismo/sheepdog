@@ -87,8 +87,7 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
         std::process::exit(set.code);
     }
     // After the lock, so a step that starts from here refuses (attached_check);
-    // the lock goes back to what it was.
-    // --force or not.
+    // --force or not, the lock goes back to what it was.
     if let Err(e) = running::idle(b, running::lease(".", b).as_ref(), "attaching") {
         if get(&key("lock")) == mine {
             match before.as_str() {
