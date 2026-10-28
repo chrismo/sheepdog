@@ -1431,33 +1431,56 @@ touch "$FX/started"
 sleep 30
 "#;
 
+/// Run implement with CLAUDE_HANGS as the agent, and send sd <sig> once the
+/// agent has started: sd's exit status.
+fn implement_signalled(sd: &mut Sd, sig: i32) -> std::process::ExitStatus {
+    sd.fake("claude", CLAUDE_HANGS);
+    sd.rm("started");
+    let mut job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::null()));
+    for _ in 0..100 {
+        if sd.ran("started") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(sd.ran("started"), "signal {sig}: the agent never started");
+    assert!(Path::new(&sd.path("repo/.git/sheepdog/feat-x.running")).exists(), "signal {sig}: no marker while the step runs");
+    unsafe { libc::kill(job.id() as i32, sig) };
+    job.wait().unwrap()
+}
+
+// @test "implement: a TERM or INT to sd ends it of that signal, with no marker, no cap charged, and no failure counted (#177, #270)"
 #[test]
 fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_cap_charged_177() {
     use std::os::unix::process::ExitStatusExt;
     let mut sd = sd();
     sd.started(TASK);
-    sd.fake("claude", CLAUDE_HANGS);
     let marker = sd.path("repo/.git/sheepdog/feat-x.running");
     for sig in [libc::SIGTERM, libc::SIGINT] {
-        sd.rm("started");
-        let mut job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::null()));
-        for _ in 0..100 {
-            if sd.ran("started") {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        assert!(sd.ran("started"), "signal {sig}: the agent never started");
-        assert!(Path::new(&marker).exists(), "signal {sig}: no marker while the step runs");
-        unsafe { libc::kill(job.id() as i32, sig) };
-        let st = job.wait().unwrap();
+        let st = implement_signalled(&mut sd, sig);
         assert_eq!(st.signal(), Some(sig), "{st:?}");
         assert!(!Path::new(&marker).exists(), "signal {sig}: the marker is left");
         let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
         let row = usage.lines().last().unwrap();
         // The agent's status: sd ends its group with TERM either way.
         assert_has(row, &["status:143,cost_usd:null,total_cost_usd:null,estimated:false"]);
+        assert_eq!(sd.git_status(&["cat-file", "-e", "refs/sheepdog/feat-x/failed"]), 128, "signal {sig}: counted as a failure");
     }
+}
+
+// @test "implement: a TERM to sd leaves the failure record as it was: the signal's sender counts it (#270)"
+#[test]
+fn implement_a_term_to_sd_leaves_the_failure_record_as_it_was_270() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.rm("agent");
+    sd.put("fail", "");
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    let before = sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/failed"]);
+    assert_eq!(jq(&["-r", ".count"], &before), "1");
+    implement_signalled(&mut sd, libc::SIGTERM);
+    assert_eq!(sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/failed"]), before);
 }
 
 /// A claude that wrote its session's transcript, then failed.

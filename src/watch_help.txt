@@ -147,7 +147,8 @@ signal. Each pass first reconciles every branch's
 lease: one past its deadline gets TERM to its process group, KILL 5s later
 if it's still there; one whose process is gone with no outcome crashed.
 Either counts in the failure record (refs/sheepdog/<b>/failed, harness sd),
-as a launched step that timed out does. A launched step still running once
+as a launched step that timed out does; sd act, ended by that signal,
+doesn't count it again (#270). A launched step still running once
 its PR has merged or closed is ended the same way, not counted, its edits
 left in the worktree: sd act <step>: ended, #<n> merged (or closed). A
 marker with no deadline, a step chrismo ran, is never ended or counted.
