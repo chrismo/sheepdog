@@ -17,7 +17,7 @@
 
 mod common;
 
-use common::{assert_has, assert_match, chomp, spawn, Sd};
+use common::{assert_has, assert_match, chomp, dead_pid, lock_by, spawn, Holder, Sd};
 use sheepdog::running::proc_start;
 use std::fs;
 use std::process::{Child, Command, Stdio};
@@ -645,8 +645,65 @@ fn force_runs_an_agent_step_over_a_live_lock() {
     let sleeper = sd.live_lock();
     sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add c"}"#);
     sd.fake("claude", IMPLEMENTER);
+    let before = sd.git(&["rev-parse", "HEAD"]);
     let r = sd.run(&["implement", "--force"]);
     assert_eq!(r.status, 0);
     assert!(sd.fx_exists("claude.args"));
     assert_eq!(sd.lock(), Some(sleeper.lock()));
+    // The lock it ran over is still the one there at the commit (#270).
+    assert_ne!(sd.git(&["rev-parse", "HEAD"]), before);
+    assert_eq!(sd.git(&["status", "--porcelain"]), "");
+}
+
+/// IMPLEMENTER, setting branch.feat.sd-lock to <lock> as it edits: an attach
+/// that came in while the step ran.
+fn implementer_locking(lock: &str) -> String {
+    IMPLEMENTER.replace("echo d >> file.txt\n", &format!("echo d >> file.txt\ngit config branch.feat.sd-lock '{lock}'\n"))
+}
+
+// @test "attached during implement, or locked by hand: nothing committed, the edits left, and said (#270)"
+#[test]
+fn attached_during_implement_or_locked_by_hand_nothing_committed_the_edits_left_and_said_270() {
+    let attach = Holder::new();
+    for lock in [lock_by(attach.pid()), "set by hand".to_string()] {
+        let sd = sd();
+        sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add d"}"#);
+        sd.fake("claude", &implementer_locking(&lock));
+        let before = sd.git(&["rev-parse", "HEAD"]);
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0, "{lock}");
+        let wt = sd.path("repo");
+        assert_has(&r.output, &[&format!("not committing: feat was attached during implement ({lock}); the edits are left in {wt}")]);
+        assert_eq!(sd.git(&["rev-parse", "HEAD"]), before);
+        assert_has(&sd.git(&["status", "--porcelain"]), &["file.txt"]);
+        assert_eq!(sd.lock(), Some(lock));
+    }
+}
+
+// @test "a stale lock set during implement doesn't stop the commit (#270)"
+#[test]
+fn a_stale_lock_set_during_implement_doesnt_stop_the_commit_270() {
+    let sd = sd();
+    sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add d"}"#);
+    sd.fake("claude", &implementer_locking(&lock_by(dead_pid())));
+    let r = sd.run(&["implement"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git(&["log", "-1", "--format=%s"]), "add d");
+    assert_eq!(sd.git(&["status", "--porcelain"]), "");
+}
+
+// @test "--force over one attach, another during the step: nothing committed (#270)"
+#[test]
+fn force_over_one_attach_another_during_the_step_nothing_committed_270() {
+    let sd = sd();
+    let _first = sd.live_lock();
+    let second = Holder::new();
+    let lock = lock_by(second.pid());
+    sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add d"}"#);
+    sd.fake("claude", &implementer_locking(&lock));
+    let before = sd.git(&["rev-parse", "HEAD"]);
+    let r = sd.run(&["implement", "--force"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("not committing: feat was attached during implement ({lock})")]);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), before);
 }

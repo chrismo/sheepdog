@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, chomp, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
+use common::{assert_has, assert_lacks, chomp, dead_pid, jq, lock_by, running_marker, step_refusal, Holder, Sd};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -1141,6 +1141,38 @@ fn resolve_the_agent_giving_up_rolls_back() {
     assert!(!sd.rebase_in_progress());
     assert_eq!(sd.git(&["status", "--porcelain"]), "");
     assert_eq!(sd.base_pin(), "");
+}
+
+// @test "--resolve: attached during the stop: nothing committed, not rolled back; the edits left mid-rebase (#270)"
+#[test]
+fn resolve_attached_during_the_stop_nothing_committed_not_rolled_back_the_edits_left_mid_rebase_270() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let attach = Holder::new();
+    let lock = lock_by(attach.pid());
+    sd.agent_also(&format!("git config branch.feat.sd-lock '{lock}'\n"));
+    let before = sd.rev("feat");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_ne!(r.status, 0);
+    let wt = sd.cwd.to_string_lossy().to_string();
+    assert_has(&r.output, &[&format!("not committing: feat was attached during resolve ({lock}); the edits are left in {wt}, mid-rebase")]);
+    assert_eq!(sd.rev("feat"), before);
+    assert!(sd.rebase_in_progress());
+    assert!(sd.file_has("GX"));
+}
+
+// @test "--resolve: a stale lock set during the stop doesn't stop it (#270)"
+#[test]
+fn resolve_a_stale_lock_set_during_the_stop_doesnt_stop_it_270() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    sd.agent_also(&format!("git config branch.feat.sd-lock '{}'\n", lock_by(dead_pid())));
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+    assert!(!sd.rebase_in_progress());
 }
 
 #[test]

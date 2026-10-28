@@ -222,7 +222,10 @@ Verbs:
             (implement, address, restack --resolve, review, describe) and
             the verbs that publish refuse to run; verify and the rest of
             sd state's mechanics go on. A lock whose process is gone from
-            this host is stale, and every sd act verb clears it first
+            this host is stale, and every sd act verb clears it first.
+            A step that runs anyway (--force) or started first checks the
+            lock again before it commits and before it pushes: a live lock
+            it didn't start under stops it, the edits or commit kept
 
 Running steps (#270): while another process's step holds the branch's
 running marker (sd state shows it), restack (--resolve too), push, ship,

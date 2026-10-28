@@ -305,7 +305,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         die(format!("the agent needs input on {b}: {summary}\n{}: answer with {}; or answer in its session (sd act attach {b}), then sd act ack --question and sd act implement", question_say(b), answer_cmd(b)));
     }
     if !status(wt).is_empty() {
-        commit_edits(wt, &commit_message(&result, fixing, &task));
+        commit_edits(b, "implement", wt, &commit_message(&result, fixing, &task));
     } else if !changed && !fixing {
         give_up(b, wt, qstep, &format!("said done but changed nothing: {summary}"), format!("the agent says done but changed nothing (session {sid})"));
     }

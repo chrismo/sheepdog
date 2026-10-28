@@ -4,7 +4,7 @@
 
 use super::commands::step_timeout;
 use super::start::start_default;
-use super::{attached_check, cfg, die, or_die, repo_remote};
+use super::{attached_check, cfg, die, lock_recheck, or_die, repo_remote};
 use crate::git::{git, git_input, git_out, rev, show_ref, strip_nl, worktree_for, worktree_mark};
 use crate::val::{at, on, t};
 use crate::{config, harness, json, running, state};
@@ -119,8 +119,10 @@ pub(super) fn must(args: &[&str]) {
     }
 }
 
-/// The agent's edits in <wt>, committed with <msg>.
-pub(super) fn commit_edits(wt: &str, msg: &str) {
+/// The agent's edits in <wt>, committed with <msg>, unless <b> was attached
+/// during <step> (#270).
+pub(super) fn commit_edits(b: &str, step: &str, wt: &str, msg: &str) {
+    lock_recheck(b, step, "committing", &format!("the edits are left in {wt}"));
     for args in [&["add", "-A"][..], &["commit", "-q", "-m", msg]] {
         let g = git(wt, args);
         print!("{}", g.stdout);

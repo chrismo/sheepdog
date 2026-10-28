@@ -19,7 +19,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, spawn, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, dead_pid, jq, lock_by, spawn, Holder, Sd};
 use sheepdog::running::proc_start;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -425,6 +425,64 @@ fn the_pr_merged_or_closed_while_the_step_ran_nothing_pushed_the_commit_kept_and
         assert_eq!(sd.remote_feat(), before);
         assert!(has_line(&sd.fx("gh.calls"), "pr view https://example/pr/7"), "{}", sd.fx("gh.calls"));
     }
+}
+
+// @test "attached during ci-fix: nothing committed or pushed; the edits left, and said (#270)"
+#[test]
+fn attached_during_ci_fix_nothing_committed_or_pushed_the_edits_left_and_said_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    let lock = lock_by(attach.pid());
+    sd.agent(&format!("{AGENT_FIXES}git config branch.feat.sd-lock '{lock}'\n"));
+    let (before, remote) = (sd.rev("HEAD"), sd.remote_feat());
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    let wt = sd.path("repo");
+    assert_has(&r.output, &[&format!("not committing: feat was attached during ci-fix ({lock}); the edits are left in {wt}")]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_has(&sd.git(&["status", "--porcelain"]), &["file.txt"]);
+    assert_eq!(sd.remote_feat(), remote);
+}
+
+// @test "attached after ci-fix's commit (during verify): nothing pushed, the commit kept (#270)"
+#[test]
+fn attached_after_ci_fixs_commit_during_verify_nothing_pushed_the_commit_kept_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    let lock = lock_by(attach.pid());
+    // Red before the agent's fix, so the lock comes only with the verify after it.
+    sd.set(&["settings.verify", &format!("grep -q THREE file.txt && git config branch.feat.sd-lock '{lock}'")]);
+    let remote = sd.remote_feat();
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    assert!(sd.ran("claude.args"));
+    let wt = sd.path("repo");
+    assert_has(&r.output, &[&format!("not pushing: feat was attached during ci-fix ({lock}); the commit is kept in {wt}")]);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), remote);
+}
+
+// @test "a stale lock set during ci-fix doesn't stop it (#270)"
+#[test]
+fn a_stale_lock_set_during_ci_fix_doesnt_stop_it_270() {
+    let sd = sd();
+    sd.agent(&format!("{AGENT_FIXES}git config branch.feat.sd-lock '{}'\n", lock_by(dead_pid())));
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
+}
+
+// @test "ci-fix --force over a live lock, the same lock still there: committed and pushed as ever (#270)"
+#[test]
+fn ci_fix_force_over_a_live_lock_the_same_lock_still_there_committed_and_pushed_as_ever_270() {
+    let sd = sd();
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
 }
 
 // @test "autofix's commit isn't pushed onto a PR that merged meanwhile (#270)"

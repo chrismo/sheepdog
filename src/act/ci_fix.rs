@@ -10,7 +10,7 @@ use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree, must, question_answered,
                   question_ask, question_gate, question_say, step_session, step_store};
-use super::{cfg, die, state_json, Args};
+use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev};
 use crate::guidance::{lib_dir, step_guidance};
@@ -120,11 +120,14 @@ fn ci_logs(sha: &str) -> String {
     logs
 }
 
-/// Push the fix in <wt>, unless held for chrismo or <state>'s PR is no longer
-/// open; <kept> says what is left unpushed when the push fails.
+/// Push the fix in <wt>, unless held for chrismo, <state>'s PR is no longer
+/// open, or <b> was attached during the step; <kept> says what is left
+/// unpushed when the push fails.
 fn publish(b: &str, wt: &str, remote: &str, state: &Value, kept: &str) {
     hold_gate(b, &format!("pushing {b}"), "");
-    pr_gate(&t(state, "pr.number"), &t(state, "pr.url"), "ci-fix", "pushing", &format!("the commit is kept in {wt}"));
+    let left = format!("the commit is kept in {wt}");
+    pr_gate(&t(state, "pr.number"), &t(state, "pr.url"), "ci-fix", "pushing", &left);
+    lock_recheck(b, "ci-fix", "pushing", &left);
     if let Err(e) = push_branch(b, remote) {
         eprintln!("sd act: {e}");
         die(kept);
@@ -297,7 +300,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         Some(m) if !blank(m) => m.to_string(),
         _ => format!("Fix CI: {}", at(&state, "ci.failing").get(0).map(text).unwrap_or_default()),
     };
-    commit_edits(wt, &msg);
+    commit_edits(b, "ci-fix", wt, &msg);
     println!("{b}: {summary}");
     print!("{}", git(wt, &["log", "--format=  %h %s", &format!("{before}..{head}")]).stdout);
     hold_since(b, &base, &agent_head);
