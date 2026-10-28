@@ -142,6 +142,9 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     }
     let src = git_out(".", &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| die("not inside a worktree"));
     let adopted = worktree_for(".", b);
+    if !adopted.is_empty() && !Path::new(&adopted).is_dir() {
+        die(format!("{b} is checked out at {adopted}, which is gone: git worktree prune, then start again"));
+    }
     let dst = if adopted.is_empty() { destination(&main_worktree("."), b) } else { adopted.clone() };
     if adopted.is_empty() && Path::new(&dst).exists() {
         die(format!("{dst} already exists"));

@@ -449,6 +449,19 @@ fn start_an_existing_worktree_with_uncommitted_changes_gets_the_task_implement_r
     assert!(!sd.ran("claude.args"));
 }
 
+// @test "start: refuses a worktree registered for the branch whose directory is gone, naming git worktree prune (#252)"
+#[test]
+fn start_refuses_a_worktree_registered_for_the_branch_whose_directory_is_gone_naming_git_worktree_prune_252() {
+    let sd = sd();
+    sd.git(&["worktree", "add", "-q", "-b", "feat-x", &sd.path("elsewhere"), "main"]);
+    fs::remove_dir_all(sd.tmp.join("elsewhere")).unwrap();
+    let r = sd.run_sep(&["start", "--no-implement", "feat-x", "a task"]);
+    assert_ne!(r.status, 0);
+    assert!(r.output.is_empty(), "{}", r.output);
+    assert_has(&r.stderr, &[&sd.path("elsewhere"), "git worktree prune"]);
+    assert_ne!(sd.git_status(&["config", "--get", "branch.feat-x.sd-task"]), 0);
+}
+
 // @test "start: refuses a name git won't take as a branch"
 #[test]
 fn start_refuses_a_name_git_wont_take_as_a_branch() {
