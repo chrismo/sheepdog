@@ -3,6 +3,15 @@
 // worktree's path. --profile picks the branch's config profiles (#74, #293),
 // checked before anything is made.
 //
+// A worktree that already has the branch checked out, wherever it is (new_wt
+// puts it beside the current one; the main worktree too, as sd act implement
+// run there would be), is used as it is (#252): no git worktree
+// add, no setup hook, the rest as for a new one. So a second start on a branch
+// just rewrites its task. A branch that was there already gets base pinned at
+// its tip only when none is pinned and it has no commits past its start point.
+// The default branch is refused, as is a registered worktree whose directory
+// is gone: git worktree add refused both before, and start would use them.
+//
 // Duplicates agent-rig's wt-new (#14), hook locations and branch resolution
 // included, so a repo set up for new_wt needs nothing more. Placement differs
 // (#85): beside the main worktree, not beside the current one.
@@ -10,7 +19,7 @@
 use super::bookkeeping::enroll_mark;
 use super::{die, or_die, Args};
 use crate::config::set_branch_profile;
-use crate::git::{common_dir, git, git_ok, git_out, main_worktree, rev, show_ref};
+use crate::git::{common_dir, git, git_ok, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for};
 use crate::proc::{self, executable};
 use std::io::stderr;
 use std::os::fd::AsFd;
@@ -33,6 +42,21 @@ pub fn start_default(remote: &str) -> Option<String> {
 /// <b> on <remote>, else here, as a full ref.
 fn start_point(remote: &str, b: &str) -> Option<String> {
     [format!("refs/remotes/{remote}/{b}"), format!("refs/heads/{b}")].into_iter().find(|r| show_ref(".", r))
+}
+
+/// Where a branch starts, as a full ref: --parent, local else on <remote>,
+/// else the default branch. Dies on a --parent that doesn't exist; Err says
+/// why there's no default branch to start from.
+fn branch_from(remote: &str, parent: &str) -> Result<String, String> {
+    if !parent.is_empty() {
+        let local = format!("refs/heads/{parent}");
+        if show_ref(".", &local) {
+            return Ok(local);
+        }
+        return Ok(start_point(remote, parent).unwrap_or_else(|| die(format!("no such parent branch: {parent}"))));
+    }
+    let def = start_default(remote).ok_or(format!("can't tell the default branch (no {remote}/HEAD, main or master)"))?;
+    start_point(remote, &def).ok_or(format!("no {remote}/{def} or {def} to start from"))
 }
 
 /// Where the new worktree goes: beside the main worktree, whichever worktree
@@ -120,8 +144,17 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
         die(format!("no task: sd act start {b} \"<task>\" (or --no-implement)"));
     }
     let src = git_out(".", &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| die("not inside a worktree"));
-    let dst = destination(&main_worktree("."), b);
-    if Path::new(&dst).exists() {
+    // Before #252 git worktree add refused it where it was checked out; now
+    // start would use that checkout, so it's refused outright.
+    if start_default(remote).as_deref() == Some(b) {
+        die(format!("{b} is the default branch: start makes a branch off it"));
+    }
+    let adopted = worktree_for(".", b);
+    if !adopted.is_empty() && !Path::new(&adopted).is_dir() {
+        die(format!("{b} is checked out at {adopted}, which is gone: git worktree prune, then start again"));
+    }
+    let dst = if adopted.is_empty() { destination(&main_worktree("."), b) } else { adopted.clone() };
+    if adopted.is_empty() && Path::new(&dst).exists() {
         die(format!("{dst} already exists"));
     }
     if !a.profiles.is_empty() {
@@ -133,30 +166,32 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
         die(format!("fetch from {remote} failed"));
     }
 
+    let from = branch_from(remote, &a.parent);
     let mut base = String::new();
-    if show_ref(".", &format!("refs/heads/{b}")) {
+    if !adopted.is_empty() {
+        eprintln!("sd act: {b} is already checked out at {dst}; using it");
+    } else if show_ref(".", &format!("refs/heads/{b}")) {
         git_or_die(&["worktree", "add", &dst, b], "git worktree add");
     } else if show_ref(".", &format!("refs/remotes/{remote}/{b}")) {
         eprintln!("sd act: tracking {remote}/{b}");
         git_or_die(&["worktree", "add", "--track", "-b", b, &dst, &format!("{remote}/{b}")], "git worktree add");
     } else {
-        let from = if !a.parent.is_empty() {
-            let local = format!("refs/heads/{}", a.parent);
-            if show_ref(".", &local) {
-                local
-            } else {
-                start_point(remote, &a.parent).unwrap_or_else(|| die(format!("no such parent branch: {}", a.parent)))
-            }
-        } else {
-            let def = start_default(remote)
-                .unwrap_or_else(|| die(format!("can't tell the default branch (no {remote}/HEAD, main or master)")));
-            start_point(remote, &def).unwrap_or_else(|| die(format!("no {remote}/{def} or {def} to start from")))
-        };
-        base = rev(".", &from);
-        let name = from.strip_prefix("refs/").and_then(|r| r.split_once('/')).map_or(from.as_str(), |(_, n)| n);
+        let from = from.as_deref().unwrap_or_else(|e| die(e));
+        base = rev(".", from);
+        let name = from.strip_prefix("refs/").and_then(|r| r.split_once('/')).map_or(from, |(_, n)| n);
         eprintln!("sd act: branching {b} off {name} ({})", base.get(..7).unwrap_or(&base));
         // From the SHA, not the ref: a remote-tracking start point would become the upstream.
         git_or_die(&["worktree", "add", "-b", b, &dst, &base], "git worktree add");
+    }
+    // A branch that was there already: base at its tip when nothing pinned one
+    // and it has no commits of its own past where it would start (#252).
+    if base.is_empty() && !show_ref(".", &format!("refs/sheepdog/{b}/base")) {
+        if let Ok(from) = &from {
+            let tip = rev(".", &format!("refs/heads/{b}"));
+            if !tip.is_empty() && is_ancestor(".", &tip, from) {
+                base = tip;
+            }
+        }
     }
 
     let set = |args: &[&str]| {
@@ -189,7 +224,7 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     eprintln!("enrolled {b}");
 
     let mut rc = 0;
-    if !start_hook(&src, &dst, b) {
+    if adopted.is_empty() && !start_hook(&src, &dst, b) {
         rc = 1;
         if !a.no_implement {
             eprintln!("sd act: fix it, then: sd act implement {b}");
