@@ -84,9 +84,7 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     }
     let key = |k: &str| format!("branch.{b}.sd-{k}");
     let before = get(&key("lock"));
-    if let Some(note) = take(b, &before, force).unwrap_or_else(|e| die(e)) {
-        eprintln!("sd act: {note}");
-    }
+    let note = take(b, &before, force).unwrap_or_else(|e| die(e));
     let stored = get(&key("harness"));
     let read = get(&key("session"));
     let (h, resume) = pick(b, harness_opt, &stored, &read, || cfg("harness", b)).unwrap_or_else(|e| die(e));
@@ -110,6 +108,9 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
             };
         }
         die(e);
+    }
+    if let Some(note) = note {
+        eprintln!("sd act: {note}");
     }
     let mode = if resume { "resume" } else { "new" };
     eprintln!("sd act: attached to {b}: {h} ({mode} session {sid}) in {wt}; agent steps wait until you exit");

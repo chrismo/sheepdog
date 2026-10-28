@@ -501,6 +501,7 @@ fn attach_force_takes_over_a_lock_but_not_a_running_step_270() {
     let r = sd.run(&["attach", "--force"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["implement is running on feat"]);
+    assert!(!r.output.contains("taking over"), "{}", r.output);
     assert!(!sd.fx_exists("claude.args"));
     assert_eq!(sd.lock(), Some(attached.lock()));
     assert_eq!(fs::read_to_string(&marker).unwrap(), line);
