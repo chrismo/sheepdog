@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, chomp, jq, Sd};
+use common::{assert_has, assert_lacks, chomp, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -1271,5 +1271,44 @@ fn resolve_with_nothing_to_resolve_is_a_plain_restack_no_agent() {
     let r = sd.run(&["restack", "--resolve"]);
     assert_eq!(r.status, 0);
     assert!(!sd.fx_exists("claude.calls"));
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+}
+
+// @test "a live step holds the running marker: restack, --resolve or not, --force or not, refused before the fetch; HEAD and the worktree don't move (#270)"
+#[test]
+fn a_live_step_holds_the_running_marker_restack_resolve_or_not_force_or_not_refused_before_the_fetch_270() {
+    let sd = sd();
+    sd.upstream("main", "b", "B", "upstream");
+    let (head, tracking, pin) = (sd.rev("feat"), sd.rev("origin/main"), sd.base_pin());
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "implement", holder.pid());
+    for args in [&["restack"][..], &["restack", "--force"], &["restack", "--resolve"], &["restack", "--resolve", "--force"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}");
+        assert_has(&r.output, &[&step_refusal("implement", "feat", holder.pid(), "restacking")]);
+    }
+    assert_eq!(sd.rev("feat"), head);
+    assert_eq!(sd.rev("origin/main"), tracking);
+    assert_eq!(sd.base_pin(), pin);
+    assert_eq!(sd.git(&["status", "--porcelain"]), "");
+    assert!(!sd.git_path_exists("rebase-merge"));
+    assert!(marker.exists());
+}
+
+// @test "restack: the step's own child (RUNNING_HELD=<b>) restacks under its marker, and a dead holder's marker doesn't refuse (#270)"
+#[test]
+fn restack_the_steps_own_child_restacks_under_its_marker_and_a_dead_holders_marker_doesnt_refuse_270() {
+    let sd = sd();
+    let holder = Holder::new();
+    running_marker(&sd.tmp.join("repo/.git"), "feat", "restack", holder.pid());
+    sd.upstream("main", "b", "B", "upstream");
+    let r = sd.run_env(&[("RUNNING_HELD", "feat")], &["restack"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+
+    running_marker(&sd.tmp.join("repo/.git"), "feat", "implement", dead_pid());
+    sd.upstream("main", "c", "C", "upstream again");
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
 }

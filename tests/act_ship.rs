@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, chomp, jq, Sd};
+use common::{assert_has, assert_lacks, chomp, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
 use std::fs;
 
 const GH: &str = r#"#!/usr/bin/env bash
@@ -301,6 +301,38 @@ fn ship_on_the_default_branch_refused_before_describe_push_or_pr_159() {
     assert!(!sd.fx_exists("claude.args"));
     assert_eq!(sd.calls(), "");
     assert_ne!(sd.remote("main"), sd.rev("main"));
+}
+
+// @test "ship: refused while a live step holds the running marker, --force or not, before describe, push or PR (#270)"
+#[test]
+fn ship_refused_while_a_live_step_holds_the_running_marker_force_or_not_before_describe_push_or_pr_270() {
+    let sd = sd();
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "implement", holder.pid());
+    for args in [&["ship"][..], &["ship", "--force"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}");
+        assert_has(&r.output, &[&step_refusal("implement", "feat", holder.pid(), "shipping")]);
+    }
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.calls(), "");
+    assert_eq!(sd.remote("feat"), "");
+    assert_eq!(sd.config("branch.feat.sheepdog"), "");
+    assert!(marker.exists());
+}
+
+// @test "ship: the step's own child (RUNNING_HELD=<b>) ships under its marker, and a dead holder's marker doesn't refuse (#270)"
+#[test]
+fn ship_the_steps_own_child_ships_under_its_marker_and_a_dead_holders_marker_doesnt_refuse_270() {
+    let holder = Holder::new();
+    for (pid, env) in [(holder.pid(), &[("RUNNING_HELD", "feat")][..]), (dead_pid(), &[])] {
+        let sd = sd();
+        running_marker(&sd.tmp.join("repo/.git"), "feat", "ship", pid);
+        let r = sd.run_env(env, &["ship"]);
+        assert_eq!(r.status, 0, "{env:?}: {}", r.output);
+        assert_eq!(sd.remote("feat"), sd.rev("feat"));
+        assert_has(&sd.calls(), &["pr create"]);
+    }
 }
 
 // @test "describe: stored for HEAD, and ship reuses it without calling the agent"

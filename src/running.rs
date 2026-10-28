@@ -70,9 +70,24 @@ pub fn lease(dir: &str, b: &str) -> Option<Lease> {
     lease_at(&file(dir, b)?)
 }
 
-/// Whether <doing> may go ahead on <b> under its running marker: not while a
-/// live agent step holds it (#270). attach and forget --remove ask.
-pub fn idle(b: &str, marker: Option<&Lease>, doing: &str) -> Result<(), String> {
+/// Whether <doing> may go ahead on <b> in the repo at <dir>: not while
+/// another process's live step holds its marker (#270). Ours isn't another's:
+/// a step's children run with RUNNING_HELD=<b> (holding, leasing), and a
+/// marker this process wrote is its own. attach, forget --remove and the
+/// verbs that write the worktree or the remote ask.
+pub fn idle(dir: &str, b: &str, doing: &str) -> Result<(), String> {
+    file(dir, b).map_or(Ok(()), |f| idle_at(&f, b, doing))
+}
+
+fn idle_at(f: &str, b: &str, doing: &str) -> Result<(), String> {
+    if std::env::var("RUNNING_HELD").is_ok_and(|h| h == b) {
+        return Ok(());
+    }
+    let marker = lease_at(f).filter(|l| l.pid != std::process::id().to_string());
+    refusal_for(b, marker.as_ref(), doing)
+}
+
+fn refusal_for(b: &str, marker: Option<&Lease>, doing: &str) -> Result<(), String> {
     match marker {
         Some(l) if l.live => Err(format!(
             "{} is running on {b} (pid {}, since {}): not {doing}. Wait for it to end (sd state shows it), or kill {}",
@@ -339,20 +354,41 @@ mod tests {
             deadline: None,
             live,
         };
-        assert_eq!(idle("feat", None, "attaching"), Ok(()));
-        assert_eq!(idle("feat", Some(&lease(false)), "attaching"), Ok(()));
+        assert_eq!(refusal_for("feat", None, "attaching"), Ok(()));
+        assert_eq!(refusal_for("feat", Some(&lease(false)), "attaching"), Ok(()));
         assert_eq!(
-            idle("feat", Some(&lease(true)), "attaching"),
+            refusal_for("feat", Some(&lease(true)), "attaching"),
             Err("address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not attaching. \
                  Wait for it to end (sd state shows it), or kill 42"
                 .into())
         );
         assert_eq!(
-            idle("feat", Some(&lease(true)), "removing its worktree"),
+            refusal_for("feat", Some(&lease(true)), "removing its worktree"),
             Err("address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not removing its worktree. \
                  Wait for it to end (sd state shows it), or kill 42"
                 .into())
         );
+    }
+
+    #[test]
+    fn idle_passes_a_marker_held_by_this_process_or_for_this_branch_by_running_held_270() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
+        let f = marker("ours");
+        let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id().to_string();
+        fs::write(&f, format!("{pid} address 2026-10-22T00:00:00Z {}\n", proc_start(&pid))).unwrap();
+        assert!(idle_at(path(&f), "b-ours", "pushing").is_err());
+        std::env::set_var("RUNNING_HELD", "b-other");
+        assert!(idle_at(path(&f), "b-ours", "pushing").is_err());
+        std::env::set_var("RUNNING_HELD", "b-ours");
+        assert_eq!(idle_at(path(&f), "b-ours", "pushing"), Ok(()));
+        std::env::remove_var("RUNNING_HELD");
+        child.kill().unwrap();
+        child.wait().unwrap();
+
+        let me = std::process::id().to_string();
+        fs::write(&f, format!("{me} implement 2026-10-22T00:00:00Z {}\n", proc_start(&me))).unwrap();
+        assert_eq!(idle_at(path(&f), "b-ours", "pushing"), Ok(()));
     }
 
     #[test]

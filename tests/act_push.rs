@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{assert_has, Sd, GH_FAILS};
+use common::{assert_has, dead_pid, running_marker, step_refusal, Holder, Sd, GH_FAILS};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -578,4 +578,41 @@ fn upstream_the_sd_parent_is_not_the_upstream() {
     assert_eq!(sd.run(&["push"]).status, 0);
     assert_eq!(sd.tracks("feat"), "origin/feat");
     assert_eq!(sd.git(&["config", "branch.feat.sd-parent"]), "main");
+}
+
+// @test "a live step holds the running marker: refused, --force or not, nothing pushed (#270)"
+#[test]
+fn a_live_step_holds_the_running_marker_refused_force_or_not_nothing_pushed_270() {
+    let sd = sd();
+    sd.commit("two");
+    let before = sd.remote("feat");
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "address", holder.pid());
+    for args in [&["push"][..], &["push", "--force"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}");
+        assert_has(&r.output, &[&step_refusal("address", "feat", holder.pid(), "pushing")]);
+    }
+    // Another branch's step holding its own marker is no pass here.
+    assert_ne!(sd.run_env(&[("RUNNING_HELD", "main")], &["push"]).status, 0);
+    assert_eq!(sd.remote("feat"), before);
+    assert!(marker.exists());
+}
+
+// @test "the step's own child (RUNNING_HELD=<b>) pushes under its marker, and a dead holder's marker doesn't refuse (#270)"
+#[test]
+fn the_steps_own_child_pushes_under_its_marker_and_a_dead_holders_marker_doesnt_refuse_270() {
+    let sd = sd();
+    let holder = Holder::new();
+    running_marker(&sd.tmp.join("repo/.git"), "feat", "push", holder.pid());
+    sd.commit("two");
+    let r = sd.run_env(&[("RUNNING_HELD", "feat")], &["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
+
+    running_marker(&sd.tmp.join("repo/.git"), "feat", "address", dead_pid());
+    sd.commit("three");
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
 }

@@ -101,6 +101,52 @@ pub fn assert_match(s: &str, re: &str) {
     assert!(regex::Regex::new(re).unwrap().is_match(s), "{s:?}\n!~ {re}");
 }
 
+/// A sleep that lives until dropped: a running marker's live holder.
+pub struct Holder(pub Child);
+
+impl Holder {
+    pub fn new() -> Holder {
+        Holder(spawn(Command::new("sleep").arg("30")))
+    }
+
+    pub fn pid(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A pid whose process has ended: a running marker's dead holder.
+pub fn dead_pid() -> u32 {
+    let mut c = spawn(&mut Command::new("true"));
+    c.wait().unwrap();
+    c.id()
+}
+
+/// <b>'s running marker in the repo whose common git dir is <git>, naming
+/// <step> run by <pid> since 2026-10-18T14:03:00Z; its path.
+pub fn running_marker(git: &Path, b: &str, step: &str, pid: u32) -> PathBuf {
+    fs::create_dir_all(git.join("sheepdog")).unwrap();
+    let marker = git.join(format!("sheepdog/{}.running", b.replace('/', "__")));
+    let pid = pid.to_string();
+    let start = sheepdog::running::proc_start(&pid);
+    fs::write(&marker, format!("{pid} {step} 2026-10-18T14:03:00Z {start}\n")).unwrap();
+    marker
+}
+
+/// A verb's refusal while <step>, run by <pid>, holds <b>'s marker (#270).
+pub fn step_refusal(step: &str, b: &str, pid: u32, doing: &str) -> String {
+    format!(
+        "{step} is running on {b} (pid {pid}, since 2026-10-18T14:03:00Z): not {doing}. \
+         Wait for it to end (sd state shows it), or kill {pid}"
+    )
+}
+
 /// A temp dir holding bin/sd-<verb>, a link to the binary under test; the
 /// global config file's path (global.json, not yet written); home/ for HOME;
 /// fakebin/, first on PATH; and git's global config.

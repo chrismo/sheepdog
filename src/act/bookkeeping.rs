@@ -154,7 +154,7 @@ fn remove_gate(b: &str) -> String {
             ));
         }
     }
-    running::idle(b, running::lease(".", b).as_ref(), "removing its worktree").unwrap_or_else(|e| die(e));
+    running::idle(".", b, "removing its worktree").unwrap_or_else(|e| die(e));
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         return default;

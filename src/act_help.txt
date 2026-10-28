@@ -224,6 +224,11 @@ Verbs:
             sd state's mechanics go on. A lock whose process is gone from
             this host is stale, and every sd act verb clears it first
 
+Running steps (#270): while another process's step holds the branch's
+running marker (sd state shows it), restack (--resolve too), push, ship,
+autofix, verify and fetch refuse before they write anything, --force or not,
+as attach and forget --remove do: wait for it to end, or kill it.
+
 Usage limits (#269): a verb whose agent step stopped on its harness's
 usage limit exits 75, isn't counted in the failure record, and writes limit
 in SHEEPDOG_STATE_DIR, so sd watch starts no agent step before the reset.

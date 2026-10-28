@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{assert_has, jq, Sd};
+use common::{assert_has, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
 use std::fs;
 
 // By number, PR #<n> from a fork's their-fix, its head origin's
@@ -259,6 +259,45 @@ fn fetch_leaves_the_remotes_other_refs_unpruned() {
     sd.author_pushes("more", false);
     sd.ok(&["fetch"]);
     assert!(sd.git_try(&["rev-parse", "--verify", "-q", "refs/remotes/origin/gone-soon"]).is_some());
+}
+
+// @test "fetch: refused while a live step holds the running marker; nothing fetched, HEAD and the worktree don't move (#270)"
+#[test]
+fn fetch_refused_while_a_live_step_holds_the_running_marker_nothing_fetched_head_and_the_worktree_dont_move_270() {
+    let mut sd = sd();
+    sd.followed();
+    let head = sd.git(&["rev-parse", "HEAD"]);
+    let pr_head = sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]);
+    sd.author_pushes("more", false);
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "review/7", "review", holder.pid());
+    let r = sd.run(&["fetch"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&step_refusal("review", "review/7", holder.pid(), "fetching")]);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), head);
+    assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]), pr_head);
+    assert!(sd.git_try(&["rev-parse", "--verify", "-q", "refs/sheepdog/review/7/pr-fetched"]).is_none());
+    assert_eq!(sd.git(&["status", "--porcelain"]), "");
+    assert!(marker.exists());
+}
+
+// @test "fetch: the step's own child (RUNNING_HELD=<b>) fetches under its marker, and a dead holder's marker doesn't refuse (#270)"
+#[test]
+fn fetch_the_steps_own_child_fetches_under_its_marker_and_a_dead_holders_marker_doesnt_refuse_270() {
+    let mut sd = sd();
+    sd.followed();
+    let holder = Holder::new();
+    running_marker(&sd.tmp.join("repo/.git"), "review/7", "fetch", holder.pid());
+    let theirs = sd.author_pushes("more", false);
+    let r = sd.run_env(&[("RUNNING_HELD", "review/7")], &["fetch"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), theirs);
+
+    running_marker(&sd.tmp.join("repo/.git"), "review/7", "review", dead_pid());
+    let theirs = sd.author_pushes("again", false);
+    let r = sd.run(&["fetch"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), theirs);
 }
 
 #[test]

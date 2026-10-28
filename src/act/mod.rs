@@ -240,6 +240,20 @@ pub fn no_base_why(state: &Value, remote: &str) -> String {
     String::new()
 }
 
+/// The mechanical verbs that write the worktree or the remote, in their own
+/// words: each refuses, --force or not, before it writes anything, while
+/// another process's step holds the branch's running marker (#270), so none
+/// rests on NEXT or a pass's snapshot. restack --resolve is refused before
+/// its rebase starts, so HEAD never moves under the running step.
+const WAIT_FOR_STEP: &[(&str, &str)] = &[
+    ("restack", "restacking"),
+    ("push", "pushing"),
+    ("ship", "shipping"),
+    ("autofix", "running autofix"),
+    ("verify", "running verify"),
+    ("fetch", "fetching"),
+];
+
 pub fn run(argv: &[String]) -> ExitCode {
     let Some((verb, rest)) = argv.split_first() else {
         eprint!("{HELP}");
@@ -269,6 +283,9 @@ pub fn run(argv: &[String]) -> ExitCode {
     lock_sweep(&b);
     if follow::AUTHORS.contains(&verb.as_str()) && follow::reviewing(&b) {
         die(format!("{b} is a PR you're reviewing (sd act follow): sd act {verb} is the author's"));
+    }
+    if let Some((_, doing)) = WAIT_FOR_STEP.iter().find(|(v, _)| v == verb) {
+        crate::running::idle(".", &b, doing).unwrap_or_else(|e| die(e));
     }
     match verb.as_str() {
         "push" => push::push(&b, &remote, a.force),
