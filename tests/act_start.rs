@@ -1481,7 +1481,9 @@ fn implement_a_term_to_sd_leaves_the_failure_record_as_it_was_270() {
     assert_ne!(r.status, 0);
     let before = sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/failed"]);
     assert_eq!(jq(&["-r", ".count"], &before), "1");
-    implement_signalled(&mut sd, libc::SIGTERM);
+    let (st, err) = implement_signalled(&mut sd, libc::SIGTERM);
+    assert_eq!(std::os::unix::process::ExitStatusExt::signal(&st), Some(libc::SIGTERM), "{st:?}");
+    assert_has(&err, &["not counted as a failure"]);
     assert_eq!(sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/failed"]), before);
 }
 
