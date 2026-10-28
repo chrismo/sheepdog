@@ -1432,11 +1432,11 @@ sleep 30
 "#;
 
 /// Run implement with CLAUDE_HANGS as the agent, and send sd <sig> once the
-/// agent has started: sd's exit status.
-fn implement_signalled(sd: &mut Sd, sig: i32) -> std::process::ExitStatus {
+/// agent has started: sd's exit status and stderr.
+fn implement_signalled(sd: &mut Sd, sig: i32) -> (std::process::ExitStatus, String) {
     sd.fake("claude", CLAUDE_HANGS);
     sd.rm("started");
-    let mut job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::null()));
+    let mut job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::piped()));
     for _ in 0..100 {
         if sd.ran("started") {
             break;
@@ -1446,7 +1446,8 @@ fn implement_signalled(sd: &mut Sd, sig: i32) -> std::process::ExitStatus {
     assert!(sd.ran("started"), "signal {sig}: the agent never started");
     assert!(Path::new(&sd.path("repo/.git/sheepdog/feat-x.running")).exists(), "signal {sig}: no marker while the step runs");
     unsafe { libc::kill(job.id() as i32, sig) };
-    job.wait().unwrap()
+    let o = job.wait_with_output().unwrap();
+    (o.status, String::from_utf8_lossy(&o.stderr).into_owned())
 }
 
 // @test "implement: a TERM or INT to sd ends it of that signal, with no marker, no cap charged, and no failure counted (#177, #270)"
@@ -1457,7 +1458,7 @@ fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_ca
     sd.started(TASK);
     let marker = sd.path("repo/.git/sheepdog/feat-x.running");
     for sig in [libc::SIGTERM, libc::SIGINT] {
-        let st = implement_signalled(&mut sd, sig);
+        let (st, err) = implement_signalled(&mut sd, sig);
         assert_eq!(st.signal(), Some(sig), "{st:?}");
         assert!(!Path::new(&marker).exists(), "signal {sig}: the marker is left");
         let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
@@ -1465,6 +1466,7 @@ fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_ca
         // The agent's status: sd ends its group with TERM either way.
         assert_has(row, &["status:143,cost_usd:null,total_cost_usd:null,estimated:false"]);
         assert_eq!(sd.git_status(&["cat-file", "-e", "refs/sheepdog/feat-x/failed"]), 128, "signal {sig}: counted as a failure");
+        assert_has(&err, &["sd: implement stopped by a signal, not counted as a failure"]);
     }
 }
 
