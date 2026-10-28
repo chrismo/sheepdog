@@ -3173,6 +3173,70 @@ fn reconcile_a_launched_step_past_its_deadline_gets_term_then_kill_and_is_counte
     assert_has(&sd.failure("feat"), &[r#""count":2"#]);
 }
 
+/// <b>'s PR is <state>, with a step running on it.
+fn running_on(sd: &Sd, b: &str, state: &str) {
+    sd.ps_fixture(b, &[&format!(r#".pr.state = "{state}" | .session.running = {{step: "push", pid: 1, since: "2026-10-23T00:00:00Z"}}"#)]);
+}
+
+// @test "kill on merge: a launched step on a PR that merged or closed is ended, not counted (#270)"
+#[test]
+fn kill_on_merge_a_launched_step_on_a_merged_or_closed_pr_is_ended_not_counted_270() {
+    let sd = sd();
+    for (state, said) in [("MERGED", "merged"), ("CLOSED", "closed")] {
+        running_on(&sd, "feat", state);
+        let holder = orphan("exec sleep 30");
+        sd.lease("feat", holder, 60);
+        let t = Instant::now();
+        sd.pass();
+        assert!(t.elapsed().as_secs() < 4, "{state}: {:?}", t.elapsed());
+        assert!(ends(holder), "{state}");
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t-\tsd act push: ended, #7 {said}")]);
+        assert!(!sd.marker("feat").exists(), "{state}");
+        assert_eq!(sd.failure("feat"), "", "{state}");
+
+        let stubborn = orphan(r#"trap "" TERM; exec sleep 30"#);
+        sd.lease("feat", stubborn, 60);
+        sd.pass();
+        assert!(ends(stubborn), "{state}");
+        assert!(!sd.marker("feat").exists(), "{state}");
+        assert_eq!(sd.failure("feat"), "", "{state}");
+    }
+}
+
+// @test "kill on merge: a launched step on an open PR is left running (#270)"
+#[test]
+fn kill_on_merge_a_launched_step_on_an_open_pr_is_left_running_270() {
+    let sd = sd();
+    running_on(&sd, "feat", "OPEN");
+    let holder = orphan("exec sleep 30");
+    sd.lease("feat", holder, 60);
+    sd.pass();
+    assert!(!ends(holder));
+    assert!(sd.marker("feat").exists());
+    assert_lacks(&sd.last_pass(), "ended");
+    end_orphan(holder);
+}
+
+// @test "kill on merge: a step chrismo ran, with no deadline, on a merged PR is left running (#270)"
+#[test]
+fn kill_on_merge_a_step_chrismo_ran_on_a_merged_pr_is_left_running_270() {
+    let sd = sd();
+    running_on(&sd, "feat", "MERGED");
+    let holder = orphan("exec sleep 30");
+    let pid = holder.to_string();
+    fs::create_dir_all(sd.marker("feat").parent().unwrap()).unwrap();
+    fs::write(sd.marker("feat"), format!("{pid} push {} {}\n", time::now_utc().0, running::proc_start(&pid))).unwrap();
+    sd.pass();
+    assert!(!ends(holder));
+    assert!(sd.marker("feat").exists());
+    assert_lacks(&sd.last_pass(), "ended");
+    end_orphan(holder);
+}
+
+fn end_orphan(pid: u32) {
+    let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+}
+
 #[test]
 fn reconcile_leaves_a_live_lease_and_a_step_chrismo_ran_alone_268() {
     let sd = sd();
