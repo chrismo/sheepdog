@@ -1,10 +1,13 @@
 // attach (A9, takeover): take branch.<b>.sd-lock, open the branch's session
 // in its harness's TUI in its worktree, and release the lock when the TUI
 // exits, however it exits. While the lock is held, agent steps refuse to run
-// (attached_check).
+// (attached_check); while an agent step holds the branch's running marker,
+// attach refuses, --force or not (#270). A step past attached_check that
+// hasn't written its marker yet when attach looks still runs alongside.
 
 use super::{cfg, die, hostname};
 use crate::git::{git, git_out, worktree_for};
+use crate::running::{self, Lease};
 use crate::val::at;
 use crate::{config, harness, proc, time};
 use serde_json::Value;
@@ -22,6 +25,18 @@ fn take(b: &str, lock: &str, force: bool) -> Result<Option<String>, String> {
         ("", _) => Ok(None),
         (_, true) => Ok(Some(format!("taking over {b}'s lock ({lock})"))),
         _ => Err(format!("{b} is already attached ({lock}); exit that session, or --force to take it over")),
+    }
+}
+
+/// Whether attach may open <b> under its running marker: not while a live
+/// agent step holds it, --force or not.
+fn idle(b: &str, marker: Option<&Lease>) -> Result<(), String> {
+    match marker {
+        Some(l) if l.live => Err(format!(
+            "{} is running on {b} (pid {}, since {}): not attaching. Wait for it to end (sd state shows it), or kill {}",
+            l.step, l.pid, l.since, l.pid
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -68,13 +83,14 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
         die(format!("{b}'s worktree {wt} is gone; git worktree prune forgets it"));
     }
     let key = |k: &str| format!("branch.{b}.sd-{k}");
-    if let Some(note) = take(b, &get(&key("lock")), force).unwrap_or_else(|e| die(e)) {
+    let before = get(&key("lock"));
+    if let Some(note) = take(b, &before, force).unwrap_or_else(|e| die(e)) {
         eprintln!("sd act: {note}");
     }
     let stored = get(&key("harness"));
-    let sid = get(&key("session"));
-    let (h, resume) = pick(b, harness_opt, &stored, &sid, || cfg("harness", b)).unwrap_or_else(|e| die(e));
-    let sid = if resume { sid } else { harness::new_session() };
+    let read = get(&key("session"));
+    let (h, resume) = pick(b, harness_opt, &stored, &read, || cfg("harness", b)).unwrap_or_else(|e| die(e));
+    let sid = if resume { read.clone() } else { harness::new_session() };
     let mut c = harness::tui(&h, &sid, resume, &block(&h, b)).unwrap_or_else(|e| die(e));
     c.current_dir(&wt);
 
@@ -83,6 +99,17 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     if !set.ok {
         eprint!("{}", set.stderr);
         std::process::exit(set.code);
+    }
+    // After the lock, so a step that starts from here refuses (attached_check);
+    // the lock goes back to what it was.
+    if let Err(e) = idle(b, running::lease(".", b).as_ref()) {
+        if get(&key("lock")) == mine {
+            match before.as_str() {
+                "" => git(".", &["config", "--unset", &key("lock")]),
+                _ => git(".", &["config", &key("lock"), &before]),
+            };
+        }
+        die(e);
     }
     let mode = if resume { "resume" } else { "new" };
     eprintln!("sd act: attached to {b}: {h} ({mode} session {sid}) in {wt}; agent steps wait until you exit");
@@ -93,7 +120,11 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     let say = |m: &str| {
         let _ = std::io::stderr().write_all(m.as_bytes());
     };
-    if resume || harness::session_exists(&h, &sid) {
+    let now = get(&key("session"));
+    if now != read {
+        // A step's step_store moved it: that session is the branch's now.
+        say(&format!("sd act: {b}'s session moved to {now} during the attach, so {sid} isn't stored\n"));
+    } else if resume || harness::session_exists(&h, &sid) {
         for (k, v) in [("session", &sid), ("harness", &h)] {
             let o = git(".", &["config", &key(k), v]);
             if !o.ok {
@@ -125,6 +156,25 @@ mod tests {
         assert_eq!(
             take("feat", lock, false),
             Err(format!("feat is already attached ({lock}); exit that session, or --force to take it over"))
+        );
+    }
+
+    #[test]
+    fn idle_unless_a_live_step_holds_the_marker_270() {
+        let lease = |live| Lease {
+            pid: "42".into(),
+            step: "address".into(),
+            since: "2026-10-22T00:00:00Z".into(),
+            deadline: None,
+            live,
+        };
+        assert_eq!(idle("feat", None), Ok(()));
+        assert_eq!(idle("feat", Some(&lease(false))), Ok(()));
+        assert_eq!(
+            idle("feat", Some(&lease(true))),
+            Err("address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not attaching. \
+                 Wait for it to end (sd state shows it), or kill 42"
+                .into())
         );
     }
 

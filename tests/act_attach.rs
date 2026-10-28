@@ -18,6 +18,7 @@
 mod common;
 
 use common::{assert_has, assert_match, chomp, spawn, Sd};
+use sheepdog::running::proc_start;
 use std::fs;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -456,6 +457,78 @@ fn attach_releases_only_its_own_lock_not_one_that_replaced_it() {
     let r = sd.run(&["attach"]);
     assert_eq!(r.status, 0);
     assert_eq!(sd.lock().as_deref(), Some("other@elsewhere.example 2026-10-15T00:00:00Z"));
+}
+
+/// The branch's running marker, written by <holder>: an implement step.
+fn marker(sd: &Sd, holder: u32) -> (String, String) {
+    let marker = sd.path("repo/.git/sheepdog/feat.running");
+    fs::create_dir_all(sd.tmp.join("repo/.git/sheepdog")).unwrap();
+    let pid = holder.to_string();
+    let line = format!("{pid} implement 2026-10-18T14:03:00Z {}\n", proc_start(&pid));
+    fs::write(&marker, &line).unwrap();
+    (marker, line)
+}
+
+#[test]
+fn attach_refuses_while_a_live_step_holds_the_running_marker_270() {
+    let sd = sd();
+    let holder = Sleeper(spawn(Command::new("sleep").arg("30")));
+    let pid = holder.0.id();
+    let (marker, line) = marker(&sd, pid);
+    let r = sd.run(&["attach"]);
+    assert_ne!(r.status, 0);
+    assert_has(
+        &r.output,
+        &[
+            &format!("implement is running on feat (pid {pid}, since 2026-10-18T14:03:00Z)"),
+            "sd state",
+            &format!("kill {pid}"),
+        ],
+    );
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.lock(), None);
+    assert_eq!(fs::read_to_string(&marker).unwrap(), line);
+}
+
+#[test]
+fn attach_force_takes_over_a_lock_but_not_a_running_step_270() {
+    let sd = sd();
+    let attached = sd.live_lock();
+    let holder = Sleeper(spawn(Command::new("sleep").arg("30")));
+    let (marker, line) = marker(&sd, holder.0.id());
+    let r = sd.run(&["attach", "--force"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["implement is running on feat"]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.lock(), Some(attached.lock()));
+    assert_eq!(fs::read_to_string(&marker).unwrap(), line);
+}
+
+#[test]
+fn attach_a_dead_steps_marker_doesnt_refuse_270() {
+    let sd = sd();
+    let mut dead = spawn(Command::new("sh").args(["-c", "exit 0"]));
+    dead.wait().unwrap();
+    marker(&sd, dead.id());
+    let r = sd.run(&["attach"]);
+    assert_eq!(r.status, 0);
+    assert!(sd.fx_exists("claude.args"));
+    assert_eq!(sd.lock(), None);
+}
+
+#[test]
+fn attach_keeps_a_session_pointer_moved_during_the_attach_270() {
+    let sd = sd();
+    let moved = "99999999-2222-4333-8444-555555555555";
+    sd.script(
+        &sd.tmp.join("fx/agent"),
+        &format!("#!/usr/bin/env bash\ngit config branch.feat.sd-session {moved}\n"),
+    );
+    let r = sd.run_sep(&["attach"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.config("branch.feat.sd-session").as_deref(), Some(moved));
+    assert_has(&r.stderr, &[&format!("feat's session moved to {moved} during the attach, so {SID} isn't stored")]);
+    assert_eq!(sd.lock(), None);
 }
 
 // ── agent steps while attached ───────────────────────────────────────────────
