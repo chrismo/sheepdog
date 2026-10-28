@@ -5,9 +5,11 @@
 //
 // Real git (a bare origin and a clone). sd state answers from
 // $FX/states/feat.json (SHEEPDOG_STATE_FIXTURES). Fakes on PATH: gh (logs
-// each call as JSON to $FX/gh.log and answers the nodes(ids:) lookup from
-// $FX/nodes.json), claude and pi (run $FX/agent to edit files, then print the
-// canned result).
+// each GraphQL call as JSON to $FX/gh.log and answers the nodes(ids:) lookup
+// from $FX/nodes.json; gh pr view, logged to $FX/pr-view.calls, answers the
+// PR's state from $FX/pr.state, OPEN when it's missing, and fails when
+// $FX/pr-view.fail exists), claude and pi (run $FX/agent to edit files, then
+// print the canned result).
 
 mod common;
 
@@ -16,6 +18,11 @@ use std::fs;
 use std::time::Instant;
 
 const GH: &str = r#"#!/usr/bin/env bash
+if [[ "$1 $2" == "pr view" ]]; then
+  printf '%s\n' "$*" >> "$FX/pr-view.calls"
+  [[ -f $FX/pr-view.fail ]] && { echo "gh: HTTP 502" >&2; exit 1; }
+  cat "$FX/pr.state" 2>/dev/null || echo OPEN; exit
+fi
 q="" fields=() filter=.
 while (( $# )); do
   case $1 in
@@ -1007,6 +1014,60 @@ fn a_failed_fetch_stops_before_anything_runs() {
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["fetch"]);
     assert!(!sd.ran("claude.args"));
+}
+
+// @test "the PR merged or closed while the step ran: nothing pushed or posted, the commit kept, and said (#270)"
+#[test]
+fn the_pr_merged_or_closed_while_the_step_ran_nothing_pushed_or_posted_the_commit_kept_and_said_270() {
+    for state in ["MERGED", "CLOSED"] {
+        let sd = sd();
+        sd.agent(&format!("{AGENT_FIXES}echo {state} > \"$FX/pr.state\"\n"));
+        let before = sd.remote_feat();
+        let r = sd.run(&["address"]);
+        assert_ne!(r.status, 0, "{state}");
+        let wt = sd.path("repo");
+        assert_has(
+            &r.output,
+            &[&format!("PR #7 {} during address: not pushing or posting; the commit is kept in {wt}", state.to_lowercase())],
+        );
+        assert_eq!(sd.subject(), "Uppercase three");
+        assert_eq!(sd.remote_feat(), before);
+        assert_eq!(sd.gh_ops(), "nodes");
+        assert_eq!(sd.fx("pr-view.calls"), "pr view https://example/pr/7 --json state --jq .state");
+    }
+}
+
+// @test "the PR merged during a reply-only round: nothing posted, and no commit claimed (#270)"
+#[test]
+fn the_pr_merged_during_a_reply_only_round_nothing_posted_and_no_commit_claimed_270() {
+    let sd = sd();
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "done", commit_message: null, summary: "", items: [{id: "T1", action: "reply", reply: "Fine as is."}]}"#);
+    sd.put("pr.state", "MERGED");
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["PR #7 merged during address: not pushing or posting; nothing was committed"]);
+    assert!(!r.output.contains("the commit is kept"), "{}", r.output);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_eq!(sd.gh_ops(), "nodes");
+}
+
+// @test "the PR's state unreadable before the push: nothing pushed or posted, the commit kept, and why (#270)"
+#[test]
+fn the_prs_state_unreadable_before_the_push_nothing_pushed_or_posted_the_commit_kept_and_why_270() {
+    let sd = sd();
+    sd.put("pr-view.fail", "");
+    let before = sd.remote_feat();
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(
+        &r.output,
+        &["can't read PR #7's state", "gh: HTTP 502", "not pushing or posting", &format!("the commit is kept in {}", sd.path("repo"))],
+    );
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), before);
+    assert_eq!(sd.gh_ops(), "nodes");
 }
 
 // @test "push failure: nothing posted"

@@ -5,7 +5,7 @@
 // so the same red isn't handed over again.
 
 use super::commands::{status, tail, verify_autofix, verify_autofix_to, Report};
-use super::hold::{hold_gate, hold_since};
+use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree, must, question_answered,
@@ -120,10 +120,11 @@ fn ci_logs(sha: &str) -> String {
     logs
 }
 
-/// Push the fix, unless held for chrismo; <kept> says what is left unpushed
-/// when the push fails.
-fn publish(b: &str, remote: &str, kept: &str) {
+/// Push the fix in <wt>, unless held for chrismo or <state>'s PR is no longer
+/// open; <kept> says what is left unpushed when the push fails.
+fn publish(b: &str, wt: &str, remote: &str, state: &Value, kept: &str) {
     hold_gate(b, &format!("pushing {b}"), "");
+    pr_gate(&t(state, "pr.number"), &t(state, "pr.url"), "ci-fix", "pushing", &format!("the commit is kept in {wt}"));
     if let Err(e) = push_branch(b, remote) {
         eprintln!("sd act: {e}");
         die(kept);
@@ -202,7 +203,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
                     println!("autofix fixed what verify saw; not pushed (--no-publish): sd act push");
                     return;
                 }
-                publish(b, remote, &format!("autofix's commit is kept in {wt}, not pushed"));
+                publish(b, wt, remote, &state, &format!("autofix's commit is kept in {wt}, not pushed"));
                 println!("autofix fixed what verify saw; CI reruns on the push");
                 return;
             }
@@ -308,7 +309,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         println!("not pushed (--no-publish): sd act push when ready");
         return;
     }
-    publish(b, remote, &format!("the fix is committed in {wt}, not pushed"));
+    publish(b, wt, remote, &state, &format!("the fix is committed in {wt}, not pushed"));
     println!("CI reruns on the push");
 }
 

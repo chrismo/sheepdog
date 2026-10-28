@@ -4,6 +4,7 @@
 use super::{die, no_base_why, state_json};
 use crate::git::{self, git, git_input, git_ok, git_out, is_ancestor, main_worktree, rev, stacked_on, stacked_unclear, worktree_for};
 use crate::proc::Out;
+use crate::running;
 use crate::val::{at, sj, t};
 use serde_json::Value;
 use std::path::Path;
@@ -127,8 +128,9 @@ pub fn unenroll(b: &str) {
 }
 
 /// Die unless forget --remove may take <b> and its worktree: the PR merged
-/// with the tip in it, and a worktree that isn't attached and has nothing
-/// uncommitted. The default branch, which a main worktree is switched to.
+/// with the tip in it, no live agent step on it (#270), and a worktree that
+/// isn't attached and has nothing uncommitted. The default branch, which a
+/// main worktree is switched to.
 fn remove_gate(b: &str) -> String {
     let state = state_json(".", b).unwrap_or_else(|_| die(format!("can't read {b}'s state: sd state --json {b} says why")));
     let (pr_state, number, head_sha) = (t(&state, "pr.state"), t(&state, "pr.number"), t(&state, "pr.head_sha"));
@@ -152,6 +154,7 @@ fn remove_gate(b: &str) -> String {
             ));
         }
     }
+    running::idle(b, running::lease(".", b).as_ref(), "removing its worktree").unwrap_or_else(|e| die(e));
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         return default;

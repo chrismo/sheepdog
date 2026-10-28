@@ -7,7 +7,7 @@
 
 use super::{cfg, die, hostname};
 use crate::git::{git, git_out, worktree_for};
-use crate::running::{self, Lease};
+use crate::running;
 use crate::val::at;
 use crate::{config, harness, proc, time};
 use serde_json::Value;
@@ -25,18 +25,6 @@ fn take(b: &str, lock: &str, force: bool) -> Result<Option<String>, String> {
         ("", _) => Ok(None),
         (_, true) => Ok(Some(format!("taking over {b}'s lock ({lock})"))),
         _ => Err(format!("{b} is already attached ({lock}); exit that session, or --force to take it over")),
-    }
-}
-
-/// Whether attach may open <b> under its running marker: not while a live
-/// agent step holds it, --force or not.
-fn idle(b: &str, marker: Option<&Lease>) -> Result<(), String> {
-    match marker {
-        Some(l) if l.live => Err(format!(
-            "{} is running on {b} (pid {}, since {}): not attaching. Wait for it to end (sd state shows it), or kill {}",
-            l.step, l.pid, l.since, l.pid
-        )),
-        _ => Ok(()),
     }
 }
 
@@ -99,8 +87,8 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
         std::process::exit(set.code);
     }
     // After the lock, so a step that starts from here refuses (attached_check);
-    // the lock goes back to what it was.
-    if let Err(e) = idle(b, running::lease(".", b).as_ref()) {
+    // --force or not, the lock goes back to what it was.
+    if let Err(e) = running::idle(b, running::lease(".", b).as_ref(), "attaching") {
         if get(&key("lock")) == mine {
             match before.as_str() {
                 "" => git(".", &["config", "--unset", &key("lock")]),
@@ -158,25 +146,6 @@ mod tests {
         assert_eq!(
             take("feat", lock, false),
             Err(format!("feat is already attached ({lock}); exit that session, or --force to take it over"))
-        );
-    }
-
-    #[test]
-    fn idle_unless_a_live_step_holds_the_marker_270() {
-        let lease = |live| Lease {
-            pid: "42".into(),
-            step: "address".into(),
-            since: "2026-10-22T00:00:00Z".into(),
-            deadline: None,
-            live,
-        };
-        assert_eq!(idle("feat", None), Ok(()));
-        assert_eq!(idle("feat", Some(&lease(false))), Ok(()));
-        assert_eq!(
-            idle("feat", Some(&lease(true))),
-            Err("address is running on feat (pid 42, since 2026-10-22T00:00:00Z): not attaching. \
-                 Wait for it to end (sd state shows it), or kill 42"
-                .into())
         );
     }
 
