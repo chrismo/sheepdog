@@ -719,9 +719,11 @@ impl Watch {
         let busy = !at(s, "session.running").is_null()
             || on(s, "session.locked")
             || running::lease(repo, b).is_some_and(|l| l.live);
+        if !enabled || busy || !may_dispatch(s, key) {
+            return None;
+        }
         // forget --remove refuses it: left to chrismo, not refused every pass.
-        let dirty = step == "forget" && uncommitted(repo, b);
-        if !enabled || busy || dirty || !may_dispatch(s, key) {
+        if step == "forget" && uncommitted(repo, b) {
             return None;
         }
         let verb = act_args(step).join(" ");
