@@ -563,6 +563,185 @@ fn attach_a_session_pointer_unset_during_the_attach_stays_unset_270() {
     assert_has(&r.stderr, &[&format!("feat's session was unset during the attach, so {SID} isn't stored")]);
 }
 
+// ── attach after a step that ended without its session stored (#270) ─────────
+
+/// A claude for implement that fails: it edits file.txt, writes its
+/// session's transcript and exits 1, so nothing stores its session.
+const FAILING_IMPLEMENTER: &str = r#"#!/usr/bin/env bash
+printf '%s\n' "$@" > "$FX/claude.args"
+echo d >> file.txt
+sid=$(grep -A1 -x -e --session-id "$FX/claude.args" | tail -1)
+touch "$CLAUDE_CONFIG_DIR/projects/-repo/$sid.jsonl"
+exit 1
+"#;
+
+const FAILED: &str = "22222222-2222-4333-8444-555555555555";
+
+impl Sd {
+    /// The repo's main worktree, as usage.sup's records name it.
+    fn repo(&self) -> String {
+        self.git(&["rev-parse", "--show-toplevel"])
+    }
+
+    /// Appends a usage record of <step> on <repo>'s <branch>, in <harness>'s
+    /// <session>, ended with <status>; and writes the session's transcript.
+    fn step_record(&self, repo: &str, branch: &str, step: &str, harness: &str, session: &str, status: i32) {
+        let line = format!(
+            "{{time:2026-10-28T00:00:00Z,repo:\"{repo}\",branch:\"{branch}\",step:\"{step}\",harness:\"{harness}\",\
+             session:\"{session}\",mode:\"fork\",status:{status},cost_usd:null,total_cost_usd:null,estimated:false}}\n"
+        );
+        let f = self.tmp.join("state/usage.sup");
+        fs::create_dir_all(self.tmp.join("state")).unwrap();
+        let mut text = fs::read_to_string(&f).unwrap_or_default();
+        text += &line;
+        fs::write(&f, text).unwrap();
+        let t = match harness {
+            "pi" => format!("pi/--repo--/2026-10-28T00-00-00-000Z_{session}.jsonl"),
+            _ => format!("claude/projects/-repo/{session}.jsonl"),
+        };
+        fs::write(self.tmp.join(t), "").unwrap();
+    }
+
+    /// An uncommitted edit in the worktree, as a killed step leaves.
+    fn dirty(&self) {
+        self.write("file.txt", "a\nb\nc\nd\n");
+    }
+}
+
+/// Attach resumed the branch's stored session, as it did before #270's item 4.
+fn as_today(sd: &Sd, r: &common::Run) {
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(after(&sd.fx_read("claude.args"), "--resume"), SID);
+    assert!(!r.stderr.contains("without its session stored"), "{}", r.stderr);
+    assert_eq!(sd.config("branch.feat.sd-session").as_deref(), Some(SID));
+}
+
+// @test "attach: after a failed implement with its edits left, resumes the implement's session, says so, and stores it (#270)"
+#[test]
+fn attach_after_a_failed_implement_with_its_edits_left_resumes_its_session_270() {
+    let sd = sd();
+    sd.fake("claude", FAILING_IMPLEMENTER);
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0, "{}", r.output);
+    let failed = after(&sd.fx_read("claude.args"), "--session-id");
+    assert_ne!(failed, SID);
+    assert_eq!(sd.config("branch.feat.sd-session").as_deref(), Some(SID));
+    assert_has(&sd.git(&["status", "--porcelain"]), &["file.txt"]);
+
+    sd.fake("claude", &TUI.replace("HARNESS", "claude"));
+    let r = sd.run_sep(&["attach"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(after(&sd.fx_read("claude.args"), "--resume"), failed);
+    let wt = sd.path("repo");
+    assert_has(
+        &r.stderr,
+        &[&format!(
+            "sd act: {wt} has uncommitted changes from feat's last step, implement, which ended without its session stored: resuming its session {failed}, not {SID}"
+        )],
+    );
+    let said = r.stderr.find("without its session stored").unwrap();
+    assert!(said < r.stderr.find("attached to feat").unwrap(), "{}", r.stderr);
+    assert_eq!(sd.config("branch.feat.sd-session"), Some(failed));
+    assert_eq!(sd.config("branch.feat.sd-harness").as_deref(), Some("claude"));
+    assert_eq!(sd.lock(), None);
+}
+
+// @test "attach: a failed implement but a clean worktree: resumes the branch's session (#270)"
+#[test]
+fn attach_a_failed_implement_but_a_clean_worktree_resumes_the_branchs_session_270() {
+    let sd = sd();
+    sd.step_record(&sd.repo(), "feat", "implement", "claude", FAILED, 1);
+    let r = sd.run_sep(&["attach"]);
+    as_today(&sd, &r);
+}
+
+// @test "attach: the last step succeeded, or only read: resumes the branch's session (#270)"
+#[test]
+fn attach_the_last_step_succeeded_or_only_read_resumes_the_branchs_session_270() {
+    for (step, status) in [("implement", 0), ("review", 1), ("describe", 124)] {
+        let sd = sd();
+        sd.dirty();
+        sd.step_record(&sd.repo(), "feat", step, "claude", FAILED, status);
+        let r = sd.run_sep(&["attach"]);
+        as_today(&sd, &r);
+    }
+}
+
+// @test "attach: only the branch's last step counts: a failed one before a later one doesn't (#270)"
+#[test]
+fn attach_only_the_branchs_last_step_counts_270() {
+    let sd = sd();
+    sd.dirty();
+    sd.step_record(&sd.repo(), "feat", "implement", "claude", FAILED, 1);
+    sd.step_record(&sd.repo(), "feat", "review", "claude", "33333333-2222-4333-8444-555555555555", 0);
+    let r = sd.run_sep(&["attach"]);
+    as_today(&sd, &r);
+}
+
+// @test "attach: a failed step on another branch, or another repo, doesn't count (#270)"
+#[test]
+fn attach_a_failed_step_on_another_branch_or_repo_doesnt_count_270() {
+    for (repo, branch) in [(None, "other"), (Some("/elsewhere"), "feat")] {
+        let sd = sd();
+        sd.dirty();
+        let repo = repo.map_or_else(|| sd.repo(), str::to_string);
+        sd.step_record(&repo, branch, "implement", "claude", FAILED, 1);
+        let r = sd.run_sep(&["attach"]);
+        as_today(&sd, &r);
+    }
+}
+
+// @test "attach: a failed step in another harness than attach's doesn't count (#270)"
+#[test]
+fn attach_a_failed_step_in_another_harness_doesnt_count_270() {
+    let sd = sd();
+    sd.dirty();
+    sd.step_record(&sd.repo(), "feat", "implement", "pi", FAILED, 1);
+    let r = sd.run_sep(&["attach"]);
+    as_today(&sd, &r);
+
+    // A claude step's, with no session stored, and attach --harness pi.
+    let sd = self::sd();
+    sd.git(&["config", "--unset", "branch.feat.sd-session"]);
+    sd.dirty();
+    sd.step_record(&sd.repo(), "feat", "implement", "claude", FAILED, 1);
+    let r = sd.run_sep(&["attach", "--harness", "pi"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    let args = sd.fx_read("pi.args");
+    assert_ne!(after(&args, "--session-id"), FAILED);
+    assert!(!r.stderr.contains("without its session stored"), "{}", r.stderr);
+}
+
+// @test "attach: no session stored, a failed implement in a new one, its edits left: resumes it (#270)"
+#[test]
+fn attach_no_session_stored_a_failed_implement_its_edits_left_resumes_it_270() {
+    let sd = sd();
+    sd.git(&["config", "--unset", "branch.feat.sd-session"]);
+    sd.dirty();
+    sd.step_record(&sd.repo(), "feat", "implement", "claude", FAILED, 1);
+    let r = sd.run_sep(&["attach"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(after(&sd.fx_read("claude.args"), "--resume"), FAILED);
+    assert_has(
+        &r.stderr,
+        &[&format!(
+            "from feat's last step, implement, which ended without its session stored: resuming its session {FAILED}, not a new one"
+        )],
+    );
+    assert_eq!(sd.config("branch.feat.sd-session").as_deref(), Some(FAILED));
+}
+
+// @test "attach: a failed step's session with no transcript isn't resumed (#270)"
+#[test]
+fn attach_a_failed_steps_session_with_no_transcript_isnt_resumed_270() {
+    let sd = sd();
+    sd.dirty();
+    sd.step_record(&sd.repo(), "feat", "implement", "claude", FAILED, 1);
+    fs::remove_file(sd.tmp.join(format!("claude/projects/-repo/{FAILED}.jsonl"))).unwrap();
+    let r = sd.run_sep(&["attach"]);
+    as_today(&sd, &r);
+}
+
 // ── agent steps while attached ───────────────────────────────────────────────
 
 // @test "implement: refused while attached; nothing runs"

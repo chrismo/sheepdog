@@ -228,7 +228,12 @@ Verbs:
             this host is stale, and every sd act verb clears it first.
             A step that runs anyway (--force) or started first checks the
             lock again before it commits and before it pushes: a live lock
-            it didn't start under stops it, the edits or commit kept
+            it didn't start under stops it, the edits or commit kept.
+            When the worktree has uncommitted changes and the branch's
+            last step (implement, address, ci-fix, restack --resolve)
+            failed or was killed without its session stored, attach
+            resumes that step's session, which made the edits, instead
+            of the stored one, says so, and stores it on exit
 
 Running steps (#270): while another process's step holds the branch's
 running marker (sd state shows it), restack (--resolve too), push, ship,
