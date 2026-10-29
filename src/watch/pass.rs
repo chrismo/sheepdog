@@ -143,6 +143,14 @@ fn uncommitted(repo: &str, b: &str) -> bool {
     !o.ok || !o.stdout.is_empty()
 }
 
+/// <b>'s tip is in its merged PR (<s>'s pr.head_sha, or behind it), as
+/// forget --remove's gate needs.
+fn in_pr(repo: &str, b: &str, s: &Value) -> bool {
+    let tip = git_out(repo, &["rev-parse", "-q", "--verify", &format!("refs/heads/{b}")]).unwrap_or_default();
+    let head = t(s, "pr.head_sha");
+    !tip.is_empty() && (tip == head || git::is_ancestor(repo, &tip, &head))
+}
+
 /// How long a launched step's lease outlasts its own timeout, so the lease
 /// ends only a step that's stuck.
 const GRACE: u64 = 60;
@@ -722,8 +730,8 @@ impl Watch {
         if !enabled || busy || !may_dispatch(s, key) {
             return None;
         }
-        // forget --remove refuses it: left to chrismo, not refused every pass.
-        if step == "forget" && uncommitted(repo, b) {
+        // forget --remove refuses these: left to chrismo, not refused every pass.
+        if step == "forget" && (uncommitted(repo, b) || !in_pr(repo, b, s)) {
             return None;
         }
         let verb = act_args(step).join(" ");

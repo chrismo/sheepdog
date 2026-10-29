@@ -78,10 +78,10 @@ Notes:
     file and path; keys are case-sensitive; a number may be quoted
     ("1800"); forkLimit, reviewRounds, interval, rateLimitFloor and
     agentSteps are whole numbers; autoRun, autoForget and useApiKey are
-    true or false; get prints a value as written; remote is global or repo file
-    only; interval, notify, vacuumAfter, rateLimitFloor and agentSteps are
-    global-file only; a repo file takes everything else a branch file
-    does
+    true or false; get prints a value as written; remote is global or
+    repo file only; interval, notify, vacuumAfter, rateLimitFloor and
+    agentSteps are global-file only; a repo file takes everything else a
+    branch file does
   - a profile holds what a branch file may; profiles are defined in the
     global or repo file only; a pick of a profile no file defines is an
     error on every read, naming the file that picks it. set refuses to

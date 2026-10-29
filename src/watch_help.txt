@@ -111,11 +111,11 @@ file (<branch>.json) and its stored description (<branch>.describe.json),
 which a branch -D leaves behind. A branch that exists keeps both, enrolled
 or not. Only vacuum prints them; vacuum --dry-run lists them.
 
-Dispatch (#267): off unless the branch's settings.autoRun (or, for merged,
-settings.autoForget) is true. It layers
-like any setting: sd config set --global settings.autoRun true turns it on
-everywhere, and on a branch, sd config set settings.autoRun false turns it
-off there (true turns it on with the global off). A pass then launches a
+Dispatch (#267): off unless the branch's settings.autoRun (or, for
+merged, settings.autoForget) is true. It layers like any setting: sd config
+set --global settings.autoRun true turns it on everywhere, and on a branch,
+sd config set settings.autoRun false turns it off there (true turns it on
+with the global off). A pass then launches a
 branch's first NEXT step when it is one of these run steps, as sd act
 <verb> <branch> from the repo: fetch, behind (restack), push, retarget,
 bot-trigger (trigger); or one of these agent steps (#269): implement,
@@ -140,10 +140,11 @@ merged runs, as sd act forget --remove <branch>, only when the branch's
 settings.autoForget is true (default false; it layers as autoRun does, and
 either one alone turns on only its own steps), under the same rules, and
 not while the worktree has uncommitted or untracked changes (untracked
-files status.showUntrackedFiles hides too): then it stays chrismo's, with
-no pass line. forget --remove still refuses an attached branch, a live
-step, or a tip with commits the PR doesn't have (sd act --help), and the
-pass launches it again each pass. The merge is notified first, once.
+files status.showUntrackedFiles hides too) or the branch has commits the
+PR doesn't: then it stays chrismo's, with no pass line. forget --remove
+still refuses what else it refuses (sd act --help), such as a main
+worktree with no default branch to switch to, and the pass launches it
+again each pass. The merge is notified first, once.
 The other run steps (stale: the pass just fetched; draft, ci-rerun,
 ship-parent, open-pr) stay chrismo's.
 

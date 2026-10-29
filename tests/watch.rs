@@ -3479,11 +3479,24 @@ fn auto_forget_doesnt_turn_on_the_other_steps_270() {
 fn auto_forget_not_on_a_dirty_worktree_270() {
     let mut sd = sd();
     sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
-    sd.merged_in_wt(&[".push.dirty = true"]);
-    // The worktree as sd state saw it.
+    sd.merged_in_wt(&[]);
+    // The pass runs its own git status: sd state's push.dirty isn't what it reads.
     fs::write(sd.tmp.join("wt/notes"), "mine\n").unwrap();
     sd.pass();
     assert_has(&sd.last_pass(), &["repo\tfeat\t🏁\t"]);
+    assert_lacks(&sd.last_pass(), "sd act");
+    assert!(sd.wt_exists());
+    assert!(sd.enrolled("feat"));
+}
+
+// @test "auto-forget: not on a branch with commits the merged PR doesn't have (#270)"
+#[test]
+fn auto_forget_not_on_a_branch_with_commits_the_pr_doesnt_have_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    sd.git_in("wt", &["commit", "-q", "--allow-empty", "-m", "after the merge"]);
+    sd.pass();
     assert_lacks(&sd.last_pass(), "sd act");
     assert!(sd.wt_exists());
     assert!(sd.enrolled("feat"));
