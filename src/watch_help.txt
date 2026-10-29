@@ -1,5 +1,6 @@
 sd watch - a pass over every enrolled branch: observe it, and with
-settings.autoRun run its steps, mechanical and agent.
+settings.autoRun run its steps, mechanical and agent (merged's forget
+--remove with settings.autoForget instead).
 
 Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | status | install | uninstall]
 
@@ -110,7 +111,8 @@ file (<branch>.json) and its stored description (<branch>.describe.json),
 which a branch -D leaves behind. A branch that exists keeps both, enrolled
 or not. Only vacuum prints them; vacuum --dry-run lists them.
 
-Dispatch (#267): off unless the branch's settings.autoRun is true. It layers
+Dispatch (#267): off unless the branch's settings.autoRun (or, for merged,
+settings.autoForget) is true. It layers
 like any setting: sd config set --global settings.autoRun true turns it on
 everywhere, and on a branch, sd config set settings.autoRun false turns it
 off there (true turns it on with the global off). A pass then launches a
