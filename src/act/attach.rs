@@ -6,13 +6,24 @@
 // hasn't written its marker yet when attach looks still runs alongside, as
 // does one run with --force over the lock; either one checks the lock again
 // before it commits and before it pushes (attached_during), and stops there.
+//
+// The session is branch.<b>.sd-session, but for one left by a step that
+// ended without its session stored (#270): when the worktree has
+// uncommitted or untracked changes and the branch's last usage.sup record is
+// an editing step's (implement, address, ci-fix, restack --resolve) that
+// failed or was killed, on the harness attach picked, in a session that isn't
+// the stored one and has a transcript, attach resumes that session, which
+// made the edits, and says so. On exit it's stored, as any resumed session
+// is; a rerun of the step still forks the stored session (#69).
 
+use super::commands::status;
 use super::{cfg, die, hostname};
-use crate::git::{git, git_out, worktree_for};
+use crate::git::{git, git_out, main_worktree, worktree_for};
 use crate::running;
 use crate::val::at;
-use crate::{config, harness, proc, time};
+use crate::{config, harness, proc, time, usage};
 use serde_json::Value;
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 
@@ -50,6 +61,33 @@ fn pick(b: &str, opt: &str, stored: &str, sid: &str, default: impl FnOnce() -> S
     }
 }
 
+/// The steps that edit the worktree, by their usage.sup names.
+const EDITING: [&str; 4] = ["implement", "address", "ci-fix", "resolve"];
+
+/// <repo>'s <b>'s last step in usage.sup's <text>, as (step, session), when
+/// it was an editing step on <h> that failed in a session other than the
+/// stored one, <stored>: its session was never stored.
+fn unstored(text: &str, repo: &str, b: &str, h: &str, stored: &str) -> Option<(String, String)> {
+    let last = text.lines().filter(|l| usage::shaped(l)).filter_map(usage::sup_record).filter(|r| {
+        let field = |k: &str| r.get(k).and_then(Value::as_str);
+        field("repo") == Some(repo) && field("branch") == Some(b)
+    });
+    let r = last.last()?;
+    let field = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    let (step, session) = (field("step"), field("session"));
+    let failed = r.get("status").and_then(Value::as_i64) != Some(0);
+    (EDITING.contains(&step.as_str()) && failed && field("harness") == h && !session.is_empty() && session != stored)
+        .then_some((step, session))
+}
+
+/// The session of <b>'s last step, as unstored finds it, when it left <wt>
+/// with uncommitted changes and a transcript to resume: (step, session).
+fn left_by_last_step(b: &str, wt: &str, h: &str, stored: &str) -> Option<(String, String)> {
+    let text = fs::read_to_string(usage::file()).ok()?;
+    let (step, sid) = unstored(&text, &main_worktree("."), b, h, stored)?;
+    (harness::session_exists(h, &sid) && !status(wt).is_empty()).then_some((step, sid))
+}
+
 /// harnesses.<h>, defaults and all; null when none is set.
 fn block(h: &str, b: &str) -> Value {
     match config::get_text("harnesses", b, true) {
@@ -78,7 +116,17 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     let stored = get(&key("harness"));
     let read = get(&key("session"));
     let (h, resume) = pick(b, harness_opt, &stored, &read, || cfg("harness", b)).unwrap_or_else(|e| die(e));
-    let sid = if resume { read.clone() } else { harness::new_session() };
+    let left = left_by_last_step(b, &wt, &h, &read).map(|(step, sid)| {
+        let not = if resume { read.clone() } else { "a new one".into() };
+        let said = format!("{wt} has uncommitted changes from {b}'s last step, {step}, which ended without its session stored: resuming its session {sid}, not {not}");
+        (said, sid)
+    });
+    let resume = resume || left.is_some();
+    let sid = match &left {
+        Some((_, sid)) => sid.clone(),
+        None if resume => read.clone(),
+        None => harness::new_session(),
+    };
     let mut c = harness::tui(&h, &sid, resume, &block(&h, b)).unwrap_or_else(|e| die(e));
     c.current_dir(&wt);
 
@@ -99,7 +147,7 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
         }
         die(e);
     }
-    if let Some(note) = note {
+    for note in [note, left.map(|(said, _)| said)].into_iter().flatten() {
         eprintln!("sd act: {note}");
     }
     let mode = if resume { "resume" } else { "new" };
@@ -157,6 +205,34 @@ mod tests {
         assert_eq!(pick("feat", "", "", "", || "pi".into()), Ok(("pi".into(), false)));
         assert_eq!(pick("feat", "", "pi", "", none), Ok(("pi".into(), false)));
         assert_eq!(pick("feat", "pi", "claude", "", none), Ok(("pi".into(), false)));
+    }
+
+    fn row(repo: &str, branch: &str, step: &str, harness: &str, session: &str, status: i32) -> String {
+        format!(
+            "{{time:2026-10-28T00:00:00Z,repo:\"{repo}\",branch:\"{branch}\",step:\"{step}\",harness:\"{harness}\",session:\"{session}\",mode:\"fork\",status:{status}}}\n"
+        )
+    }
+
+    #[test]
+    fn unstored_is_the_branchs_last_step_when_it_was_a_failed_edit_in_an_unstored_session() {
+        let found = |text: &str| unstored(text, "/r", "feat", "claude", "stored");
+        let hit = Some(("implement".to_string(), "s".to_string()));
+        assert_eq!(found(""), None);
+        assert_eq!(found(&row("/r", "feat", "implement", "claude", "s", 1)), hit);
+        for step in ["address", "ci-fix", "resolve"] {
+            assert_eq!(found(&row("/r", "feat", step, "claude", "s", 143)), Some((step.to_string(), "s".to_string())));
+        }
+        // A read-only step, one that succeeded, the stored session, another harness's.
+        assert_eq!(found(&row("/r", "feat", "review", "claude", "s", 1)), None);
+        assert_eq!(found(&row("/r", "feat", "implement", "claude", "s", 0)), None);
+        assert_eq!(found(&row("/r", "feat", "implement", "claude", "stored", 1)), None);
+        assert_eq!(found(&row("/r", "feat", "implement", "pi", "s", 1)), None);
+        // Only the branch's last record counts; other branches' and repos', and lines
+        // that aren't records, don't.
+        let failed = row("/r", "feat", "implement", "claude", "s", 1);
+        assert_eq!(found(&(failed.clone() + &row("/r", "feat", "describe", "claude", "s2", 0))), None);
+        let after = row("/r", "other", "review", "claude", "o", 0) + &row("/elsewhere", "feat", "review", "claude", "o", 0);
+        assert_eq!(found(&(failed.clone() + &after + "{time:cut off\n")), hit);
     }
 
     #[test]
