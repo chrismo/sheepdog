@@ -137,9 +137,11 @@ Mechanical steps run either way.
 merged runs, as sd act forget --remove <branch>, only when the branch's
 settings.autoForget is true (default false; it layers as autoRun does, and
 either one alone turns on only its own steps), under the same rules, and
-not while sd state says the worktree has uncommitted or untracked changes:
-then it stays chrismo's, with no pass line. forget --remove refuses what
-else it refuses (sd act --help). The merge is notified first, once.
+not while the worktree has uncommitted or untracked changes (untracked
+files status.showUntrackedFiles hides too): then it stays chrismo's, with
+no pass line. forget --remove still refuses an attached branch, a live
+step, or a tip with commits the PR doesn't have (sd act --help), and the
+pass launches it again each pass. The merge is notified first, once.
 The other run steps (stale: the pass just fetched; draft, ci-rerun,
 ship-parent, open-pr) stay chrismo's.
 

@@ -3489,17 +3489,33 @@ fn auto_forget_not_on_a_dirty_worktree_270() {
     assert!(sd.enrolled("feat"));
 }
 
+// @test "auto-forget: not on an untracked file status.showUntrackedFiles=no hides from sd state (#270)"
+#[test]
+fn auto_forget_not_on_an_untracked_file_status_hides_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    sd.git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(sd.tmp.join("wt/notes"), "mine\n").unwrap();
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "sd act");
+    assert!(sd.wt_exists());
+    assert!(sd.enrolled("feat"));
+}
+
 // @test "auto-forget: not while the branch is attached or a step runs on it (#270)"
 #[test]
 fn auto_forget_not_while_attached_or_a_step_runs_270() {
     let mut sd = sd();
     sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
     sd.merged_in_wt(&[]);
-    sd.git(&["config", "branch.feat.sd-lock", "session"]);
     for (why, more) in [
         ("running", r#".session.running = {step: "implement", pid: 1, since: "2026-10-23T00:00:00Z"}"#),
         ("attached", ".session.locked = true"),
     ] {
+        if why == "attached" {
+            sd.git(&["config", "branch.feat.sd-lock", "session"]);
+        }
         sd.merged_fixture(&[more]);
         sd.pass();
         assert_has(&sd.last_pass(), &["repo\tfeat\t"]);

@@ -131,6 +131,18 @@ fn outcome_line(repo: &str, name: &str, b: &str) -> String {
     pass_line(name, b, text.trim_end())
 }
 
+/// <b>'s worktree has anything forget --remove's gate refuses: -uall, as it
+/// counts untracked files, which status.showUntrackedFiles=no (and so sd
+/// state's dirty) hides. A status that fails counts too.
+fn uncommitted(repo: &str, b: &str) -> bool {
+    let wt = git::worktree_for(repo, b);
+    if wt.is_empty() {
+        return false;
+    }
+    let o = git(&wt, &["--no-optional-locks", "status", "--porcelain", "--untracked-files=all"]);
+    !o.ok || !o.stdout.is_empty()
+}
+
 /// How long a launched step's lease outlasts its own timeout, so the lease
 /// ends only a step that's stuck.
 const GRACE: u64 = 60;
@@ -708,7 +720,7 @@ impl Watch {
             || on(s, "session.locked")
             || running::lease(repo, b).is_some_and(|l| l.live);
         // forget --remove refuses it: left to chrismo, not refused every pass.
-        let dirty = step == "forget" && on(s, "push.dirty");
+        let dirty = step == "forget" && uncommitted(repo, b);
         if !enabled || busy || dirty || !may_dispatch(s, key) {
             return None;
         }
