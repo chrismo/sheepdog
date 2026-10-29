@@ -542,6 +542,7 @@ fn harness_run_a_failed_step_adds_to_the_branchs_failure_record_and_one_that_suc
     assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/failed"]), None);
 }
 
+// @test "harness_run: a step its own stepTimeout ended, no signal to sd, records the timeout (#242, #270)"
 #[test]
 fn harness_run_a_timed_out_step_records_the_timeout_242() {
     let sd = sd();

@@ -1,7 +1,11 @@
 // The failure record (#242): refs/sheepdog/<b>/failed, one line of JSON,
 // {step, harness, count, since, at, error}. An agent step whose harness ran
 // and failed, or returned nothing usable, counts one more; one that succeeds
-// removes it. One the harness's usage limit stopped does neither (#269).
+// removes it (harness::run_step). One the harness's usage limit stopped does
+// neither (#269), nor does one sd ended because sd got a HUP, INT or TERM
+// (#270): that's the sender's to count. sd watch counts, harness sd, a lease
+// reconcile finds past its deadline (and ends) or crashed, and sd watch
+// step's timeout; ending one on a merged or closed PR isn't counted.
 
 use crate::git::{git, git_input, strip_nl};
 use crate::{json, time};

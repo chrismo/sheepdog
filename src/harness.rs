@@ -97,6 +97,9 @@ impl Step<'_> {
 /// leaves the failure record (#242) as it was, and it pauses sd watch's agent
 /// steps till the reset (crate::limit). The verbs still take any Err as their
 /// step failing: they say so after the limit's line, and exit LIMIT_STATUS.
+/// Nor is one ended by a HUP, INT or TERM to sd (#270): it says so and leaves
+/// the record too, as the signal's sender counts it if it's a failure. One
+/// that succeeded as the signal came still clears it.
 pub fn run_step(s: &Step) -> Result<Ran, Stop> {
     let b = match s.branch {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
@@ -258,7 +261,9 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
             eprintln!("{}", tail(said, 20));
         }
     }
-    if !b.is_empty() && result.is_ok() {
+    if out.stopped && result.is_err() {
+        eprintln!("sd: {} stopped by a signal, not counted as a failure", s.label());
+    } else if !b.is_empty() && result.is_ok() {
         failed::clear(b);
     } else if !b.is_empty() {
         failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status));
