@@ -18,9 +18,9 @@
 // chrismo's (#143). So are uncommitted changes there, which implement refuses;
 // and with errors, pr may be wrong, so nothing spends on implementing. A
 // remote with commits reset away here isn't empty: the #86 steps handle it.
-// While an agent step runs (session.running), its one step is to wait: the
-// worktree is the agent's, so its edits aren't chrismo's to commit, and no
-// other step should touch it (#170).
+// While a step runs (session.running), its one step is to wait: the
+// worktree is the step's, so an agent's edits aren't chrismo's to commit,
+// and no other step should touch it (#170, #270).
 //
 // An agent step's question standing at HEAD (sd state's question, #167; a
 // give-up is one too, #254) is chrismo's question step, with the human
@@ -270,7 +270,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         vec![step("default", "you", format!("on {branch}: start a branch"), cmd("sd act start"))]
     } else if !nul("session.running") {
         vec![step("running", "wait",
-            format!("agent: {} running since {}", t("session.running.step"), t("session.running.since")),
+            format!("{} running since {}", t("session.running.step"), t("session.running.since")),
             None,
         )]
     } else if is("mode", "reviewer") {

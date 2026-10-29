@@ -46,13 +46,13 @@ fn remove_is_for_sd_act_forget_only() {
     assert_has(&r.output, &["--remove is for sd act forget only"]);
 }
 
-/// The verbs src/act/mod.rs's `match verb.as_str()` dispatches, as the bats
+/// The verbs src/act/mod.rs's `match verb` dispatches, as the bats
 /// test's sed read them.
 fn dispatched_verbs() -> Vec<String> {
     let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/act/mod.rs")).unwrap();
     let arm = regex::Regex::new(r#"^        "([a-z-]*)""#).unwrap();
     src.lines()
-        .skip_while(|l| *l != "    match verb.as_str() {")
+        .skip_while(|l| *l != "    match verb {")
         .take_while(|l| *l != "    }")
         .filter_map(|l| arm.captures(l).map(|c| c[1].to_string()))
         .collect()

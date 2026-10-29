@@ -616,3 +616,19 @@ fn the_steps_own_child_pushes_under_its_marker_and_a_dead_holders_marker_doesnt_
     assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
 }
+
+// @test "push by hand holds the running marker, naming push, while git pushes; removed after (#270)"
+#[test]
+fn push_by_hand_holds_the_running_marker_naming_push_while_git_pushes_removed_after_270() {
+    let sd = sd();
+    sd.commit("more");
+    let hook = sd.tmp.join("repo/.git/hooks/pre-push");
+    fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    fs::write(&hook, "#!/bin/sh\ncp \"$(git rev-parse --git-common-dir)/sheepdog/feat.running\" ../push-saw\n").unwrap();
+    std::process::Command::new("chmod").args(["+x", hook.to_str().unwrap()]).status().unwrap();
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    let line = fs::read_to_string(sd.tmp.join("push-saw")).unwrap_or_default();
+    assert_eq!(line.split_whitespace().nth(1), Some("push"), "{line}");
+    assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
+}
