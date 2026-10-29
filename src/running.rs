@@ -186,12 +186,20 @@ pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
 /// RUNNING_HELD=<b> is exported while <f> runs, so the
 /// step's harness step and children (verify) run under this marker.
 pub fn holding<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
-    during(b, step, || {
-        std::env::set_var("RUNNING_HELD", b);
-        let out = f();
-        std::env::remove_var("RUNNING_HELD");
-        out
-    })
+    during(b, step, || with_held(b, f))
+}
+
+/// <f> with RUNNING_HELD=<b>, then RUNNING_HELD as it was, so a hold nested
+/// in another leaves the outer one's set (#270).
+fn with_held<T>(b: &str, f: impl FnOnce() -> T) -> T {
+    let before = std::env::var_os("RUNNING_HELD");
+    std::env::set_var("RUNNING_HELD", b);
+    let out = f();
+    match before {
+        Some(v) => std::env::set_var("RUNNING_HELD", v),
+        None => std::env::remove_var("RUNNING_HELD"),
+    }
+    out
 }
 
 /// holding, for a step the watcher launched (#268): the marker is a lease
@@ -206,16 +214,7 @@ pub fn leasing<T>(b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Opti
 
 fn leasing_at<T>(marker: &str, b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Option<T> {
     let end = time::utc((time::now_utc().1 / 1_000_000_000) as i64 + secs as i64);
-    marked(marker, b, step, &format!("deadline {end}\n"), || {
-        let before = std::env::var_os("RUNNING_HELD");
-        std::env::set_var("RUNNING_HELD", b);
-        let out = f();
-        match before {
-            Some(v) => std::env::set_var("RUNNING_HELD", v),
-            None => std::env::remove_var("RUNNING_HELD"),
-        }
-        out
-    })
+    marked(marker, b, step, &format!("deadline {end}\n"), || with_held(b, f))
 }
 
 /// during, with <b>'s marker at <marker>.
@@ -427,6 +426,19 @@ mod tests {
         fs::write(&f, format!("{me} implement 2026-10-23T00:00:00Z {}\n", proc_start(&me))).unwrap();
         let l = lease_at(path(&f)).unwrap();
         assert_eq!((l.pid.as_str(), l.live, l.deadline), (me.as_str(), true, None));
+    }
+
+    #[test]
+    fn with_held_puts_running_held_back_as_it_was_so_a_nested_hold_leaves_the_outer_ones_270() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
+        std::env::set_var("RUNNING_HELD", "b-outer");
+        let inside = with_held("b-outer", || std::env::var("RUNNING_HELD").ok());
+        let after = std::env::var("RUNNING_HELD").ok();
+        std::env::remove_var("RUNNING_HELD");
+        assert_eq!(inside.as_deref(), Some("b-outer"));
+        assert_eq!(after.as_deref(), Some("b-outer"));
+        assert_eq!(with_held("b-new", || std::env::var("RUNNING_HELD").ok()).as_deref(), Some("b-new"));
+        assert!(std::env::var("RUNNING_HELD").is_err());
     }
 
     #[test]

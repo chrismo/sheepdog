@@ -272,6 +272,8 @@ pub fn no_base_why(state: &Value, remote: &str) -> String {
 /// its rebase starts, so HEAD never moves under the running step. Run by
 /// hand, each then holds the marker itself, so an agent step started by
 /// hand sees it running; a pass's lease already covers one it launched.
+/// A HUP, INT or TERM to sd is then held till the verb returns, as for an
+/// agent step: its timed commands (verify, autofix) end at once.
 const WAIT_FOR_STEP: &[(&str, &str)] = &[
     ("restack", "restacking"),
     ("push", "pushing"),

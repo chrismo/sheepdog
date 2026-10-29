@@ -217,7 +217,9 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
             ));
         }
         let r = Rebase { b, wt: &wt, old_base: &old_base, old_head: &old_head, onto: &onto };
-        // Marked running across every stop and continue, not only each agent run (#170).
+        // Marked running across every stop and continue, not only each agent
+        // run (#170). By hand and from a pass, the marker is already held
+        // (act::run, sd watch step); this holds it for any other caller.
         let run = || {
             resolve_conflicts(&r, &a.harness, a.force).inspect_err(|h| {
                 if !h.keep {

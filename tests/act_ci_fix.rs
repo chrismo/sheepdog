@@ -24,7 +24,8 @@ use sheepdog::running::proc_start;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 const GH: &str = r#"#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FX/gh.calls"
@@ -405,6 +406,27 @@ fn another_live_steps_marker_refuses_the_run_and_is_left_alone_177() {
     );
     assert!(!sd.ran("claude.args"));
     assert_eq!(after.unwrap(), theirs);
+}
+
+// @test "a mechanical verb run by hand holds the marker: ci-fix started meanwhile refuses, no agent runs (#270)"
+#[test]
+fn a_mechanical_verb_run_by_hand_holds_the_marker_ci_fix_started_meanwhile_refuses_270() {
+    let sd = sd();
+    sd.set(&["settings.verify", "touch ../verify-started; while [ ! -e ../go ]; do sleep 0.1; done"]);
+    let mut verify = spawn(sd.command(&sd.bin).arg("verify").stdout(Stdio::null()).stderr(Stdio::null()));
+    for _ in 0..100 {
+        if sd.tmp.join("verify-started").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let r = sd.run(&["ci-fix"]);
+    fs::write(sd.tmp.join("go"), "").unwrap();
+    assert!(verify.wait().unwrap().success());
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("verify is running on feat (pid {}", verify.id())]);
+    assert!(!sd.ran("claude.args"));
+    assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
 }
 
 // @test "the PR merged or closed while the step ran: nothing pushed, the commit kept, and said (#270)"
