@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, jq, spawn, Sd, GH_FAILS};
+use common::{assert_has, assert_lacks, assert_match, jq, running_marker, spawn, Holder, Sd, GH_FAILS};
 use std::fs;
 use std::process::Stdio;
 use std::time::Duration;
@@ -488,4 +488,37 @@ fn review_a_reviewer_exiting_75_leaves_a_limit_that_already_holds_269() {
     sd.script(&sd.tmp.join("reviewer"), "#!/usr/bin/env bash\nexit 75\n");
     assert_eq!(sd.run(&["review"]).status, 75);
     assert_eq!(fs::read_to_string(sd.tmp.join("state/limit")).unwrap(), line);
+}
+
+// @test "a live step's running marker refuses review before verify runs (#270)"
+#[test]
+fn a_live_steps_running_marker_refuses_review_before_verify_runs_270() {
+    let sd = sd();
+    sd.set_global("settings.verify", "touch ../verify-ran");
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "address", holder.pid());
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("address is running on feat (pid {}, since", holder.pid()), "not starting another agent step"]);
+    assert!(!sd.tmp.join("verify-ran").exists());
+    assert!(!sd.fx_exists("reviewer.env"));
+    assert_eq!(sd.pin("local"), "");
+    assert!(marker.exists());
+}
+
+// @test "verify and a custom reviewer run under review's running marker, removed after (#270)"
+#[test]
+fn verify_and_a_custom_reviewer_run_under_reviews_running_marker_removed_after_270() {
+    let sd = sd();
+    sd.set_global("settings.verify", "cp .git/sheepdog/feat.running ../verify-saw");
+    sd.script(
+        &sd.tmp.join("reviewer"),
+        "#!/usr/bin/env bash\ncp .git/sheepdog/feat.running \"$FX/reviewer-saw\" && echo '[]'\n",
+    );
+    sd.review();
+    for saw in [sd.tmp.join("verify-saw"), sd.tmp.join("fx/reviewer-saw")] {
+        let line = fs::read_to_string(&saw).unwrap_or_default();
+        assert_eq!(line.split_whitespace().nth(1), Some("review"), "{}: {line}", saw.display());
+    }
+    assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
 }

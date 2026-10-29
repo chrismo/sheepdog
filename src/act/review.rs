@@ -2,13 +2,16 @@
 // branch's own change, base..HEAD. Clean pins local; findings that block are
 // recorded for the review-fix round and nothing is pinned. A HEAD the local
 // review already covers is refused, at zero tokens, unless --force (#241).
+// verify and the reviewer run under the branch's running marker, a custom
+// settings.localReview too, so another live step's marker refuses review
+// before its verify runs (#270).
 
 use super::commands::{status, step_timeout, verify_run};
 use super::{attached_check, cfg, die, no_base_why, plural, state_json};
 use crate::config::one_value;
 use crate::git::{git, git_input, git_out, pin_write, rev, strip_nl, worktree_for};
 use crate::json;
-use crate::{harness, limit, proc};
+use crate::{harness, limit, proc, running};
 use crate::state::flag_lines;
 use crate::val::{at, on, t};
 use serde_json::{json, Value};
@@ -85,7 +88,14 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     if !force && matches!(t(&s, "review.local.status").as_str(), "covered" | "rewritten-same") {
         die(format!("local review already covers {}; --force to review again", short(&head)));
     }
-    if let Err(cmd) = verify_run(&wt, b) {
+    if running::holding(b, "review", || reviewed(b, &wt, &s, &base, &head)).is_none() {
+        std::process::exit(1);
+    }
+}
+
+/// verify, the reviewer, and its findings pinned or recorded.
+fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
+    if let Err(cmd) = verify_run(wt, b) {
         die(format!("verify failed ({cmd}); not reviewing"));
     }
     let mut secs = step_timeout(b);
@@ -106,8 +116,8 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
         c
     };
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
-    c.current_dir(&wt);
-    c.env("SHEEPDOG_BASE", &base).env("SHEEPDOG_HEAD", &head).env("SHEEPDOG_TASK", &task);
+    c.current_dir(wt);
+    c.env("SHEEPDOG_BASE", base).env("SHEEPDOG_HEAD", head).env("SHEEPDOG_TASK", &task);
     let o = proc::timeout_passing_stderr(secs, c);
     eprint!("{}", o.stderr);
     if !o.ok {
