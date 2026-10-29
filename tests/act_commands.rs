@@ -262,7 +262,7 @@ mod marker {
     #[test]
     fn verify_by_hand_failing_leaves_no_running_marker_behind_270() {
         let sd = sd();
-        sd.set_global("settings.verify", "test -e .git/sheepdog/feat.running && false");
+        sd.set_global("settings.verify", "false");
         let r = sd.run(&["verify"]);
         assert_ne!(r.status, 0);
         assert_has(&r.output, &["verify failed"]);
