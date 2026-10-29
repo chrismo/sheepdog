@@ -595,6 +595,11 @@ impl Sd {
         let mut text = fs::read_to_string(&f).unwrap_or_default();
         text += &line;
         fs::write(&f, text).unwrap();
+        self.transcript(harness, session);
+    }
+
+    /// <harness>'s transcript of <session>, where the real one writes it.
+    fn transcript(&self, harness: &str, session: &str) {
         let t = match harness {
             "pi" => format!("pi/--repo--/2026-10-28T00-00-00-000Z_{session}.jsonl"),
             _ => format!("claude/projects/-repo/{session}.jsonl"),
@@ -697,6 +702,8 @@ fn attach_a_failed_step_in_another_harness_doesnt_count_270() {
     let sd = sd();
     sd.dirty();
     sd.step_record(&sd.repo(), "feat", "implement", "pi", FAILED, 1);
+    // A transcript in attach's harness too, so only the record's harness differs.
+    sd.transcript("claude", FAILED);
     let r = sd.run_sep(&["attach"]);
     as_today(&sd, &r);
 
@@ -705,6 +712,7 @@ fn attach_a_failed_step_in_another_harness_doesnt_count_270() {
     sd.git(&["config", "--unset", "branch.feat.sd-session"]);
     sd.dirty();
     sd.step_record(&sd.repo(), "feat", "implement", "claude", FAILED, 1);
+    sd.transcript("pi", FAILED);
     let r = sd.run_sep(&["attach", "--harness", "pi"]);
     assert_eq!(r.status, 0, "{}", r.stderr);
     let args = sd.fx_read("pi.args");
