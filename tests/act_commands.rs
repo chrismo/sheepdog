@@ -242,6 +242,37 @@ mod running {
     }
 }
 
+mod marker {
+    use super::*;
+    use crate::common::{running_marker, Holder};
+
+    // @test "verify by hand holds the running marker, naming verify, removed after (#270)"
+    #[test]
+    fn verify_by_hand_holds_the_running_marker_naming_verify_removed_after_270() {
+        let sd = sd();
+        sd.set_global("settings.verify", "cp .git/sheepdog/feat.running ../verify-saw");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        let line = fs::read_to_string(sd.tmp.join("verify-saw")).unwrap();
+        assert_eq!(line.split_whitespace().nth(1), Some("verify"), "{line}");
+        assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
+    }
+
+    // @test "verify as a step's child (RUNNING_HELD=<b>) runs under the step's marker and leaves it (#270)"
+    #[test]
+    fn verify_as_a_steps_child_runs_under_the_steps_marker_and_leaves_it_270() {
+        let sd = sd();
+        sd.set_global("settings.verify", "cp .git/sheepdog/feat.running ../verify-saw");
+        let holder = Holder::new();
+        let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "push", holder.pid());
+        let before = fs::read_to_string(&marker).unwrap();
+        let r = sd.run_env(&[("RUNNING_HELD", "feat")], &["verify"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_eq!(fs::read_to_string(sd.tmp.join("verify-saw")).unwrap(), before);
+        assert_eq!(fs::read_to_string(&marker).unwrap(), before);
+    }
+}
+
 mod autofix {
     use super::*;
 

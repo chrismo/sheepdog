@@ -269,7 +269,9 @@ pub fn no_base_why(state: &Value, remote: &str) -> String {
 /// words: each refuses, --force or not, before it writes anything, while
 /// another process's step holds the branch's running marker (#270), so none
 /// rests on NEXT or a pass's snapshot. restack --resolve is refused before
-/// its rebase starts, so HEAD never moves under the running step.
+/// its rebase starts, so HEAD never moves under the running step. Run by
+/// hand, each then holds the marker itself, so an agent step started by
+/// hand sees it running; a pass's lease already covers one it launched.
 const WAIT_FOR_STEP: &[(&str, &str)] = &[
     ("restack", "restacking"),
     ("push", "pushing"),
@@ -311,8 +313,13 @@ pub fn run(argv: &[String]) -> ExitCode {
     }
     if let Some((_, doing)) = WAIT_FOR_STEP.iter().find(|(v, _)| v == verb) {
         crate::running::idle(".", &b, doing).unwrap_or_else(|e| die(e));
+        return crate::running::holding(&b, verb, || act(verb, &b, &remote, &a)).unwrap_or(ExitCode::from(1));
     }
-    match verb.as_str() {
+    act(verb, &b, &remote, &a)
+}
+
+fn act(verb: &str, b: &str, remote: &str, a: &Args) -> ExitCode {
+    match verb {
         "push" => push::push(&b, &remote, a.force),
         "verify" => commands::verify(&b),
         "autofix" => commands::autofix(&b),
