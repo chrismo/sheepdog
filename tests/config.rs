@@ -1916,6 +1916,20 @@ fn validate_auto_run_is_true_or_false_in_any_file_and_a_branch_overrides_the_glo
 }
 
 #[test]
+fn validate_auto_forget_is_true_or_false_in_any_file_and_a_branch_overrides_the_global_270() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"autoForget":false}}"#);
+    sd.write_repo(r#"{"settings":{"autoForget":true}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoForget", "feat"]), "true");
+    sd.write_branch("feat", r#"{"settings":{"autoForget":false}}"#);
+    assert_eq!(sd.out(&["get", "settings.autoForget", "feat"]), "false");
+    sd.write_branch("feat", r#"{"settings":{"autoForget":"yes"}}"#);
+    let r = sd.run(&["get", "settings.autoForget", "feat"]);
+    assert_eq!(r.status, 1);
+    assert!(r.output.ends_with(r#"settings.autoForget: expected true or false, got "yes""#), "{}", r.output);
+}
+
+#[test]
 fn a_renamed_key_in_a_file_is_moved_to_its_new_name_and_the_file_rewritten() {
     let sd = Sd::new();
     sd.write_global(r#"{"settings":{"verify":"make","dispatch":true}}"#);
@@ -2056,6 +2070,7 @@ fn defaults_every_pipeline_setting_has_one_when_nothing_is_set() {
     assert_eq!(sd.out(&["get", "settings.vacuumAfter"]), "604800");
     assert_eq!(sd.out(&["get", "settings.rateLimitFloor"]), "250");
     assert_eq!(sd.out(&["get", "settings.autoRun"]), "false");
+    assert_eq!(sd.out(&["get", "settings.autoForget"]), "false");
     assert_eq!(sd.stdout(&["get", "settings.replyPrefix"]), "🤖 \n");
 }
 
@@ -2503,6 +2518,7 @@ fn explain_lists_every_key_the_typed_tables_define() {
         "settings.remote",
         "settings.rateLimitFloor",
         "settings.autoRun",
+        "settings.autoForget",
     ] {
         assert!(paths.iter().any(|x| x == p), "no {p}: {paths:?}");
     }

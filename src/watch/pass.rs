@@ -2,7 +2,8 @@
 // branch, glyph it, notify per the policy, and keep each branch's state for
 // the next pass; with settings.autoRun, a pass also launches a branch's
 // first step when it's one a pass runs, mechanical (#267) or an agent's
-// (#269). sd state runs as `sd state`, this binary in a process of its own,
+// (#269), and with settings.autoForget, a merged branch's forget --remove
+// (#270). sd state runs as `sd state`, this binary in a process of its own,
 // so a hung one can be timed out: on purpose not state::observe in-process,
 // as sd act calls it, since the watcher supervises its children with
 // deadlines (#12).
@@ -47,10 +48,11 @@ struct Class {
 
 /// The steps a pass runs, by NEXT key, with the step each is: the run steps
 /// (#267), and the agent steps (#269), whose step is the running marker's.
-/// Not stale (the pass has just fetched), merged (forget --remove deletes the
-/// worktree), draft, ci-rerun, or ship-parent and open-pr, which may spend
-/// tokens describing.
-const DISPATCH: [(&str, &str); 11] = [
+/// merged (forget --remove deletes the worktree) only with settings.autoForget,
+/// not settings.autoRun, and not on a dirty worktree (#270). Not stale (the
+/// pass has just fetched), draft, ci-rerun, or ship-parent and open-pr, which
+/// may spend tokens describing.
+const DISPATCH: [(&str, &str); 12] = [
     ("fetch", "fetch"),
     ("behind", "restack"),
     ("push", "push"),
@@ -62,15 +64,16 @@ const DISPATCH: [(&str, &str); 11] = [
     ("bot", "address"),
     ("ci-red", "ci-fix"),
     ("conflict", "resolve"),
+    ("merged", "forget"),
 ];
 
 const AGENT_STEPS: [&str; 5] = ["implement", "review", "address", "ci-fix", "resolve"];
 
 fn act_args(step: &str) -> Vec<&str> {
-    if step == "resolve" {
-        vec!["restack", "--resolve"]
-    } else {
-        vec![step]
+    match step {
+        "resolve" => vec!["restack", "--resolve"],
+        "forget" => vec!["forget", "--remove"],
+        _ => vec![step],
     }
 }
 
@@ -111,6 +114,21 @@ fn release(repo: &str, b: &str, l: &running::Lease) {
     if running::lease(repo, b).is_some_and(|now| now.pid == l.pid) {
         let _ = fs::remove_file(&marker);
     }
+}
+
+/// <msg> as <b>'s pass line, also to stderr, the job's log.
+fn pass_line(name: &str, b: &str, msg: &str) -> String {
+    let l = format!("{name}\t{b}\t-\t{msg}\n");
+    eprint!("{}", show(&l));
+    l
+}
+
+/// The pass line for how the step launched on <b> ended, once, else "".
+fn outcome_line(repo: &str, name: &str, b: &str) -> String {
+    let Some(f) = running::outcome_file(repo, b) else { return String::new() };
+    let Ok(text) = fs::read_to_string(&f) else { return String::new() };
+    let _ = fs::remove_file(&f);
+    pass_line(name, b, text.trim_end())
 }
 
 /// How long a launched step's lease outlasts its own timeout, so the lease
@@ -667,9 +685,7 @@ impl Watch {
         stop(repo, b, &l);
         let msg = format!("sd act {}: ended, #{} {}", l.step, t(s, "pr.number"), state.to_lowercase());
         self.log(name, b, &msg);
-        let line = format!("{name}\t{b}\t-\t{msg}\n");
-        eprint!("{}", show(&line));
-        line
+        pass_line(name, b, &msg)
     }
 
     /// Launch the branch's first NEXT step when it's one a pass runs: one
@@ -684,13 +700,16 @@ impl Watch {
         if at(first, "who").as_str() != Some(if agent { "agent" } else { "run" }) {
             return None;
         }
+        let setting = if step == "forget" { "settings.autoForget" } else { "settings.autoRun" };
         // A file that doesn't read is off.
-        let enabled = config::get_text_in(repo, "settings.autoRun", b, false).is_ok_and(|v| v == "true");
+        let enabled = config::get_text_in(repo, setting, b, false).is_ok_and(|v| v == "true");
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
         let busy = !at(s, "session.running").is_null()
             || on(s, "session.locked")
             || running::lease(repo, b).is_some_and(|l| l.live);
-        if !enabled || busy || !may_dispatch(s, key) {
+        // forget --remove refuses it: left to chrismo, not refused every pass.
+        let dirty = step == "forget" && on(s, "push.dirty");
+        if !enabled || busy || dirty || !may_dispatch(s, key) {
             return None;
         }
         let verb = act_args(step).join(" ");
@@ -701,9 +720,7 @@ impl Watch {
                 Err(e) => format!("couldn't launch sd act {verb}: {e}"),
             },
         };
-        let line = format!("{name}\t{b}\t-\t{msg}\n");
-        eprint!("{}", show(&line));
-        Some(line)
+        Some(pass_line(name, b, &msg))
     }
 
     /// Why an agent step isn't launched now: settings.agentSteps of them
@@ -772,21 +789,10 @@ impl Watch {
     /// (#242). A marker with no deadline is a step chrismo ran: never ended
     /// or counted.
     fn reconcile(&self, repo: &str, name: &str, b: &str) -> String {
-        let line = |msg: &str| {
-            let l = format!("{name}\t{b}\t-\t{msg}\n");
-            eprint!("{}", show(&l));
-            l
-        };
         // The lease before the outcome: a holder gone by the first read
         // wrote any outcome it was going to by the second.
         let lease = running::lease(repo, b);
-        let mut out = String::new();
-        if let Some(f) = running::outcome_file(repo, b) {
-            if let Ok(text) = fs::read_to_string(&f) {
-                let _ = fs::remove_file(&f);
-                out.push_str(&line(text.trim_end()));
-            }
-        }
+        let mut out = outcome_line(repo, name, b);
         let Some(l) = lease else { return out };
         let Some(deadline) = l.deadline else { return out };
         let why = if !l.live {
@@ -800,7 +806,7 @@ impl Watch {
         };
         if let Some((error, msg)) = why {
             failed::record_in(repo, b, &l.step, "sd", error);
-            out.push_str(&line(&msg));
+            out.push_str(&pass_line(name, b, &msg));
         }
         out
     }
@@ -860,7 +866,8 @@ impl Watch {
     /// too (gh pr merge --delete-branch takes the branch's config,
     /// enrollment and all) has its PR asked about once, and a merge not yet
     /// notified is. GitHub not answering, or a failed notification's one
-    /// retry, keeps the state for the next pass.
+    /// retry, keeps the state for the next pass. How a step launched on it
+    /// ended is reported too: forget --remove's, when it unenrolled it.
     fn report_gone(&self, repo: &str, name: &str) -> String {
         let dir = repo_state_dir(&self.state, repo);
         let mut files = vec![];
@@ -873,6 +880,7 @@ impl Watch {
             if git_out(repo, &["config", &format!("branch.{b}.sheepdog")]).as_deref() == Some("true") {
                 continue;
             }
+            out.push_str(&outcome_line(repo, name, b));
             let cached = read_json(&path).unwrap_or(Value::Null);
             if !t(&cached, "state.pr.number").is_empty()
                 && !git::branch_in(repo, b)
