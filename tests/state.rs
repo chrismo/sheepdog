@@ -3822,7 +3822,7 @@ fn session_an_agent_step_running_on_the_branch_harness_runs_marker_is_nexts_only
     );
     assert_eq!(
         r.field_c("[.next[] | [.key, .who, .say]]"),
-        r#"[["running","wait","agent: implement running since 2026-10-18T14:03:00Z"]]"#
+        r#"[["running","wait","implement running since 2026-10-18T14:03:00Z"]]"#
     );
     let mut dead = spawn(Command::new("sh").args(["-c", "exit 0"]));
     dead.wait().unwrap();
@@ -3851,7 +3851,7 @@ fn session_mid_restack_resolve_detached_rebase_stopped_the_branch_comes_from_the
     assert_eq!(r.field(".branch"), "feat");
     assert_eq!(
         r.field_c("[.next[] | [.key, .who, .say]]"),
-        r#"[["running","wait","agent: resolve running since 2026-10-18T14:03:00Z"]]"#
+        r#"[["running","wait","resolve running since 2026-10-18T14:03:00Z"]]"#
     );
 }
 

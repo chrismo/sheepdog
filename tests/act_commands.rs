@@ -258,6 +258,17 @@ mod marker {
         assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
     }
 
+    // @test "verify by hand failing leaves no running marker behind (#270)"
+    #[test]
+    fn verify_by_hand_failing_leaves_no_running_marker_behind_270() {
+        let sd = sd();
+        sd.set_global("settings.verify", "test -e .git/sheepdog/feat.running && false");
+        let r = sd.run(&["verify"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["verify failed"]);
+        assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
+    }
+
     // @test "verify as a step's child (RUNNING_HELD=<b>) runs under the step's marker and leaves it (#270)"
     #[test]
     fn verify_as_a_steps_child_runs_under_the_steps_marker_and_leaves_it_270() {

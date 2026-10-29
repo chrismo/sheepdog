@@ -313,7 +313,9 @@ pub fn run(argv: &[String]) -> ExitCode {
     }
     if let Some((_, doing)) = WAIT_FOR_STEP.iter().find(|(v, _)| v == verb) {
         crate::running::idle(".", &b, doing).unwrap_or_else(|e| die(e));
-        return crate::running::holding(&b, verb, || act(verb, &b, &remote, &a)).unwrap_or(ExitCode::from(1));
+        let step = if a.resolve { "resolve" } else { verb };
+        let ran = crate::running::holding(&b, step, || act(verb, &b, &remote, &a));
+        return ran.unwrap_or_else(|| std::process::exit(crate::harness::failed_status()));
     }
     act(verb, &b, &remote, &a)
 }

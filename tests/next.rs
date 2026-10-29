@@ -325,7 +325,7 @@ fn an_agent_step_running_the_only_step_is_to_wait_for_it_whatever_else_the_state
     let got: Vec<Value> = out.as_array().unwrap().iter().map(|s| json!([s["key"], s["who"], s["say"], s["cmd"]])).collect();
     assert_eq!(
         serde_json::to_string(&got).unwrap(),
-        r#"[["running","wait","agent: implement running since 2026-10-18T14:03:00Z",null]]"#
+        r#"[["running","wait","implement running since 2026-10-18T14:03:00Z",null]]"#
     );
     // mid-implement: the agent's edits, not chrismo's to commit or remove
     assert_eq!(keys(&e![FRESH, r#".task = "add c""#, ".push.dirty = true", run]), "running");
