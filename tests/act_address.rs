@@ -794,6 +794,8 @@ fn a_stored_address_answer_says_sd_watch_runs_it_only_when_a_push_clears_the_gat
         (".sync.up_to_date = null", "sync with main unknown"),
         (".push.behind = 1 | .push.remote_made = false", "the remote branch has 1 commit(s) you don't"),
         (".push.ahead = 1 | .push.held = {paths: [\".rwx/tests.yml\"]}", "1 unpushed commit(s)"),
+        // verify red on HEAD: NEXT offers no push (#325)
+        (".push.ahead = 1 | .verify = {at_head: true, sha: \"h1\", step: \"implement\", cmd: \"make test\"}", "1 unpushed commit(s)"),
         // with a push that clears the rest, only what it doesn't is named
         (".push.ahead = 1 | .sync.up_to_date = null", "sync with main unknown"),
     ] {

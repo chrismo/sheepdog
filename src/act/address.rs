@@ -78,10 +78,11 @@ pub struct Gate {
 
 impl Gate {
     /// The soft reasons nothing sd watch runs clears: all but the push's
-    /// (the last one, when sd act push clears it), unless that push is a
-    /// CI config change held for chrismo's review (<s>'s push.held).
+    /// (the last one, when sd act push clears it), unless NEXT offers no
+    /// push: a CI config change held for chrismo's review (<s>'s
+    /// push.held), or verify red on HEAD (#325).
     pub fn yours(&self, s: &Value) -> Vec<String> {
-        let pushed = usize::from(self.push && at(s, "push.held").is_null());
+        let pushed = usize::from(self.push && at(s, "push.held").is_null() && !on(s, "verify.at_head"));
         self.soft[..self.soft.len() - pushed.min(self.soft.len())].to_vec()
     }
 }

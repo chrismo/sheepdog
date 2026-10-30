@@ -865,6 +865,7 @@ fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clear
     for (edit, yours) in [
         (r#".ci.verdict = "inconclusive""#, "the cancelled CI (rerun it: gh run rerun, or rwx retry)"),
         (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "the held CI config change (review it, then sd act push)"),
+        (r#".push.ahead = 1 | .verify = {at_head: true, sha: "h1", step: "ci-fix", cmd: "make test"}"#, "the verify red on HEAD (fix it, then sd act verify)"),
     ] {
         sd.state(&[edit]);
         let r = sd.ok(&["answer", "keep THREE"]);
