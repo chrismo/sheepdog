@@ -209,6 +209,7 @@ fn follow_adopts_a_checkout_behind_the_pr_or_diverged_from_it_and_moves_neither(
     // PR #7 is followed now; ahead's is #8, the same commits, and ahead and
     // the PR have each moved on from old.
     sd.git_in("other", &["push", "-q", "origin", "HEAD:refs/pull/8/head"]);
+    sd.git(&["config", "branch.ahead.merge", "refs/pull/8/head"]);
     sd.cd("ahead");
     sd.ok(&["follow", "8"]);
     assert_eq!(sd.git(&["rev-parse", "HEAD"]), mine);
@@ -216,6 +217,46 @@ fn follow_adopts_a_checkout_behind_the_pr_or_diverged_from_it_and_moves_neither(
     let r = sd.run(&["fetch"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["ahead has commits the PR never had"]);
+}
+
+#[test]
+fn follow_adopts_a_same_repo_prs_branch_checked_out_tracking_it() {
+    let mut sd = sd();
+    sd.git_in("other", &["push", "-q", "origin", "their-fix"]);
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git(&["worktree", "add", "-q", "--track", "-b", "their-fix", &sd.path("their-fix"), "origin/their-fix"]);
+    sd.cd("their-fix");
+    let r = sd.run_sep(&["follow", "7"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("their-fix"));
+    assert_eq!(sd.git(&["config", "--get", "branch.their-fix.sd-mode"]), "reviewer");
+}
+
+#[test]
+fn follow_from_the_branch_a_stacked_pr_is_on_makes_review_n_and_leaves_the_base_alone() {
+    let mut sd = sd();
+    sd.git_in("other", &["switch", "-qc", "base", "main"]);
+    sd.git_in("other", &["commit", "-q", "--allow-empty", "-m", "the base"]);
+    sd.git_in("other", &["push", "-q", "origin", "base"]);
+    sd.git_in("other", &["switch", "-qc", "on-base"]);
+    sd.git_in("other", &["commit", "-q", "--allow-empty", "-m", "on the base"]);
+    sd.git_in("other", &["push", "-q", "-f", "origin", "HEAD:refs/pull/7/head"]);
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git(&["worktree", "add", "-q", "--track", "-b", "base", &sd.path("base"), "origin/base"]);
+    sd.cd("base");
+    let r = sd.run_sep(&["follow", "7"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("review-7"));
+    assert_has(&r.stderr, &["sd act: base isn't PR #7's checkout (it doesn't track refs/pull/7/head or a branch at its head); making review/7"]);
+    assert!(sd.git_try(&["config", "--get", "branch.base.sd-mode"]).is_none());
+}
+
+#[test]
+fn follow_makes_review_n_from_scratch_whatever_pr_head_was_left_behind() {
+    let sd = sd();
+    sd.git(&["update-ref", "refs/sheepdog/review/7/pr-head", "main"]);
+    sd.ok(&["follow", "7"]);
+    assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]), sd.git_in("other", &["rev-parse", "HEAD"]));
 }
 
 #[test]

@@ -71,8 +71,9 @@ Verbs:
             (.sd-mode), enrolls. A checkout already there is used as it is,
             no setup hook, nothing reset (#358): the branch already following
             the PR, whatever its name; else the branch checked out here when
-            it has the PR's commits (cd into a gh pr checkout, then follow);
-            else review/<number> when it has them. A reviewer's branch refuses
+            it tracks the PR (refs/pull/<number>/head, or an upstream at its
+            head: cd into a gh pr checkout, then follow); else review/<number>
+            when it has the PR's commits. A reviewer's branch refuses
             the author's verbs: implement, address, ci-fix, restack, retarget,
             push, ship, describe, trigger, answer, autofix. stdout is only the
             worktree's path

@@ -8,13 +8,13 @@
 // fetch into it, no reset, no setup hook. Which one, first match:
 // - the branch already following PR <n>, whatever it's called (no fetch at
 //   all, so a repeat follow just prints its path);
-// - the branch checked out where follow runs, when it's the PR's: it shares a
-//   commit with the PR's head that the default branch doesn't have (so cd
-//   into a gh pr checkout and follow it);
-// - review/<n>, if it's the PR's by the same test.
-// A branch's worktree is made, with the hook, when it has none. pr-head, if
-// none is recorded, is where branch and PR last met (their merge-base), so
-// fetch keeps any commits of the branch's own. Refused: a branch that is an
+// - the branch checked out where follow runs, when it tracks the PR as gh pr
+//   checkout leaves it: refs/pull/<n>/head (a fork's), or an upstream at the
+//   PR's head. Not mere shared history, which a stacked PR's base has too;
+// - review/<n>, when it has a commit of the PR's past the default branch.
+// A branch's worktree is made, with the hook, when it has none. pr-head is
+// where branch and PR last met (their merge-base), so fetch keeps any
+// commits of the branch's own. Refused: a branch that is an
 // author's or another PR's, two branches following the PR, a review/<n> that
 // isn't the PR's, a registered worktree whose directory is gone.
 //
@@ -81,13 +81,17 @@ fn following(n: &str) -> Option<String> {
 }
 
 /// Where <b> and the PR's head <pr_head> last met, when that's past the
-/// default branch <main>: so <b> is the PR's.
+/// default branch <main>.
 fn met(b: &str, pr_head: &str, main: Option<&str>) -> Option<String> {
     let mb = git_out(".", &["merge-base", &format!("refs/heads/{b}"), pr_head])?;
-    if main.is_some_and(|m| is_ancestor(".", &mb, m)) {
-        return None;
-    }
-    Some(mb)
+    (!is_ancestor(".", &mb, main?)).then_some(mb)
+}
+
+/// <b> tracks PR <n>: refs/pull/<n>/head, or an upstream at its head.
+fn tracks(b: &str, n: &str, pr_head: &str) -> bool {
+    git_out(".", &["config", "--get", &format!("branch.{b}.merge")]) == Some(format!("refs/pull/{n}/head"))
+        || git_out(".", &["for-each-ref", "--format=%(upstream)", &format!("refs/heads/{b}")])
+            .is_some_and(|u| !u.is_empty() && rev(".", &u) == pr_head)
 }
 
 /// Dies when <b> is another PR's or an author's.
@@ -106,8 +110,8 @@ fn unclaimed(b: &str, n: &str) {
 
 /// <b> following PR <n> in its worktree, made beside the main one if it has
 /// none (<b> made too, at <from>, if given) and the setup hook run there;
-/// pr-head recorded at <pr_head> unless one is. Prints the worktree's path;
-/// the exit code.
+/// pr-head recorded at <pr_head>, if given. Prints the worktree's path; the
+/// exit code.
 fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>) -> i32 {
     let wt = worktree_for(".", b);
     if !wt.is_empty() && !Path::new(&wt).is_dir() {
@@ -136,7 +140,7 @@ fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>
             std::process::exit(o.code);
         }
     }
-    if let Some(h) = pr_head.filter(|_| !show_ref(".", &pr_head_ref(b))) {
+    if let Some(h) = pr_head {
         let o = git(".", &["update-ref", &pr_head_ref(b), h]);
         if !o.ok {
             eprint!("{}", o.stderr);
@@ -160,10 +164,12 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
     git(".", &["update-ref", "-d", &fetched]);
     let main = start_default(remote).and_then(|d| start_point(remote, &d));
     let here = git_out(".", &["branch", "--show-current"]).unwrap_or_default();
-    let mine = (!here.is_empty()).then(|| met(&here, &pr_head, main.as_deref())).flatten();
-    if let Some(mb) = mine {
-        unclaimed(&here, n);
-        return settle(&src, &here, n, Some(&mb), None);
+    if let Some(mb) = (!here.is_empty()).then(|| met(&here, &pr_head, main.as_deref())).flatten() {
+        if tracks(&here, n, &pr_head) {
+            unclaimed(&here, n);
+            return settle(&src, &here, n, Some(&mb), None);
+        }
+        eprintln!("sd act: {here} isn't PR #{n}'s checkout (it doesn't track refs/pull/{n}/head or a branch at its head); making {b}");
     }
     if !show_ref(".", &format!("refs/heads/{b}")) {
         return settle(&src, b, n, Some(&pr_head), Some(&pr_head));
