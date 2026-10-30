@@ -542,6 +542,16 @@ fn harness_run_a_failed_step_adds_to_the_branchs_failure_record_and_one_that_suc
     assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/failed"]), None);
 }
 
+#[test]
+fn harness_run_a_step_that_exits_0_with_no_usable_result_records_that_not_the_replys_last_line_324() {
+    let sd = sd();
+    sd.fx("out", "Done.\n\n```js\n{\"ok\": true}\n```\n");
+    let r = sd.step(&[("HARNESS_STEP", "implement")], &["pi", "sid2", "new", "30", "do it", "{}"]);
+    assert_ne!(r.status, 0);
+    let rec: Value = serde_json::from_str(&sd.git(&["cat-file", "blob", "refs/sheepdog/feat/failed"])).unwrap();
+    assert_eq!(rec["error"], "no usable result in the reply");
+}
+
 // @test "harness_run: a step its own stepTimeout ended, no signal to sd, records the timeout (#242, #270)"
 #[test]
 fn harness_run_a_timed_out_step_records_the_timeout_242() {

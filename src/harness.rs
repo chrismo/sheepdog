@@ -266,7 +266,10 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     } else if !b.is_empty() && result.is_ok() {
         failed::clear(b);
     } else if !b.is_empty() {
-        failed::record(b, s.label(), h, &failed::why(out.timed_out, &said, &out.stderr, status));
+        // A harness that exited 0 failed only sd's parse: the reply's last
+        // line (a brace, a fence) wouldn't say so (#324).
+        let why = if out.ok { "no usable result in the reply".to_string() } else { failed::why(out.timed_out, &said, &out.stderr, status) };
+        failed::record(b, s.label(), h, &why);
     }
     result.map(|results| Ran { results, session: sid }).map_err(Stop::Failed)
 }
@@ -438,11 +441,12 @@ fn claude_result(out: &str) -> Option<Vec<Value>> {
     (!rs.is_empty()).then_some(rs)
 }
 
-/// The last closed ```json block in pi's reply.
+/// The last closed ```json block in pi's reply. Its opening fence may end a
+/// prose line rather than start its own (#324).
 fn fenced(out: &str) -> String {
     let (mut buf, mut last, mut inside) = (String::new(), String::new(), false);
     for l in out.trim_end_matches('\n').split('\n') {
-        if l.starts_with("```json") {
+        if l.starts_with("```json") || l.trim_end().ends_with("```json") {
             buf.clear();
             inside = true;
         } else if l.starts_with("```") {
@@ -705,6 +709,13 @@ mod tests {
         assert_eq!(fenced("```json\n{\"a\": 1}\n```\nthen\n```json\n{\"b\": 2}\n```"), "{\"b\": 2}\n");
         assert_eq!(fenced("```json\n{\"a\": 1}\n```\n```json\n{\"unclosed\": 2}\n"), "{\"a\": 1}\n");
         assert_eq!(fenced("```\nplain\n```\n"), "");
+    }
+
+    #[test]
+    fn fenced_opens_on_a_fence_glued_to_the_end_of_prose() {
+        assert_eq!(fenced("...remain unrun, as requested.```json\n{\"ok\": true}\n```\n"), "{\"ok\": true}\n");
+        assert_eq!(fenced("Done: ```json \n{\"a\": 1}\n```\nthen ```json\n{\"b\": 2}\n```"), "{\"b\": 2}\n");
+        assert_eq!(fenced("see ```json\n{\"unclosed\": 2}\n"), "");
     }
 
     #[test]
