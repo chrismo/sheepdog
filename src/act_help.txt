@@ -68,9 +68,16 @@ Verbs:
             (refs/pull/<number>/head, a fork's PR too) on the branch
             review/<number>, in a worktree beside the main one with the
             setup hook run, as start does; records the PR and reviewer mode
-            (.sd-mode), enrolls. A reviewer's branch refuses the author's
-            verbs: implement, address, ci-fix, restack, retarget, push, ship,
-            describe, trigger, answer, autofix. stdout is only the worktree's path
+            (.sd-mode), enrolls. A checkout already there is used as it is,
+            nothing reset (#358), the setup hook run only for a worktree made
+            for a branch that had none: the branch already following
+            the PR, whatever its name; else the branch checked out here when
+            its upstream is at the PR's head, as its remote has it now (cd
+            into a gh pr checkout, then follow); else review/<number> when it
+            has the PR's commits. A reviewer's branch refuses
+            the author's verbs: implement, address, ci-fix, restack, retarget,
+            push, ship, describe, trigger, answer, autofix. stdout is only the
+            worktree's path
   fetch     a followed PR's head (A1): the author's pushes, force-pushes
             too, fetched and the branch reset to them. Refuses uncommitted
             changes, or commits on the branch that no fetched head had: the

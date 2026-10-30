@@ -40,7 +40,7 @@ pub fn start_default(remote: &str) -> Option<String> {
 }
 
 /// <b> on <remote>, else here, as a full ref.
-fn start_point(remote: &str, b: &str) -> Option<String> {
+pub(super) fn start_point(remote: &str, b: &str) -> Option<String> {
     [format!("refs/remotes/{remote}/{b}"), format!("refs/heads/{b}")].into_iter().find(|r| show_ref(".", r))
 }
 
