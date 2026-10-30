@@ -161,7 +161,10 @@ fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, St
         r.say(&tail(&o.stdout, VERIFY_TAIL));
         r.say(&tap_missing(&o.stdout).unwrap_or_default());
     } else {
-        verify_red::clear(wt, b);
+        // A pass on uncommitted edits didn't test HEAD.
+        if before.is_empty() {
+            verify_red::clear(wt, b);
+        }
         return Ok(cmd);
     }
     if !o.stopped {

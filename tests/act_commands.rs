@@ -116,6 +116,16 @@ mod verify {
         assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
     }
 
+    #[test]
+    fn a_pass_on_a_dirty_tree_leaves_the_record_it_didnt_test_head_325() {
+        let sd = sd();
+        verify_cmd(&sd, "echo formatted >> file.txt");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        verify_cmd(&sd, "true");
+        assert_eq!(sd.run(&["verify"]).status, 0);
+        assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
+    }
+
     // @test "failing: short output is shown whole, untrimmed"
     #[test]
     fn failing_short_output_is_shown_whole_untrimmed() {
