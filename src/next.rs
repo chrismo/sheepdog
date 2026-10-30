@@ -636,7 +636,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             if bot && addr_refuses {
                 address()
             } else if resume && addr_refuses {
-                step("answer", "wait", format!("your answer to the address agent's question waits while {addr_why}"), None)
+                // it runs address, and the rewrite below may offer --force
+                spends(hold, step("answer", "wait", format!("your answer to the address agent's question waits while {addr_why}"), None))
             } else {
                 None
             },

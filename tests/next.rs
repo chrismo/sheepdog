@@ -583,6 +583,24 @@ fn a_stored_address_answer_runs_as_the_bot_step_once_address_s_gate_clears_and_w
 }
 
 #[test]
+fn past_the_budget_or_failed_limit_a_stored_address_answer_isn_t_offered_as_sd_act_address_force_326() {
+    // Round 6: the rewrite handing a first answer step to chrismo offered
+    // --force, a token-spending run the budget or failed hold should hide.
+    let a = answered("address");
+    let over = r#".spend = {"usd": 30, "budget": 25}"#;
+    let failed = r#".failed = {count: 3, step: "address", harness: "claude", at: "2026-10-23T10:00:00Z", error: "boom"}"#;
+    for hold in [over, failed] {
+        let unknown = e![hold, ".threads.owed_bot = 1", ".sync.up_to_date = null", &a];
+        let conflict = e![hold, ".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &a];
+        let k = if hold == over { "budget" } else { "failed" };
+        for st in [&unknown, &conflict] {
+            assert_eq!(keys(st), k, "{hold}");
+            assert!(!lines_for(true, st).contains("--force"), "{hold}: {}", lines_for(true, st));
+        }
+    }
+}
+
+#[test]
 fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_its_question_326() {
     let a = answered("address");
     let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
