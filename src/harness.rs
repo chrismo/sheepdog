@@ -20,14 +20,17 @@ use std::time::Instant;
 // and talks to GitHub.
 const CLAUDE_DENY: &str = "Bash(git commit *),Bash(git push *),Bash(gh *)";
 
-/// A read-only step's tools (review, describe), and pi's "read".
+/// A read-only step's tools (review, describe), and pi's "read": no
+/// codemode, since the MCP tools it reaches may write (#323).
 pub const READONLY_ALLOW: &str = "Read,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git blame *)";
 pub const READONLY_PI_TOOLS: &str = "read";
 
 /// An editing step's tools. Claude may read and edit; pi has no per-command
-/// bash rules, so no bash at all.
+/// bash rules, so no bash at all. pi's MCP tools are reachable only through
+/// codemode, whose scripts call the active built-ins and MCP tools, not an
+/// inactive bash (#323).
 pub const CLAUDE_ALLOW: &str = "Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)";
-pub const PI_TOOLS: &str = "read,edit,write";
+pub const PI_TOOLS: &str = "read,edit,write,codemode";
 
 /// An editing step's claude tools with <rules> (Claude Code permission
 /// rules, agent_rules) added, and its prompt's word on what the agent may
@@ -848,6 +851,15 @@ mod tests {
         let none = (CLAUDE_ALLOW.to_string(), "You can't run commands here beyond read-only git.".to_string());
         assert_eq!(tool_rules("pi", &rules), none);
         assert_eq!(tool_rules("claude", &[]), none);
+    }
+
+    // pi's codemode scripts call active built-ins and MCP tools, never an
+    // inactive bash; MCP tools may write, so read-only steps don't get it (#323).
+    #[test]
+    fn pi_editing_steps_get_codemode_and_no_bash_and_read_only_steps_get_neither_323() {
+        let tools = |s: &str| s.split(',').map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(tools(PI_TOOLS), ["read", "edit", "write", "codemode"]);
+        assert_eq!(tools(READONLY_PI_TOOLS), ["read"]);
     }
 
     #[test]

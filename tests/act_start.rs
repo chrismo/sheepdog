@@ -912,16 +912,16 @@ fn implement_settings_implementallow_adds_its_rules_and_the_prompt_names_them() 
     assert_has(&sd.prompt(), &["Bash(bats *)"]);
 }
 
-// @test "implement: pi gets no shell, and its prompt names no Claude rules"
+// @test "implement: pi gets no shell but codemode, and its prompt names no Claude rules (#323)"
 #[test]
-fn implement_pi_gets_no_shell_and_its_prompt_names_no_claude_rules() {
+fn implement_pi_gets_no_shell_but_codemode_and_its_prompt_names_no_claude_rules_323() {
     let mut sd = sd();
     sd.started(TASK);
     sd.fake("pi", PI);
     sd.write_global(r#"{"settings": {"verify": "test -f file.txt", "implementAllow": ["Bash(bats *)"]}}"#);
     let r = sd.run(&["implement", "--harness", "pi"]);
     assert_eq!(r.status, 0);
-    assert_eq!(sd.after("pi.args", "--tools"), "read,edit,write");
+    assert_eq!(sd.after("pi.args", "--tools"), "read,edit,write,codemode");
     assert_lacks(&sd.fx("pi.args"), "Bash(");
     assert_has(&sd.fx("pi.args"), &["can't run commands"]);
 }
