@@ -261,7 +261,7 @@ fn follow_says_nothing_of_a_review_branch_checked_out_here_and_takes_it() {
     let r = sd.run_sep(&["follow", "7"]);
     assert_eq!(r.status, 0, "{}", r.stderr);
     assert_eq!(r.output, sd.path("review-7"));
-    assert_lacks(&r.stderr, "isn't PR #7's");
+    assert_lacks(&r.stderr, "not taking");
 }
 
 impl Sd {
