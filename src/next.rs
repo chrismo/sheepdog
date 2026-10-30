@@ -7,10 +7,13 @@
 //
 // Ordering of the loop's own steps, after what blocks everything (stale refs,
 // human items): restack, agent fixes, one push, then review and wait; the push
-// leads because every push restarts CI (#79 Design record). GitHub behind the
-// remote refs, a push it hasn't seen yet (sd state's lag), is a wait where
-// stale refs are a fetch (#246). It has no time limit: a PR GitHub never
-// updates waits until chrismo sees sd watch's ⚠️ glyph.
+// leads because every push restarts CI (#79 Design record). While address's
+// own gate (src/act/address.rs) would refuse it, address comes after the steps
+// that clear the gate, or is chrismo's when none does; an address question's
+// step says what clears it (#326).
+// GitHub behind the remote refs, a push it hasn't seen yet (sd state's lag),
+// is a wait where stale refs are a fetch (#246). It has no time limit: a PR
+// GitHub never updates waits until chrismo sees sd watch's ⚠️ glyph.
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -266,6 +269,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             || restack_due
             || (pr_null && !empty && !dropping));
     let refused = dirty || (open && on("push.dirty") && !asking.is_empty());
+    let addr = crate::act::address_gate(s);
+    let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
+    let addr_refuses = !addr_why.is_empty();
+    let bot = open && bot_blocking > 0.0 && asking != "address" && !refused;
+    let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
 
     let branch = t("branch");
     let target = t("sync.target");
@@ -344,14 +352,16 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
             if open && !asking.is_empty() {
                 let answer = "sd act answer \"<your answer>\"";
-                let (say, then) = if asking == "resolve" {
-                    (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), "sd act restack")
+                let (say, then) = if asking == "address" && addr_refuses {
+                    answer_refused(s, &addr, &addr_why, &asked, !foreign && !undone && !parent_unpushed)
+                } else if asking == "resolve" {
+                    (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
                 } else if is("question.kind", "gave-up") {
-                    (format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again"), answer)
+                    (format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again"), cmd(answer))
                 } else {
-                    (format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"), answer)
+                    (format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"), cmd(answer))
                 };
-                step("question", "you", say, cmd(then))
+                step("question", "you", say, then)
             } else {
                 None
             },
@@ -448,8 +458,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && bot_blocking > 0.0 && asking != "address" && !refused {
-                agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address")
+            if bot && !addr_refuses {
+                address()
             } else {
                 None
             },
@@ -563,6 +573,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                     },
                     cmd("sd act push"),
                 )
+            } else {
+                None
+            },
+            if bot && addr_refuses {
+                address()
             } else {
                 None
             },
@@ -737,11 +752,46 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         }
         out.push(st);
     }
+    // Nothing above clears address's gate: chrismo's, with why.
+    if out.first().is_some_and(|st| st["key"] == "bot") && addr_refuses {
+        let (say, cmd) = if addr.hard.is_some() {
+            ("clear that first", None)
+        } else {
+            ("clear that first, or sd act address --force", Some("sd act address --force".to_string()))
+        };
+        out[0] = json!({"key": "bot", "who": "you", "say": format!("{}: sd act address refuses while {addr_why}: {say}", text(&out[0]["say"])), "cmd": cmd});
+    }
     // ready, merge-wait and blocked are the end state, listed only alone.
     if out.len() > 1 && matches!(out[out.len() - 1]["key"].as_str(), Some("ready" | "merge-wait" | "blocked")) {
         out.pop();
     }
     Ok(Value::Array(out))
+}
+
+/// The question step for an address question that address's gate <g>
+/// refuses: what clears it first. A push leaves the question standing; a
+/// restack would drop it, so a conflict is answered with --force.
+fn answer_refused(s: &Value, g: &crate::act::Gate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
+    let did = if val::t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" };
+    let head = format!("the agent {did} (address): {asked}; sd act answer refuses while {why}");
+    let answer = if g.conflict {
+        "answer it with sd act answer --force, since a restack first would drop the question"
+    } else {
+        "answer it with sd act answer"
+    };
+    let others = g.soft.len() - usize::from(g.push) - usize::from(g.conflict);
+    if g.hard.is_some() || others > 0 {
+        (format!("{head}: clear that first, or answer in its session (sd act attach), then sd act ack --question"), None)
+    } else if g.push {
+        let push = if at(s, "push.held").is_null() {
+            "push first,".to_string()
+        } else {
+            format!("review the agent's CI config change ({}), then sd act push;", sj(at(s, "push.held.paths"), ", "))
+        };
+        (format!("{head}: {push} then {answer}"), can_push.then(|| "sd act push".into()))
+    } else {
+        (format!("{head}: {answer}"), cmd("sd act answer --force \"<your answer>\""))
+    }
 }
 
 /// A followed PR's steps (#250).

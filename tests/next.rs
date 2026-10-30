@@ -440,6 +440,79 @@ fn bot_items_sd_act_address() {
     assert_eq!(step("bot", "cmd", &e![".threads.owed_bot = 3"]), "sd act address");
 }
 
+#[test]
+fn bot_items_wait_behind_what_clears_address_s_gate_326() {
+    let bot = ".threads.owed_bot = 2";
+    // address refuses unpushed, unpublished or rewritten commits: the push goes first
+    assert_eq!(keys(&e![bot, ".push.ahead = 2"]), "push bot");
+    assert_eq!(keys(&e![bot, ".push.remote_sha = null", ".push.ahead = 2"]), "push bot");
+    assert_eq!(keys(&e![bot, ".push.ahead = 2", ".push.behind = 2", ".push.diverged = true"]), "push bot");
+    assert_eq!(step("bot", "cmd", &e![bot, ".push.ahead = 2"]), "sd act address");
+    // a held push is chrismo's to release
+    assert_eq!(keys(&e![bot, ".push.ahead = 1", r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#]), "ci-config bot");
+    // and a restack that would conflict
+    assert_eq!(keys(&e![bot, ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true"]), "conflict bot");
+    // behind with no conflict only warns: address as before
+    assert_eq!(keys(&e![bot, ".sync.up_to_date = false", ".sync.behind = 2"]), "bot");
+}
+
+#[test]
+fn bot_items_address_refuses_with_nothing_ahead_to_clear_it_are_chrismo_s_326() {
+    // the parent closed: no restack is offered, and the conflict stands
+    let closed = e![
+        r#".pr.base = "p""#,
+        r#".sync.target = "p""#,
+        ".sync.up_to_date = false",
+        ".sync.behind = 2",
+        ".sync.conflict = true",
+        r#".parent = {"name": "p", "source": "pr", "merged": false, "pr": {"number": 25, "state": "CLOSED", "head_sha": "x"}}"#,
+        ".threads.owed_bot = 2",
+    ];
+    assert_eq!(keys(&closed), "bot parent-closed");
+    assert_eq!(step("bot", "who", &closed), "you");
+    assert_eq!(
+        step("bot", "say", &closed),
+        "address 2 bot items: sd act address refuses while restack due, and it would conflict: clear that first, or sd act address --force"
+    );
+    assert_eq!(step("bot", "cmd", &closed), "sd act address --force");
+}
+
+#[test]
+fn an_address_question_its_answer_s_gate_refuses_says_what_clears_it_first_326() {
+    let q = asked("address", true);
+    let ahead = e![".threads.owed_bot = 1", ".push.ahead = 1", &q];
+    assert_eq!(keys(&ahead), "question push");
+    assert_eq!(
+        step("question", "say", &ahead),
+        "the agent asks (address): Which test is right?; sd act answer refuses while 1 unpushed commit(s): push first, then answer it with sd act answer"
+    );
+    assert_eq!(step("question", "cmd", &ahead), "sd act push");
+    // a restack would drop the question, so the answer goes in with --force
+    let conflict = e![".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &q];
+    assert_eq!(keys(&conflict), "question conflict");
+    assert_eq!(
+        step("question", "say", &conflict),
+        "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict: answer it with sd act answer --force, since a restack first would drop the question"
+    );
+    assert_eq!(step("question", "cmd", &conflict), r#"sd act answer --force "<your answer>""#);
+    // soak of 2026-10-29: both, and the unpushed commit a CI-config hold only chrismo releases
+    let held = e![&conflict, ".push.ahead = 1", r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#];
+    assert_eq!(
+        step("question", "say", &held),
+        "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict; 1 unpushed commit(s): review the agent's CI config change (.rwx/tests.yml), then sd act push; then answer it with sd act answer --force, since a restack first would drop the question"
+    );
+    assert_eq!(step("question", "cmd", &held), "sd act push");
+    // nothing NEXT offers clears it: say so
+    let theirs = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = false", &q];
+    assert_eq!(
+        step("question", "say", &theirs),
+        "the agent asks (address): Which test is right?; sd act answer refuses while the remote branch has 1 commit(s) you don't: clear that first, or answer in its session (sd act attach), then sd act ack --question"
+    );
+    assert_eq!(step("question", "cmd", &theirs), "null");
+    // other steps' questions: as before
+    assert_eq!(step("question", "cmd", &e![".push.ahead = 1", &asked("implement", true)]), r#"sd act answer "<your answer>""#);
+}
+
 // @test "bot items that are only info: chrismo reads them, then acks"
 #[test]
 fn bot_items_that_are_only_info_chrismo_reads_them_then_acks() {
@@ -484,9 +557,9 @@ fn past_settings_branchbudget_one_you_step_in_place_of_the_agent_steps_run_steps
     assert_eq!(step("budget", "who", &e![over, ".threads.owed_bot = 2"]), "you");
     assert_eq!(step("budget", "say", &e![over, ".threads.owed_bot = 2"]), "spent $25.46 on this branch, past settings.branchBudget ($25.00): raise it, or take over");
     assert_eq!(step("budget", "cmd", &e![over, ".threads.owed_bot = 2"]), "sd act attach");
-    // a restack ahead of the agent's steps, and a push after them, stay
+    // a restack ahead of the agent's steps, and a push (which address waits behind, #326), stay
     assert_eq!(keys(&e![over, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 2"]), "behind budget");
-    assert_eq!(keys(&e![over, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "budget push");
+    assert_eq!(keys(&e![over, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "push budget");
     // nothing that spends: no budget step
     assert_eq!(keys(&e![over]), "ready");
 }
@@ -556,9 +629,9 @@ fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_ru
     assert_eq!(step("failed", "cmd", &e![&failed(3, "resolve"), ".threads.owed_bot = 2"]), "sd act restack --resolve");
     // a step nothing reruns: clearing the record is the way on
     assert_eq!(step("failed", "cmd", &e![&failed(3, "agent"), ".threads.owed_bot = 2"]), "git update-ref -d refs/sheepdog/feat/failed");
-    // a restack ahead of the agent's steps, and a push after them, stay
+    // a restack ahead of the agent's steps, and a push (which address waits behind, #326), stay
     assert_eq!(keys(&e![&three, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 2"]), "behind failed");
-    assert_eq!(keys(&e![&three, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "failed push");
+    assert_eq!(keys(&e![&three, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "push failed");
     // nothing that spends: no failed step
     assert_eq!(keys(&e![&three]), "ready");
     // fewer in a row: the loop retries
@@ -1077,8 +1150,9 @@ fn no_pr_no_ci_wait() {
 #[test]
 fn order_follows_the_loop_s_ordering_79_design_record_restack_agent_fixes_push_then_waiting() {
     // ci-red yields to push while commits are unpushed (they may be the fix), so
-    // it shows up only once the push is done.
-    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind bot push review");
+    // it shows up only once the push is done; address refuses them, so it
+    // follows the push (#326).
+    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind push bot review");
     assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind ci-red bot review");
 }
 
@@ -1102,7 +1176,7 @@ fn the_remote_and_branch_reach_commands_as_data() {
 fn lines_one_next_line_with_who_say_command_and_a_count_of_the_rest() {
     let out = lines_for(false, &e![".push.ahead = 1", ".threads.owed_bot = 1"]);
     assert_eq!(out.lines().count(), 1);
-    assert_eq!(out, "NEXT  agent  address 1 bot item  → sd act address  (+1 more)");
+    assert_eq!(out, "NEXT  run    push 1 commit  → sd act push  (+1 more)");
 }
 
 // @test "lines: a step with no command has no arrow"
@@ -1118,8 +1192,8 @@ fn lines_all_lists_every_step_the_rest_as_then() {
     let out = lines_for(true, &e![".push.ahead = 1", ".threads.owed_bot = 1"]);
     let ls: Vec<&str> = out.lines().collect();
     assert_eq!(ls.len(), 2);
-    assert_eq!(ls[0], "NEXT  agent  address 1 bot item  → sd act address");
-    assert_eq!(ls[1], "then  run    push 1 commit  → sd act push");
+    assert_eq!(ls[0], "NEXT  run    push 1 commit  → sd act push");
+    assert_eq!(ls[1], "then  agent  address 1 bot item  → sd act address");
 }
 
 // @test "question: a you step quoting its first line, in place of the agent step that asked (#167)"

@@ -64,15 +64,19 @@ const ACTIONS: [&str; 4] = ["fixed", "reply", "pushback", "ask"];
 const UNANSWERED: &str = ". The answer didn't reach the agent; sd act ack --question drops its question";
 
 /// What sd state says of addressing: a hard refusal can't be forced, soft
-/// ones can, and warnings never block.
+/// ones can, and warnings never block. push: sd act push clears a soft
+/// reason; conflict: one is a restack that would conflict. NEXT reads it too
+/// (#326).
 #[derive(Debug, Default, PartialEq)]
-struct Gate {
-    hard: Option<String>,
-    soft: Vec<String>,
-    warn: Vec<String>,
+pub struct Gate {
+    pub hard: Option<String>,
+    pub soft: Vec<String>,
+    pub warn: Vec<String>,
+    pub push: bool,
+    pub conflict: bool,
 }
 
-fn gate(s: &Value) -> Gate {
+pub fn gate(s: &Value) -> Gate {
     let nul = |p: &str| at(s, p).is_null();
     let b = t(s, "branch");
     let state = at(s, "pr.state");
@@ -89,20 +93,25 @@ fn gate(s: &Value) -> Gate {
     if on(s, "session.locked") {
         soft.push(format!("taken over (branch.{b}.sd-lock is set)"));
     }
-    if on(s, "sync.conflict") {
+    let conflict = on(s, "sync.conflict");
+    if conflict {
         soft.push("restack due, and it would conflict".into());
     } else if nul("sync.up_to_date") {
         let target = if nul("sync.target") { "the parent".into() } else { t(s, "sync.target") };
         soft.push(format!("sync with {target} unknown"));
     }
+    let mut push = true;
     if nul("push.remote_sha") {
         soft.push("not pushed".into());
     } else if on(s, "push.diverged") {
         soft.push("diverged from the remote branch".into());
     } else if n(s, "push.behind") > 0.0 {
         soft.push(format!("the remote branch has {} commit(s) you don't", t(s, "push.behind")));
+        push = false;
     } else if n(s, "push.ahead") > 0.0 {
         soft.push(format!("{} unpushed commit(s)", t(s, "push.ahead")));
+    } else {
+        push = false;
     }
     let mut warn = vec![];
     if at(s, "sync.up_to_date") == &Value::Bool(false) && !on(s, "sync.conflict") {
@@ -111,7 +120,7 @@ fn gate(s: &Value) -> Gate {
     if t(s, "ci.verdict") == "pending" {
         warn.push("CI is still running".into());
     }
-    Gate { hard, soft, warn }
+    Gate { hard, soft, warn, push, conflict }
 }
 
 /// gh api graphql with these -f fields: its answer, or None (gh said why).
@@ -585,6 +594,17 @@ mod tests {
         let s = st(json!({"push.behind": 2, "push.ahead": 1}));
         assert_eq!(gate(&s).soft, strings(&["the remote branch has 2 commit(s) you don't"]));
         assert_eq!(gate(&st(json!({"push.ahead": 1}))).soft, strings(&["1 unpushed commit(s)"]));
+    }
+
+    #[test]
+    fn gate_says_which_soft_reasons_a_push_or_a_restack_clears() {
+        for s in [json!({"push.remote_sha": null}), json!({"push.diverged": true, "push.behind": 1}), json!({"push.ahead": 1})] {
+            assert!(gate(&st(s)).push);
+        }
+        assert!(!gate(&st(json!({"push.behind": 2}))).push);
+        let g = gate(&st(json!({"sync.conflict": true, "session.locked": true})));
+        assert!(g.conflict && !g.push);
+        assert!(!gate(&st(json!({"sync.up_to_date": null}))).conflict);
     }
 
     #[test]

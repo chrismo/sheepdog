@@ -19,6 +19,7 @@ mod ship;
 mod start;
 mod step;
 pub(crate) use step::plain_words;
+pub(crate) use address::{gate as address_gate, Gate};
 
 use crate::git::{self, git, git_out};
 use crate::proc;
