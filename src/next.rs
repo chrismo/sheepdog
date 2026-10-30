@@ -55,8 +55,9 @@
 // steps go to chrismo the same way.
 //
 // A verify that failed on HEAD (verify.at_head, #325) is chrismo's step in
-// place of push, open-pr and draft: nothing publishes a commit verify
-// rejected.
+// place of push, open-pr, draft, review and bot-trigger: nothing publishes or
+// reviews a commit verify rejected (review would only rerun verify and fail
+// again), and ready, as an end state, is listed only alone.
 //
 // A followed PR (mode reviewer, sd act follow, #250) is a teammate's: none of
 // the author's steps, only its own list (reviewer below). The author's pushes
@@ -606,7 +607,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                     ),
                     cmd("sd act review --accept"),
                 )
-            } else if open && need_review && !refused {
+            } else if open && need_review && !refused && !verify_red {
                 let say = match &last_review {
                     Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
                     None if reviewed => "review again: the branch was rewritten since the last review".into(),
@@ -616,7 +617,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && !to_push && !held && !foreign && bot_due {
+            if has_pr && !to_push && !held && !foreign && !verify_red && bot_due {
                 step("bot-trigger", "run",
                     format!("trigger the review bot ({})", t("bot.command")),
                     cmd("sd act trigger"),

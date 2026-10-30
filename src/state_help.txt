@@ -100,8 +100,8 @@ Reports, for <branch> (default: the current one):
   verify    the last failed settings.verify (refs/sheepdog/<b>/verify-red):
             {sha (the commit it ran on), step (the verb that ran it), cmd,
             at, at_head}; a pass removes it, null with none. While at_head,
-            NEXT's verify-red step stands in for push, open-pr and draft,
-            and sd act ship refuses (#325)
+            NEXT's verify-red step stands in for push, open-pr, draft,
+            review, bot-trigger and ready, and sd act ship refuses (#325)
   fresh     false when GitHub's PR / parent-PR head differs from the local
             remote-tracking ref and isn't an older value of it (see lag),
             i.e. sync and push answers need a fetch;

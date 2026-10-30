@@ -529,6 +529,20 @@ fn verify_red_at_head_chrismo_s_step_in_place_of_push_and_ship_325() {
 }
 
 #[test]
+fn verify_red_at_head_holds_review_the_bot_trigger_and_ready_325() {
+    // review would run verify first, fail and re-record it, every watch pass
+    let unreviewed = r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#;
+    assert_eq!(keys(&e![unreviewed, &red(false)]), "review");
+    assert_eq!(keys(&e![unreviewed, &red(true)]), "verify-red");
+    let bot = e![r#".bot = {command: "/review-bot"}"#, r#".review.bot = {sha: null, status: "none"}"#];
+    assert_eq!(keys(&e![&bot, &red(false)]), "bot-trigger");
+    assert_eq!(keys(&e![&bot, &red(true)]), "verify-red");
+    // HEAD already pushed (sd act push isn't gated), PR open and CLEAN
+    assert_eq!(keys(&e![&red(false)]), "ready");
+    assert_eq!(keys(&e![&red(true)]), "verify-red");
+}
+
+#[test]
 fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_run_steps_still_run_242() {
     let failed = |n: u32, s: &str| format!(r#".failed = {{"step": "{s}", "harness": "pi", "count": {n}, "since": "T0", "at": "T1", "error": "no quota"}}"#);
     let three = failed(3, "address");
