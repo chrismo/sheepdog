@@ -2708,6 +2708,37 @@ fn failed_agent_steps_show_on_the_one_liner_and_in_long_three_in_a_row_hand_the_
 }
 
 #[test]
+fn verify_red_stands_at_the_commit_it_failed_on_on_the_one_liner_and_next_325() {
+    let sd = sd();
+    sd.feat();
+    let head = sd.git(&["rev-parse", "HEAD"]);
+    let rec = format!(r#"{{"head": "{head}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z"}}"#);
+    sd.put_blob("refs/sheepdog/feat/verify-red", &rec);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".verify.sha"), head);
+    assert_eq!(r.field(".verify.step"), "implement");
+    assert_eq!(r.field(".verify.cmd"), "make test");
+    assert_eq!(r.field(".verify.at_head"), "true");
+    assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "verify-red");
+    let r = sd.run(&[]);
+    assert_has(&r.output, &["✗ verify red"]);
+    let r = sd.run(&["--long"]);
+    assert_has(&r.output, &[&format!("✗  verify red at {} (implement: make test)", &head[..7])]);
+    sd.commit("b.txt", "b"); // a new HEAD isn't the one verify failed on
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".verify.at_head"), "false");
+    assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "push open-pr");
+    let r = sd.run(&[]);
+    assert_lacks(&r.output, "verify red");
+    let r = sd.run(&["--long"]);
+    assert_lacks(&r.output, "verify red");
+    sd.put_blob("refs/sheepdog/feat/verify-red", r#"{"head": "x"}"#);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".verify"), "null");
+    assert_has(&r.field(".errors[0]"), &["refs/sheepdog/feat/verify-red isn't a verify record"]);
+}
+
+#[test]
 fn question_a_give_up_says_so_on_the_one_liner_and_in_long_254() {
     let sd = sd();
     sd.feat();

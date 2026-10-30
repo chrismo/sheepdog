@@ -45,6 +45,12 @@ impl Sd {
     fn exists(&self, name: &str) -> bool {
         self.cwd.join(name).exists()
     }
+
+    /// refs/sheepdog/feat/verify-red's record, if any (#325).
+    fn verify_red(&self) -> Option<serde_json::Value> {
+        let rec = self.git_try(&["cat-file", "blob", "refs/sheepdog/feat/verify-red"])?;
+        Some(serde_json::from_str(&rec).unwrap())
+    }
 }
 
 mod verify {
@@ -86,6 +92,98 @@ mod verify {
         assert_has(&r.output, &["last 40 of 61 lines"]);
         assert!(has_line(&r.output, "60"));
         assert!(!has_line(&r.output, "1"));
+    }
+
+    #[test]
+    fn a_failure_is_recorded_against_head_and_a_pass_removes_it_325() {
+        let sd = sd();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        let rec = sd.verify_red().expect("a verify-red record");
+        assert_eq!(rec["head"], sd.head_sha().as_str());
+        assert_eq!(rec["step"], "verify");
+        assert_eq!(rec["cmd"], "false");
+        verify_cmd(&sd, "true");
+        assert_eq!(sd.run(&["verify"]).status, 0);
+        assert!(sd.verify_red().is_none());
+    }
+
+    #[test]
+    fn a_pass_that_cant_remove_the_record_warns_325() {
+        let sd = sd();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        sd.write(".git/refs/sheepdog/feat/verify-red.lock", "");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        assert_has(
+            &r.output,
+            &["sd: warning: couldn't remove the failed verify on feat, so NEXT and ship still count HEAD red; git update-ref -d refs/sheepdog/feat/verify-red"],
+        );
+        assert!(sd.verify_red().is_some());
+    }
+
+    #[test]
+    fn a_command_that_changes_the_tree_is_recorded_red_too_325() {
+        let sd = sd();
+        verify_cmd(&sd, "echo formatted >> file.txt");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
+    }
+
+    #[test]
+    fn a_pass_on_a_dirty_tree_leaves_the_record_it_didnt_test_head_325() {
+        let sd = sd();
+        verify_cmd(&sd, "echo formatted >> file.txt");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        verify_cmd(&sd, "true");
+        assert_eq!(sd.run(&["verify"]).status, 0);
+        assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
+    }
+
+    #[test]
+    fn a_pass_on_a_dirty_tree_says_the_red_record_at_head_stands_325() {
+        let sd = sd();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        sd.write("scratch.txt", "stray\n");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        let sha7 = &sd.head_sha()[..7];
+        let line = format!("verify passed on uncommitted changes; the red record at {sha7} stands (commit, or rerun on a clean tree, to clear it)");
+        assert!(has_line(&r.output, &line), "{}", r.output);
+        assert!(sd.verify_red().is_some());
+    }
+
+    #[test]
+    fn a_pass_on_a_dirty_tree_with_no_red_record_at_head_says_nothing_of_one_325() {
+        let sd = sd();
+        sd.write("scratch.txt", "stray\n");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        assert_lacks(&r.output, "red record");
+
+        fs::remove_file(sd.cwd.join("scratch.txt")).unwrap();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        sd.git(&["commit", "-q", "--allow-empty", "-m", "moved"]);
+        sd.write("scratch.txt", "stray\n");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        assert_lacks(&r.output, "red record");
+    }
+
+    #[test]
+    fn a_failure_on_a_dirty_tree_isnt_recorded_against_head_325() {
+        let sd = sd();
+        sd.write("file.txt", "half-done\n");
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        assert!(sd.verify_red().is_none());
     }
 
     // @test "failing: short output is shown whole, untrimmed"
@@ -541,6 +639,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         assert_eq!(sd.subject(), "autofix: sed -i.bak 's/ *$//' file.txt && rm file.txt.bak");
         assert_eq!(sd.git(&["log", "-2", "--format=%s"]).lines().last(), Some("add d"));
         assert_eq!(sd.git(&["status", "--porcelain"]), "");
+        assert!(sd.verify_red().is_none(), "autofix's commit passed verify: nothing red at HEAD");
     }
 
     // @test "implement: a failed verify with no autofix fails as before"
@@ -552,6 +651,9 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         assert_has(&r.output, &["verify failed"]);
         assert_lacks(&r.output, "autofix");
         assert_eq!(sd.subject(), "add d");
+        let rec = sd.verify_red().expect("a verify-red record");
+        assert_eq!(rec["head"], sd.head_sha().as_str());
+        assert_eq!(rec["step"], "implement");
     }
 
     // @test "implement: autofix that changes nothing doesn't rerun verify; the failure stands"
@@ -588,6 +690,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         assert_has(&r.output, &["autofix committed"]);
         assert_has(&r.output, &["verify failed"]);
         assert_eq!(sd.subject(), "autofix: echo more >> file.txt");
+        assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
     }
 
     // @test "implement: verify dirtying the tree is verify's failure; autofix doesn't run"

@@ -3,7 +3,7 @@
 
 use super::{cfg, die, lock_recheck, plural};
 use crate::git::{git, git_out, worktree_for};
-use crate::proc;
+use crate::{proc, verify_red};
 
 const VERIFY_TAIL: usize = 40;
 
@@ -138,13 +138,17 @@ impl Report<'_> {
     }
 }
 
-/// settings.verify in <wt>: Ok(the command) when it passed, or empty when
-/// none is configured; Err(the command) when it failed, after printing why.
-pub(super) fn verify_run(wt: &str, b: &str) -> Result<String, String> {
-    verify_to(wt, b, &mut Report::Print)
+/// settings.verify in <wt>, run for <step>: Ok(the command) when it passed,
+/// or empty when none is configured; Err(the command) when it failed, after
+/// printing why.
+pub(super) fn verify_run(wt: &str, b: &str, step: &str) -> Result<String, String> {
+    verify_to(wt, b, step, &mut Report::Print)
 }
 
-fn verify_to(wt: &str, b: &str, r: &mut Report) -> Result<String, String> {
+/// The verdict is recorded against <wt>'s HEAD (src/verify_red.rs) when the
+/// tree was clean: a run on uncommitted edits didn't test HEAD, and a run sd
+/// stopped on a signal is no verdict.
+fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, String> {
     let cmd = command("verify", b);
     if cmd.is_empty() {
         return Ok(cmd);
@@ -152,19 +156,31 @@ fn verify_to(wt: &str, b: &str, r: &mut Report) -> Result<String, String> {
     let secs = step_timeout(b);
     let before = status(wt);
     let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
+    let verdict = before.is_empty() && !o.stopped;
     if o.ok && status(wt) != before {
         r.line(&format!("verify changed files in {wt} (a formatter?); commit them and rerun"));
     } else if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
         r.say(&tap_missing(&o.stdout).unwrap_or_default());
     } else {
+        if verdict {
+            verify_red::clear(wt, b);
+        } else if let Some(h) = verify_red::at_head(wt, b).filter(|_| !before.is_empty()) {
+            r.line(&format!(
+                "verify passed on uncommitted changes; the red record at {} stands (commit, or rerun on a clean tree, to clear it)",
+                &h[..7]
+            ));
+        }
         return Ok(cmd);
+    }
+    if verdict {
+        verify_red::record(wt, b, step, &cmd);
     }
     Err(cmd)
 }
 
 pub fn verify(b: &str) {
-    match verify_run(&worktree(b), b) {
+    match verify_run(&worktree(b), b, "verify") {
         Ok(cmd) if cmd.is_empty() => println!("no settings.verify configured; nothing to run"),
         Ok(cmd) => println!("verify passed ({cmd})"),
         Err(cmd) => die(format!("verify failed ({cmd})")),
@@ -245,12 +261,12 @@ pub(super) fn verify_autofix(wt: &str, b: &str, step: &str) -> Result<(), String
 
 /// verify_autofix, saying so to <r>, and autofix's commit if it made one.
 pub(super) fn verify_autofix_to(wt: &str, b: &str, step: &str, r: &mut Report) -> (Result<(), String>, Option<String>) {
-    let Err(cmd) = verify_to(wt, b, r) else { return (Ok(()), None) };
+    let Err(cmd) = verify_to(wt, b, step, r) else { return (Ok(()), None) };
     if !status(wt).is_empty() {
         return (Err(cmd), None);
     }
     let Ok(Some(sha)) = autofix_run(wt, b, Some(step), r) else { return (Err(cmd), None) };
-    let verified = verify_to(wt, b, r);
+    let verified = verify_to(wt, b, step, r);
     if let Ok(cmd) = &verified {
         r.line(&format!("verify passed after autofix ({cmd})"));
     }

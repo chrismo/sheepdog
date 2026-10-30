@@ -55,6 +55,9 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     so none runs until chrismo fixes it and reruns the last one (#242)
   ci-config: ❌ an agent step's commit changed CI config, held unpushed
     until chrismo reviews it and runs sd act push (#124)
+  verify-red: ❌ settings.verify failed on HEAD, so nothing pushes or ships
+    it until chrismo fixes it and sd act verify passes, or a new commit
+    replaces HEAD (#325)
   nothing default: ❌ nothing ahead of the base and no task to implement, or
     the default branch itself: chrismo commits, records a task, or starts a
     branch (#143, #159)

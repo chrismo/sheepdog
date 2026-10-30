@@ -147,7 +147,11 @@ Verbs:
   verify   run settings.verify in the branch's worktree, zero tokens. Pass:
             one line. Fail: nonzero, the output trimmed to its last 40 lines
             for the fix step. A command that changes the tree fails too.
-            Gates local review and everything after it
+            Gates local review and everything after it. Every run on a
+            clean tree, by hand or inside a step, records its verdict
+            against HEAD (refs/sheepdog/<b>/verify-red; sd state's verify):
+            a pass removes it, and a failure stops counting once HEAD moves,
+            though its ref stays (#325)
   autofix   run settings.autofix (formatters, lint --fix) in the branch's
             worktree, zero tokens, and commit what it changed ("autofix:
             <command>"). Nothing to commit: says so. A failing command is
@@ -207,7 +211,8 @@ Verbs:
             branch (#159), when git can't
             pick the branch it was made from, and while the parent isn't on
             the remote, has merged (restack first), was closed, or can't be
-            looked up; a merged parent with the branch already on the
+            looked up, and while verify is red at HEAD (sd state's verify,
+            #325); a merged parent with the branch already on the
             default branch ships onto it and rewrites sd-parent. Spends
             tokens unless a description for HEAD and the target is stored
   trigger   post settings.botCommand on the PR so the review bot runs, and
@@ -287,6 +292,7 @@ failed step did.
 --force:
   address         run even if the branch is unpushed, diverged or taken over
   restack, push, ship   run even if taken over
+  ship            ship though verify is red at HEAD
   implement, review, describe   the same
   implement       run though the branch is already ahead of its target
   review          review again a HEAD the local review already covers
