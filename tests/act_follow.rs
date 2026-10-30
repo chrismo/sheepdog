@@ -337,6 +337,43 @@ fn follow_makes_review_n_from_scratch_whatever_pr_head_was_left_behind() {
 }
 
 #[test]
+fn follow_from_a_branch_of_mine_on_top_of_the_pr_unenrolled_makes_review_n_and_leaves_mine_alone() {
+    let mut sd = sd();
+    sd.git(&["fetch", "-q", "origin", "refs/pull/7/head"]);
+    sd.git(&["worktree", "add", "-q", "-b", "mine", &sd.path("mine"), "FETCH_HEAD"]);
+    sd.cd("mine");
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "built on their fix"]);
+    sd.git(&["push", "-q", "-u", "origin", "mine"]);
+    let r = sd.run_sep(&["follow", "7"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("review-7"));
+    assert!(sd.git_try(&["config", "--get", "branch.mine.sd-mode"]).is_none());
+}
+
+#[test]
+fn follow_refuses_the_prs_checkout_when_its_enrolled_as_an_authors() {
+    let mut sd = sd();
+    sd.checkout_by_hand("their-fix", "their-fix");
+    sd.cd("their-fix");
+    sd.ok(&["enroll"]);
+    let r = sd.run(&["follow", "7"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["their-fix is an author's branch (sd act start or enroll)"]);
+    assert!(sd.git_try(&["config", "--get", "branch.their-fix.sd-mode"]).is_none());
+}
+
+#[test]
+fn follow_never_takes_the_default_branch_even_at_the_prs_head() {
+    let sd = sd();
+    sd.git_in("other", &["push", "-q", "origin", "HEAD:main"]);
+    sd.git(&["pull", "-q", "--ff-only"]);
+    let r = sd.run_sep(&["follow", "7"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("review-7"));
+    assert!(sd.git_try(&["config", "--get", "branch.main.sd-mode"]).is_none());
+}
+
+#[test]
 fn follow_from_an_unrelated_worktree_makes_review_n_and_leaves_that_branch_alone() {
     let mut sd = sd();
     sd.git(&["worktree", "add", "-q", "-b", "feat", &sd.path("feat"), "main"]);

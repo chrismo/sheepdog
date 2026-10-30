@@ -11,7 +11,8 @@
 // - the branch checked out where follow runs, when its upstream, as its
 //   remote has it now, is the PR's head: gh pr checkout tracks
 //   refs/pull/<n>/head, the PR's branch, or a fork's branch by URL. Not
-//   mere shared history, which a stacked PR's base has too;
+//   mere shared history, which a stacked PR's base has too. Never the
+//   default branch;
 // - review/<n>, when it has a commit of the PR's past the default branch
 //   (with no default branch to tell by, only one at the PR's head).
 // A branch's worktree is made, with the hook, when it has none. pr-head is
@@ -171,9 +172,10 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
     let fetched = format!("refs/sheepdog/{b}/pr-fetched");
     let pr_head = fetch_pr(&fetched, n, remote);
     git(".", &["update-ref", "-d", &fetched]);
-    let main = start_default(remote).and_then(|d| start_point(remote, &d));
+    let default = start_default(remote);
+    let main = default.as_deref().and_then(|d| start_point(remote, d));
     let here = git_out(".", &["branch", "--show-current"]).unwrap_or_default();
-    if !here.is_empty() && tracks(&here, &pr_head) {
+    if !here.is_empty() && Some(&here) != default.as_ref() && tracks(&here, &pr_head) {
         unclaimed(&here, n);
         let mb = met(&here, &pr_head);
         if mb.is_none() {
