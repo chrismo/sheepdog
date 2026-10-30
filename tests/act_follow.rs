@@ -324,7 +324,7 @@ fn follow_from_the_branch_a_stacked_pr_is_on_makes_review_n_and_leaves_the_base_
     let r = sd.run_sep(&["follow", "7"]);
     assert_eq!(r.status, 0, "{}", r.stderr);
     assert_eq!(r.output, sd.path("review-7"));
-    assert_has(&r.stderr, &["sd act: not taking base for PR #7: its upstream, if any, isn't at the PR's head as its remote has it"]);
+    assert_has(&r.stderr, &["sd act: not taking base for PR #7: follow couldn't confirm its upstream is at the PR's head"]);
     assert!(sd.git_try(&["config", "--get", "branch.base.sd-mode"]).is_none());
 }
 

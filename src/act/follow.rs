@@ -12,7 +12,7 @@
 //   remote has it now, is the PR's head: gh pr checkout tracks
 //   refs/pull/<n>/head, the PR's branch, or a fork's branch by URL. Not
 //   mere shared history, which a stacked PR's base has too. Never the
-//   default branch;
+//   default branch (when one resolves);
 // - review/<n>, when it has a commit of the PR's past the default branch
 //   (with no default branch to tell by, only one at the PR's head).
 // A branch's worktree is made, with the hook, when it has none. pr-head is
@@ -129,21 +129,13 @@ fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>
     }
     let made = wt.is_empty();
     let dst = if made { destination(&main_worktree("."), b) } else { wt };
-    if made {
-        if Path::new(&dst).exists() {
-            die(format!("{dst} already exists"));
-        }
-        let add = match from {
-            Some(f) => ["worktree", "add", "-b", b, &dst, f].to_vec(),
-            None => ["worktree", "add", &dst, b].to_vec(),
-        };
-        if !git_on_stderr(&add) {
-            die("git worktree add failed");
-        }
-    } else {
-        eprintln!("sd act: {b} is already checked out at {dst}; using it");
+    if made && Path::new(&dst).exists() {
+        die(format!("{dst} already exists"));
     }
-    for (k, v) in [("sd-pr", n), ("sd-mode", REVIEWER)] {
+    // Before the worktree: one there with no PR recorded would be taken next
+    // time as found, without the setup hook.
+    let keys = [("sd-pr", n), ("sd-mode", REVIEWER)];
+    for (k, v) in keys {
         let o = git(".", &["config", &format!("branch.{b}.{k}"), v]);
         if !o.ok {
             eprint!("{}", o.stderr);
@@ -156,6 +148,22 @@ fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>
             eprint!("{}", o.stderr);
             die(format!("couldn't record the PR's head for {b}"));
         }
+    }
+    if made {
+        let add = match from {
+            Some(f) => ["worktree", "add", "-b", b, &dst, f].to_vec(),
+            None => ["worktree", "add", &dst, b].to_vec(),
+        };
+        if !git_on_stderr(&add) {
+            if from.is_some() {
+                for (k, _) in keys {
+                    git(".", &["config", "--unset", &format!("branch.{b}.{k}")]);
+                }
+            }
+            die("git worktree add failed");
+        }
+    } else {
+        eprintln!("sd act: {b} is already checked out at {dst}; using it");
     }
     enroll_mark(b);
     eprintln!("enrolled {b}");
@@ -184,7 +192,7 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
         return settle(&src, &here, n, mb.as_deref(), None);
     }
     if here != b && main.as_deref().and_then(|m| past(&here, &pr_head, m)).is_some() {
-        eprintln!("sd act: not taking {here} for PR #{n}: its upstream, if any, isn't at the PR's head as its remote has it");
+        eprintln!("sd act: not taking {here} for PR #{n}: follow couldn't confirm its upstream is at the PR's head");
     }
     if !show_ref(".", &format!("refs/heads/{b}")) {
         return settle(&src, b, n, Some(&pr_head), Some(&pr_head));
