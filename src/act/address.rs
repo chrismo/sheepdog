@@ -105,6 +105,8 @@ pub fn gate(s: &Value) -> Gate {
         soft.push("not pushed".into());
     } else if on(s, "push.diverged") {
         soft.push("diverged from the remote branch".into());
+        // with someone else's commits there, a push would drop them
+        push = at(s, "push.remote_ours") != &Value::Bool(false);
     } else if n(s, "push.behind") > 0.0 {
         soft.push(format!("the remote branch has {} commit(s) you don't", t(s, "push.behind")));
         // reset away here: the force-push drops them
@@ -603,6 +605,7 @@ mod tests {
             assert!(gate(&st(s)).push);
         }
         assert!(!gate(&st(json!({"push.behind": 2}))).push);
+        assert!(!gate(&st(json!({"push.diverged": true, "push.remote_ours": false}))).push);
         assert!(gate(&st(json!({"push.behind": 2, "push.remote_ours": true, "push.remote_made": true}))).push);
         let g = gate(&st(json!({"sync.conflict": true, "session.locked": true})));
         assert!(g.conflict && !g.push);

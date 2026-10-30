@@ -7,13 +7,14 @@
 //
 // Ordering of the loop's own steps, after what blocks everything (stale refs,
 // human items): restack, agent fixes, one push, then review and wait; the push
-// leads because every push restarts CI (#79 Design record). While address's
-// own gate (src/act/address.rs) would refuse it, address comes after the steps
-// that clear the gate, or is chrismo's when none does; an address question's
-// step says what clears it (#326).
-// GitHub behind the remote refs, a push it hasn't seen yet (sd state's lag),
-// is a wait where stale refs are a fetch (#246). It has no time limit: a PR
-// GitHub never updates waits until chrismo sees sd watch's ⚠️ glyph.
+// leads because every push restarts CI (#79 Design record). GitHub behind the
+// remote refs, a push it hasn't seen yet (sd state's lag), is a wait where
+// stale refs are a fetch (#246). It has no time limit: a PR GitHub never
+// updates waits until chrismo sees sd watch's ⚠️ glyph.
+//
+// While address's own gate (src/act/address.rs) would refuse it, address
+// comes after the steps that clear the gate, or is chrismo's when it would be
+// first; an address question's step says what clears it (#326).
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -269,6 +270,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             || restack_due
             || (pr_null && !empty && !dropping));
     let refused = dirty || (open && on("push.dirty") && !asking.is_empty());
+    let push_held = foreign || undone || parent_unpushed;
+    let push_step = open && !verify_red && !ci_held && !push_held && !empty && to_push;
     let addr = crate::act::address_gate(s);
     let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
     let addr_refuses = !addr_why.is_empty();
@@ -353,7 +356,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             if open && !asking.is_empty() {
                 let answer = "sd act answer \"<your answer>\"";
                 let (say, then) = if asking == "address" && addr_refuses {
-                    answer_refused(s, &addr, &addr_why, &asked, (to_push || ci_held) && !foreign && !undone && !parent_unpushed)
+                    answer_refused(s, &addr, &addr_why, &asked, push_step || (ci_held && !push_held))
                 } else if asking == "resolve" {
                     (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
                 } else if is("question.kind", "gave-up") {
@@ -509,7 +512,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
             if open && ci_held {
                 let paths = sj(g("push.held.paths"), ", ");
-                if foreign || undone || parent_unpushed {
+                if push_held {
                     step("ci-config", "you",
                         format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
                         None,
@@ -556,7 +559,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !verify_red && !ci_held && !foreign && !undone && !parent_unpushed && !empty && to_push {
+            if push_step {
                 let ahead = if nul("sync.ahead") { g("push.ahead") } else { g("sync.ahead") };
                 step("push", "run",
                     if is_null(s, "push.remote_sha") {
@@ -752,7 +755,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         }
         out.push(st);
     }
-    // Address refused, with nothing ahead of it: chrismo's, with why.
+    // Address refused, with nothing ahead of it: chrismo's, with why. Behind a
+    // step that doesn't clear the gate (attached, take), it stays an agent
+    // step: that step blocks first.
     if out.first().is_some_and(|st| st["key"] == "bot") && addr_refuses {
         let (say, cmd) = if addr.hard.is_some() {
             ("clear that first", None)
