@@ -60,6 +60,7 @@ tasks:
     run: |
       rustup component add clippy
       cargo clippy --all-targets --locked -- -D warnings
+      cargo test --locked --test lint_ratchet -- --ignored
     filter:
       - Cargo.toml
       - Cargo.lock

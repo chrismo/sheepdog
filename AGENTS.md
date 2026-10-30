@@ -148,14 +148,16 @@ means the sandbox, so run it outside.
 from the repo (`src/`, `tests/`, `lib/prompts/`, `lib/review-rules.md`,
 `install.sh`, `bin/sd`, the Cargo files): a test that starts reading another
 one needs it added there, or a change to that file won't rerun the task.
-Two lint tasks run beside it, and any warning fails them: `clippy` (`cargo
-clippy --all-targets -- -D warnings`) and `shellcheck` (`shellcheck
-install.sh`). Both are cheap, so run them locally before pushing. Cargo.toml's
-`[lints]` caps function length and cognitive complexity at clippy's defaults;
-the functions already over them carry `#[expect(...)]`. Don't add another:
-split the function. Once one is split, its `expect` fails until it's removed. A
-push to a branch with an open PR starts a run; `sd state` reports its result.
-To read a run:
+Two lint tasks run beside it: `clippy` and `shellcheck` (`shellcheck
+install.sh`). `clippy` fails on any warning (`cargo clippy --all-targets
+--locked -- -D warnings`) and runs the lint ratchet (`cargo test --locked
+--test lint_ratchet -- --ignored`): every function over clippy's length or
+cognitive-complexity cap is listed in `tests/lint-ratchet.txt` at its score,
+and may not grow or be joined by a new one. Split the function instead; when a
+split shrinks one, lower or drop its line. All three are cheap, so run them
+locally before pushing; CI's versions (Rust 1.90.0, Ubuntu 24.04's shellcheck)
+are the ones that count. A push to a branch with an open PR starts a run;
+`sd state` reports its result. To read a run:
 
 ```bash
 rwx runs list --branch <branch>

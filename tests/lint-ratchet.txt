@@ -1,0 +1,20 @@
+# Functions over clippy's cap (100 lines, cognitive complexity 25), at their
+# scores today; tests/lint_ratchet.rs holds each one to its line.
+# file  fn  lint  score
+src/act/address.rs  address_run  too_many_lines  155
+src/act/ci_fix.rs  ci_fix_run  cognitive_complexity  27
+src/act/ci_fix.rs  ci_fix_run  too_many_lines  172
+src/act/implement.rs  implement_run  too_many_lines  140
+src/act/restack.rs  restack  too_many_lines  121
+src/act/ship.rs  ship  too_many_lines  113
+src/config.rs  cli  too_many_lines  105
+src/config.rs  explain  too_many_lines  131
+src/harness.rs  agent  too_many_lines  115
+src/next.rs  steps  cognitive_complexity  90  # #335 splits it
+src/next.rs  steps  too_many_lines  600  # #335 splits it
+src/state.rs  assemble  cognitive_complexity  27
+src/state.rs  assemble  too_many_lines  230
+src/state.rs  flags_json  too_many_lines  115
+src/state.rs  observe  cognitive_complexity  76  # #340 splits it
+src/state.rs  observe  too_many_lines  448  # #340 splits it
+src/watch/pass.rs  check  too_many_lines  108

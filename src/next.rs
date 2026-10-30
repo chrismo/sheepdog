@@ -130,7 +130,6 @@ fn len(v: &Value) -> usize {
 }
 
 /// The steps for an sd state record, first is next.
-#[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the cap; split it and drop this")]
 pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
         return Err("sd state JSON must be one record".into());

@@ -487,7 +487,6 @@ fn compile_all(v: &Value) -> Option<Vec<Regex>> {
 /// hunk: commits is the one that added the line (blame), or for a test-edit
 /// every commit in base..head that touched the file. Err with a message on
 /// an invalid pattern or a failed step. One blame per file with hits.
-#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 fn flags_json(dir: &str, base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> Result<Value, String> {
     let (Some(sup), Some(skips)) = (compile_all(at(cfg, "suppressions")), compile_all(at(cfg, "skips"))) else {
         return Err(format!("settings.flags has an invalid regex: {cfg_text}"));
@@ -787,7 +786,6 @@ fn strings(v: &Value) -> Vec<String> {
     arr(v).iter().map(|x| unbot(str_or(x, "")).to_string()).collect()
 }
 
-#[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the cap; split it and drop this")]
 fn assemble(s: &Facts) -> Value {
     let bots = strings(&s.bots);
     let ign = strings(&s.ignore);
@@ -1109,7 +1107,6 @@ fn required_checks(dir: &str, base: &str) -> Result<Value, String> {
 /// any worktree of the repo. gh asks the repo GH_REPO names, which the caller
 /// sets from <remote> (git::gh_repo), else <dir>'s. Err is what sd state
 /// prints on stderr before it exits 1; warnings go to stderr as they come.
-#[expect(clippy::too_many_lines, clippy::cognitive_complexity, reason = "predates the cap; split it and drop this")]
 pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let head = rev(dir, &format!("refs/heads/{branch}"));
     if head.is_empty() {

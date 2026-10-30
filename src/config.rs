@@ -775,7 +775,6 @@ fn trace(layers: &[(String, Value)], dflt: &Value, path: &[&str]) -> Traced {
     }
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
     let mut all = Vec::new();
     key_paths(Ty::Obj(CONFIG), "", &mut all);
@@ -1195,7 +1194,6 @@ fn needs(verb: &str, what: &str) -> ! {
     usage_exit(&format!("sd config: {verb} needs {what}\nUsage:\n{lines}"))
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 fn cli(argv: &[String]) -> Res<String> {
     let Some(verb) = argv.first() else { usage_exit(HELP) };
     let takes: &[&str] = match verb.as_str() {

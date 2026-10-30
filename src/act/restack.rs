@@ -150,7 +150,6 @@ pub(super) fn state(dir: &str, b: &str) -> Value {
     })
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 pub fn restack(b: &str, remote: &str, a: &Args) {
     let wt = worktree_for(".", b);
     if wt.is_empty() {

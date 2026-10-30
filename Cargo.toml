@@ -16,8 +16,3 @@ regex = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
 # The watcher's per-repo state dir is named by the first 8 hex of sha1(path), as shasum made it.
 sha1_smol = "1"
-
-# At clippy's default caps: 100 lines, cognitive complexity 25.
-[lints.clippy]
-cognitive_complexity = "warn"
-too_many_lines = "warn"
