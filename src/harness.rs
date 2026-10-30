@@ -28,7 +28,11 @@ pub const READONLY_PI_TOOLS: &str = "read";
 /// An editing step's tools. Claude may read and edit; pi has no per-command
 /// bash rules, so no bash at all. pi's MCP tools are reachable only through
 /// codemode, whose scripts call the active built-ins and MCP tools, not an
-/// inactive bash (#323).
+/// inactive bash (#323). A git or GitHub MCP server could still commit, push
+/// or post: pi has no CLAUDE_DENY, only the prompts' "do not commit, push, or
+/// run gh", and that gap is accepted, as sd reconciles a push it didn't make
+/// (rule 4). codemode is a built-in extension of pi 1.3.0, which drops a
+/// --tools name it has no tool for rather than failing.
 pub const CLAUDE_ALLOW: &str = "Read,Edit,Write,Grep,Glob,Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *)";
 pub const PI_TOOLS: &str = "read,edit,write,codemode";
 
