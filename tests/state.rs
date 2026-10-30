@@ -2722,11 +2722,15 @@ fn verify_red_stands_at_the_commit_it_failed_on_on_the_one_liner_and_next_325() 
     assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "verify-red");
     let r = sd.run(&[]);
     assert_has(&r.output, &["✗ verify red"]);
+    let r = sd.run(&["--long"]);
+    assert_has(&r.output, &[&format!("✗  verify red at {} (implement: make test)", &head[..7])]);
     sd.commit("b.txt", "b"); // a new HEAD isn't the one verify failed on
     let r = sd.state(&[]);
     assert_eq!(r.field(".verify.at_head"), "false");
     assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "push open-pr");
     let r = sd.run(&[]);
+    assert_lacks(&r.output, "verify red");
+    let r = sd.run(&["--long"]);
     assert_lacks(&r.output, "verify red");
     sd.put_blob("refs/sheepdog/feat/verify-red", r#"{"head": "x"}"#);
     let r = sd.state(&[]);

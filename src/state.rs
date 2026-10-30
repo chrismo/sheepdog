@@ -1773,6 +1773,15 @@ fn long_lines(s: &Value) -> String {
             t(s, "failed.error")
         ));
     }
+    if on(s, "verify.at_head") {
+        let sha = t(s, "verify.sha");
+        out.push_str(&format!(
+            "  ✗  verify red at {} ({}: {})\n",
+            &sha[..sha.len().min(7)],
+            t(s, "verify.step"),
+            t(s, "verify.cmd")
+        ));
+    }
     out.push_str(&flag_lines(s));
     if !at(s, "flags_error").is_null() {
         out.push_str(&format!("  ⚑  check failed: {}\n", t(s, "flags_error")));
