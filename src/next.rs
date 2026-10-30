@@ -353,7 +353,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             if open && !asking.is_empty() {
                 let answer = "sd act answer \"<your answer>\"";
                 let (say, then) = if asking == "address" && addr_refuses {
-                    answer_refused(s, &addr, &addr_why, &asked, !foreign && !undone && !parent_unpushed)
+                    answer_refused(s, &addr, &addr_why, &asked, (to_push || ci_held) && !foreign && !undone && !parent_unpushed)
                 } else if asking == "resolve" {
                     (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
                 } else if is("question.kind", "gave-up") {
@@ -752,7 +752,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         }
         out.push(st);
     }
-    // Nothing above clears address's gate: chrismo's, with why.
+    // Address refused, with nothing ahead of it: chrismo's, with why.
     if out.first().is_some_and(|st| st["key"] == "bot") && addr_refuses {
         let (say, cmd) = if addr.hard.is_some() {
             ("clear that first", None)
@@ -770,7 +770,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
 
 /// The question step for an address question that address's gate <g>
 /// refuses: what clears it first. A push leaves the question standing; a
-/// restack would drop it, so a conflict is answered with --force.
+/// restack would drop it, so a conflict is answered with --force. <can_push>:
+/// NEXT offers the push.
 fn answer_refused(s: &Value, g: &crate::act::Gate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
     let did = if val::t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" };
     let head = format!("the agent {did} (address): {asked}; sd act answer refuses while {why}");
@@ -779,16 +780,17 @@ fn answer_refused(s: &Value, g: &crate::act::Gate, why: &str, asked: &str, can_p
     } else {
         "answer it with sd act answer"
     };
-    let others = g.soft.len() - usize::from(g.push) - usize::from(g.conflict);
+    let pushes = g.push && can_push;
+    let others = g.soft.len().saturating_sub(usize::from(pushes) + usize::from(g.conflict));
     if g.hard.is_some() || others > 0 {
         (format!("{head}: clear that first, or answer in its session (sd act attach), then sd act ack --question"), None)
-    } else if g.push {
+    } else if pushes {
         let push = if at(s, "push.held").is_null() {
             "push first,".to_string()
         } else {
             format!("review the agent's CI config change ({}), then sd act push;", sj(at(s, "push.held.paths"), ", "))
         };
-        (format!("{head}: {push} then {answer}"), can_push.then(|| "sd act push".into()))
+        (format!("{head}: {push} then {answer}"), cmd("sd act push"))
     } else {
         (format!("{head}: {answer}"), cmd("sd act answer --force \"<your answer>\""))
     }

@@ -509,6 +509,17 @@ fn an_address_question_its_answer_s_gate_refuses_says_what_clears_it_first_326()
         "the agent asks (address): Which test is right?; sd act answer refuses while the remote branch has 1 commit(s) you don't: clear that first, or answer in its session (sd act attach), then sd act ack --question"
     );
     assert_eq!(step("question", "cmd", &theirs), "null");
+    // commits this branch made, reset away here: the force-push clears it
+    let dropped = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = true", &q];
+    assert_eq!(step("question", "cmd", &dropped), "sd act push");
+    assert_eq!(step("question", "cmd", &e![&dropped, ".push.dirty = true"]), "null");
+    // a push NEXT holds (someone else's commits on the remote): no push offered
+    let foreign = e![".threads.owed_bot = 1", ".push.ahead = 1", ".push.behind = 1", ".push.diverged = true", ".push.remote_ours = false", ".push.theirs = 1", &q];
+    assert_eq!(
+        step("question", "say", &foreign),
+        "the agent asks (address): Which test is right?; sd act answer refuses while diverged from the remote branch: clear that first, or answer in its session (sd act attach), then sd act ack --question"
+    );
+    assert_eq!(step("question", "cmd", &foreign), "null");
     // other steps' questions: as before
     assert_eq!(step("question", "cmd", &e![".push.ahead = 1", &asked("implement", true)]), r#"sd act answer "<your answer>""#);
 }
