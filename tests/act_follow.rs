@@ -264,21 +264,49 @@ fn follow_says_nothing_of_a_review_branch_checked_out_here_and_takes_it() {
     assert_lacks(&r.stderr, "isn't PR #7's");
 }
 
+impl Sd {
+    /// main gone, here and on origin: no default branch to tell by.
+    fn no_default_branch(&self) {
+        self.git(&["branch", "-m", "main", "trunk"]);
+        self.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+        self.git(&["update-ref", "-d", "refs/remotes/origin/HEAD"]);
+        self.git_in("origin.git", &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+        self.git_in("origin.git", &["update-ref", "-d", "refs/heads/main"]);
+    }
+}
+
 #[test]
-fn follow_with_no_default_branch_adopts_the_checkout_tracking_the_pr_and_refuses_an_untracked_review_branch() {
+fn follow_with_no_default_branch_adopts_the_checkout_tracking_the_pr_and_refuses_a_review_branch_past_its_head() {
     let mut sd = sd();
     sd.checkout_by_hand("their-fix", "their-fix");
     sd.git(&["fetch", "-q", "origin", "refs/pull/7/head:review/7"]);
-    sd.git(&["branch", "-m", "main", "trunk"]);
-    sd.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
-    sd.git(&["update-ref", "-d", "refs/remotes/origin/HEAD"]);
-    sd.git_in("origin.git", &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
-    sd.git_in("origin.git", &["update-ref", "-d", "refs/heads/main"]);
+    sd.git(&["update-ref", "refs/heads/review/7", &sd.git(&["commit-tree", "-p", "review/7", "-m", "mine", "review/7^{tree}"])]);
+    sd.no_default_branch();
     let r = sd.run(&["follow", "7"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["review/7 already exists, and with no default branch to tell by, follow can't say it's PR #7's"]);
     sd.cd("their-fix");
     assert_eq!(sd.out(&["follow", "7"]), sd.path("their-fix"));
+}
+
+#[test]
+fn follow_with_no_default_branch_takes_a_review_branch_at_the_prs_head() {
+    let sd = sd();
+    sd.git(&["fetch", "-q", "origin", "refs/pull/7/head:review/7"]);
+    sd.no_default_branch();
+    assert_eq!(sd.out(&["follow", "7"]), sd.path("review-7"));
+}
+
+#[test]
+fn follow_adopting_a_checkout_with_no_history_in_common_with_the_pr_drops_a_left_over_pr_head() {
+    let mut sd = sd();
+    sd.checkout_by_hand("their-fix", "their-fix");
+    sd.git(&["update-ref", "refs/sheepdog/their-fix/pr-head", "main"]);
+    sd.cd("their-fix");
+    let unrelated = sd.git(&["commit-tree", "-m", "unrelated", "HEAD^{tree}"]);
+    sd.git(&["reset", "-q", "--hard", &unrelated]);
+    sd.ok(&["follow", "7"]);
+    assert!(sd.git_try(&["rev-parse", "--verify", "-q", "refs/sheepdog/their-fix/pr-head"]).is_none());
 }
 
 #[test]
@@ -296,7 +324,7 @@ fn follow_from_the_branch_a_stacked_pr_is_on_makes_review_n_and_leaves_the_base_
     let r = sd.run_sep(&["follow", "7"]);
     assert_eq!(r.status, 0, "{}", r.stderr);
     assert_eq!(r.output, sd.path("review-7"));
-    assert_has(&r.stderr, &["sd act: base isn't PR #7's checkout (its upstream isn't at the PR's head); making review/7"]);
+    assert_has(&r.stderr, &["sd act: not taking base for PR #7: its upstream, if any, isn't at the PR's head as its remote has it"]);
     assert!(sd.git_try(&["config", "--get", "branch.base.sd-mode"]).is_none());
 }
 

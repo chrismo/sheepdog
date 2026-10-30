@@ -13,7 +13,7 @@
 //   refs/pull/<n>/head, the PR's branch, or a fork's branch by URL. Not
 //   mere shared history, which a stacked PR's base has too;
 // - review/<n>, when it has a commit of the PR's past the default branch
-//   (refused with no default branch to tell by).
+//   (with no default branch to tell by, only one at the PR's head).
 // A branch's worktree is made, with the hook, when it has none. pr-head is
 // where branch and PR last met (their merge-base), so fetch keeps any
 // commits of the branch's own. Refused: a branch that is an
@@ -175,15 +175,22 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
     let here = git_out(".", &["branch", "--show-current"]).unwrap_or_default();
     if !here.is_empty() && tracks(&here, &pr_head) {
         unclaimed(&here, n);
-        return settle(&src, &here, n, met(&here, &pr_head).as_deref(), None);
+        let mb = met(&here, &pr_head);
+        if mb.is_none() {
+            git(".", &["update-ref", "-d", &pr_head_ref(&here)]);
+        }
+        return settle(&src, &here, n, mb.as_deref(), None);
     }
     if here != b && main.as_deref().and_then(|m| past(&here, &pr_head, m)).is_some() {
-        eprintln!("sd act: {here} isn't PR #{n}'s checkout (its upstream isn't at the PR's head); making {b}");
+        eprintln!("sd act: not taking {here} for PR #{n}: its upstream, if any, isn't at the PR's head as its remote has it");
     }
     if !show_ref(".", &format!("refs/heads/{b}")) {
         return settle(&src, b, n, Some(&pr_head), Some(&pr_head));
     }
     unclaimed(b, n);
+    if rev(".", &format!("refs/heads/{b}")) == pr_head {
+        return settle(&src, b, n, Some(&pr_head), None);
+    }
     let main = main.unwrap_or_else(|| die(format!("{b} already exists, and with no default branch to tell by, follow can't say it's PR #{n}'s")));
     let mb = past(b, &pr_head, &main).unwrap_or_else(|| die(format!("{b} already exists and isn't PR #{n}'s")));
     settle(&src, b, n, Some(&mb), None)

@@ -69,7 +69,8 @@ Verbs:
             review/<number>, in a worktree beside the main one with the
             setup hook run, as start does; records the PR and reviewer mode
             (.sd-mode), enrolls. A checkout already there is used as it is,
-            no setup hook, nothing reset (#358): the branch already following
+            nothing reset (#358), the setup hook run only for a worktree made
+            for a branch that had none: the branch already following
             the PR, whatever its name; else the branch checked out here when
             its upstream is at the PR's head, as its remote has it now (cd
             into a gh pr checkout, then follow); else review/<number> when it
