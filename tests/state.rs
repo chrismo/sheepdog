@@ -3715,6 +3715,23 @@ fn flags_a_test_file_deleted_and_an_unrelated_one_added_alike_in_boilerplate_is_
     );
 }
 
+// @test "flags: a test file renamed with only lines added, past -M's 50%, isn't one: nothing it had changed"
+#[test]
+fn flags_a_test_file_renamed_with_only_lines_added_past_gits_rename_detection_isnt_one() {
+    let sd = sd();
+    let old = "@test \"usage a\" {\n  run usage a\n  [ \"$status\" -eq 0 ]\n}";
+    sd.commit("old-usage.bats", old);
+    sd.git(&["push", "-q", "origin", "main"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.git(&["rm", "-q", "old-usage.bats"]);
+    sd.commit("new-usage.bats", &format!("{old}\n\n{}\n\n{}", old.replace(" a", " b"), old.replace(" a", " c")));
+    // the precondition: git's own -M sees a delete and an add, and -M20% alone would pair them
+    assert_has(&sd.git(&["diff", "-M", "--name-status", "main", "feat"]), &["D\told-usage.bats"]);
+    assert_has(&sd.git(&["diff", "-M20%", "--name-status", "main", "feat"]), &["R"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(r#"[.flags[] | select(.kind == "test-edit")] | length"#), "0");
+}
+
 // @test "flags: a base that isn't in HEAD's history (a tree restack due) isn't diffed: flags_error says why"
 #[test]
 fn flags_a_base_that_isnt_in_heads_history_a_tree_restack_due_isnt_diffed_flags_error_says_why() {

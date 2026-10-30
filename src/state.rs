@@ -515,7 +515,7 @@ fn flags_json(dir: &str, base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> R
     // added test file that -M20% pairs, with a word of their names in common,
     // is that rename: one record of its lines changed, not the deletion's.
     if !deleted.is_empty() && !added.is_empty() {
-        let mut args = vec!["-c", "core.quotePath=false", "diff", "-M20%", "--name-status", base, hd, "--"];
+        let mut args = vec!["--literal-pathspecs", "-c", "core.quotePath=false", "diff", "-M20%", "--name-status", base, hd, "--"];
         args.extend(deleted.iter().chain(&added).map(String::as_str));
         for l in git(dir, &args).stdout.lines() {
             let f: Vec<&str> = l.split('\t').collect();
@@ -527,6 +527,9 @@ fn flags_json(dir: &str, base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> R
             let Some(n) = ns.split('\t').nth(1).and_then(|n| n.parse::<usize>().ok()) else { continue };
             let all = git(dir, &["cat-file", "blob", &format!("{base}:{a}")]).stdout.matches('\n').count();
             tests.remove(a);
+            if n == 0 {
+                continue;
+            }
             moved.push(format!("-\t1\t{n}\t1\t{a}\t{b}\trenamed to {b}, {n} of its {all} lines changed"));
         }
     }
