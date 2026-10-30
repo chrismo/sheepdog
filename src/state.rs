@@ -393,6 +393,21 @@ fn is_test(p: &str, globs: &[String]) -> bool {
     })
 }
 
+/// Whether two paths' file names, up to the first dot, share a word, other
+/// than one that test files' names all have (test_a.py, b_spec.rb).
+fn shares_a_word(a: &str, b: &str) -> bool {
+    let words = |p: &str| -> Vec<String> {
+        let name = p.rsplit('/').next().unwrap_or(p);
+        let stem = name.split('.').next().unwrap_or(name);
+        stem.split(|c: char| !c.is_alphanumeric())
+            .map(str::to_lowercase)
+            .filter(|w| !w.is_empty() && !["test", "tests", "spec", "specs"].contains(&w.as_str()))
+            .collect()
+    };
+    let wa = words(a);
+    words(b).iter().any(|w| wa.contains(w))
+}
+
 /// The net diff's lines, tab-separated: +, line, 1, test (1|0), file, file,
 /// text: an added line; -, first line, lines removed, 1, old file, new file,
 /// first removed line: a hunk of a test file. -U0, so a hunk is only changed
@@ -475,6 +490,7 @@ fn flags_json(dir: &str, base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> R
     // record for the whole file, as git_diff_lines writes them.
     let mut tests = HashSet::new();
     let mut moved = Vec::new();
+    let (mut deleted, mut added) = (Vec::new(), Vec::new());
     for l in changed.stdout.lines() {
         let mut f = l.split('\t');
         let (st, a, b) = (f.next().unwrap_or(""), f.next().unwrap_or(""), f.next().unwrap_or(""));
@@ -489,6 +505,32 @@ fn flags_json(dir: &str, base: &str, hd: &str, cfg: &Value, cfg_text: &str) -> R
         if st.starts_with('R') && is_test(a, &globs) && !is_test(b, &globs) {
             let n = git(dir, &["cat-file", "blob", &format!("{base}:{a}")]).stdout.matches('\n').count();
             moved.push(format!("-\t1\t{n}\t1\t{a}\t{b}\tmoved to {b}, out of the test files"));
+        }
+        if is_test(a, &globs) && (st == "D" || st == "A") {
+            (if st == "D" { &mut deleted } else { &mut added }).push(a.to_string());
+        }
+    }
+    // A test file renamed and edited past -M's 50% similarity is a delete and
+    // an add, and reads as the whole file deleted (#327). A deleted and an
+    // added test file that -M20% pairs, with a word of their names in common,
+    // is that rename: one record of its lines changed, not the deletion's.
+    if !deleted.is_empty() && !added.is_empty() {
+        let mut args = vec!["--literal-pathspecs", "-c", "core.quotePath=false", "diff", "-M20%", "--name-status", base, hd, "--"];
+        args.extend(deleted.iter().chain(&added).map(String::as_str));
+        for l in git(dir, &args).stdout.lines() {
+            let f: Vec<&str> = l.split('\t').collect();
+            let [st, a, b] = f[..] else { continue };
+            if !st.starts_with('R') || !shares_a_word(a, b) {
+                continue;
+            }
+            let ns = git(dir, &["diff", "--numstat", &format!("{base}:{a}"), &format!("{hd}:{b}")]).stdout;
+            let Some(n) = ns.split('\t').nth(1).and_then(|n| n.parse::<usize>().ok()) else { continue };
+            let all = git(dir, &["cat-file", "blob", &format!("{base}:{a}")]).stdout.matches('\n').count();
+            tests.remove(a);
+            if n == 0 {
+                continue;
+            }
+            moved.push(format!("-\t1\t{n}\t1\t{a}\t{b}\trenamed to {b}, {n} of its {all} lines changed"));
         }
     }
     let mut lines = git_diff_lines(dir, base, hd, &tests).ok_or("couldn't read the diff")?;
@@ -1840,6 +1882,17 @@ mod tests {
         assert!(is_test("lib/x/a.bats", &g(&["lib/*.bats"])));
         assert!(is_test("a/x1.spec", &g(&["x[0-9].spec"])));
         assert!(!is_test("a/xa.spec", &g(&["x[!a-z].spec"])));
+    }
+
+    #[test]
+    fn shares_a_word_compares_the_names_words_before_the_first_dot() {
+        assert!(shares_a_word("t/claude-usage-monitor.bats", "t/ai-usage-monitor.bats"));
+        assert!(shares_a_word("a/Parser_test.go", "b/parser.test.js"));
+        assert!(!shares_a_word("gone.bats", "new.bats"));
+        assert!(!shares_a_word("test/a.test.js", "test/b.test.js"));
+        assert!(!shares_a_word("test_foo.py", "test_bar.py"));
+        assert!(!shares_a_word("foo_spec.rb", "bar_specs.rb"));
+        assert!(!shares_a_word("foo_test.go", "bar_tests.go"));
     }
 
     #[test]
