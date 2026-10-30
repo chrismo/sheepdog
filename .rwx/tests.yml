@@ -58,7 +58,6 @@ tasks:
   - key: clippy
     use: [code, rust]
     run: |
-      rustup component add clippy
       cargo clippy --all-targets --locked -- -D warnings
       cargo test --locked --test lint_ratchet -- --ignored
     filter:
