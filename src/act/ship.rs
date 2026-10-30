@@ -87,12 +87,12 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
     if b == t(&s, "sync.default") {
         die(format!("not shipping {b}: it's the default branch; start a branch (sd act start <branch> \"<task>\")"));
     }
-    if !a.force && on(&s, "verify.at_head") {
-        die(format!(
-            "not shipping {b}: verify is red at HEAD ({}: {}); fix it, then sd act verify, or --force to ship anyway",
-            t(&s, "verify.step"),
-            t(&s, "verify.cmd")
-        ));
+    if on(&s, "verify.at_head") {
+        let why = format!("{}: {}", t(&s, "verify.step"), t(&s, "verify.cmd"));
+        if !a.force {
+            die(format!("not shipping {b}: verify is red at HEAD ({why}); fix it, then sd act verify, or --force to ship anyway"));
+        }
+        println!("shipping {b} with verify red at HEAD ({why}): --force");
     }
     let pr_state = at(&s, "pr.state").as_str().unwrap_or("none").to_string();
     if !matches!(pr_state.as_str(), "none" | "OPEN") {

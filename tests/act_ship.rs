@@ -452,6 +452,7 @@ fn ship_refused_while_verify_is_red_at_head_before_describe_or_push_force_ships_
     assert_eq!(sd.calls(), "");
     let r = sd.run(&["ship", "--force"]);
     assert_eq!(r.status, 0);
+    assert_has(&r.output, &["shipping feat with verify red at HEAD (implement: make test): --force"]);
     assert_eq!(sd.remote("feat"), sd.rev("HEAD"));
 }
 

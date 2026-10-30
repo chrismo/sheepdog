@@ -145,7 +145,8 @@ pub(super) fn verify_run(wt: &str, b: &str, step: &str) -> Result<String, String
     verify_to(wt, b, step, &mut Report::Print)
 }
 
-/// The verdict is recorded against <wt>'s HEAD (src/verify_red.rs); a run sd
+/// The verdict is recorded against <wt>'s HEAD (src/verify_red.rs) when the
+/// tree was clean: a run on uncommitted edits didn't test HEAD, and a run sd
 /// stopped on a signal is no verdict.
 fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, String> {
     let cmd = command("verify", b);
@@ -155,19 +156,19 @@ fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, St
     let secs = step_timeout(b);
     let before = status(wt);
     let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
+    let verdict = before.is_empty() && !o.stopped;
     if o.ok && status(wt) != before {
         r.line(&format!("verify changed files in {wt} (a formatter?); commit them and rerun"));
     } else if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
         r.say(&tap_missing(&o.stdout).unwrap_or_default());
     } else {
-        // A pass on uncommitted edits didn't test HEAD.
-        if before.is_empty() {
+        if verdict {
             verify_red::clear(wt, b);
         }
         return Ok(cmd);
     }
-    if !o.stopped {
+    if verdict {
         verify_red::record(wt, b, step, &cmd);
     }
     Err(cmd)

@@ -126,6 +126,15 @@ mod verify {
         assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
     }
 
+    #[test]
+    fn a_failure_on_a_dirty_tree_isnt_recorded_against_head_325() {
+        let sd = sd();
+        sd.write("file.txt", "half-done\n");
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        assert!(sd.verify_red().is_none());
+    }
+
     // @test "failing: short output is shown whole, untrimmed"
     #[test]
     fn failing_short_output_is_shown_whole_untrimmed() {
