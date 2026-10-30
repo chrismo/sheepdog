@@ -159,6 +159,7 @@ fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>
                 for (k, _) in keys {
                     git(".", &["config", "--unset", &format!("branch.{b}.{k}")]);
                 }
+                git(".", &["update-ref", "-d", &pr_head_ref(b)]);
             }
             die("git worktree add failed");
         }
@@ -192,7 +193,7 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
         return settle(&src, &here, n, mb.as_deref(), None);
     }
     if here != b && main.as_deref().and_then(|m| past(&here, &pr_head, m)).is_some() {
-        eprintln!("sd act: not taking {here} for PR #{n}: follow couldn't confirm its upstream is at the PR's head");
+        eprintln!("sd act: not taking {here} for PR #{n}: it has the PR's commits but doesn't track the PR's head");
     }
     if !show_ref(".", &format!("refs/heads/{b}")) {
         return settle(&src, b, n, Some(&pr_head), Some(&pr_head));

@@ -324,7 +324,7 @@ fn follow_from_the_branch_a_stacked_pr_is_on_makes_review_n_and_leaves_the_base_
     let r = sd.run_sep(&["follow", "7"]);
     assert_eq!(r.status, 0, "{}", r.stderr);
     assert_eq!(r.output, sd.path("review-7"));
-    assert_has(&r.stderr, &["sd act: not taking base for PR #7: follow couldn't confirm its upstream is at the PR's head"]);
+    assert_has(&r.stderr, &["sd act: not taking base for PR #7: it has the PR's commits but doesn't track the PR's head"]);
     assert!(sd.git_try(&["config", "--get", "branch.base.sd-mode"]).is_none());
 }
 
@@ -435,6 +435,31 @@ fn follow_takes_a_review_branch_made_by_hand_at_the_prs_head() {
     assert_eq!(r.output, sd.path("review-7"));
     assert_eq!(sd.git(&["config", "--get", "branch.review/7.sd-mode"]), "reviewer");
     assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]), sd.git_in("other", &["rev-parse", "HEAD"]));
+}
+
+#[test]
+fn follow_takes_a_review_branch_behind_the_pr_or_diverged_from_it_and_moves_neither() {
+    let sd = sd();
+    sd.git(&["fetch", "-q", "origin", "refs/pull/7/head:review/7"]);
+    sd.git(&["fetch", "-q", "origin", "refs/pull/7/head:review/8"]);
+    let old = sd.git(&["rev-parse", "review/7"]);
+    let mine = sd.git(&["commit-tree", "-p", "review/8", "-m", "mine", "review/8^{tree}"]);
+    sd.git(&["update-ref", "refs/heads/review/8", &mine]);
+    let theirs = sd.author_pushes("more", false);
+    sd.git_in("other", &["push", "-q", "origin", "HEAD:refs/pull/8/head"]);
+
+    sd.ok(&["follow", "7"]);
+    assert_eq!(sd.git(&["rev-parse", "review/7"]), old);
+    assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/7/pr-head"]), old);
+    sd.ok(&["fetch", "review/7"]);
+    assert_eq!(sd.git(&["rev-parse", "review/7"]), theirs);
+
+    sd.ok(&["follow", "8"]);
+    assert_eq!(sd.git(&["rev-parse", "review/8"]), mine);
+    assert_eq!(sd.git(&["rev-parse", "refs/sheepdog/review/8/pr-head"]), old);
+    let r = sd.run(&["fetch", "review/8"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["review/8 has commits the PR never had"]);
 }
 
 #[test]
@@ -625,6 +650,7 @@ fn follow_whose_worktree_add_fails_leaves_no_reviewer_config() {
     assert_ne!(r.status, 0);
     assert!(sd.git_try(&["config", "--get", "branch.review/7.sd-mode"]).is_none());
     assert!(sd.git_try(&["config", "--get", "branch.review/7.sd-pr"]).is_none());
+    assert!(sd.git_try(&["rev-parse", "--verify", "-q", "refs/sheepdog/review/7/pr-head"]).is_none());
 }
 
 #[test]
