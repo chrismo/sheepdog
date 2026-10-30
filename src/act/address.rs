@@ -6,8 +6,8 @@ use super::commands::{command, status, verify_autofix};
 use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, question_answered, question_ask,
-                  question_gate, question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base,
+                  question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
 use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
@@ -64,15 +64,29 @@ const ACTIONS: [&str; 4] = ["fixed", "reply", "pushback", "ask"];
 const UNANSWERED: &str = ". The answer didn't reach the agent; sd act ack --question drops its question";
 
 /// What sd state says of addressing: a hard refusal can't be forced, soft
-/// ones can, and warnings never block.
+/// ones can, and warnings never block. push: sd act push clears a soft
+/// reason; conflict: one is a restack that would conflict. NEXT reads it too
+/// (#326).
 #[derive(Debug, Default, PartialEq)]
-struct Gate {
-    hard: Option<String>,
-    soft: Vec<String>,
-    warn: Vec<String>,
+pub struct Gate {
+    pub hard: Option<String>,
+    pub soft: Vec<String>,
+    pub warn: Vec<String>,
+    pub push: bool,
+    pub conflict: bool,
 }
 
-fn gate(s: &Value) -> Gate {
+impl Gate {
+    /// The soft reasons nothing sd watch runs clears: all but the push's
+    /// (the last one, when sd act push clears it), unless NEXT offers no
+    /// push for <s> (next::push_offered).
+    pub fn yours(&self, s: &Value) -> Vec<String> {
+        let pushed = usize::from(self.push && crate::next::push_offered(s));
+        self.soft[..self.soft.len() - pushed.min(self.soft.len())].to_vec()
+    }
+}
+
+pub fn gate(s: &Value) -> Gate {
     let nul = |p: &str| at(s, p).is_null();
     let b = t(s, "branch");
     let state = at(s, "pr.state");
@@ -81,7 +95,8 @@ fn gate(s: &Value) -> Gate {
     } else if !state.is_null() && state != "OPEN" {
         Some(format!("PR #{} is {}", t(s, "pr.number"), text(state).to_lowercase()))
     } else if nul("threads.owed_bot") {
-        Some(format!("can't read the PR from GitHub: {}", sj(at(s, "errors"), "; ")))
+        let errors = sj(at(s, "errors"), "; ");
+        Some(if errors.is_empty() { "can't read the PR from GitHub".into() } else { format!("can't read the PR from GitHub: {errors}") })
     } else {
         None
     };
@@ -89,20 +104,28 @@ fn gate(s: &Value) -> Gate {
     if on(s, "session.locked") {
         soft.push(format!("taken over (branch.{b}.sd-lock is set)"));
     }
-    if on(s, "sync.conflict") {
+    let conflict = on(s, "sync.conflict");
+    if conflict {
         soft.push("restack due, and it would conflict".into());
     } else if nul("sync.up_to_date") {
         let target = if nul("sync.target") { "the parent".into() } else { t(s, "sync.target") };
         soft.push(format!("sync with {target} unknown"));
     }
+    let mut push = true;
     if nul("push.remote_sha") {
         soft.push("not pushed".into());
     } else if on(s, "push.diverged") {
         soft.push("diverged from the remote branch".into());
+        // with someone else's commits there (NEXT's foreign), a push would drop them
+        push = !(at(s, "push.remote_ours") == &Value::Bool(false) && n(s, "push.theirs") > 0.0);
     } else if n(s, "push.behind") > 0.0 {
         soft.push(format!("the remote branch has {} commit(s) you don't", t(s, "push.behind")));
+        // reset away here: the force-push drops them
+        push = on(s, "push.remote_ours") && on(s, "push.remote_made");
     } else if n(s, "push.ahead") > 0.0 {
         soft.push(format!("{} unpushed commit(s)", t(s, "push.ahead")));
+    } else {
+        push = false;
     }
     let mut warn = vec![];
     if at(s, "sync.up_to_date") == &Value::Bool(false) && !on(s, "sync.conflict") {
@@ -111,7 +134,7 @@ fn gate(s: &Value) -> Gate {
     if t(s, "ci.verdict") == "pending" {
         warn.push("CI is still running".into());
     }
-    Gate { hard, soft, warn }
+    Gate { hard, soft, warn, push, conflict }
 }
 
 /// gh api graphql with these -f fields: its answer, or None (gh said why).
@@ -375,14 +398,26 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         return true;
     }
     if !a.force && !g.soft.is_empty() {
+        // not for a restack: it moves HEAD, dropping the question (#326)
+        if answering && !g.conflict {
+            answer_store(b, "address", a);
+            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears", &g.yours(&s), a));
+            return true;
+        }
         eprintln!("sd act: not addressing {b}:");
         for why in &g.soft {
             eprintln!("  - {why}");
+        }
+        if a.stored {
+            eprintln!("a restack would drop the question: sd act address --force runs your stored answer now, or sd act ack --question drops both");
+        } else if answering {
+            eprintln!("a restack would drop the question, so the answer can't wait for one: sd act answer --force answers now");
         }
         eprintln!("(--force to run anyway)");
         std::process::exit(1);
     }
     question_gate(b, "address", a.force, answering);
+    going_on("address", a);
     for w in &g.warn {
         eprintln!("sd-act: warning: {w}");
     }
@@ -518,6 +553,8 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
 /// included, so NEXT doesn't hand the worktree on mid-step (#170). It runs
 /// in the branch's worktree.
 pub fn address(b: &str, remote: &str, a: &Args) {
+    let stored = with_stored_answer(b, "address", a);
+    let a = stored.as_ref().unwrap_or(a);
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         die(format!("{b} isn't checked out in any worktree"));
@@ -585,6 +622,20 @@ mod tests {
         let s = st(json!({"push.behind": 2, "push.ahead": 1}));
         assert_eq!(gate(&s).soft, strings(&["the remote branch has 2 commit(s) you don't"]));
         assert_eq!(gate(&st(json!({"push.ahead": 1}))).soft, strings(&["1 unpushed commit(s)"]));
+    }
+
+    #[test]
+    fn gate_says_which_soft_reasons_a_push_or_a_restack_clears() {
+        for s in [json!({"push.remote_sha": null}), json!({"push.diverged": true, "push.behind": 1}), json!({"push.ahead": 1})] {
+            assert!(gate(&st(s)).push);
+        }
+        assert!(!gate(&st(json!({"push.behind": 2}))).push);
+        assert!(!gate(&st(json!({"push.diverged": true, "push.remote_ours": false, "push.theirs": 1}))).push);
+        assert!(gate(&st(json!({"push.diverged": true, "push.remote_ours": false, "push.theirs": 0}))).push);
+        assert!(gate(&st(json!({"push.behind": 2, "push.remote_ours": true, "push.remote_made": true}))).push);
+        let g = gate(&st(json!({"sync.conflict": true, "session.locked": true})));
+        assert!(g.conflict && !g.push);
+        assert!(!gate(&st(json!({"sync.up_to_date": null}))).conflict);
     }
 
     #[test]

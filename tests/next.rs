@@ -440,6 +440,263 @@ fn bot_items_sd_act_address() {
     assert_eq!(step("bot", "cmd", &e![".threads.owed_bot = 3"]), "sd act address");
 }
 
+#[test]
+fn bot_items_wait_behind_what_clears_address_s_gate_326() {
+    let bot = ".threads.owed_bot = 2";
+    // address refuses unpushed, unpublished or rewritten commits: the push goes first
+    assert_eq!(keys(&e![bot, ".push.ahead = 2"]), "push bot");
+    assert_eq!(keys(&e![bot, ".push.remote_sha = null", ".push.ahead = 2"]), "push bot");
+    assert_eq!(keys(&e![bot, ".push.ahead = 2", ".push.behind = 2", ".push.diverged = true"]), "push bot");
+    assert_eq!(step("bot", "cmd", &e![bot, ".push.ahead = 2"]), "sd act address");
+    // a held push is chrismo's to release
+    assert_eq!(keys(&e![bot, ".push.ahead = 1", r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#]), "ci-config bot");
+    // and a restack that would conflict
+    assert_eq!(keys(&e![bot, ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true"]), "conflict bot");
+    // behind with no conflict only warns: address as before
+    assert_eq!(keys(&e![bot, ".sync.up_to_date = false", ".sync.behind = 2"]), "bot");
+}
+
+#[test]
+fn bot_items_address_refuses_with_nothing_ahead_to_clear_it_are_chrismo_s_326() {
+    // the parent closed: no restack is offered, and the conflict stands
+    let closed = e![
+        r#".pr.base = "p""#,
+        r#".sync.target = "p""#,
+        ".sync.up_to_date = false",
+        ".sync.behind = 2",
+        ".sync.conflict = true",
+        r#".parent = {"name": "p", "source": "pr", "merged": false, "pr": {"number": 25, "state": "CLOSED", "head_sha": "x"}}"#,
+        ".threads.owed_bot = 2",
+    ];
+    assert_eq!(keys(&closed), "bot parent-closed");
+    assert_eq!(step("bot", "who", &closed), "you");
+    assert_eq!(
+        step("bot", "say", &closed),
+        "address 2 bot items: sd act address refuses while restack due, and it would conflict: clear that first, or sd act address --force"
+    );
+    assert_eq!(step("bot", "cmd", &closed), "sd act address --force");
+    // sync unknown, with no step for it
+    let unknown = e![".threads.owed_bot = 2", ".sync.up_to_date = null"];
+    assert_eq!(keys(&unknown), "bot");
+    assert_eq!(step("bot", "say", &unknown), "address 2 bot items: sd act address refuses while sync with main unknown: clear that first, or sd act address --force");
+    // behind a step that blocks first, it stays the agent's
+    assert_eq!(step("bot", "who", &e![".threads.owed_bot = 2", ".session.locked = true"]), "agent");
+}
+
+#[test]
+fn an_address_question_its_gate_refuses_takes_the_answer_now_unless_a_restack_would_drop_it_326() {
+    let q = asked("address", true);
+    let ahead = e![".threads.owed_bot = 1", ".push.ahead = 1", &q];
+    assert_eq!(keys(&ahead), "question push");
+    assert_eq!(
+        step("question", "say", &ahead),
+        "the agent asks (address): Which test is right?; address refuses while 1 unpushed commit(s): answer it with sd act answer, and it runs once that clears"
+    );
+    assert_eq!(step("question", "cmd", &ahead), r#"sd act answer "<your answer>""#);
+    // nothing NEXT offers clears it, or a push NEXT holds: the answer waits all the same
+    let theirs = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = false", &q];
+    assert_eq!(
+        step("question", "say", &theirs),
+        "the agent asks (address): Which test is right?; address refuses while the remote branch has 1 commit(s) you don't: answer it with sd act answer, and it runs once that clears"
+    );
+    let foreign = e![".threads.owed_bot = 1", ".push.ahead = 1", ".push.behind = 1", ".push.diverged = true", ".push.remote_ours = false", ".push.theirs = 1", &q];
+    assert_eq!(step("question", "cmd", &foreign), r#"sd act answer "<your answer>""#);
+    // a restack would drop the question, so the answer goes in with --force
+    let conflict = e![".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &q];
+    assert_eq!(keys(&conflict), "question conflict");
+    assert_eq!(
+        step("question", "say", &conflict),
+        "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict: answer it with sd act answer --force, since a restack first would drop the question"
+    );
+    assert_eq!(step("question", "cmd", &conflict), r#"sd act answer --force "<your answer>""#);
+    // soak of 2026-10-29: both, and the unpushed commit a CI-config hold only chrismo releases
+    let held = e![&conflict, ".push.ahead = 1", r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#];
+    assert_eq!(
+        step("question", "say", &held),
+        "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict; 1 unpushed commit(s): review the agent's CI config change (.rwx/tests.yml), then sd act push; then answer it with sd act answer --force, since a restack first would drop the question"
+    );
+    assert_eq!(step("question", "cmd", &held), "sd act push");
+    // nothing owed: address has nothing to go on with
+    assert_eq!(keys(&e![&q]), "question");
+    assert_eq!(
+        step("question", "say", &e![&q]),
+        "the agent asks (address): Which test is right?; nothing is owed now, so it's moot: sd act ack --question drops it"
+    );
+    assert_eq!(step("question", "cmd", &e![&q]), "sd act ack --question");
+    // other steps' questions: as before
+    assert_eq!(step("question", "cmd", &e![".push.ahead = 1", &asked("implement", true)]), r#"sd act answer "<your answer>""#);
+}
+
+/// A question standing at HEAD with chrismo's answer stored for it (#326).
+fn answered(step: &str) -> String {
+    let q = json!({"step": step, "sha": "h1", "text": "Which test is right?", "at_head": true, "answer": "keep it"});
+    format!(".question = {q}")
+}
+
+#[test]
+fn a_stored_address_answer_runs_as_the_bot_step_once_address_s_gate_clears_and_waits_behind_what_clears_it_326() {
+    let a = answered("address");
+    let clear = e![".threads.owed_bot = 2", &a];
+    assert_eq!(keys(&clear), "bot");
+    assert_eq!(step("bot", "who", &clear), "agent");
+    assert_eq!(step("bot", "say", &clear), "address 2 bot items, going on with your answer to its question");
+    assert_eq!(step("bot", "cmd", &clear), "sd act address");
+    // what clears the gate goes first, and the answer waits
+    let ahead = e![".threads.owed_bot = 1", ".push.ahead = 1", &a];
+    assert_eq!(keys(&ahead), "push answer");
+    assert_eq!(step("answer", "who", &ahead), "wait");
+    assert_eq!(step("answer", "say", &ahead), "your answer to the address agent's question waits while 1 unpushed commit(s)");
+    assert_eq!(step("answer", "cmd", &ahead), "null");
+    assert_eq!(keys(&e![&ahead, r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#]), "ci-config answer");
+    // nothing listed clears it: chrismo's
+    let theirs = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = false", &a];
+    assert_eq!(keys(&theirs), "take answer");
+    let unknown = e![".threads.owed_bot = 1", ".sync.up_to_date = null", &a];
+    assert_eq!(keys(&unknown), "answer");
+    assert_eq!(step("answer", "who", &unknown), "you");
+    assert_eq!(
+        step("answer", "say", &unknown),
+        "your answer to the address agent's question waits while sync with main unknown: clear that first, or sd act address --force"
+    );
+    assert_eq!(step("answer", "cmd", &unknown), "sd act address --force");
+    // a restack would drop the question, so it waits for the answer, which can't wait for it
+    let conflict = e![".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &a];
+    assert_eq!(keys(&conflict), "answer");
+    assert_eq!(
+        step("answer", "say", &conflict),
+        "your answer to the address agent's question waits while restack due, and it would conflict: a restack would drop the question, so sd act address --force runs it now, or sd act ack --question drops both"
+    );
+    assert_eq!(step("answer", "cmd", &conflict), "sd act address --force");
+    // a hard reason: no --force
+    let unread = e![".threads.owed_bot = null", &a];
+    assert_eq!(keys(&unread), "answer");
+    assert_eq!(
+        step("answer", "say", &unread),
+        "your answer to the address agent's question waits while can't read the PR from GitHub: clear that first"
+    );
+    assert_eq!(step("answer", "cmd", &unread), "null");
+    // nothing owed: moot
+    assert_eq!(
+        step("question", "say", &e![&a]),
+        "the agent asks (address): Which test is right?; nothing is owed now, so it's moot: sd act ack --question drops it, and your answer"
+    );
+}
+
+#[test]
+fn past_the_budget_or_failed_limit_a_stored_address_answer_isn_t_offered_as_sd_act_address_force_326() {
+    // Round 6: the rewrite handing a first answer step to chrismo offered
+    // --force, a token-spending run the budget or failed hold should hide.
+    let a = answered("address");
+    let over = r#".spend = {"usd": 30, "budget": 25}"#;
+    let failed = r#".failed = {count: 3, step: "address", harness: "claude", at: "2026-10-23T10:00:00Z", error: "boom"}"#;
+    for hold in [over, failed] {
+        let unknown = e![hold, ".threads.owed_bot = 1", ".sync.up_to_date = null", &a];
+        let conflict = e![hold, ".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &a];
+        let k = if hold == over { "budget" } else { "failed" };
+        for st in [&unknown, &conflict] {
+            assert_eq!(keys(st), k, "{hold}");
+            assert!(!lines_for(true, st).contains("--force"), "{hold}: {}", lines_for(true, st));
+        }
+    }
+}
+
+#[test]
+fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_its_question_326() {
+    let a = answered("address");
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "bot");
+    assert_eq!(keys(&e![r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 1", &a]), "bot");
+    assert_eq!(keys(&e![STACKED, ".threads.owed_bot = 1", &a]), "bot");
+    let st = e![r#".review.local = {sha: "x", status: "uncovered", uncovered: 2}"#, r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}"#];
+    assert_eq!(keys(&e![&st, ".threads.owed_bot = 1", &a]), "bot");
+}
+
+#[test]
+fn a_moot_question_holds_back_nothing_whether_its_answer_is_stored_or_not_326() {
+    // Round 6: a stored answer to a moot question held back ci-red, restacks
+    // and review, where the same question unanswered held back none of them.
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    let review = e![UNREVIEWED];
+    for q in [asked("address", true), answered("address")] {
+        assert_eq!(keys(&e![&red, &q]), "question ci-red", "{q}");
+        assert_eq!(keys(&e![STACKED, &q]), "question behind", "{q}");
+        assert_eq!(keys(&e![&review, &q]), "question review", "{q}");
+    }
+    for q in [asked("ci-fix", true), answered("ci-fix")] {
+        assert_eq!(keys(&e![STACKED, &q]), "question behind", "{q}");
+        assert_eq!(keys(&e![".threads.owed_bot = 1", &q]), "question bot", "{q}");
+        assert_eq!(keys(&e![&review, &q]), "question review", "{q}");
+    }
+}
+
+#[test]
+fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
+    let q = asked("ci-fix", true);
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    let ahead = e![&red, ".push.ahead = 1", ".ci.for_head = false", r#".ci.sha = "h0""#, &q];
+    assert_eq!(keys(&ahead), "question push");
+    assert_eq!(
+        step("question", "say", &ahead),
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI's red is for h0, not HEAD: answer it with sd act answer, and it runs once CI is red at HEAD"
+    );
+    assert_eq!(step("question", "cmd", &ahead), r#"sd act answer "<your answer>""#);
+    let pending = e![r#".ci.verdict = "pending""#, &q];
+    assert_eq!(keys(&pending), "question ci-wait");
+    assert_eq!(
+        step("question", "say", &pending),
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI is pending: answer it with sd act answer, and it runs once CI is red at HEAD"
+    );
+    // CI passed at HEAD: nothing left to fix
+    assert_eq!(keys(&e![&q]), "question");
+    assert_eq!(step("question", "say", &e![&q]), "the agent asks (ci-fix): Which test is right?; CI is green at HEAD now, so it's moot: sd act ack --question drops it");
+    assert_eq!(step("question", "cmd", &e![&q]), "sd act ack --question");
+    // no CI ran at HEAD: moot too, said without a verdict word
+    assert_eq!(
+        step("question", "say", &e![r#".ci.verdict = "none""#, &q]),
+        "the agent asks (ci-fix): Which test is right?; no CI ran at HEAD, so it's moot: sd act ack --question drops it"
+    );
+    // red at HEAD: as before
+    assert_eq!(step("question", "cmd", &e![&red, &q]), r#"sd act answer "<your answer>""#);
+    // a give-up keeps its other ways on
+    let gave_up = format!(".question = {}", json!({"step": "ci-fix", "kind": "gave-up", "sha": "h1", "text": "no idea", "at_head": true}));
+    assert_eq!(
+        step("question", "say", &e![r#".ci.verdict = "pending""#, &gave_up]),
+        "the agent gave up (ci-fix): no idea; ci-fix can't go on while CI is pending: guide it with sd act answer, and it runs once CI is red at HEAD; or fix it by hand, or sd act ack --question to let it try again"
+    );
+    let gave_up = format!(".question = {}", json!({"step": "address", "kind": "gave-up", "sha": "h1", "text": "no idea", "at_head": true}));
+    assert_eq!(
+        step("question", "say", &e![".threads.owed_bot = 1", ".push.ahead = 1", &gave_up]),
+        "the agent gave up (address): no idea; address refuses while 1 unpushed commit(s): guide it with sd act answer, and it runs once that clears; or fix it by hand, or sd act ack --question to let it try again"
+    );
+}
+
+#[test]
+fn a_stored_ci_fix_answer_runs_as_the_ci_red_step_once_ci_is_red_at_head_and_waits_on_ci_till_then_326() {
+    let a = answered("ci-fix");
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    // the agent's edits are uncommitted: they're the answer's to go on from
+    let now = e![&red, ".push.dirty = true", &a];
+    assert_eq!(keys(&now), "ci-red");
+    assert_eq!(step("ci-red", "who", &now), "agent");
+    assert_eq!(step("ci-red", "say", &now), "fix CI: test, going on with your answer to its question");
+    assert_eq!(step("ci-red", "cmd", &now), "sd act ci-fix");
+    // the push goes first, then CI on HEAD
+    let ahead = e![&red, ".push.ahead = 1", ".ci.for_head = false", r#".ci.sha = "h0""#, &a];
+    assert_eq!(keys(&ahead), "push answer");
+    assert_eq!(step("answer", "who", &ahead), "wait");
+    assert_eq!(step("answer", "say", &ahead), "your answer to the ci-fix agent's question waits while CI's red is for h0, not HEAD");
+    assert_eq!(keys(&e![r#".ci.verdict = "pending""#, &a]), "ci-wait answer");
+    // passed at HEAD: moot
+    assert_eq!(keys(&e![&a]), "question");
+    assert_eq!(
+        step("question", "say", &e![&a]),
+        "the agent asks (ci-fix): Which test is right?; CI is green at HEAD now, so it's moot: sd act ack --question drops it, and your answer"
+    );
+    // what would move HEAD waits for it
+    assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "ci-red");
+    assert_eq!(keys(&e![&red, STACKED, &a]), "ci-red");
+}
+
 // @test "bot items that are only info: chrismo reads them, then acks"
 #[test]
 fn bot_items_that_are_only_info_chrismo_reads_them_then_acks() {
@@ -484,9 +741,9 @@ fn past_settings_branchbudget_one_you_step_in_place_of_the_agent_steps_run_steps
     assert_eq!(step("budget", "who", &e![over, ".threads.owed_bot = 2"]), "you");
     assert_eq!(step("budget", "say", &e![over, ".threads.owed_bot = 2"]), "spent $25.46 on this branch, past settings.branchBudget ($25.00): raise it, or take over");
     assert_eq!(step("budget", "cmd", &e![over, ".threads.owed_bot = 2"]), "sd act attach");
-    // a restack ahead of the agent's steps, and a push after them, stay
+    // a restack ahead of the agent's steps, and a push (which address waits behind, #326), stay
     assert_eq!(keys(&e![over, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 2"]), "behind budget");
-    assert_eq!(keys(&e![over, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "budget push");
+    assert_eq!(keys(&e![over, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "push budget");
     // nothing that spends: no budget step
     assert_eq!(keys(&e![over]), "ready");
 }
@@ -556,9 +813,9 @@ fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_ru
     assert_eq!(step("failed", "cmd", &e![&failed(3, "resolve"), ".threads.owed_bot = 2"]), "sd act restack --resolve");
     // a step nothing reruns: clearing the record is the way on
     assert_eq!(step("failed", "cmd", &e![&failed(3, "agent"), ".threads.owed_bot = 2"]), "git update-ref -d refs/sheepdog/feat/failed");
-    // a restack ahead of the agent's steps, and a push after them, stay
+    // a restack ahead of the agent's steps, and a push (which address waits behind, #326), stay
     assert_eq!(keys(&e![&three, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 2"]), "behind failed");
-    assert_eq!(keys(&e![&three, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "failed push");
+    assert_eq!(keys(&e![&three, ".threads.owed_bot = 1", ".push.ahead = 1", r#".review.local.status = "uncovered""#]), "push failed");
     // nothing that spends: no failed step
     assert_eq!(keys(&e![&three]), "ready");
     // fewer in a row: the loop retries
@@ -1077,8 +1334,9 @@ fn no_pr_no_ci_wait() {
 #[test]
 fn order_follows_the_loop_s_ordering_79_design_record_restack_agent_fixes_push_then_waiting() {
     // ci-red yields to push while commits are unpushed (they may be the fix), so
-    // it shows up only once the push is done.
-    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind bot push review");
+    // it shows up only once the push is done; address refuses them, so it
+    // follows the push (#326).
+    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind push bot review");
     assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind ci-red bot review");
 }
 
@@ -1102,7 +1360,7 @@ fn the_remote_and_branch_reach_commands_as_data() {
 fn lines_one_next_line_with_who_say_command_and_a_count_of_the_rest() {
     let out = lines_for(false, &e![".push.ahead = 1", ".threads.owed_bot = 1"]);
     assert_eq!(out.lines().count(), 1);
-    assert_eq!(out, "NEXT  agent  address 1 bot item  → sd act address  (+1 more)");
+    assert_eq!(out, "NEXT  run    push 1 commit  → sd act push  (+1 more)");
 }
 
 // @test "lines: a step with no command has no arrow"
@@ -1118,8 +1376,8 @@ fn lines_all_lists_every_step_the_rest_as_then() {
     let out = lines_for(true, &e![".push.ahead = 1", ".threads.owed_bot = 1"]);
     let ls: Vec<&str> = out.lines().collect();
     assert_eq!(ls.len(), 2);
-    assert_eq!(ls[0], "NEXT  agent  address 1 bot item  → sd act address");
-    assert_eq!(ls[1], "then  run    push 1 commit  → sd act push");
+    assert_eq!(ls[0], "NEXT  run    push 1 commit  → sd act push");
+    assert_eq!(ls[1], "then  agent  address 1 bot item  → sd act address");
 }
 
 // @test "question: a you step quoting its first line, in place of the agent step that asked (#167)"

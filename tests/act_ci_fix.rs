@@ -815,6 +815,85 @@ fn answer_the_agent_asking_again_records_the_new_question_178() {
     assert_eq!(jq(&["-r", ".text"], &rec), "and the other one?");
 }
 
+fn has_answer(sd: &Sd) -> bool {
+    sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/answer"]).is_some()
+}
+
+#[test]
+fn answer_is_stored_while_ci_fix_s_gate_waits_on_ci_and_ci_fix_goes_on_with_it_once_ci_is_red_at_head_326() {
+    let sd = sd();
+    sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
+    sd.run(&["ci-fix"]);
+    let sid = sd.git(&["config", "branch.feat.sd-session"]);
+    sd.rm("claude.prompt");
+    // unpushed, so CI's red isn't for HEAD: the push restarts CI
+    sd.state(&[".push.ahead = 1 | .ci.for_head = false | .ci.sha = \"r0\""]);
+    let r = sd.run(&["answer", "keep THREE"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["ci-fix refuses on feat while CI's red is for r0, not HEAD", "your answer is stored", "once CI is red at HEAD"]);
+    assert!(!sd.ran("claude.prompt"));
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/answer"]);
+    assert_eq!(jq(&["-r", "[.step, .text] | join(\"|\")"], &rec), "ci-fix|keep THREE");
+    // CI running on HEAD: still waiting
+    sd.state(&[r#".ci.verdict = "pending""#]);
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["CI is pending", "your answer is still stored"]);
+    assert_lacks(&r.output, "going on with your stored answer");
+    assert!(!sd.ran("claude.prompt"));
+    // red at HEAD: ci-fix goes on with it, and it's used up
+    sd.state(&[]);
+    sd.result(r#"{outcome: "fixed", commit_message: "Uppercase three", summary: "kept THREE, as chrismo said"}"#);
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer to the ci-fix agent's question"]);
+    assert_has(&sd.prompt(), &["keep THREE"]);
+    assert_eq!(sd.after("--resume"), sid);
+    assert_eq!(sd.question(), None);
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clears_the_gate_326() {
+    let sd = sd();
+    sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
+    sd.run(&["ci-fix"]);
+    sd.rm("claude.prompt");
+    sd.state(&[r#".ci.verdict = "pending""#]);
+    let r = sd.ok(&["answer", "keep THREE"]);
+    assert_has(&r, &["(NEXT then offers ci-fix, so sd watch runs ci-fix)"]);
+    for (edit, yours) in [
+        (r#".ci.verdict = "inconclusive""#, "the cancelled CI (rerun it: gh run rerun, or rwx retry)"),
+        (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "the held CI config change (review it, then sd act push)"),
+        (r#".push.ahead = 1 | .verify = {at_head: true, sha: "h1", step: "ci-fix", cmd: "make test"}"#, "the verify red on HEAD (fix it, then sd act verify)"),
+        (r#".push.ahead = 1 | .parent.unpushed = true"#, "the unpushed commits NEXT won't push (sd state says why)"),
+    ] {
+        sd.state(&[edit]);
+        let r = sd.ok(&["answer", "keep THREE"]);
+        assert_has(&r, &["once CI is red at HEAD", &format!("nothing sd watch runs clears {yours}, so that's yours to clear")]);
+        assert_lacks(&r, "sd watch runs it");
+    }
+    assert!(!sd.ran("claude.prompt"));
+}
+
+#[test]
+fn answer_to_a_ci_fix_question_is_moot_once_ci_passed_at_head_326() {
+    let sd = sd();
+    sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
+    sd.run(&["ci-fix"]);
+    sd.rm("claude.prompt");
+    sd.state(&[r#".ci.verdict = "green""#]);
+    let r = sd.run(&["answer", "keep THREE"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["CI is green on feat", "the ci-fix agent's question is moot", "sd act ack --question"]);
+    assert!(!sd.ran("claude.prompt"));
+    assert!(!has_answer(&sd));
+    // green, but not on HEAD: CI on HEAD may yet be red
+    sd.state(&[r#".ci.verdict = "green" | .ci.for_head = false | .ci.sha = "r0""#]);
+    sd.ok(&["answer", "keep THREE"]);
+    assert!(has_answer(&sd));
+}
+
 // @test "answer: refused at zero tokens with no text, no question, or one that no longer stands (#178)"
 #[test]
 fn answer_refused_at_zero_tokens_with_no_text_no_question_or_one_that_no_longer_stands_178() {

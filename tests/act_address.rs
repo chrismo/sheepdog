@@ -731,6 +731,197 @@ fn sd_act_answer_resumes_addresss_session_with_the_answer_then_drops_the_questio
     assert!(!sd.has_question());
 }
 
+const TWO_OWED: &str = r#".threads.owed_bot = 2 | .threads.items += [{id: "T2", type: "thread", kind: "bot", path: "file.txt", line: 1, outdated: false, last: "review-bot"}]"#;
+
+fn has_answer(sd: &Sd) -> bool {
+    sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/answer"]).is_some()
+}
+
+#[test]
+fn sd_act_answer_stores_the_answer_while_addresss_gate_refuses_and_address_goes_on_with_it_once_that_clears_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    let sid = sd.git(&["config", "branch.feat.sd-session"]);
+    sd.rm("claude.args");
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    let r = sd.run(&["answer", "call it bar"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["1 unpushed commit(s)", "your answer is stored", "goes on with it once that clears"]);
+    assert!(!sd.ran("claude.args"));
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/answer"]);
+    assert_eq!(jq(&["-r", ".text"], &rec), "call it bar");
+    assert_eq!(jq(&["-r", ".question"], &rec), sd.rev("refs/sheepdog/feat/question"));
+    assert_eq!(sd.question(".step"), "address");
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["your answer is still stored"]);
+    assert_lacks(&r.output, "going on with your stored answer");
+    assert!(!sd.ran("claude.args"));
+    // the gate cleared: address goes on with it, and it's used up
+    sd.two_owed();
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer to the address agent's question"]);
+    assert_has(&sd.fx("claude.args"), &["call it bar"]);
+    assert_eq!(sd.after("--resume"), sid);
+    assert!(!sd.has_question());
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn a_stored_address_answer_says_sd_watch_runs_it_only_when_a_push_clears_the_gate_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.rm("claude.args");
+    // a push NEXT offers clears it
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    let r = sd.ok(&["answer", "call it bar"]);
+    assert_has(&r, &["your answer is stored", "(NEXT then offers address, so sd watch runs address)"]);
+    assert_lacks(&r, "yours to clear");
+    // nothing NEXT runs clears these: chrismo is told what's theirs
+    for (edit, yours) in [
+        (".sync.up_to_date = null", "sync with main unknown"),
+        (".push.behind = 1 | .push.remote_made = false", "the remote branch has 1 commit(s) you don't"),
+        (".push.ahead = 1 | .push.held = {paths: [\".rwx/tests.yml\"]}", "1 unpushed commit(s)"),
+        // NEXT holds the push: an undone restack, an unpushed parent, a
+        // dirty worktree over commits reset away
+        (".push.ahead = 1 | .sync.undone = 1", "1 unpushed commit(s)"),
+        (".push.ahead = 1 | .parent.unpushed = true", "1 unpushed commit(s)"),
+        (".push.behind = 1 | .push.remote_made = true | .push.dirty = true", "the remote branch has 1 commit(s) you don't"),
+        // verify red on HEAD: NEXT offers no push (#325)
+        (".push.ahead = 1 | .verify = {at_head: true, sha: \"h1\", step: \"implement\", cmd: \"make test\"}", "1 unpushed commit(s)"),
+        // with a push that clears the rest, only what it doesn't is named
+        (".push.ahead = 1 | .sync.up_to_date = null", "sync with main unknown"),
+    ] {
+        sd.state(&[TWO_OWED, edit]);
+        let r = sd.ok(&["answer", "call it bar"]);
+        assert_has(&r, &["stored, and address goes on with it once that clears", &format!("nothing sd watch runs clears {yours}, so that's yours to clear")]);
+        assert_lacks(&r, "sd watch runs it");
+    }
+    assert!(!sd.ran("claude.args"));
+}
+
+#[test]
+fn a_stored_address_answer_meeting_a_dirty_worktree_waits_and_the_worktree_is_refused_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    sd.rm("claude.args");
+    sd.two_owed();
+    // edited since the question (its worktree mark): the question doesn't
+    // stand, so the answer isn't used, and the worktree is refused as for
+    // any run, not skipped as for an answer
+    sd.write("untracked.txt", "junk\n");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["uncommitted"]);
+    assert!(!sd.ran("claude.args"));
+    assert!(has_answer(&sd));
+    // back as asked: address goes on with the answer
+    fs::remove_file(sd.cwd.join("untracked.txt")).unwrap();
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer"]);
+    assert_has(&sd.fx("claude.args"), &["call it bar"]);
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn a_stored_address_answer_meeting_nothing_owed_fails_unanswered_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    sd.rm("claude.args");
+    // the bot items were resolved elsewhere meanwhile
+    sd.state(&[".threads.owed_bot = 0 | .threads.items = []"]);
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["nothing to address on feat", "The answer didn't reach the agent; sd act ack --question drops its question"]);
+    assert!(!sd.ran("claude.args"));
+    assert!(has_answer(&sd));
+}
+
+#[test]
+fn an_answer_cant_wait_on_a_restack_that_would_drop_its_question_nor_go_to_another_question_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.rm("claude.args");
+    sd.state(&[TWO_OWED, ".sync.up_to_date = false | .sync.behind = 2 | .sync.conflict = true"]);
+    let r = sd.run(&["answer", "call it bar"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["restack due, and it would conflict", "a restack would drop the question", "sd act answer --force"]);
+    assert!(!has_answer(&sd));
+    // stored, then the agent asks anew at the same HEAD: the answer isn't for that one
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    let again = jq(&["-c", r#".text = "And the other one?""#], &sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]));
+    let blob = sd.git_with(&[], Some(&format!("{again}\n")), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/question", &blob]);
+    sd.two_owed();
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not running address on feat: its agent asked", "And the other one?"]);
+    assert!(!sd.ran("claude.args"));
+    // ack --question drops a stored answer with it
+    sd.ok(&["ack", "--question"]);
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn a_stored_address_answer_runs_now_with_force_over_a_restack_that_would_drop_its_question_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    sd.rm("claude.args");
+    sd.state(&[TWO_OWED, ".sync.up_to_date = false | .sync.behind = 2 | .sync.conflict = true"]);
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["a restack would drop the question", "sd act address --force runs your stored answer now"]);
+    assert_lacks(&r.output, "sd act answer --force");
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer"]);
+    assert_has(&sd.fx("claude.args"), &["call it bar"]);
+    assert!(!sd.has_question());
+    assert!(!has_answer(&sd));
+}
+
 // @test "sd act answer hands address the items owed now, so one that came after the question gets an answer (#178)"
 #[test]
 fn sd_act_answer_hands_address_the_items_owed_now_so_one_that_came_after_the_question_gets_an_answer_178() {

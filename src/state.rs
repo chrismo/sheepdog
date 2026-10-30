@@ -146,10 +146,13 @@ fn blob_record(dir: &str, r: &str) -> Option<Result<Value, ()>> {
 }
 
 /// An agent step's question for chrismo (#167): {step, kind, sha, text,
-/// at_head}, kind "ask", or "gave-up" for a give-up (#254);
-/// None with no record, Err for one that isn't one.
+/// at_head, answer}, kind "ask", or "gave-up" for a give-up (#254);
+/// None with no record, Err for one that isn't one. answer: chrismo's
+/// answer stored for this question while its step couldn't run (#326),
+/// else null.
 pub(crate) fn question_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
-    let Some(rec) = blob_record(dir, &format!("refs/sheepdog/{b}/question")) else { return Ok(None) };
+    let qref = format!("refs/sheepdog/{b}/question");
+    let Some(rec) = blob_record(dir, &qref) else { return Ok(None) };
     let rec = rec?;
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
     let (Some(h), Some(step), Some(m), Some(text)) = (s("head"), s("step"), s("mark"), s("text")) else { return Err(()) };
@@ -163,7 +166,19 @@ pub(crate) fn question_state(dir: &str, b: &str, head: &str) -> Result<Option<Va
             _ => true,
         };
     let kind = s("kind").unwrap_or("ask");
-    Ok(Some(json!({"step": step, "kind": kind, "sha": h, "text": text, "at_head": at_head})))
+    let answer = stored_answer(dir, b, &git::oid(dir, &qref));
+    Ok(Some(json!({"step": step, "kind": kind, "sha": h, "text": text, "at_head": at_head, "answer": answer})))
+}
+
+/// refs/sheepdog/<b>/answer's text when it answers the question whose record
+/// is the blob <question> (#326); one for another question, or not a record,
+/// is none.
+fn stored_answer(dir: &str, b: &str, question: &str) -> Value {
+    let Some(Ok(rec)) = blob_record(dir, &format!("refs/sheepdog/{b}/answer")) else { return Value::Null };
+    match (rec.get("question").and_then(Value::as_str), rec.get("text").and_then(Value::as_str)) {
+        (Some(q), Some(text)) if !question.is_empty() && q == question => json!(text),
+        _ => Value::Null,
+    }
 }
 
 /// The agent steps that failed in a row (#242, src/failed.rs): {step,

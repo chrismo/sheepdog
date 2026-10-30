@@ -74,6 +74,7 @@ pub fn ack(b: &str, ids: &[String], question: bool) {
             return;
         }
         git_or_exit(&["update-ref", "-d", &r]);
+        super::step::answer_drop(b);
         let step = match one_value(&q.stdout) {
             Some(v) if !at(&v, "step").is_null() => t(&v, "step"),
             _ => "?".into(),

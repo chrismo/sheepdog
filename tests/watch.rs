@@ -163,9 +163,14 @@ impl Sd {
         fs::write(self.fixture(b), format!("{}\n", serde_json::to_string_pretty(&v).unwrap())).unwrap();
     }
 
-    /// one_step <key>: sd state's next is that single step, said as "say <key>".
+    /// one_step <key>: sd state's next is that single step, said as "say
+    /// <key>", whose as src/next.rs makes it (who_in_next).
     fn one_step(&self, key: &str) {
-        self.ps_fixture("feat", &[&format!(r#".next = [{{key: "{key}", who: "you", say: "say {key}", cmd: null}}]"#)]);
+        self.one_step_as(key, &who_in_next(key));
+    }
+
+    fn one_step_as(&self, key: &str, who: &str) {
+        self.ps_fixture("feat", &[&format!(r#".next = [{{key: "{key}", who: "{who}", say: "say {key}", cmd: null}}]"#)]);
     }
 
     /// The calls sd state got, "<dir> <branch>" each.
@@ -614,9 +619,9 @@ fn glyph_follows_sd_states_next_steps_not_its_raw_fields() {
     assert_eq!(sd.glyph("repo"), "🔧");
 }
 
-// @test "glyph: nothing to ship is ❌; nothing to ship with uncommitted changes is 🔧, since implement looks the same (#143)"
+// @test "glyph: nothing to ship is ❌, and with uncommitted changes too: stuck until chrismo commits (#143, #326)"
 #[test]
-fn glyph_nothing_to_ship_is_nothing_to_ship_with_uncommitted_changes_is_since_implement_looks_the_same_143() {
+fn glyph_nothing_to_ship_is_and_with_uncommitted_changes_too_stuck_until_chrismo_commits_143_326() {
     let sd = sd();
     sd.ps_fixture("feat", &[r#".next = [{key: "nothing", who: "you", say: "nothing to ship: commit, or record a task", cmd: null}]"#]);
     sd.pass();
@@ -626,7 +631,8 @@ fn glyph_nothing_to_ship_is_nothing_to_ship_with_uncommitted_changes_is_since_im
         &[r#".next = [{key: "nothing-dirty", who: "you", say: "nothing to ship, and the worktree has uncommitted changes: commit them", cmd: null}]"#],
     );
     sd.pass();
-    assert_eq!(sd.glyph("repo"), "🔧");
+    assert_eq!(sd.glyph("repo"), "❌");
+    assert_eq!(sd.notified_lines().last().unwrap(), "repo feat|nothing to ship, and the worktree has uncommitted changes: commit them");
 }
 
 // @test "glyph: uncommitted edits holding up an agent step are ❌ and notified: they may be an agent's that gave up (#178)"
@@ -660,6 +666,25 @@ fn glyph_info_only_bot_items_waiting_on_chrismos_read_are_and_notified_once_76()
     assert_eq!(sd.notified(), "repo feat|read 1 bot item in sd state --long, then ack");
 }
 
+// @test "glyph: bot items address refuses, with nothing listed to clear it, are ❌ and notified once (#326)"
+#[test]
+fn glyph_bot_items_address_refuses_with_nothing_listed_to_clear_it_are_and_notified_once_326() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[".threads.owed_bot = 1 | .sync.up_to_date = null"]);
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "❌");
+    sd.pass();
+    assert_eq!(
+        sd.notified(),
+        "repo feat|address 1 bot item: sd act address refuses while sync with main unknown: clear that first, or sd act address --force"
+    );
+    // The agent's again, it's 🔧 and quiet.
+    sd.ps_fixture("feat", &[".threads.owed_bot = 1"]);
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "🔧");
+    assert_eq!(sd.notified_lines().len(), 1);
+}
+
 // @test "glyph: sd state output with no next steps is ⚠️"
 #[test]
 fn glyph_sd_state_output_with_no_next_steps_is() {
@@ -680,14 +705,16 @@ fn glyph_waiting_on_a_required_review_is_never() {
     assert_eq!(sd.notified(), "");
 }
 
-// @test "glyph: GitHub blocking the merge for another reason is 🔧, never ✅"
+// @test "glyph: GitHub blocking the merge for another reason is ❌ and notified once, never ✅ (#326)"
 #[test]
-fn glyph_github_blocking_the_merge_for_another_reason_is_never() {
+fn glyph_github_blocking_the_merge_for_another_reason_is_and_notified_once_never_326() {
     let sd = sd();
     sd.ps_fixture("feat", &[r#".pr.merge_state = "BLOCKED""#]);
     sd.pass();
-    assert_eq!(sd.glyph("repo"), "🔧");
-    assert_eq!(sd.notified(), "");
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "❌");
+    assert_eq!(sd.notified_lines().len(), 1);
+    assert_match(&sd.notified(), "^repo feat\\|GitHub says");
 }
 
 // @test "glyph: a draft is never ready"
@@ -1114,7 +1141,8 @@ fn policy_a_notified_step_notifies_once_on_entering_it_not_on_later_passes() {
     for k in sd.policy("n") {
         let _ = fs::remove_dir_all(sd.tmp.join("state"));
         let _ = fs::remove_file(sd.ps("notified"));
-        sd.one_step(&k);
+        // chrismo's, as each notified step is when it notifies.
+        sd.one_step_as(&k, "you");
         sd.pass();
         sd.pass();
         sd.pass();
@@ -1122,9 +1150,27 @@ fn policy_a_notified_step_notifies_once_on_entering_it_not_on_later_passes() {
     }
 }
 
+/// <key>'s who as src/next.rs makes its step: "you" if any of them is
+/// chrismo's, else the first one's (an agent step's is "agent").
+fn who_in_next(key: &str) -> String {
+    let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/next.rs")).unwrap();
+    let whos: Vec<String> = Regex::new(r#"step\("([a-z-]+)", "([a-z]+)"|agent\(hold, "([a-z-]+)""#)
+        .unwrap()
+        .captures_iter(&src)
+        .filter_map(|c| match (c.get(1), c.get(2), c.get(3)) {
+            (Some(k), Some(w), _) if k.as_str() == key => Some(w.as_str().to_string()),
+            (_, _, Some(k)) if k.as_str() == key => Some("agent".to_string()),
+            _ => None,
+        })
+        .collect();
+    if whos.iter().any(|w| w == "you") { "you".into() } else { whos.first().cloned().unwrap_or_else(|| panic!("no step {key}")) }
+}
+
 // @test "policy: a step that isn't notified never is"
 #[test]
 fn policy_a_step_that_isnt_notified_never_is() {
+    // As NEXT makes it: a first step of chrismo's notifies unless it's one
+    // of the quiet ones (#326), so only those are tried as chrismo's.
     let sd = sd();
     for k in sd.policy("q") {
         let _ = fs::remove_dir_all(sd.tmp.join("state"));
