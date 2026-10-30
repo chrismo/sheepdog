@@ -567,6 +567,14 @@ fn a_stored_address_answer_runs_as_the_bot_step_once_address_s_gate_clears_and_w
         "your answer to the address agent's question waits while restack due, and it would conflict: a restack would drop the question, so sd act address --force runs it now, or sd act ack --question drops both"
     );
     assert_eq!(step("answer", "cmd", &conflict), "sd act address --force");
+    // a hard reason: no --force
+    let unread = e![".threads.owed_bot = null", &a];
+    assert_eq!(keys(&unread), "answer");
+    assert_eq!(
+        step("answer", "say", &unread),
+        "your answer to the address agent's question waits while can't read the PR from GitHub: : clear that first"
+    );
+    assert_eq!(step("answer", "cmd", &unread), "null");
     // nothing owed: moot
     assert_eq!(
         step("question", "say", &e![&a]),

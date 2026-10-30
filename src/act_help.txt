@@ -286,8 +286,8 @@ don't move: it stands until the target moves too, and sd act answer can't
 go on from it; resolve it by hand (sd act restack says how), or ack it.
 
 Stored answers (#326): an answer whose step can't run yet is kept in
-refs/sheepdog/<b>/answer, keyed to the question's record, so a question
-asked anew or dropped never gets it. The step that asked, run with no
+refs/sheepdog/<b>/answer, keyed to the question record's blob, so it never
+goes to a different question. The step that asked, run with no
 answer, goes on with it once its gate clears, and the step running uses
 it up. sd act ack --question drops it with the question; forget and sd
 watch's sweep drop it with the branch's other refs.

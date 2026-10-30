@@ -300,13 +300,18 @@ pub fn question_answered(b: &str, answering: bool) {
 // ── chrismo's answer, waiting on its step's gate (#326) ──────────────────────
 
 /// refs/sheepdog/<b>/answer's blob: chrismo's answer, keyed to the
-/// question record's blob <question>, so a question asked anew never gets it.
+/// question record's blob <question>, so it never goes to a different question.
 fn answer_record(question: &str, step: &str, text: &str) -> String {
     json::to_string(&json!({"question": question, "step": step, "text": text})) + "\n"
 }
 
-/// Store <text> as the answer to <b>'s standing <step> question.
-pub fn answer_store(b: &str, step: &str, text: &str) {
+/// Store <a>'s answer to <b>'s standing <step> question, unless it's the
+/// one stored already.
+pub fn answer_store(b: &str, step: &str, a: &super::Args) {
+    if a.stored {
+        return;
+    }
+    let text = &a.answer;
     let q = oid(".", &format!("refs/sheepdog/{b}/question"));
     let rec = answer_record(&q, step, text);
     let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
@@ -328,8 +333,14 @@ pub fn with_stored_answer(b: &str, step: &str, a: &super::Args) -> Option<super:
     }
     let q = state::question_state(".", b, &rev(".", &format!("refs/heads/{b}"))).ok()??;
     let answer = at(&q, "answer").as_str().filter(|_| on(&q, "at_head") && t(&q, "step") == step)?.to_string();
-    eprintln!("sd act: going on with your stored answer to the {step} agent's question");
-    Some(super::Args { answer, ..a.clone() })
+    Some(super::Args { answer, stored: true, ..a.clone() })
+}
+
+/// Once <step>'s gate passed with the stored answer, say so.
+pub fn going_on(step: &str, a: &super::Args) {
+    if a.stored {
+        eprintln!("sd act: going on with your stored answer to the {step} agent's question");
+    }
 }
 
 /// What sd act answer says when <step>'s gate refuses <why> and the answer

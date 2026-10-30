@@ -809,7 +809,10 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             ("clear that first, or sd act address --force", force)
         };
         let why = if first == "bot" { format!(": sd act address refuses while {addr_why}") } else { String::new() };
-        out[0] = json!({"key": first, "who": "you", "say": format!("{}{why}: {say}", text(&out[0]["say"])), "cmd": cmd});
+        let said = format!("{}{why}: {say}", text(&out[0]["say"]));
+        out[0]["who"] = json!("you");
+        out[0]["say"] = json!(said);
+        out[0]["cmd"] = json!(cmd);
     }
     // ready, merge-wait and blocked are the end state, listed only alone.
     if out.len() > 1 && matches!(out[out.len() - 1]["key"].as_str(), Some("ready" | "merge-wait" | "blocked")) {
@@ -822,7 +825,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
 /// refuses. sd act answer stores an answer to run once soft reasons clear;
 /// a restack would drop the question, so a conflict is answered with
 /// --force, after the push when NEXT offers one (<can_push>).
-fn answer_refused(s: &Value, g: &crate::act::Gate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
+fn answer_refused(s: &Value, g: &crate::act::AddressGate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
     let did = if val::t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" };
     if g.hard.is_none() && !g.conflict {
         return (

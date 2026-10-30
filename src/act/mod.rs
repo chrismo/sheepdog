@@ -19,7 +19,7 @@ mod ship;
 mod start;
 mod step;
 pub(crate) use step::plain_words;
-pub(crate) use address::{gate as address_gate, Gate};
+pub(crate) use address::{gate as address_gate, Gate as AddressGate};
 pub(crate) use ci_fix::{gate as ci_fix_gate, Gate as CiFixGate};
 
 use crate::git::{self, git, git_out};
@@ -77,6 +77,8 @@ pub struct Args {
     pub positionals: Vec<String>,
     pub task: String,
     pub answer: String,
+    /// answer is the one stored for the question (#326), not given now.
+    pub stored: bool,
     /// follow's <number>.
     pub pr: String,
 }

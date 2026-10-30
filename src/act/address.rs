@@ -7,7 +7,7 @@ use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base,
-                  question_answered, question_ask, question_gate, question_say, step_session, step_store, with_stored_answer};
+                  question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
 use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
@@ -389,7 +389,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     if !a.force && !g.soft.is_empty() {
         // not for a restack: it moves HEAD, dropping the question (#326)
         if answering && !g.conflict {
-            answer_store(b, "address", &a.answer);
+            answer_store(b, "address", a);
             println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears"));
             return true;
         }
@@ -404,6 +404,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         std::process::exit(1);
     }
     question_gate(b, "address", a.force, answering);
+    going_on("address", a);
     for w in &g.warn {
         eprintln!("sd-act: warning: {w}");
     }

@@ -9,7 +9,7 @@ use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base, in_worktree,
-                  must, question_answered, question_ask, question_gate, question_say, step_session, step_store, with_stored_answer};
+                  must, question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
 use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev};
@@ -202,7 +202,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
             if !answering {
                 die(msg);
             }
-            answer_store(b, "ci-fix", &a.answer);
+            answer_store(b, "ci-fix", a);
             println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD"));
             return;
         }
@@ -219,6 +219,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         ));
     }
     question_gate(b, "ci-fix", a.force, answering);
+    going_on("ci-fix", a);
     let s = step_session(b, "ci-fix", &a.harness, a.force, answering);
     // With no base from sd state, the trusted one guidance_base finds (maybe none).
     let mut base = t(&state, "sync.old_base");

@@ -755,6 +755,11 @@ fn sd_act_answer_stores_the_answer_while_addresss_gate_refuses_and_address_goes_
     assert_eq!(jq(&["-r", ".text"], &rec), "call it bar");
     assert_eq!(jq(&["-r", ".question"], &rec), sd.rev("refs/sheepdog/feat/question"));
     assert_eq!(sd.question(".step"), "address");
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["your answer is stored"]);
+    assert_lacks(&r.output, "going on with your stored answer");
+    assert!(!sd.ran("claude.args"));
     // the gate cleared: address goes on with it, and it's used up
     sd.two_owed();
     sd.result(
