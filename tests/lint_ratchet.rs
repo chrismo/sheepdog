@@ -26,8 +26,8 @@ fn scores(json: &str) -> Scores {
             continue;
         }
         let span = &m["spans"][0];
-        let (Some(file), Some(line), Some(msg)) = (span["file_name"].as_str(), span["text"][0]["text"].as_str(), m["message"].as_str()) else { continue };
-        let (Some(f), Some(n)) = (name.captures(line), score.captures(msg)) else { continue };
+        let read = (span["file_name"].as_str(), span["text"][0]["text"].as_str().and_then(|l| name.captures(l)), m["message"].as_str().and_then(|s| score.captures(s)));
+        let (Some(file), Some(f), Some(n)) = read else { panic!("can't read clippy::{lint} in {m}") };
         let (k, n) = (format!("{file} {} {lint}", &f[1]), n[1].parse().unwrap());
         // Each target reports a function again at the same score; another
         // score is a second function with the name, which the key can't hold.
@@ -45,7 +45,9 @@ fn baseline(text: &str) -> Scores {
         match l.split('#').next().unwrap().split_whitespace().collect::<Vec<_>>()[..] {
             [] => {}
             [file, f, lint, n] => {
-                out.insert(format!("{file} {f} {lint}"), n.parse().unwrap_or_else(|_| panic!("{BASELINE}:{}: score {n:?}", i + 1)));
+                let k = format!("{file} {f} {lint}");
+                let n = n.parse().unwrap_or_else(|_| panic!("{BASELINE}:{}: score {n:?}", i + 1));
+                assert!(out.insert(k.clone(), n).is_none(), "{BASELINE}:{}: {k} is listed twice", i + 1);
             }
             _ => panic!("{BASELINE}:{}: want <file> <fn> <lint> <score>, got {l:?}", i + 1),
         }
@@ -146,6 +148,19 @@ fn scores_refuses_two_functions_with_one_name_in_one_file() {
     ]
     .join("\n");
     scores(&json);
+}
+
+#[test]
+#[should_panic(expected = "can't read clippy::cognitive_complexity")]
+fn scores_refuses_one_of_the_lints_on_a_line_with_no_fn() {
+    let json = diag("clippy::cognitive_complexity", "the function has a cognitive complexity of (30/25)", "src/next.rs", "    let f = |x| {");
+    scores(&json);
+}
+
+#[test]
+#[should_panic(expected = "tests/lint-ratchet.txt:3: src/next.rs steps too_many_lines is listed twice")]
+fn baseline_refuses_a_function_listed_twice() {
+    baseline("# file fn lint score\nsrc/next.rs  steps  too_many_lines  600\nsrc/next.rs  steps  too_many_lines  590\n");
 }
 
 #[test]
