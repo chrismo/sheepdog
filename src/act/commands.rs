@@ -59,32 +59,46 @@ pub(super) fn tail(text: &str, n: usize) -> String {
 /// line reports, as bats' "Executed N instead of expected M" leaves it with
 /// no "not ok" to point at (#325). TAP gives a test that never reports no
 /// name, so each gap is placed by the line reported just before it. A plan
-/// line starts a new run's count.
+/// line starts a new run's count, or, with no plan above them, ends the
+/// results above it (TAP allows either end). A heuristic: verify's output
+/// is any command's, so a plan with no results under it adds nothing.
 fn tap_missing(out: &str) -> Option<String> {
     let mut notes = String::new();
-    let mut run: Option<(usize, Vec<(usize, &str)>)> = None;
+    let (mut plan, mut seen) = (None, Vec::new());
     for l in out.lines() {
         if let Some(m) = l.strip_prefix("1..").and_then(|r| r.split(' ').next()?.parse().ok()) {
-            notes += &run.map(tap_gaps).unwrap_or_default();
-            run = Some((m, Vec::new()));
-        } else if let Some((_, seen)) = run.as_mut() {
+            match plan {
+                None if !seen.is_empty() => notes += &tap_gaps(m, std::mem::take(&mut seen)),
+                Some(p) => {
+                    notes += &tap_gaps(p, std::mem::take(&mut seen));
+                    plan = Some(m);
+                }
+                None => plan = Some(m),
+            }
+        } else {
             let result = l.strip_prefix("not ok ").or(l.strip_prefix("ok "));
-            if let Some(n) = result.and_then(|r| r.split(' ').next()?.parse().ok()) {
+            if let Some(n) = result.and_then(|r| r.split(' ').next()?.parse::<usize>().ok()) {
                 seen.push((n, l));
             }
         }
     }
-    notes += &run.map(tap_gaps).unwrap_or_default();
+    if let Some(p) = plan {
+        notes += &tap_gaps(p, seen);
+    }
     (!notes.is_empty()).then_some(notes)
 }
 
-/// tap_missing's line for one plan, or empty when every number reported.
-fn tap_gaps((m, mut seen): (usize, Vec<(usize, &str)>)) -> String {
+/// tap_missing's line for one plan, or empty when every number reported or
+/// none did.
+fn tap_gaps(m: usize, mut seen: Vec<(usize, &str)>) -> String {
     seen.retain(|&(n, _)| (1..=m).contains(&n));
+    if seen.is_empty() {
+        return String::new();
+    }
     seen.sort_by_key(|&(n, _)| n);
     seen.dedup_by_key(|&mut (n, _)| n);
     let (mut gaps, mut prev) = (Vec::new(), (0, ""));
-    for (n, l) in seen.iter().copied().chain([(m + 1, "")]) {
+    for (n, l) in seen.iter().copied().chain([(m.saturating_add(1), "")]) {
         let at = match prev {
             (0, _) => "at the start".to_string(),
             (_, before) => format!("after: {before}"),
@@ -299,10 +313,18 @@ mod tests {
     }
 
     #[test]
-    fn tap_missing_with_nothing_run_places_the_gap_at_the_start() {
+    fn tap_missing_takes_a_plan_at_the_end_for_the_results_above_it() {
+        assert_eq!(tap_missing("ok 1 a\nok 2 b\n1..2\n"), None);
         assert_eq!(
-            tap_missing("1..2\nboom\n").as_deref(),
-            Some("TAP plan 1..2 but 0 reported; no line for 1-2 (at the start). TAP doesn't name the missing tests.\n"),
+            tap_missing("ok 1 a\nok 3 c\n1..3\n").as_deref(),
+            Some("TAP plan 1..3 but 2 reported; no line for 2 (after: ok 1 a). TAP doesn't name the missing tests.\n"),
         );
+    }
+
+    // A "1..3" with no result under it may not be TAP at all.
+    #[test]
+    fn tap_missing_is_none_for_a_plan_with_no_results() {
+        assert_eq!(tap_missing("1..3\nboom\n"), None);
+        assert_eq!(tap_missing("1..3\nok 1 a\nok 2 b\nok 3 c\n1..2\n"), None);
     }
 }
