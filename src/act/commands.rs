@@ -60,13 +60,15 @@ pub(super) fn tail(text: &str, n: usize) -> String {
 /// no "not ok" to point at (#325). TAP gives a test that never reports no
 /// name, so each gap is placed by the line reported just before it. A plan
 /// line starts a new run's count, or, with no plan above them, ends the
-/// results above it (TAP allows either end). A heuristic: verify's output
-/// is any command's, so a plan with no results under it adds nothing.
+/// results above it (TAP allows either end); output that mixes the two
+/// isn't told apart. A heuristic: verify's output is any command's, so a
+/// plan with no results under it adds nothing.
 fn tap_missing(out: &str) -> Option<String> {
     let mut notes = String::new();
     let (mut plan, mut seen) = (None, Vec::new());
     for l in out.lines() {
-        if let Some(m) = l.strip_prefix("1..").and_then(|r| r.split(' ').next()?.parse().ok()) {
+        let plan_line = l.strip_prefix("1..").and_then(|r| r.split(' ').next()?.parse().ok());
+        if let Some(m) = plan_line.filter(|&m: &usize| m < usize::MAX) {
             match plan {
                 None if !seen.is_empty() => notes += &tap_gaps(m, std::mem::take(&mut seen)),
                 Some(p) => {
@@ -98,7 +100,7 @@ fn tap_gaps(m: usize, mut seen: Vec<(usize, &str)>) -> String {
     seen.sort_by_key(|&(n, _)| n);
     seen.dedup_by_key(|&mut (n, _)| n);
     let (mut gaps, mut prev) = (Vec::new(), (0, ""));
-    for (n, l) in seen.iter().copied().chain([(m.saturating_add(1), "")]) {
+    for (n, l) in seen.iter().copied().chain([(m + 1, "")]) {
         let at = match prev {
             (0, _) => "at the start".to_string(),
             (_, before) => format!("after: {before}"),
