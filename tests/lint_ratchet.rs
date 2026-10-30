@@ -28,20 +28,29 @@ fn scores(json: &str) -> Scores {
         let span = &m["spans"][0];
         let (Some(file), Some(line), Some(msg)) = (span["file_name"].as_str(), span["text"][0]["text"].as_str(), m["message"].as_str()) else { continue };
         let (Some(f), Some(n)) = (name.captures(line), score.captures(msg)) else { continue };
-        out.insert(format!("{file} {} {lint}", &f[1]), n[1].parse().unwrap());
+        let (k, n) = (format!("{file} {} {lint}", &f[1]), n[1].parse().unwrap());
+        // Each target reports a function again at the same score; another
+        // score is a second function with the name, which the key can't hold.
+        if let Some(had) = out.insert(k.clone(), n) {
+            assert_eq!(had, n, "{k} scores both {had} and {n}: rename one");
+        }
     }
     out
 }
 
 /// <text>'s "<file> <fn> <lint> <score>" lines; # starts a comment.
 fn baseline(text: &str) -> Scores {
-    text.lines()
-        .map(|l| l.split('#').next().unwrap())
-        .filter_map(|l| match l.split_whitespace().collect::<Vec<_>>()[..] {
-            [file, f, lint, n] => Some((format!("{file} {f} {lint}"), n.parse().unwrap())),
-            _ => None,
-        })
-        .collect()
+    let mut out = Scores::new();
+    for (i, l) in text.lines().enumerate() {
+        match l.split('#').next().unwrap().split_whitespace().collect::<Vec<_>>()[..] {
+            [] => {}
+            [file, f, lint, n] => {
+                out.insert(format!("{file} {f} {lint}"), n.parse().unwrap_or_else(|_| panic!("{BASELINE}:{}: score {n:?}", i + 1)));
+            }
+            _ => panic!("{BASELINE}:{}: want <file> <fn> <lint> <score>, got {l:?}", i + 1),
+        }
+    }
+    out
 }
 
 /// What breaks the ratchet: <now> against <base>.
@@ -126,6 +135,23 @@ fn scores_reads_the_two_lints_once_per_function_and_nothing_else() {
 fn baseline_skips_comments_and_blank_lines() {
     let text = "# file fn lint score\n\nsrc/next.rs  steps  too_many_lines  600\n";
     assert_eq!(baseline(text), s(&[("src/next.rs steps too_many_lines", 600)]));
+}
+
+#[test]
+#[should_panic(expected = "src/state.rs run too_many_lines scores both 120 and 140")]
+fn scores_refuses_two_functions_with_one_name_in_one_file() {
+    let json = [
+        diag("clippy::too_many_lines", "this function has too many lines (120/100)", "src/state.rs", "fn run() {"),
+        diag("clippy::too_many_lines", "this function has too many lines (140/100)", "src/state.rs", "    fn run(&self) {"),
+    ]
+    .join("\n");
+    scores(&json);
+}
+
+#[test]
+#[should_panic(expected = "tests/lint-ratchet.txt:2: want <file> <fn> <lint> <score>")]
+fn baseline_refuses_a_line_without_four_fields() {
+    baseline("# file fn lint score\nsrc/next.rs  steps  too_many_lines\n");
 }
 
 #[test]
