@@ -3659,6 +3659,34 @@ fn flags_a_test_file_moved_out_of_the_test_files_even_unchanged_is_a_test_edit()
     assert_eq!(r.field(r#".flags[] | select(.file == "a.bats") | .commits | join(" ")"#), moved);
 }
 
+// @test "flags: a test file renamed and edited past git's rename detection is one test-edit: renamed, N lines changed (#327)"
+#[test]
+fn flags_a_test_file_renamed_and_edited_past_gits_rename_detection_is_one_test_edit() {
+    let sd = sd();
+    let mut old = String::from("setup() {\n  export CLAUDE_DIR=\"$BATS_TEST_TMPDIR/claude\"\n  MONITOR=bin/claude-usage-monitor\n}\n");
+    for i in 1..=8 {
+        old.push_str(&format!(
+            "\n@test \"claude-usage-monitor case {i}\" {{\n  echo '{{\"tokens\": {i}}}' > \"$CLAUDE_DIR/{i}.json\"\n  run \"$MONITOR\" --case {i}\n  [ \"$status\" -eq 0 ]\n  [[ \"$output\" == *\"claude usage: {i}\"* ]]\n}}\n"
+        ));
+    }
+    let new = old.replace("claude", "ai").replace("CLAUDE", "AI");
+    sd.commit("claude-usage-monitor.bats", old.trim_end());
+    sd.git(&["push", "-q", "origin", "main"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.git(&["rm", "-q", "claude-usage-monitor.bats"]);
+    sd.commit("ai-usage-monitor.bats", new.trim_end());
+    let renamed = sd.git(&["rev-parse", "HEAD"]);
+    // the precondition: git's own -M sees a delete and an add
+    assert_has(&sd.git(&["diff", "-M", "--name-status", "main", "feat"]), &["D\tclaude-usage-monitor.bats"]);
+    let r = sd.state(&[]);
+    assert_eq!(
+        r.field(r#"[.flags[] | "\(.kind) \(.file):\(.line) -\(.n)"] | join(", ")"#),
+        "test-edit claude-usage-monitor.bats:1 -26"
+    );
+    assert_eq!(r.field(".flags[0].text"), "renamed to ai-usage-monitor.bats, 26 of its 60 lines changed");
+    assert_eq!(r.field(".flags[0].commits | join(\" \")"), renamed);
+}
+
 // @test "flags: a base that isn't in HEAD's history (a tree restack due) isn't diffed: flags_error says why"
 #[test]
 fn flags_a_base_that_isnt_in_heads_history_a_tree_restack_due_isnt_diffed_flags_error_says_why() {
