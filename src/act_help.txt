@@ -150,7 +150,8 @@ Verbs:
             Gates local review and everything after it. Every run on a
             clean tree, by hand or inside a step, records its verdict
             against HEAD (refs/sheepdog/<b>/verify-red; sd state's verify):
-            a failure stands until HEAD moves or a pass removes it (#325)
+            a pass removes it, and a failure stops counting once HEAD moves,
+            though its ref stays (#325)
   autofix   run settings.autofix (formatters, lint --fix) in the branch's
             worktree, zero tokens, and commit what it changed ("autofix:
             <command>"). Nothing to commit: says so. A failing command is

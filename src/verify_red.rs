@@ -28,7 +28,11 @@ pub fn record(wt: &str, b: &str, step: &str, cmd: &str) {
     }
 }
 
-/// verify passed in <wt>.
+/// verify passed in <wt>: remove the record (no record is no error); a
+/// failure to remove it only warns.
 pub fn clear(wt: &str, b: &str) {
-    git(wt, &["update-ref", "-d", &name(b)]);
+    let r = name(b);
+    if !git(wt, &["update-ref", "-d", &r]).ok {
+        eprintln!("sd: warning: couldn't remove the failed verify on {b}, so NEXT and ship still count HEAD red; git update-ref -d {r}");
+    }
 }

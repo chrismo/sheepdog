@@ -109,6 +109,22 @@ mod verify {
     }
 
     #[test]
+    fn a_pass_that_cant_remove_the_record_warns_325() {
+        let sd = sd();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        sd.write(".git/refs/sheepdog/feat/verify-red.lock", "");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        assert_has(
+            &r.output,
+            &["sd: warning: couldn't remove the failed verify on feat, so NEXT and ship still count HEAD red; git update-ref -d refs/sheepdog/feat/verify-red"],
+        );
+        assert!(sd.verify_red().is_some());
+    }
+
+    #[test]
     fn a_command_that_changes_the_tree_is_recorded_red_too_325() {
         let sd = sd();
         verify_cmd(&sd, "echo formatted >> file.txt");
