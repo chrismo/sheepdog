@@ -86,6 +86,8 @@ Not notified:
   attached: chrismo is in the branch's session; like merge-wait, keeps ready
   bot: routine agent work, picked up when the branch is next worked on
   review review-fix implement: the same
+  answer: chrismo's answer, stored, waiting on what clears its step's gate
+    (#326); chrismo's only when nothing listed clears it, as for bot
   behind push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
     (behind with no old base is chrismo's, but its errors step shows ⚠️ first)
   ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub
