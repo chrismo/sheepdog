@@ -393,12 +393,16 @@ fn is_test(p: &str, globs: &[String]) -> bool {
     })
 }
 
-/// Whether two paths' file names, up to the first dot, share a word.
+/// Whether two paths' file names, up to the first dot, share a word, other
+/// than one that test files' names all have (test_a.py, b_spec.rb).
 fn shares_a_word(a: &str, b: &str) -> bool {
     let words = |p: &str| -> Vec<String> {
         let name = p.rsplit('/').next().unwrap_or(p);
         let stem = name.split('.').next().unwrap_or(name);
-        stem.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+        stem.split(|c: char| !c.is_alphanumeric())
+            .map(str::to_lowercase)
+            .filter(|w| !w.is_empty() && !["test", "tests", "spec", "specs"].contains(&w.as_str()))
+            .collect()
     };
     let wa = words(a);
     words(b).iter().any(|w| wa.contains(w))
@@ -1883,6 +1887,9 @@ mod tests {
         assert!(shares_a_word("a/Parser_test.go", "b/parser.test.js"));
         assert!(!shares_a_word("gone.bats", "new.bats"));
         assert!(!shares_a_word("test/a.test.js", "test/b.test.js"));
+        assert!(!shares_a_word("test_foo.py", "test_bar.py"));
+        assert!(!shares_a_word("foo_spec.rb", "bar_specs.rb"));
+        assert!(!shares_a_word("foo_test.go", "bar_tests.go"));
     }
 
     #[test]

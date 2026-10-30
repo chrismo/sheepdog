@@ -3687,6 +3687,34 @@ fn flags_a_test_file_renamed_and_edited_past_gits_rename_detection_is_one_test_e
     assert_eq!(r.field(".flags[0].commits | join(\" \")"), renamed);
 }
 
+// @test "flags: a test file deleted and an unrelated one added, alike only in boilerplate and the word test, is still a deletion (#327)"
+#[test]
+fn flags_a_test_file_deleted_and_an_unrelated_one_added_alike_in_boilerplate_is_still_a_deletion() {
+    let sd = sd();
+    let file = |name: &str| {
+        let mut s = String::from("setup() {\n  load helper\n}\n");
+        for i in 1..=4 {
+            s.push_str(&format!(
+                "\n@test \"{name} {i}\" {{\n  run {name} {i}\n  [ \"$status\" -eq 0 ]\n  [[ \"$output\" == *\"{name} {i}\"* ]]\n}}\n"
+            ));
+        }
+        s
+    };
+    sd.commit("test_foo.bats", file("foo").trim_end());
+    sd.git(&["push", "-q", "origin", "main"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.git(&["rm", "-q", "test_foo.bats"]);
+    sd.commit("test_bar.bats", file("bar").trim_end());
+    // the precondition: git's own -M sees a delete and an add, and -M20% alone would pair them
+    assert_has(&sd.git(&["diff", "-M", "--name-status", "main", "feat"]), &["D\ttest_foo.bats"]);
+    assert_has(&sd.git(&["diff", "-M20%", "--name-status", "main", "feat"]), &["R"]);
+    let r = sd.state(&[]);
+    assert_eq!(
+        r.field(r#"[.flags[] | "\(.kind) \(.file):\(.line) -\(.n)"] | join(", ")"#),
+        "test-edit test_foo.bats:1 -27"
+    );
+}
+
 // @test "flags: a base that isn't in HEAD's history (a tree restack due) isn't diffed: flags_error says why"
 #[test]
 fn flags_a_base_that_isnt_in_heads_history_a_tree_restack_due_isnt_diffed_flags_error_says_why() {
