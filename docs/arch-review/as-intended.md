@@ -31,13 +31,16 @@ The five rules every agent builds by. **[stated: AGENTS.md]**
 
 1. **Deterministic wherever possible.** Scripts observe and act at zero token
    cost; an agent runs only for judgment. Token-spending verbs are
-   `implement`, `address`, `describe`, `review`, `restack --resolve`, and
-   `start`/`ship` when they run implement or describe. Everything else is
-   zero tokens.
+   `implement`, `address`, `ci-fix`, `answer`, `describe`, `review`,
+   `restack --resolve`, and `start`/`ship` when they run implement or
+   describe (`ci-fix` and `answer` added 2026-10-29: `sd act --help` marks
+   them, AGENTS.md's list didn't). Everything else is zero tokens.
 2. **The pipeline drives; agents are workers.** The pipeline initiates every
    step and hands an agent one bounded task; the agent edits, and sheepdog
    commits, pushes and talks to GitHub. Agents never need to know the
-   pipeline exists.
+   pipeline exists. (Pass C: every step contract does tell the agent "the
+   pipeline commits your edits", correctly, or it would commit itself. The
+   rule means agents never *drive* the pipeline; AGENTS.md could say that.)
 3. **Harness-agnostic.** Claude and pi both work. The per-harness code is
    `src/harness.rs` plus the tool-rule wording a prompt needs
    (`tool_rules`); nothing else may be per-harness.
@@ -88,10 +91,12 @@ atomic action plus notification:
 
 Intended relationships between them:
 
-- **Observe is the single source of truth.** `sd state --json` is what `sd
-  act` and `sd watch` read; the verbs' precondition checks *are* the state
-  machine's transition guards. **[stated: #79 "Build order"; state.rs
-  header]**
+- **Observe is the single source of truth.** The state document is what `sd
+  act` and `sd watch` read (`sd act` calls `state::observe` in-process; only
+  the watcher runs `sd state --json` as a child, so it can time it out:
+  corrected 2026-10-29, pass A finding A6); the verbs' precondition checks
+  *are* the state machine's transition guards. **[stated: #79 "Build
+  order"; state.rs header]**
 - **NEXT is derived from state, nothing else.** `src/next.rs` turns the state
   JSON into the ordered list of steps; glyphs are read from NEXT so the tab
   and NEXT can't disagree. **[stated: #79 "Watcher"]**
@@ -145,7 +150,7 @@ Intended relationships between them:
 | Running marker / lease | `$GIT_COMMON_DIR/sheepdog/<branch>`, one or two lines (corrected 2026-10-29 from `$SHEEPDOG_STATE_DIR`: as-built/externals.md) | read by sd state; the watcher's reconcile ends leases past deadline | [stated: running.rs header; location inferred: running.rs] |
 | Usage ledger | `$SHEEPDOG_STATE_DIR/usage.sup`, one SUP line per agent step | cost per step and per branch; format fixed for compatibility with the bash era | [stated: usage.rs header] |
 | Usage-limit pause | `$SHEEPDOG_STATE_DIR/limit` | one file for every harness and model | [stated: limit.rs header] |
-| Watcher per-branch state (last pass's state, seen markers) | `$SHEEPDOG_STATE_DIR` | so a rerun reports only what's new (N3) | [inferred: pass.rs, AGENTS.md N3] |
+| Watcher per-branch state (last pass's state, seen markers) | `$SHEEPDOG_STATE_DIR/branches/<repo>/<b>.json` | so a rerun reports only what's new (N3). The one record that is a cache, not truth: written unlocked, and its loss only re-notifies (pass B, B12). Don't try to eliminate it. | [inferred: pass.rs, AGENTS.md N3] |
 | Stored PR description for HEAD + target | `$GIT_COMMON_DIR/sheepdog/<branch>.describe.json` | ship finds it; removed by forget and the branch-file sweep | [inferred: describe.rs header; location from as-built/deps.md] |
 | Lineage (parent) | `branch.<b>.sd-parent` | must be local: GitHub retargets a child to main when the parent merges | [stated: #79, #22] |
 
@@ -239,8 +244,10 @@ report which hold, which don't, and which can't be determined.
 - I6. Every record is keyed on a SHA or validated against HEAD before it
   drives a decision. [§4]
 - I7. No timestamp is used to decide staleness. [§4]
-- I8. Every record has exactly one writer module and that module's header
-  names it. [§5]
+- I8. Every record has exactly one writer *function*, in the record's
+  module; lifecycle points (start, enroll, restack) call it. [§5] (Restated
+  2026-10-29 from "one writer module": the extra writers are legitimate
+  lifecycle points; what was missing is the shared function. #342.)
 - I9. Records removed with a branch (git config) vs. records needing a sweep
   (refs, state-dir files) are each cleaned on their path; nothing is
   orphaned by `forget` or vacuum. [§4]
@@ -248,7 +255,11 @@ report which hold, which don't, and which can't be determined.
 **Boundaries**
 
 - I10. `next.rs` imports nothing that touches git, gh or the filesystem.
-- I11. `state.rs` performs no write.
+- I11. `state.rs` writes nothing a later observation wouldn't recompute: it
+  may cache discovered identity (the PR number), never a decision. (Restated
+  2026-10-29 from "performs no write"; passes A and B both judged the
+  `sd-pr` cache acceptable and the rule's wording wrong. #339 carries the
+  AGENTS.md edit.)
 - I12. All git invocations go through `git.rs`. [assumed]
 - I13. All gh invocations go through one place. [assumed]
 - I14. The running marker is taken before any agent step's harness call and
