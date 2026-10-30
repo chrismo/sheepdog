@@ -120,3 +120,13 @@ are provisional.
 - Review prose quality of the help texts, prompts or review rules.
 - Verify any finding adversarially. Each pass read the code it cites; no
   second agent tried to refute. The file:line references are the check.
+
+## After the review (2026-10-30)
+
+- The incremental plan for the shared gates is the sequencing comment on
+  #348: scaffold plus parity test, then push, ci-fix, address, implement,
+  review, restack, then #335 and #341 as the last phase. No big bang.
+- `prior-art-reconcile.md` reads the decision code of Kodiak, bors-ng,
+  Renovate, Sortie and Symphony for a reusable reconcile engine (none) and
+  the ideas to pull into #348 (nine, two filed: #356 author-set foreign
+  modification, #357 address re-offer fingerprint).
