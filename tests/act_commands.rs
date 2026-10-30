@@ -99,6 +99,22 @@ mod verify {
         assert_lacks(&r.output, "last 40");
     }
 
+    // bats' "Executed N instead of expected M" exits non-zero with no
+    // "not ok" line, and its plan is above the 40-line tail (#325).
+    #[test]
+    fn failing_tap_short_of_its_plan_names_the_missing_numbers_and_the_test_before_them() {
+        let sd = sd();
+        verify_cmd(
+            &sd,
+            "echo 1..45; for i in $(seq 1 43); do echo \"ok $i t$i\"; done; \
+             echo '# bats warning: Executed 43 instead of expected 45 tests'; exit 1",
+        );
+        let r = sd.run(&["verify"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["last 40 of 45 lines", "Executed 43 instead of expected 45"]);
+        assert_has(&r.output, &["plan 1..45", "no line for 44-45 (after: ok 43 t43)"]);
+    }
+
     // @test "runs in the branch's worktree, not the current one"
     #[test]
     fn runs_in_the_branchs_worktree_not_the_current_one() {
