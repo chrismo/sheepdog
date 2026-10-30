@@ -757,7 +757,7 @@ fn sd_act_answer_stores_the_answer_while_addresss_gate_refuses_and_address_goes_
     assert_eq!(sd.question(".step"), "address");
     let r = sd.run(&["address"]);
     assert_eq!(r.status, 0, "{}", r.output);
-    assert_has(&r.output, &["your answer is stored"]);
+    assert_has(&r.output, &["your answer is still stored"]);
     assert_lacks(&r.output, "going on with your stored answer");
     assert!(!sd.ran("claude.args"));
     // the gate cleared: address goes on with it, and it's used up
@@ -802,6 +802,30 @@ fn an_answer_cant_wait_on_a_restack_that_would_drop_its_question_nor_go_to_anoth
     assert!(!sd.ran("claude.args"));
     // ack --question drops a stored answer with it
     sd.ok(&["ack", "--question"]);
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn a_stored_address_answer_runs_now_with_force_over_a_restack_that_would_drop_its_question_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    sd.rm("claude.args");
+    sd.state(&[TWO_OWED, ".sync.up_to_date = false | .sync.behind = 2 | .sync.conflict = true"]);
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer"]);
+    assert_has(&sd.fx("claude.args"), &["call it bar"]);
+    assert!(!sd.has_question());
     assert!(!has_answer(&sd));
 }
 

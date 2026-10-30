@@ -838,7 +838,7 @@ fn answer_is_stored_while_ci_fix_s_gate_waits_on_ci_and_ci_fix_goes_on_with_it_o
     sd.state(&[r#".ci.verdict = "pending""#]);
     let r = sd.run(&["ci-fix"]);
     assert_eq!(r.status, 0, "{}", r.output);
-    assert_has(&r.output, &["CI is pending", "your answer is stored"]);
+    assert_has(&r.output, &["CI is pending", "your answer is still stored"]);
     assert_lacks(&r.output, "going on with your stored answer");
     assert!(!sd.ran("claude.prompt"));
     // red at HEAD: ci-fix goes on with it, and it's used up

@@ -383,7 +383,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 } else if ci_moot {
                     (format!("the agent {did} (ci-fix): {asked}; CI is {} at HEAD now, so it's moot: sd act ack --question drops it{and}", t("ci.verdict")), cmd("sd act ack --question"))
                 } else if !ci_waits.is_empty() {
-                    (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: answer it with sd act answer, and it runs once CI is red at HEAD"), cmd(answer))
+                    (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
                 } else if asking == "address" && addr_refuses {
                     answer_refused(s, &addr, &addr_why, &asked, push_step || (ci_held && !push_held))
                 } else if asking == "resolve" {
@@ -829,7 +829,7 @@ fn answer_refused(s: &Value, g: &crate::act::AddressGate, why: &str, asked: &str
     let did = if val::t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" };
     if g.hard.is_none() && !g.conflict {
         return (
-            format!("the agent {did} (address): {asked}; address refuses while {why}: answer it with sd act answer, and it runs once that clears"),
+            format!("the agent {did} (address): {asked}; address refuses while {why}: {}", waits_say(s, "once that clears")),
             cmd("sd act answer \"<your answer>\""),
         );
     }
@@ -848,6 +848,16 @@ fn answer_refused(s: &Value, g: &crate::act::AddressGate, why: &str, asked: &str
         (format!("{head}: {push} then {answer}"), cmd("sd act push"))
     } else {
         (format!("{head}: {answer}"), cmd("sd act answer --force \"<your answer>\""))
+    }
+}
+
+/// How a question whose step's gate refuses is answered, to run <once>; a
+/// give-up keeps its other ways on.
+fn waits_say(s: &Value, once: &str) -> String {
+    if val::t(s, "question.kind") == "gave-up" {
+        format!("guide it with sd act answer, and it runs {once}; or fix it by hand, or sd act ack --question to let it try again")
+    } else {
+        format!("answer it with sd act answer, and it runs {once}")
     }
 }
 

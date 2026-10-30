@@ -572,7 +572,7 @@ fn a_stored_address_answer_runs_as_the_bot_step_once_address_s_gate_clears_and_w
     assert_eq!(keys(&unread), "answer");
     assert_eq!(
         step("answer", "say", &unread),
-        "your answer to the address agent's question waits while can't read the PR from GitHub: : clear that first"
+        "your answer to the address agent's question waits while can't read the PR from GitHub: clear that first"
     );
     assert_eq!(step("answer", "cmd", &unread), "null");
     // nothing owed: moot
@@ -616,6 +616,17 @@ fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
     assert_eq!(step("question", "cmd", &e![&q]), "sd act ack --question");
     // red at HEAD: as before
     assert_eq!(step("question", "cmd", &e![&red, &q]), r#"sd act answer "<your answer>""#);
+    // a give-up keeps its other ways on
+    let gave_up = format!(".question = {}", json!({"step": "ci-fix", "kind": "gave-up", "sha": "h1", "text": "no idea", "at_head": true}));
+    assert_eq!(
+        step("question", "say", &e![r#".ci.verdict = "pending""#, &gave_up]),
+        "the agent gave up (ci-fix): no idea; ci-fix can't go on while CI is pending: guide it with sd act answer, and it runs once CI is red at HEAD; or fix it by hand, or sd act ack --question to let it try again"
+    );
+    let gave_up = format!(".question = {}", json!({"step": "address", "kind": "gave-up", "sha": "h1", "text": "no idea", "at_head": true}));
+    assert_eq!(
+        step("question", "say", &e![".threads.owed_bot = 1", ".push.ahead = 1", &gave_up]),
+        "the agent gave up (address): no idea; address refuses while 1 unpushed commit(s): guide it with sd act answer, and it runs once that clears; or fix it by hand, or sd act ack --question to let it try again"
+    );
 }
 
 #[test]

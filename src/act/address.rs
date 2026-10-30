@@ -85,7 +85,8 @@ pub fn gate(s: &Value) -> Gate {
     } else if !state.is_null() && state != "OPEN" {
         Some(format!("PR #{} is {}", t(s, "pr.number"), text(state).to_lowercase()))
     } else if nul("threads.owed_bot") {
-        Some(format!("can't read the PR from GitHub: {}", sj(at(s, "errors"), "; ")))
+        let errors = sj(at(s, "errors"), "; ");
+        Some(if errors.is_empty() { "can't read the PR from GitHub".into() } else { format!("can't read the PR from GitHub: {errors}") })
     } else {
         None
     };
@@ -390,7 +391,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         // not for a restack: it moves HEAD, dropping the question (#326)
         if answering && !g.conflict {
             answer_store(b, "address", a);
-            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears"));
+            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears", a));
             return true;
         }
         eprintln!("sd act: not addressing {b}:");

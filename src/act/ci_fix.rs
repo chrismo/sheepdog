@@ -203,7 +203,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
                 die(msg);
             }
             answer_store(b, "ci-fix", a);
-            println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD"));
+            println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD", a));
             return;
         }
         Gate::Moot(msg) if answering => die(format!("{msg}: the ci-fix agent's question is moot; sd act ack --question drops it")),

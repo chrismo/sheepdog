@@ -345,8 +345,9 @@ pub fn going_on(step: &str, a: &super::Args) {
 
 /// What sd act answer says when <step>'s gate refuses <why> and the answer
 /// waits till <once>.
-pub fn answer_waits(b: &str, step: &str, why: &str, once: &str) -> String {
-    format!("{step} refuses on {b} while {why}: your answer is stored, and {step} goes on with it once {once} (NEXT offers it, so sd watch runs it)")
+pub fn answer_waits(b: &str, step: &str, why: &str, once: &str, a: &super::Args) -> String {
+    let still = if a.stored { "still " } else { "" };
+    format!("{step} refuses on {b} while {why}: your answer is {still}stored, and {step} goes on with it once {once} (NEXT offers it, so sd watch runs it)")
 }
 
 #[cfg(test)]
