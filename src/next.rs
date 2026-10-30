@@ -14,7 +14,11 @@
 //
 // While address's own gate (src/act/address.rs) would refuse it, address
 // comes after the steps that clear the gate, or is chrismo's when it would be
-// first; an address question's step says what clears it (#326).
+// first; an address question's step says what clears it (#326). An answer
+// stored for the question stands in for its question step: the bot step goes
+// on with it once the gate clears, an answer step waits behind what clears it
+// till then, and the steps that would move HEAD, dropping the question
+// (restacks, agent fixes, review), wait for it.
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -203,6 +207,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     } else {
         String::new()
     };
+    // chrismo's answer, stored while its step's gate refused (#326)
+    let stored = on("question.at_head") && !nul("question.answer");
     let last_review = ["review.local", "review.bot", "review.accepted"]
         .iter()
         .filter(|p| status_in(p, &["uncovered"]))
@@ -269,7 +275,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             || (need_review && !fixing)
             || restack_due
             || (pr_null && !empty && !dropping));
-    let refused = dirty || (open && on("push.dirty") && !asking.is_empty());
+    let answer_pending = open && stored && asking == "address";
+    // while it stands, what would move HEAD waits: that drops the question
+    let refused = dirty || (open && !asking.is_empty() && (on("push.dirty") || answer_pending));
     let push_held = foreign || undone || parent_unpushed;
     let push_step = open && !verify_red && !ci_held && !push_held && !empty && to_push;
     let addr = crate::act::address_gate(s);
@@ -277,6 +285,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     let addr_refuses = !addr_why.is_empty();
     let bot = open && bot_blocking > 0.0 && asking != "address" && !refused;
     let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
+    let addr_moot = asking == "address" && addr.hard.is_none() && n("threads.owed_bot") == 0.0;
+    let resume = answer_pending && !addr_moot;
 
     let branch = t("branch");
     let target = t("sync.target");
@@ -353,9 +363,13 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !asking.is_empty() {
+            if open && !asking.is_empty() && (!answer_pending || addr_moot) {
                 let answer = "sd act answer \"<your answer>\"";
-                let (say, then) = if asking == "address" && addr_refuses {
+                let did = if is("question.kind", "gave-up") { "gave up" } else { "asks" };
+                let (say, then) = if addr_moot {
+                    let and = if stored { ", and your answer" } else { "" };
+                    (format!("the agent {did} (address): {asked}; nothing is owed now, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
+                } else if asking == "address" && addr_refuses {
                     answer_refused(s, &addr, &addr_why, &asked, push_step || (ci_held && !push_held))
                 } else if asking == "resolve" {
                     (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
@@ -463,6 +477,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
             if bot && !addr_refuses {
                 address()
+            } else if resume && !addr_refuses {
+                agent(hold, "bot", format!("address {}, going on with your answer to its question", plural(g("threads.owed_bot"), "bot item")), "sd act address")
             } else {
                 None
             },
@@ -581,6 +597,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
             if bot && addr_refuses {
                 address()
+            } else if resume && addr_refuses {
+                step("answer", "wait", format!("your answer to the address agent's question waits while {addr_why}"), None)
             } else {
                 None
             },
@@ -758,13 +776,18 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     // Address refused, with nothing ahead of it: chrismo's, with why. Behind a
     // step that doesn't clear the gate (attached, take), it stays an agent
     // step: that step blocks first.
-    if out.first().is_some_and(|st| st["key"] == "bot") && addr_refuses {
+    let first = out.first().map(|st| text(&st["key"])).unwrap_or_default();
+    if (first == "bot" || (first == "answer" && resume)) && addr_refuses {
+        let force = Some("sd act address --force".to_string());
         let (say, cmd) = if addr.hard.is_some() {
             ("clear that first", None)
+        } else if first == "answer" && addr.conflict {
+            ("a restack would drop the question, so sd act address --force runs it now, or sd act ack --question drops both", force)
         } else {
-            ("clear that first, or sd act address --force", Some("sd act address --force".to_string()))
+            ("clear that first, or sd act address --force", force)
         };
-        out[0] = json!({"key": "bot", "who": "you", "say": format!("{}: sd act address refuses while {addr_why}: {say}", text(&out[0]["say"])), "cmd": cmd});
+        let why = if first == "bot" { format!(": sd act address refuses while {addr_why}") } else { String::new() };
+        out[0] = json!({"key": first, "who": "you", "say": format!("{}{why}: {say}", text(&out[0]["say"])), "cmd": cmd});
     }
     // ready, merge-wait and blocked are the end state, listed only alone.
     if out.len() > 1 && matches!(out[out.len() - 1]["key"].as_str(), Some("ready" | "merge-wait" | "blocked")) {
@@ -774,17 +797,19 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
 }
 
 /// The question step for an address question that address's gate <g>
-/// refuses: what clears it first. A push leaves the question standing; a
-/// restack would drop it, so a conflict is answered with --force. <can_push>:
-/// NEXT offers the push.
+/// refuses. sd act answer stores an answer to run once soft reasons clear;
+/// a restack would drop the question, so a conflict is answered with
+/// --force, after the push when NEXT offers one (<can_push>).
 fn answer_refused(s: &Value, g: &crate::act::Gate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
     let did = if val::t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" };
+    if g.hard.is_none() && !g.conflict {
+        return (
+            format!("the agent {did} (address): {asked}; address refuses while {why}: answer it with sd act answer, and it runs once that clears"),
+            cmd("sd act answer \"<your answer>\""),
+        );
+    }
     let head = format!("the agent {did} (address): {asked}; sd act answer refuses while {why}");
-    let answer = if g.conflict {
-        "answer it with sd act answer --force, since a restack first would drop the question"
-    } else {
-        "answer it with sd act answer"
-    };
+    let answer = "answer it with sd act answer --force, since a restack first would drop the question";
     let pushes = g.push && can_push;
     let others = g.soft.len().saturating_sub(usize::from(pushes) + usize::from(g.conflict));
     if g.hard.is_some() || others > 0 {

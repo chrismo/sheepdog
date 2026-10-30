@@ -484,15 +484,23 @@ fn bot_items_address_refuses_with_nothing_ahead_to_clear_it_are_chrismo_s_326() 
 }
 
 #[test]
-fn an_address_question_its_answer_s_gate_refuses_says_what_clears_it_first_326() {
+fn an_address_question_its_gate_refuses_takes_the_answer_now_unless_a_restack_would_drop_it_326() {
     let q = asked("address", true);
     let ahead = e![".threads.owed_bot = 1", ".push.ahead = 1", &q];
     assert_eq!(keys(&ahead), "question push");
     assert_eq!(
         step("question", "say", &ahead),
-        "the agent asks (address): Which test is right?; sd act answer refuses while 1 unpushed commit(s): push first, then answer it with sd act answer"
+        "the agent asks (address): Which test is right?; address refuses while 1 unpushed commit(s): answer it with sd act answer, and it runs once that clears"
     );
-    assert_eq!(step("question", "cmd", &ahead), "sd act push");
+    assert_eq!(step("question", "cmd", &ahead), r#"sd act answer "<your answer>""#);
+    // nothing NEXT offers clears it, or a push NEXT holds: the answer waits all the same
+    let theirs = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = false", &q];
+    assert_eq!(
+        step("question", "say", &theirs),
+        "the agent asks (address): Which test is right?; address refuses while the remote branch has 1 commit(s) you don't: answer it with sd act answer, and it runs once that clears"
+    );
+    let foreign = e![".threads.owed_bot = 1", ".push.ahead = 1", ".push.behind = 1", ".push.diverged = true", ".push.remote_ours = false", ".push.theirs = 1", &q];
+    assert_eq!(step("question", "cmd", &foreign), r#"sd act answer "<your answer>""#);
     // a restack would drop the question, so the answer goes in with --force
     let conflict = e![".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &q];
     assert_eq!(keys(&conflict), "question conflict");
@@ -508,26 +516,73 @@ fn an_address_question_its_answer_s_gate_refuses_says_what_clears_it_first_326()
         "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict; 1 unpushed commit(s): review the agent's CI config change (.rwx/tests.yml), then sd act push; then answer it with sd act answer --force, since a restack first would drop the question"
     );
     assert_eq!(step("question", "cmd", &held), "sd act push");
-    // nothing NEXT offers clears it: say so
-    let theirs = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = false", &q];
+    // nothing owed: address has nothing to go on with
+    assert_eq!(keys(&e![&q]), "question");
     assert_eq!(
-        step("question", "say", &theirs),
-        "the agent asks (address): Which test is right?; sd act answer refuses while the remote branch has 1 commit(s) you don't: clear that first, or answer in its session (sd act attach), then sd act ack --question"
+        step("question", "say", &e![&q]),
+        "the agent asks (address): Which test is right?; nothing is owed now, so it's moot: sd act ack --question drops it"
     );
-    assert_eq!(step("question", "cmd", &theirs), "null");
-    // commits this branch made, reset away here: the force-push clears it
-    let dropped = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = true", &q];
-    assert_eq!(step("question", "cmd", &dropped), "sd act push");
-    assert_eq!(step("question", "cmd", &e![&dropped, ".push.dirty = true"]), "null");
-    // a push NEXT holds (someone else's commits on the remote): no push offered
-    let foreign = e![".threads.owed_bot = 1", ".push.ahead = 1", ".push.behind = 1", ".push.diverged = true", ".push.remote_ours = false", ".push.theirs = 1", &q];
-    assert_eq!(
-        step("question", "say", &foreign),
-        "the agent asks (address): Which test is right?; sd act answer refuses while diverged from the remote branch: clear that first, or answer in its session (sd act attach), then sd act ack --question"
-    );
-    assert_eq!(step("question", "cmd", &foreign), "null");
+    assert_eq!(step("question", "cmd", &e![&q]), "sd act ack --question");
     // other steps' questions: as before
     assert_eq!(step("question", "cmd", &e![".push.ahead = 1", &asked("implement", true)]), r#"sd act answer "<your answer>""#);
+}
+
+/// A question standing at HEAD with chrismo's answer stored for it (#326).
+fn answered(step: &str) -> String {
+    let q = json!({"step": step, "sha": "h1", "text": "Which test is right?", "at_head": true, "answer": "keep it"});
+    format!(".question = {q}")
+}
+
+#[test]
+fn a_stored_address_answer_runs_as_the_bot_step_once_address_s_gate_clears_and_waits_behind_what_clears_it_326() {
+    let a = answered("address");
+    let clear = e![".threads.owed_bot = 2", &a];
+    assert_eq!(keys(&clear), "bot");
+    assert_eq!(step("bot", "who", &clear), "agent");
+    assert_eq!(step("bot", "say", &clear), "address 2 bot items, going on with your answer to its question");
+    assert_eq!(step("bot", "cmd", &clear), "sd act address");
+    // what clears the gate goes first, and the answer waits
+    let ahead = e![".threads.owed_bot = 1", ".push.ahead = 1", &a];
+    assert_eq!(keys(&ahead), "push answer");
+    assert_eq!(step("answer", "who", &ahead), "wait");
+    assert_eq!(step("answer", "say", &ahead), "your answer to the address agent's question waits while 1 unpushed commit(s)");
+    assert_eq!(step("answer", "cmd", &ahead), "null");
+    assert_eq!(keys(&e![&ahead, r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#]), "ci-config answer");
+    // nothing listed clears it: chrismo's
+    let theirs = e![".threads.owed_bot = 1", ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = false", &a];
+    assert_eq!(keys(&theirs), "take answer");
+    let unknown = e![".threads.owed_bot = 1", ".sync.up_to_date = null", &a];
+    assert_eq!(keys(&unknown), "answer");
+    assert_eq!(step("answer", "who", &unknown), "you");
+    assert_eq!(
+        step("answer", "say", &unknown),
+        "your answer to the address agent's question waits while sync with main unknown: clear that first, or sd act address --force"
+    );
+    assert_eq!(step("answer", "cmd", &unknown), "sd act address --force");
+    // a restack would drop the question, so it waits for the answer, which can't wait for it
+    let conflict = e![".threads.owed_bot = 1", ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true", &a];
+    assert_eq!(keys(&conflict), "answer");
+    assert_eq!(
+        step("answer", "say", &conflict),
+        "your answer to the address agent's question waits while restack due, and it would conflict: a restack would drop the question, so sd act address --force runs it now, or sd act ack --question drops both"
+    );
+    assert_eq!(step("answer", "cmd", &conflict), "sd act address --force");
+    // nothing owed: moot
+    assert_eq!(
+        step("question", "say", &e![&a]),
+        "the agent asks (address): Which test is right?; nothing is owed now, so it's moot: sd act ack --question drops it, and your answer"
+    );
+}
+
+#[test]
+fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_its_question_326() {
+    let a = answered("address");
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "bot");
+    assert_eq!(keys(&e![r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 1", &a]), "bot");
+    assert_eq!(keys(&e![STACKED, ".threads.owed_bot = 1", &a]), "bot");
+    let st = e![r#".review.local = {sha: "x", status: "uncovered", uncovered: 2}"#, r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}"#];
+    assert_eq!(keys(&e![&st, ".threads.owed_bot = 1", &a]), "bot");
 }
 
 // @test "bot items that are only info: chrismo reads them, then acks"
