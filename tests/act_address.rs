@@ -777,6 +777,35 @@ fn sd_act_answer_stores_the_answer_while_addresss_gate_refuses_and_address_goes_
 }
 
 #[test]
+fn a_stored_address_answer_says_sd_watch_runs_it_only_when_a_push_clears_the_gate_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.rm("claude.args");
+    // a push NEXT offers clears it
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    let r = sd.ok(&["answer", "call it bar"]);
+    assert_has(&r, &["your answer is stored", "NEXT offers it, so sd watch runs it"]);
+    assert_lacks(&r, "yours to clear");
+    // nothing NEXT runs clears these: chrismo is told what's theirs
+    for (edit, yours) in [
+        (".sync.up_to_date = null", "sync with main unknown"),
+        (".push.behind = 1 | .push.remote_made = false", "the remote branch has 1 commit(s) you don't"),
+        (".push.ahead = 1 | .push.held = {paths: [\".rwx/tests.yml\"]}", "1 unpushed commit(s)"),
+        // with a push that clears the rest, only what it doesn't is named
+        (".push.ahead = 1 | .sync.up_to_date = null", "sync with main unknown"),
+    ] {
+        sd.state(&[TWO_OWED, edit]);
+        let r = sd.ok(&["answer", "call it bar"]);
+        assert_has(&r, &["stored, and address goes on with it once that clears", &format!("nothing sd watch runs clears {yours}, so that's yours to clear")]);
+        assert_lacks(&r, "sd watch runs it");
+    }
+    assert!(!sd.ran("claude.args"));
+}
+
+#[test]
 fn an_answer_cant_wait_on_a_restack_that_would_drop_its_question_nor_go_to_another_question_326() {
     let sd = sd();
     sd.two_owed();

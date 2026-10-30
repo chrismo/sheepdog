@@ -182,6 +182,19 @@ pub fn gate(s: &Value) -> Gate {
     Gate::Runs
 }
 
+/// What of ci-fix's wait nothing sd watch runs clears: a cancelled run
+/// (sd watch doesn't rerun CI), or unpushed commits held for chrismo's
+/// review of a CI config change.
+fn waits_yours(s: &Value) -> Vec<String> {
+    if t(s, "ci.verdict") == "inconclusive" {
+        vec!["the cancelled CI (rerun it: gh run rerun, or rwx retry)".into()]
+    } else if n(s, "push.ahead") > 0.0 && !at(s, "push.held").is_null() {
+        vec!["the held CI config change (review it, then sd act push)".into()]
+    } else {
+        vec![]
+    }
+}
+
 fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {
@@ -203,7 +216,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
                 die(msg);
             }
             answer_store(b, "ci-fix", a);
-            println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD", a));
+            println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD", &waits_yours(&state), a));
             return;
         }
         Gate::Moot(msg) if answering => die(format!("{msg}: the ci-fix agent's question is moot; sd act ack --question drops it")),

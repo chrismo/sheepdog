@@ -344,10 +344,16 @@ pub fn going_on(step: &str, a: &super::Args) {
 }
 
 /// What sd act answer says when <step>'s gate refuses <why> and the answer
-/// waits till <once>.
-pub fn answer_waits(b: &str, step: &str, why: &str, once: &str, a: &super::Args) -> String {
+/// waits till <once>. sd watch runs it only when a push or a CI run clears
+/// the gate; <yours> is what neither does, chrismo's to clear.
+pub fn answer_waits(b: &str, step: &str, why: &str, once: &str, yours: &[String], a: &super::Args) -> String {
     let still = if a.stored { "still " } else { "" };
-    format!("{step} refuses on {b} while {why}: your answer is {still}stored, and {step} goes on with it once {once} (NEXT offers it, so sd watch runs it)")
+    let then = if yours.is_empty() {
+        " (NEXT offers it, so sd watch runs it)".to_string()
+    } else {
+        format!("; nothing sd watch runs clears {}, so that's yours to clear", yours.join("; "))
+    };
+    format!("{step} refuses on {b} while {why}: your answer is {still}stored, and {step} goes on with it once {once}{then}")
 }
 
 #[cfg(test)]

@@ -854,6 +854,27 @@ fn answer_is_stored_while_ci_fix_s_gate_waits_on_ci_and_ci_fix_goes_on_with_it_o
 }
 
 #[test]
+fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clears_the_gate_326() {
+    let sd = sd();
+    sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
+    sd.run(&["ci-fix"]);
+    sd.rm("claude.prompt");
+    sd.state(&[r#".ci.verdict = "pending""#]);
+    let r = sd.ok(&["answer", "keep THREE"]);
+    assert_has(&r, &["NEXT offers it, so sd watch runs it"]);
+    for (edit, yours) in [
+        (r#".ci.verdict = "inconclusive""#, "the cancelled CI (rerun it: gh run rerun, or rwx retry)"),
+        (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "the held CI config change (review it, then sd act push)"),
+    ] {
+        sd.state(&[edit]);
+        let r = sd.ok(&["answer", "keep THREE"]);
+        assert_has(&r, &["once CI is red at HEAD", &format!("nothing sd watch runs clears {yours}, so that's yours to clear")]);
+        assert_lacks(&r, "sd watch runs it");
+    }
+    assert!(!sd.ran("claude.prompt"));
+}
+
+#[test]
 fn answer_to_a_ci_fix_question_is_moot_once_ci_passed_at_head_326() {
     let sd = sd();
     sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);

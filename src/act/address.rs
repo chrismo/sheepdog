@@ -76,6 +76,16 @@ pub struct Gate {
     pub conflict: bool,
 }
 
+impl Gate {
+    /// The soft reasons nothing sd watch runs clears: all but the push's
+    /// (the last one, when sd act push clears it), unless that push is a
+    /// CI config change held for chrismo's review (<s>'s push.held).
+    pub fn yours(&self, s: &Value) -> Vec<String> {
+        let pushed = usize::from(self.push && at(s, "push.held").is_null());
+        self.soft[..self.soft.len() - pushed.min(self.soft.len())].to_vec()
+    }
+}
+
 pub fn gate(s: &Value) -> Gate {
     let nul = |p: &str| at(s, p).is_null();
     let b = t(s, "branch");
@@ -391,7 +401,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         // not for a restack: it moves HEAD, dropping the question (#326)
         if answering && !g.conflict {
             answer_store(b, "address", a);
-            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears", a));
+            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears", &g.yours(&s), a));
             return true;
         }
         eprintln!("sd act: not addressing {b}:");
