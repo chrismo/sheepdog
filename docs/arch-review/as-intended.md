@@ -141,12 +141,12 @@ Intended relationships between them:
 | Per-branch records: enrolled, parent, harness, session, lock, task, handled, ci-fix flaky SHA | `git config branch.<b>.sd-*` | removed with the branch by `git branch -D`; shared across worktrees | [stated: #79; ci_fix.rs header] |
 | Pins: base, local, bot, accepted, each with a `-base` | `refs/sheepdog/<b>/*` | a ref pins the object against gc; refs are shared across worktrees and stay local (not in default refspecs) | [stated: #79] |
 | Failure record, verify-red record | `refs/sheepdog/<b>/failed`, `.../verify-red` (one JSON line each) | same reasons as pins | [stated: failed.rs, verify_red.rs headers] |
-| Settings | JSON config files, global plus per-branch overrides only | git config layers only the same key; a full per-branch copy froze the branch | [stated: #79] |
-| Running marker / lease | `$SHEEPDOG_STATE_DIR/<branch file>`, one or two lines | read by sd state; the watcher's reconcile ends leases past deadline | [stated: running.rs header] |
+| Settings | JSON config files: global, plus per-branch overrides only under `$GIT_COMMON_DIR/sheepdog/` | git config layers only the same key; a full per-branch copy froze the branch | [stated: #79] |
+| Running marker / lease | `$GIT_COMMON_DIR/sheepdog/<branch>`, one or two lines (corrected 2026-10-29 from `$SHEEPDOG_STATE_DIR`: as-built/externals.md) | read by sd state; the watcher's reconcile ends leases past deadline | [stated: running.rs header; location inferred: running.rs] |
 | Usage ledger | `$SHEEPDOG_STATE_DIR/usage.sup`, one SUP line per agent step | cost per step and per branch; format fixed for compatibility with the bash era | [stated: usage.rs header] |
 | Usage-limit pause | `$SHEEPDOG_STATE_DIR/limit` | one file for every harness and model | [stated: limit.rs header] |
 | Watcher per-branch state (last pass's state, seen markers) | `$SHEEPDOG_STATE_DIR` | so a rerun reports only what's new (N3) | [inferred: pass.rs, AGENTS.md N3] |
-| Stored PR description for HEAD + target | unknown location | ship finds it | [inferred: describe.rs header; location not stated] |
+| Stored PR description for HEAD + target | `$GIT_COMMON_DIR/sheepdog/<branch>.describe.json` | ship finds it; removed by forget and the branch-file sweep | [inferred: describe.rs header; location from as-built/deps.md] |
 | Lineage (parent) | `branch.<b>.sd-parent` | must be local: GitHub retargets a child to main when the parent merges | [stated: #79, #22] |
 
 Intended rules about state:
@@ -268,7 +268,7 @@ report which hold, which don't, and which can't be determined.
 Not findings; the design hasn't decided. **[stated: alternatives "Still
 open"; question-labeled issues]**
 
-- Fork per step vs. one persistent session per branch (#69).
+- Fork per step vs. one persistent session per branch (#69, closed: fork per step was chosen; the alternatives doc's "Still open" list is stale on this).
 - Accept warnings at the review cap (#142).
 - Ready to merge while behind the base: the merged combination never ran in
   CI (#158).
@@ -280,6 +280,12 @@ open"; question-labeled issues]**
   finding source.
 - One editing step for implement / review-fix / address / ci-fix (#133).
   Same: the four verbs' duplication is a known, scheduled consolidation.
+- Also open and not in the alternatives doc (found 2026-10-29,
+  as-built/issues.md): re-review policy J5 (#66), several review passes
+  (#279), the task from its issue (#281), compaction past the fork ceiling
+  (#135), resume -p while open interactively (#90), pi session context
+  (#23), --json-schema for describe (#21), risk level per branch (#190),
+  .spq files (#36, SuperDB-era, likely moot since #235).
 
 ## 9. What this page assumes and chrismo should check
 
