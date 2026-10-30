@@ -806,6 +806,59 @@ fn a_stored_address_answer_says_sd_watch_runs_it_only_when_a_push_clears_the_gat
 }
 
 #[test]
+fn a_stored_address_answer_meeting_a_dirty_worktree_waits_and_the_worktree_is_refused_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    sd.rm("claude.args");
+    sd.two_owed();
+    // edited since the question (its worktree mark): the question doesn't
+    // stand, so the answer isn't used, and the worktree is refused as for
+    // any run, not skipped as for an answer
+    sd.write("untracked.txt", "junk\n");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["uncommitted"]);
+    assert!(!sd.ran("claude.args"));
+    assert!(has_answer(&sd));
+    // back as asked: address goes on with the answer
+    fs::remove_file(sd.cwd.join("untracked.txt")).unwrap();
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer"]);
+    assert_has(&sd.fx("claude.args"), &["call it bar"]);
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn a_stored_address_answer_meeting_nothing_owed_fails_unanswered_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    sd.rm("claude.args");
+    // the bot items were resolved elsewhere meanwhile
+    sd.state(&[".threads.owed_bot = 0 | .threads.items = []"]);
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["nothing to address on feat", "The answer didn't reach the agent; sd act ack --question drops its question"]);
+    assert!(!sd.ran("claude.args"));
+    assert!(has_answer(&sd));
+}
+
+#[test]
 fn an_answer_cant_wait_on_a_restack_that_would_drop_its_question_nor_go_to_another_question_326() {
     let sd = sd();
     sd.two_owed();
