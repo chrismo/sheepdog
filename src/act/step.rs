@@ -333,9 +333,9 @@ pub fn with_stored_answer(b: &str, step: &str, a: &super::Args) -> Option<super:
 }
 
 /// What sd act answer says when <step>'s gate refuses <why> and the answer
-/// waits.
-pub fn answer_waits(b: &str, step: &str, why: &str) -> String {
-    format!("{step} refuses on {b} while {why}: your answer is stored, and {step} goes on with it once that clears (NEXT offers it, so sd watch runs it)")
+/// waits till <once>.
+pub fn answer_waits(b: &str, step: &str, why: &str, once: &str) -> String {
+    format!("{step} refuses on {b} while {why}: your answer is stored, and {step} goes on with it once {once} (NEXT offers it, so sd watch runs it)")
 }
 
 #[cfg(test)]

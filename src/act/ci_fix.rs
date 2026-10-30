@@ -8,8 +8,8 @@ use super::commands::{status, tail, verify_autofix, verify_autofix_to, Report};
 use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree, must, question_answered,
-                  question_ask, question_gate, question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base, in_worktree,
+                  must, question_answered, question_ask, question_gate, question_say, step_session, step_store, with_stored_answer};
 use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev};
@@ -134,6 +134,53 @@ fn publish(b: &str, wt: &str, remote: &str, state: &Value, kept: &str) {
     }
 }
 
+/// What ci-fix makes of sd state <s>; NEXT reads it too (#326).
+#[derive(Debug, PartialEq)]
+pub enum Gate {
+    Runs,
+    Hard(String),
+    /// CI may yet be red at HEAD, after a push, a run or a rerun. <why> is
+    /// short, for NEXT; <msg> is what ci-fix says.
+    Waits { why: String, msg: String },
+    /// CI passed at HEAD: nothing to fix.
+    Moot(String),
+}
+
+pub fn gate(s: &Value) -> Gate {
+    let b = t(s, "branch");
+    if at(s, "pr").is_null() {
+        return Gate::Hard(format!("no PR for {b}"));
+    }
+    let pr = t(s, "pr.state");
+    if pr != "OPEN" {
+        return Gate::Hard(format!("PR #{} is {}; nothing to fix", t(s, "pr.number"), pr.to_lowercase()));
+    }
+    let waits = |why: String, msg: String| Gate::Waits { why, msg };
+    let at_head = on(s, "ci.for_head") && n(s, "push.ahead") == 0.0;
+    match at(s, "ci.verdict").as_str().unwrap_or("none") {
+        "red" => {}
+        "inconclusive" => {
+            return waits("CI was cancelled".into(), "CI was cancelled, not red: rerun it (gh run rerun, or rwx retry), then wait".into())
+        }
+        v @ ("green" | "none") if at_head => return Gate::Moot(format!("CI is {v} on {b}; nothing to fix")),
+        v => return waits(format!("CI is {v}"), format!("CI is {v} on {b}; nothing to fix")),
+    }
+    if !on(s, "ci.for_head") {
+        let red = short(&t(s, "ci.sha")).to_string();
+        return waits(
+            format!("CI's red is for {red}, not HEAD"),
+            format!("CI's red is for {red}, not HEAD: push if there is something to push, then wait for CI on HEAD"),
+        );
+    }
+    if n(s, "push.ahead") != 0.0 {
+        return waits(
+            format!("{} unpushed commit(s)", t(s, "push.ahead")),
+            format!("{b} has unpushed commits, which may be the fix already: sd act push, then wait for CI"),
+        );
+    }
+    Gate::Runs
+}
+
 fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {
@@ -148,28 +195,20 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         eprint!("{e}");
         die("sd state failed")
     });
-    if at(&state, "pr").is_null() {
-        die(format!("no PR for {b}"));
-    }
-    let pr = t(&state, "pr.state");
-    if pr != "OPEN" {
-        die(format!("PR #{} is {}; nothing to fix", t(&state, "pr.number"), pr.to_lowercase()));
+    match gate(&state) {
+        Gate::Runs => {}
+        Gate::Waits { why, msg } => {
+            if !answering {
+                die(msg);
+            }
+            answer_store(b, "ci-fix", &a.answer);
+            println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD"));
+            return;
+        }
+        Gate::Moot(msg) if answering => die(format!("{msg}: the ci-fix agent's question is moot; sd act ack --question drops it")),
+        Gate::Moot(msg) | Gate::Hard(msg) => die(msg),
     }
     let sha = t(&state, "ci.sha");
-    match at(&state, "ci.verdict").as_str().unwrap_or("none") {
-        "red" => {}
-        "inconclusive" => die("CI was cancelled, not red: rerun it (gh run rerun, or rwx retry), then wait"),
-        v => die(format!("CI is {v} on {b}; nothing to fix")),
-    }
-    if !on(&state, "ci.for_head") {
-        die(format!(
-            "CI's red is for {}, not HEAD: push if there is something to push, then wait for CI on HEAD",
-            short(&sha)
-        ));
-    }
-    if n(&state, "push.ahead") != 0.0 {
-        die(format!("{b} has unpushed commits, which may be the fix already: sd act push, then wait for CI"));
-    }
     let failing = sj(at(&state, "ci.failing"), ", ");
     let last = git_out(".", &["config", "--get", &format!("branch.{b}.sd-ci-fix")]).unwrap_or_default();
     if !a.force && judged_flaky(&last, &sha) {
@@ -317,6 +356,8 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
 }
 
 pub fn ci_fix(b: &str, remote: &str, a: &Args) {
+    let stored = with_stored_answer(b, "ci-fix", a);
+    let a = stored.as_ref().unwrap_or(a);
     in_worktree(b, "ci-fix", |wt| ci_fix_run(b, wt, remote, a));
 }
 
@@ -333,6 +374,32 @@ mod tests {
         assert!(!judged_flaky("abc123 autofix", "abc123"));
         assert!(!judged_flaky("", "abc123"));
         assert!(!judged_flaky("abc123", "abc123"));
+    }
+
+    fn st(edits: Value) -> Value {
+        let mut s = json!({"branch": "feat", "pr": {"number": 7, "state": "OPEN"},
+                           "ci": {"sha": "abcdef12", "for_head": true, "verdict": "red"}, "push": {"ahead": 0}});
+        for (k, v) in edits.as_object().unwrap() {
+            let (a, b) = k.split_once('.').unwrap();
+            s[a][b] = v.clone();
+        }
+        s
+    }
+
+    #[test]
+    fn gate_runs_on_red_at_head_waits_while_ci_may_yet_be_and_is_moot_once_it_passed_there() {
+        assert_eq!(gate(&st(json!({}))), Gate::Runs);
+        let why = |g: Gate| match g {
+            Gate::Waits { why, .. } => why,
+            g => panic!("{g:?}"),
+        };
+        assert_eq!(why(gate(&st(json!({"ci.verdict": "pending"})))), "CI is pending");
+        assert_eq!(why(gate(&st(json!({"ci.verdict": "inconclusive"})))), "CI was cancelled");
+        assert_eq!(why(gate(&st(json!({"ci.for_head": false})))), "CI's red is for abcdef1, not HEAD");
+        assert_eq!(why(gate(&st(json!({"push.ahead": 2})))), "2 unpushed commit(s)");
+        assert_eq!(why(gate(&st(json!({"ci.verdict": "green", "push.ahead": 1})))), "CI is green");
+        assert_eq!(gate(&st(json!({"ci.verdict": "green"}))), Gate::Moot("CI is green on feat; nothing to fix".into()));
+        assert_eq!(gate(&st(json!({"pr.state": "MERGED"}))), Gate::Hard("PR #7 is merged; nothing to fix".into()));
     }
 
     #[test]

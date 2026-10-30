@@ -115,8 +115,10 @@ Verbs:
             that no longer stands, or an address question with no bot item
             left for the agent. While address's gate refuses, the answer is
             stored instead (below) and exits 0, except on a restack that
-            would conflict: that restack would drop the question. Spends
-            tokens
+            would conflict: that restack would drop the question. So is a
+            ci-fix answer while CI may yet be red at HEAD (unpushed, not
+            run on HEAD yet, pending, blocked, cancelled); once it passed
+            at HEAD, the question is moot, and answer refuses. Spends tokens
   restack   rebase --onto the parent (the default branch once the parent
             merged), check the branch's own change came through unchanged,
             else roll back; never pushes. When the old base isn't an

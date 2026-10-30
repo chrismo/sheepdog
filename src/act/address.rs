@@ -390,7 +390,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         // not for a restack: it moves HEAD, dropping the question (#326)
         if answering && !g.conflict {
             answer_store(b, "address", &a.answer);
-            println!("{}", answer_waits(b, "address", &g.soft.join("; ")));
+            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears"));
             return true;
         }
         eprintln!("sd act: not addressing {b}:");
