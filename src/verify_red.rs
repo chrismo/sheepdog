@@ -2,9 +2,9 @@
 // {head, step, cmd, at}: settings.verify failed with <head> checked out, run
 // by <step> (implement, address, ci-fix, review, resolve, or verify by hand).
 // Every run on a clean tree writes it: a failure records the commit it ran
-// on, a pass removes it. Keyed on the commit, so sd state calls it at_head only while HEAD is
-// still that commit: any new commit leaves it standing on an old one, which
-// NEXT and ship ignore.
+// on, a pass removes it. Keyed on the commit, so sd state calls it at_head
+// only while HEAD is still that commit: any new commit leaves it standing on
+// an old one, which NEXT and ship ignore.
 
 use crate::git::{git, git_input, git_out, strip_nl};
 use crate::{json, time};
