@@ -398,7 +398,9 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         for why in &g.soft {
             eprintln!("  - {why}");
         }
-        if answering {
+        if a.stored {
+            eprintln!("a restack would drop the question: sd act address --force runs your stored answer now, or sd act ack --question drops both");
+        } else if answering {
             eprintln!("a restack would drop the question, so the answer can't wait for one: sd act answer --force answers now");
         }
         eprintln!("(--force to run anyway)");

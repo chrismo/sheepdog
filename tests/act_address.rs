@@ -816,6 +816,10 @@ fn a_stored_address_answer_runs_now_with_force_over_a_restack_that_would_drop_it
     sd.ok(&["answer", "call it bar"]);
     sd.rm("claude.args");
     sd.state(&[TWO_OWED, ".sync.up_to_date = false | .sync.behind = 2 | .sync.conflict = true"]);
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["a restack would drop the question", "sd act address --force runs your stored answer now"]);
+    assert_lacks(&r.output, "sd act answer --force");
     sd.result(
         r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
             items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
