@@ -54,3 +54,26 @@ tasks:
       - lib/review-rules.md
       - bin/sd
       - install.sh
+
+  - key: clippy
+    use: [code, rust]
+    run: |
+      rustup component add clippy
+      cargo clippy --all-targets --locked -- -D warnings
+    filter:
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - tests/**
+
+  - key: shellcheck-package
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y shellcheck
+      sudo apt-get clean
+
+  - key: shellcheck
+    use: [code, shellcheck-package]
+    run: shellcheck install.sh
+    filter:
+      - install.sh

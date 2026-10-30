@@ -1602,7 +1602,7 @@ sleep 30
 fn implement_signalled(sd: &mut Sd, sig: i32) -> (std::process::ExitStatus, String) {
     sd.fake("claude", CLAUDE_HANGS);
     sd.rm("started");
-    let mut job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::piped()));
+    let job = common::spawn(sd.command(&sd.bin).arg("implement").stdin(Stdio::null()).stderr(Stdio::piped()));
     for _ in 0..100 {
         if sd.ran("started") {
             break;

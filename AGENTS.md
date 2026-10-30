@@ -147,7 +147,13 @@ means the sandbox, so run it outside.
 `main`, as one task, `cargo-test`. Its filter lists the files the tests read
 from the repo (`src/`, `tests/`, `lib/prompts/`, `lib/review-rules.md`,
 `install.sh`, `bin/sd`, the Cargo files): a test that starts reading another
-one needs it added there, or a change to that file won't rerun the task. A
+one needs it added there, or a change to that file won't rerun the task.
+Two lint tasks run beside it, and any warning fails them: `clippy` (`cargo
+clippy --all-targets -- -D warnings`) and `shellcheck` (`shellcheck
+install.sh`). Both are cheap, so run them locally before pushing. Cargo.toml's
+`[lints]` caps function length and cognitive complexity at clippy's defaults;
+the functions already over them carry `#[expect(...)]`. Don't add another:
+split the function. Once one is split, its `expect` fails until it's removed. A
 push to a branch with an open PR starts a run; `sd state` reports its result.
 To read a run:
 

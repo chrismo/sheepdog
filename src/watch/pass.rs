@@ -534,6 +534,7 @@ impl Watch {
 
     /// Check one branch: its pass lines, whether sd state answered, and why
     /// the pass must stop for the rate limit, if it must.
+    #[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
     fn check(&mut self, repo: &str, name: &str, b: &str, wt: &str) -> (String, bool, Option<String>) {
         let (prog, verb) = sd_verb("state", "SHEEPDOG_STATE_PROGRAM");
         let o = proc::with_timeout(self.timeout, &prog, &[&verb[..], &["--json", b]].concat(), Some(repo));

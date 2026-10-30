@@ -344,6 +344,7 @@ fn commit_message(result: &Value) -> String {
 }
 
 /// address in <wt>; false when it ran but a reply or the PR comment failed.
+#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {

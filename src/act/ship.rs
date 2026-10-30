@@ -62,6 +62,7 @@ fn branch_parent(b: &str) -> String {
     git_out(".", &["config", "--get", &format!("branch.{b}.sd-parent")]).unwrap_or_default()
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 pub fn ship(b: &str, remote: &str, a: &Args) {
     let wt = worktree_for(".", b);
     if wt.is_empty() {

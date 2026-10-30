@@ -180,6 +180,7 @@ fn commit_message(result: &Value, fixing: bool, task: &str) -> String {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 fn implement_run(b: &str, wt: &str, a: &Args) {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {

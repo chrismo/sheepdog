@@ -68,11 +68,10 @@ const EDITING: [&str; 4] = ["implement", "address", "ci-fix", "resolve"];
 /// it was an editing step on <h> that failed in a session other than the
 /// stored one, <stored>: its session was never stored.
 fn unstored(text: &str, repo: &str, b: &str, h: &str, stored: &str) -> Option<(String, String)> {
-    let last = text.lines().filter(|l| usage::shaped(l)).filter_map(usage::sup_record).filter(|r| {
+    let r = text.lines().rev().filter(|l| usage::shaped(l)).filter_map(usage::sup_record).find(|r| {
         let field = |k: &str| r.get(k).and_then(Value::as_str);
         field("repo") == Some(repo) && field("branch") == Some(b)
-    });
-    let r = last.last()?;
+    })?;
     let field = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
     let (step, session) = (field("step"), field("session"));
     let failed = r.get("status").and_then(Value::as_i64) != Some(0);

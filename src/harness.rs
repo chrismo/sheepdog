@@ -151,6 +151,7 @@ impl Ran {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "predates the cap; split it and drop this")]
 fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let (h, minted) = (s.harness, s.session);
     // Only the first line, as bash's read -ra took it.
