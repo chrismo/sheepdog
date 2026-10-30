@@ -594,6 +594,24 @@ fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_
 }
 
 #[test]
+fn a_moot_question_holds_back_nothing_whether_its_answer_is_stored_or_not_326() {
+    // Round 6: a stored answer to a moot question held back ci-red, restacks
+    // and review, where the same question unanswered held back none of them.
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    let review = e![UNREVIEWED];
+    for q in [asked("address", true), answered("address")] {
+        assert_eq!(keys(&e![&red, &q]), "question ci-red", "{q}");
+        assert_eq!(keys(&e![STACKED, &q]), "question behind", "{q}");
+        assert_eq!(keys(&e![&review, &q]), "question review", "{q}");
+    }
+    for q in [asked("ci-fix", true), answered("ci-fix")] {
+        assert_eq!(keys(&e![STACKED, &q]), "question behind", "{q}");
+        assert_eq!(keys(&e![".threads.owed_bot = 1", &q]), "question bot", "{q}");
+        assert_eq!(keys(&e![&review, &q]), "question review", "{q}");
+    }
+}
+
+#[test]
 fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
     let q = asked("ci-fix", true);
     let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];

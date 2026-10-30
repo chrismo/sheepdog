@@ -298,16 +298,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             || (need_review && !fixing)
             || restack_due
             || (pr_null && !empty && !dropping));
-    let answer_pending = open && stored && (asking == "address" || asking == "ci-fix");
-    // while it stands, what would move HEAD waits: that drops the question
-    let refused = dirty || (open && !asking.is_empty() && (on("push.dirty") || answer_pending));
-    let push_held = foreign || undone || parent_unpushed;
-    let push_step = push_offered(s);
     let addr = crate::act::address_gate(s);
     let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
     let addr_refuses = !addr_why.is_empty();
-    let bot = open && bot_blocking > 0.0 && asking != "address" && !refused;
-    let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
     let addr_moot = asking == "address" && addr.hard.is_none() && n("threads.owed_bot") == 0.0;
     let ci = if asking == "ci-fix" { crate::act::ci_fix_gate(s) } else { CiFixGate::Runs };
     let ci_moot = matches!(ci, CiFixGate::Moot(_));
@@ -315,8 +308,16 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
         CiFixGate::Waits { why, .. } => why.clone(),
         _ => String::new(),
     };
-    let resume = answer_pending && asking == "address" && !addr_moot;
-    let resume_ci = answer_pending && asking == "ci-fix" && !ci_moot;
+    // a stored answer to a moot question has nothing to go on with
+    let resume = open && stored && asking == "address" && !addr_moot;
+    let resume_ci = open && stored && asking == "ci-fix" && !ci_moot;
+    let answer_pending = resume || resume_ci;
+    // while it stands, what would move HEAD waits: that drops the question
+    let refused = dirty || (open && !asking.is_empty() && (on("push.dirty") || answer_pending));
+    let push_held = foreign || undone || parent_unpushed;
+    let push_step = push_offered(s);
+    let bot = open && bot_blocking > 0.0 && asking != "address" && !refused;
+    let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
 
     let branch = t("branch");
     let target = t("sync.target");
@@ -393,7 +394,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !asking.is_empty() && (!answer_pending || addr_moot || ci_moot) {
+            if open && !asking.is_empty() && !answer_pending {
                 let answer = "sd act answer \"<your answer>\"";
                 let did = if is("question.kind", "gave-up") { "gave up" } else { "asks" };
                 let and = if stored { ", and your answer" } else { "" };
