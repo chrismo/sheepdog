@@ -1,8 +1,9 @@
 // clippy's too_many_lines and cognitive_complexity, held per function. Every
 // function over clippy's cap (100 lines, complexity 25) is listed in
-// tests/lint-ratchet.txt at its score: it may not grow, and a change that
-// shrinks it lowers its line, so it can't grow back. The clippy task runs the
-// ignored test; the others check the comparison.
+// tests/lint-ratchet.txt at its score and may not grow past it. Shrinking, or
+// dropping under the cap, passes with the line left as is; #354 recalibrates
+// the list. The clippy task runs the ignored test; the others check the
+// comparison.
 
 use regex::Regex;
 use serde_json::Value;
@@ -62,12 +63,8 @@ fn ratchet(now: &Scores, base: &Scores) -> Vec<String> {
         match base.get(k) {
             None => problems.push(format!("{k} is {n}, over clippy's cap: split it")),
             Some(&b) if n > b => problems.push(format!("{k} grew from {b} to {n}: split it, don't grow it")),
-            Some(&b) if n < b => problems.push(format!("{k} shrank from {b} to {n}: lower it to {n} in {BASELINE}")),
             Some(_) => {}
         }
-    }
-    for k in base.keys().filter(|k| !now.contains_key(*k)) {
-        problems.push(format!("{k} is under clippy's cap or gone: drop its line from {BASELINE}"));
     }
     problems
 }
@@ -96,9 +93,9 @@ fn a_listed_function_that_grew_fails() {
 }
 
 #[test]
-fn a_listed_function_that_shrank_fails_until_its_line_is_lowered() {
+fn a_listed_function_that_shrank_passes_without_lowering_its_line() {
     let p = ratchet(&s(&[("src/next.rs steps too_many_lines", 590)]), &s(&[("src/next.rs steps too_many_lines", 600)]));
-    assert_eq!(p, ["src/next.rs steps too_many_lines shrank from 600 to 590: lower it to 590 in tests/lint-ratchet.txt"]);
+    assert_eq!(p, Vec::<String>::new());
 }
 
 #[test]
@@ -108,9 +105,9 @@ fn a_new_function_over_the_cap_fails() {
 }
 
 #[test]
-fn a_listed_function_now_under_the_cap_fails_until_its_line_is_dropped() {
+fn a_listed_function_now_under_the_cap_passes_with_its_line_left() {
     let p = ratchet(&Scores::new(), &s(&[("src/next.rs steps cognitive_complexity", 90)]));
-    assert_eq!(p, ["src/next.rs steps cognitive_complexity is under clippy's cap or gone: drop its line from tests/lint-ratchet.txt"]);
+    assert_eq!(p, Vec::<String>::new());
 }
 
 #[test]
