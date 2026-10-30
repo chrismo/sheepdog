@@ -4195,8 +4195,8 @@ fn next_json_carries_the_ordered_steps() {
     sd.commit("b.txt", "b");
     sd.git(&["update-ref", "refs/sheepdog/feat/local", "HEAD"]);
     let r = sd.state(&[]);
-    assert_eq!(r.keys(), "bot push"); // no ci-wait: CI can't run before the push
-    assert_eq!(r.field(".next[1].cmd"), "sd act push");
+    assert_eq!(r.keys(), "push bot"); // no ci-wait: CI can't run before the push; address's gate wants the push first (#326)
+    assert_eq!(r.field(".next[0].cmd"), "sd act push");
 }
 
 // @test "next: a pushed branch with an open PR and nothing owed is ready to merge"
