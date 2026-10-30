@@ -180,6 +180,17 @@ fn failed_state(dir: &str, b: &str) -> Result<Option<Value>, ()> {
     Ok(Some(json!({"step": step, "harness": h, "count": count, "since": since, "at": at, "error": error})))
 }
 
+/// A failed verify (#325, src/verify_red.rs): {sha, step, cmd, at,
+/// at_head}, at_head while HEAD is the commit it failed on; None with no
+/// record, Err for one that isn't one.
+fn verify_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
+    let Some(rec) = blob_record(dir, &crate::verify_red::name(b)) else { return Ok(None) };
+    let rec = rec?;
+    let s = |k: &str| rec.get(k).and_then(Value::as_str);
+    let (Some(h), Some(step), Some(cmd), Some(at)) = (s("head"), s("step"), s("cmd"), s("at")) else { return Err(()) };
+    Ok(Some(json!({"sha": h, "step": step, "cmd": cmd, "at": at, "at_head": h == head})))
+}
+
 // ── GitHub ───────────────────────────────────────────────────────────────────
 
 struct Gh<'a> {
@@ -739,6 +750,7 @@ struct Facts {
     review_rounds: Value,
     question: Value,
     failed: Value,
+    verify: Value,
     flags: Value,
     flags_error: String,
     gh_ok: bool,
@@ -995,6 +1007,7 @@ fn assemble(s: &Facts) -> Value {
         "review": {"local": s.r_local, "bot": bot_pin, "accepted": accepted, "findings": findings, "github": github},
         "question": s.question,
         "failed": s.failed,
+        "verify": s.verify,
         "flags": s.flags, "flags_error": jn(&s.flags_error),
         "threads": {"owed_bot": gh(json!(ob.len())),
                     "owed_human": gh(json!(owed.iter().filter(|o| o["kind"] == "human").count())),
@@ -1449,6 +1462,13 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
             Value::Null
         }
     };
+    let verify = match verify_state(dir, branch, &head) {
+        Ok(v) => v.unwrap_or(Value::Null),
+        Err(()) => {
+            errors.push(format!("verify: {} isn't a verify record", crate::verify_red::name(branch)));
+            Value::Null
+        }
+    };
     let pin = |k: &str| pin_status(dir, branch, k, &head, &target_ref, &old_base, stackless);
     let (r_local, r_bot, r_accepted) = (pin("local"), pin("bot"), pin("accepted"));
 
@@ -1532,6 +1552,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         review_rounds,
         question,
         failed,
+        verify,
         flags,
         flags_error,
         gh_ok,
@@ -1684,6 +1705,7 @@ fn summary(s: &Value) -> String {
         }),
         on(s, "question.at_head").then(|| format!("? {} {}", t(s, "question.step"), asks_or_gave_up(s))),
         (!at(s, "failed").is_null()).then(|| format!("✗ {} failed", t(s, "failed.count"))),
+        on(s, "verify.at_head").then(|| "✗ verify red".to_string()),
         if !flags.is_empty() {
             Some(format!("⚑ {} flagged", flags.len()))
         } else if at(s, "flags_error").is_null() {

@@ -24,10 +24,10 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The NEXT steps that are ❌: chrismo's to deal with.
-const RED: [&str; 19] = [
+const RED: [&str; 20] = [
     "ci-red", "ci-blocked", "conflict", "human", "foreign", "parent-closed", "review-decide", "question",
     "restack-undone", "bot-silent", "budget", "failed", "ci-config", "nothing", "default", "dirty", "read",
-    "submit", "yours",
+    "submit", "yours", "verify-red",
 ];
 
 /// What sd state's next steps mean to the pass. carry: sd state is unsure,
@@ -1244,6 +1244,7 @@ mod tests {
             assert_eq!(glyph(&[step(k, "you")]), "❌", "{k}");
         }
         assert!(RED.contains(&"failed"));
+        assert!(RED.contains(&"verify-red"), "a failed verify is chrismo's until #325's part 2 hands it to the agent");
     }
 
     #[test]

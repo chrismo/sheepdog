@@ -54,6 +54,10 @@
 // After FAIL_LIMIT agent steps failed in a row (failed, #242), the agent
 // steps go to chrismo the same way.
 //
+// A verify that failed on HEAD (verify.at_head, #325) is chrismo's step in
+// place of push, open-pr and draft: nothing publishes a commit verify
+// rejected.
+//
 // A followed PR (mode reviewer, sd act follow, #250) is a teammate's: none of
 // the author's steps, only its own list (reviewer below). The author's pushes
 // are fetched before anything else; the agent reviews HEAD; then the review
@@ -234,6 +238,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     });
     let hold = &hold;
 
+    let verify_red = open && on("verify.at_head");
     let ci_red = has_pr && is("ci.verdict", "red") && on("ci.for_head") && !to_push;
     let fix_due = fixing && !on("review.findings.declined") && n("review.findings.round") < n("review.findings.cap");
     let behind_target = off("sync.up_to_date");
@@ -526,7 +531,21 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !ci_held && !foreign && !undone && !parent_unpushed && !empty && to_push {
+            if verify_red {
+                let sha = t("verify.sha");
+                step("verify-red", "you",
+                    format!(
+                        "verify red at {} ({}: {}): fix it, then sd act verify",
+                        &sha[..sha.len().min(7)],
+                        t("verify.step"),
+                        t("verify.cmd")
+                    ),
+                    cmd("sd act verify"),
+                )
+            } else {
+                None
+            },
+            if open && !verify_red && !ci_held && !foreign && !undone && !parent_unpushed && !empty && to_push {
                 let ahead = if nul("sync.ahead") { g("push.ahead") } else { g("sync.ahead") };
                 step("push", "run",
                     if is_null(s, "push.remote_sha") {
@@ -546,12 +565,12 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if pr_null && len(g("errors")) == 0 && !parent_unpushed && !ci_held && !empty && !refused {
+            if pr_null && len(g("errors")) == 0 && !verify_red && !parent_unpushed && !ci_held && !empty && !refused {
                 spends(hold, step("open-pr", "run", "ship: push, open a draft PR", cmd("sd act ship")))
             } else {
                 None
             },
-            if has_pr && draft_ready && !need_review && !bot_due && !bot_waiting {
+            if has_pr && draft_ready && !verify_red && !need_review && !bot_due && !bot_waiting {
                 step("draft", "run",
                     format!(
                         "{}: mark the PR ready for review",

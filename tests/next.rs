@@ -501,6 +501,33 @@ fn past_settings_branchbudget_open_pr_is_chrismo_s_too_since_ship_may_describe_1
     assert_eq!(keys(&e![r#".spend = {"usd": 30, "budget": 25}"#, &nopr, r#".parent = {"name": "p", "source": "config", "merged": false, "local": true, "on_remote": false, "unpushed": true, "pr": null}"#, r#".sync = {"target": "p", "default": "main", "behind": null, "up_to_date": null, "conflict": null, "old_base": null}"#]), "ship-parent");
 }
 
+/// sd state's verify field: a failed verify recorded against a commit (#325).
+fn red(at_head: bool) -> String {
+    let v = json!({"sha": "0123456789abcdef", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z", "at_head": at_head});
+    format!(".verify = {v}")
+}
+
+#[test]
+fn verify_red_at_head_chrismo_s_step_in_place_of_push_and_ship_325() {
+    let unpushed = ".push.ahead = 1";
+    assert_eq!(keys(&e![unpushed, &red(true)]), "verify-red");
+    assert_eq!(step("verify-red", "who", &e![&red(true)]), "you");
+    assert_eq!(
+        step("verify-red", "say", &e![&red(true)]),
+        "verify red at 0123456 (implement: make test): fix it, then sd act verify"
+    );
+    assert_eq!(step("verify-red", "cmd", &e![&red(true)]), "sd act verify");
+    // no PR yet: no push, no ship
+    assert_eq!(keys(&e![".pr = null", r#".push = {"remote_sha": null, "ahead": 1, "behind": 0}"#, &red(true)]), "verify-red");
+    // a pushed draft isn't marked ready
+    let draft = &e![".pr.draft = true", r#".ci.required = []"#];
+    assert_eq!(keys(&e![draft, &red(false)]), "draft");
+    assert_eq!(keys(&e![draft, &red(true)]), "verify-red");
+    // a record on an older commit is no step: the new HEAD isn't verified red
+    assert_eq!(keys(&e![unpushed, &red(false)]), "push");
+    assert_eq!(keys(&e![".verify = null"]), "ready");
+}
+
 #[test]
 fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_run_steps_still_run_242() {
     let failed = |n: u32, s: &str| format!(r#".failed = {{"step": "{s}", "harness": "pi", "count": {n}, "since": "T0", "at": "T1", "error": "no quota"}}"#);

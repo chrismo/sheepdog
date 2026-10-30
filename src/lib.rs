@@ -14,4 +14,5 @@ pub mod state;
 pub mod time;
 pub mod usage;
 pub mod val;
+pub mod verify_red;
 pub mod watch;

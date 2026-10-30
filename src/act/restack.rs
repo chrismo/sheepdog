@@ -272,7 +272,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     }
     if resolved {
         println!("conflicts resolved by the agent, so {b}'s change is unreviewed");
-        if let Err(cmd) = verify_run(&wt, b) {
+        if let Err(cmd) = verify_run(&wt, b, "resolve") {
             die(format!(
                 "verify failed ({cmd}) on the resolved branch; it is kept at {}, unpushed. Fix, then sd act verify",
                 short(&new_head, 7)

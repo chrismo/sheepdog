@@ -95,7 +95,7 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
 
 /// verify, the reviewer, and its findings pinned or recorded.
 fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
-    if let Err(cmd) = verify_run(wt, b) {
+    if let Err(cmd) = verify_run(wt, b, "review") {
         die(format!("verify failed ({cmd}); not reviewing"));
     }
     let mut secs = step_timeout(b);

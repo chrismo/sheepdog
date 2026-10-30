@@ -101,6 +101,13 @@ impl Sd {
         self.git_try(&["config", key]).unwrap_or_default()
     }
 
+    /// A failed verify recorded against <commit> (#325).
+    fn verify_red(&self, commit: &str) {
+        let rec = format!(r#"{{"head": "{}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z"}}"#, self.rev(commit));
+        let blob = self.git_with(&[], Some(&format!("{rec}\n")), &["hash-object", "-w", "--stdin"]);
+        self.git(&["update-ref", "refs/sheepdog/feat/verify-red", &blob]);
+    }
+
     fn result(&self, json: &str) {
         fs::write(self.tmp.join("fx/result.json"), format!("{json}\n")).unwrap();
     }
@@ -428,6 +435,33 @@ fn ship_held_ci_config_is_refused_even_with_force_before_describe_or_push_after_
     assert_has(&r.output, &["released the CI config hold on feat"]);
     let r = sd.run(&["ship"]);
     assert_eq!(r.status, 0);
+}
+
+#[test]
+fn ship_refused_while_verify_is_red_at_head_before_describe_or_push_force_ships_anyway_325() {
+    let sd = sd();
+    sd.verify_red("HEAD");
+    let r = sd.run(&["ship"]);
+    assert_ne!(r.status, 0);
+    assert_has(
+        &r.output,
+        &["not shipping feat: verify is red at HEAD (implement: make test); fix it, then sd act verify, or --force to ship anyway"],
+    );
+    assert_eq!(sd.remote("feat"), "");
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.calls(), "");
+    let r = sd.run(&["ship", "--force"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.remote("feat"), sd.rev("HEAD"));
+}
+
+#[test]
+fn ship_a_verify_red_record_on_an_older_commit_isnt_a_refusal_325() {
+    let sd = sd();
+    sd.verify_red("HEAD~1");
+    let r = sd.run(&["ship"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.remote("feat"), sd.rev("HEAD"));
 }
 
 // @test "ship: a hold whose commit is already on the remote (pushed some other way) is cleared, not a refusal (#124)"
