@@ -63,9 +63,13 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     branch (#143, #159)
   dirty: ❌ uncommitted edits hold up an agent or restack step that refuses
     them, and nothing says whose they are: chrismo's hand edit, or an agent
-    step's that failed or timed out (#178). The
-    two steps below are the same edits where the state says they're
-    chrismo's, so those aren't notified
+    step's that failed or timed out (#178)
+  reset-dirty take: ❌ chrismo is mid-change on the branch: no sheepdog
+    step resets pushed commits away, so the reset and the edits with it are
+    chrismo's to commit, take back or drop
+  nothing-dirty: ❌ the same, on a branch chrismo hasn't committed to yet
+    (an agent step's edits show as running instead)
+  blocked: ❌ GitHub's branch rules hold the merge until chrismo sees why
   read: ❌ info-only bot items, shown once nothing else moves without
     chrismo: unnotified, an unattended loop stalls there unseen (#76)
   submit yours: ❌ a followed PR (sd act follow, #250) is chrismo's turn:
@@ -75,25 +79,22 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
     nothing NEXT lists ahead clears it. As the agent's (bot, routine agent
     work) or waiting behind what clears the gate (answer, chrismo's stored
     answer), not notified
+  behind: ❌ only once chrismo's: no base to restack from, which sd state's
+    errors explain. As a restack sd runs (mechanical), not notified
 Any other step of chrismo's that's first in NEXT notifies too, as ❌, except
-those below.
+those below: a step notifies when the branch is stuck until chrismo acts,
+and stays quiet for an end state (its glyph shows it) and while sd state
+isn't sure yet.
 Not notified:
   closed: chrismo closed it
   errors stale gh-wait: ⚠️ sd state can't be sure, so what was notified
     carries over; gh-wait is GitHub not yet showing a push (#246)
-  reset-dirty take: chrismo is mid-change on the branch: no sheepdog step
-    resets pushed commits away, so the reset and the edits with it are
-    chrismo's; the 🔧 glyph shows it
-  nothing-dirty: the same, on a branch chrismo hasn't committed to yet (an
-    agent step's edits show as running instead)
   running: an agent step is running on the branch (#170); what was notified
     carries over, since it hides every other step
-  blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it
   attached: chrismo is in the branch's session; like merge-wait, keeps ready
   review review-fix implement: routine agent work, picked up when the branch
     is next worked on
-  behind push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
-    (behind with no old base is chrismo's, but its errors step shows ⚠️ first)
+  push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
   ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub
     recomputing after the base moved) keeps ready notified
   fetch author-wait: a followed PR's (#250): the author pushed, mechanical

@@ -30,14 +30,12 @@ const RED: [&str; 20] = [
     "submit", "yours", "verify-red",
 ];
 
-/// chrismo's steps (who "you") that don't notify when first in NEXT (#326):
-/// closed, the end state (ready, blocked), chrismo mid-change (take,
-/// reset-dirty, nothing-dirty), and unsure (errors, which a behind of
-/// chrismo's comes with, stale, gh-wait). Any other step of chrismo's that's first does: a
-/// step NEXT hands chrismo is never a silent stall (bot or answer, when
-/// address's gate refuses and nothing listed clears it).
-const QUIET_YOURS: [&str; 10] =
-    ["closed", "ready", "blocked", "take", "reset-dirty", "nothing-dirty", "errors", "stale", "gh-wait", "behind"];
+/// chrismo's steps (who "you") that don't notify when first in NEXT (#326).
+/// Notify when the branch is stuck until chrismo acts; stay quiet for end
+/// states (closed, ready: their glyph shows them) and when sd isn't sure yet
+/// (errors, stale, gh-wait). So bot or answer, handed to chrismo when
+/// address's gate refuses, is never a silent stall.
+const QUIET_YOURS: [&str; 5] = ["closed", "ready", "errors", "stale", "gh-wait"];
 
 /// What sd state's next steps mean to the pass. carry: sd state is unsure,
 /// so what was notified, what failed and the stale clock carry over. hold:
@@ -1276,8 +1274,14 @@ mod tests {
         // Alongside a red step, both notify, in NEXT's order.
         let c = of(&[step("bot", "you"), step("ci-red", "agent")]);
         assert_eq!(c.reasons, vec![json!({"key": "bot", "msg": "say bot"}), json!({"key": "ci-red", "msg": "say ci-red"})]);
-        // chrismo's steps that stay quiet keep their glyph.
-        for (k, g) in [("closed", "🔧"), ("ready", "🔧"), ("blocked", "🔧"), ("take", "🔧"), ("reset-dirty", "🔧"), ("nothing-dirty", "🔧"), ("behind", "🔧"), ("errors", "⚠️")] {
+        // Stuck until chrismo acts, they notify: mid-change on the branch,
+        // GitHub's branch rules, a restack with no base to restack from.
+        for k in ["take", "reset-dirty", "nothing-dirty", "blocked", "behind"] {
+            let c = of(&[step(k, "you"), step("ci-wait", "wait")]);
+            assert_eq!((c.glyph, c.reasons.clone()), ("❌", vec![json!({"key": k, "msg": format!("say {k}")})]), "{k}");
+        }
+        // End states and sd state unsure stay quiet and keep their glyph.
+        for (k, g) in [("closed", "🔧"), ("ready", "🔧"), ("errors", "⚠️"), ("stale", "⚠️"), ("gh-wait", "⚠️")] {
             let c = of(&[step(k, "you"), step("ci-wait", "wait")]);
             assert_eq!((c.glyph, c.reasons.len()), (g, 0), "{k}");
         }

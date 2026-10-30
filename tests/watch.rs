@@ -619,9 +619,9 @@ fn glyph_follows_sd_states_next_steps_not_its_raw_fields() {
     assert_eq!(sd.glyph("repo"), "🔧");
 }
 
-// @test "glyph: nothing to ship is ❌; nothing to ship with uncommitted changes is 🔧, since implement looks the same (#143)"
+// @test "glyph: nothing to ship is ❌, and with uncommitted changes too: stuck until chrismo commits (#143, #326)"
 #[test]
-fn glyph_nothing_to_ship_is_nothing_to_ship_with_uncommitted_changes_is_since_implement_looks_the_same_143() {
+fn glyph_nothing_to_ship_is_and_with_uncommitted_changes_too_stuck_until_chrismo_commits_143_326() {
     let sd = sd();
     sd.ps_fixture("feat", &[r#".next = [{key: "nothing", who: "you", say: "nothing to ship: commit, or record a task", cmd: null}]"#]);
     sd.pass();
@@ -631,7 +631,8 @@ fn glyph_nothing_to_ship_is_nothing_to_ship_with_uncommitted_changes_is_since_im
         &[r#".next = [{key: "nothing-dirty", who: "you", say: "nothing to ship, and the worktree has uncommitted changes: commit them", cmd: null}]"#],
     );
     sd.pass();
-    assert_eq!(sd.glyph("repo"), "🔧");
+    assert_eq!(sd.glyph("repo"), "❌");
+    assert_eq!(sd.notified_lines().last().unwrap(), "repo feat|nothing to ship, and the worktree has uncommitted changes: commit them");
 }
 
 // @test "glyph: uncommitted edits holding up an agent step are ❌ and notified: they may be an agent's that gave up (#178)"
@@ -704,14 +705,16 @@ fn glyph_waiting_on_a_required_review_is_never() {
     assert_eq!(sd.notified(), "");
 }
 
-// @test "glyph: GitHub blocking the merge for another reason is 🔧, never ✅"
+// @test "glyph: GitHub blocking the merge for another reason is ❌ and notified once, never ✅ (#326)"
 #[test]
-fn glyph_github_blocking_the_merge_for_another_reason_is_never() {
+fn glyph_github_blocking_the_merge_for_another_reason_is_and_notified_once_never_326() {
     let sd = sd();
     sd.ps_fixture("feat", &[r#".pr.merge_state = "BLOCKED""#]);
     sd.pass();
-    assert_eq!(sd.glyph("repo"), "🔧");
-    assert_eq!(sd.notified(), "");
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "❌");
+    assert_eq!(sd.notified_lines().len(), 1);
+    assert_match(&sd.notified(), "^repo feat\\|GitHub says");
 }
 
 // @test "glyph: a draft is never ready"
