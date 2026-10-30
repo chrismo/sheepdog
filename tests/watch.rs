@@ -163,9 +163,14 @@ impl Sd {
         fs::write(self.fixture(b), format!("{}\n", serde_json::to_string_pretty(&v).unwrap())).unwrap();
     }
 
-    /// one_step <key>: sd state's next is that single step, said as "say <key>".
+    /// one_step <key>: sd state's next is that single step, said as "say
+    /// <key>", whose as src/next.rs makes it (who_in_next).
     fn one_step(&self, key: &str) {
-        self.ps_fixture("feat", &[&format!(r#".next = [{{key: "{key}", who: "you", say: "say {key}", cmd: null}}]"#)]);
+        self.one_step_as(key, &who_in_next(key));
+    }
+
+    fn one_step_as(&self, key: &str, who: &str) {
+        self.ps_fixture("feat", &[&format!(r#".next = [{{key: "{key}", who: "{who}", say: "say {key}", cmd: null}}]"#)]);
     }
 
     /// The calls sd state got, "<dir> <branch>" each.
@@ -660,6 +665,25 @@ fn glyph_info_only_bot_items_waiting_on_chrismos_read_are_and_notified_once_76()
     assert_eq!(sd.notified(), "repo feat|read 1 bot item in sd state --long, then ack");
 }
 
+// @test "glyph: bot items address refuses, with nothing listed to clear it, are ❌ and notified once (#326)"
+#[test]
+fn glyph_bot_items_address_refuses_with_nothing_listed_to_clear_it_are_and_notified_once_326() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[".threads.owed_bot = 1 | .sync.up_to_date = null"]);
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "❌");
+    sd.pass();
+    assert_eq!(
+        sd.notified(),
+        "repo feat|address 1 bot item: sd act address refuses while sync with main unknown: clear that first, or sd act address --force"
+    );
+    // The agent's again, it's 🔧 and quiet.
+    sd.ps_fixture("feat", &[".threads.owed_bot = 1"]);
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "🔧");
+    assert_eq!(sd.notified_lines().len(), 1);
+}
+
 // @test "glyph: sd state output with no next steps is ⚠️"
 #[test]
 fn glyph_sd_state_output_with_no_next_steps_is() {
@@ -1114,7 +1138,8 @@ fn policy_a_notified_step_notifies_once_on_entering_it_not_on_later_passes() {
     for k in sd.policy("n") {
         let _ = fs::remove_dir_all(sd.tmp.join("state"));
         let _ = fs::remove_file(sd.ps("notified"));
-        sd.one_step(&k);
+        // chrismo's, as each notified step is when it notifies.
+        sd.one_step_as(&k, "you");
         sd.pass();
         sd.pass();
         sd.pass();
@@ -1122,9 +1147,27 @@ fn policy_a_notified_step_notifies_once_on_entering_it_not_on_later_passes() {
     }
 }
 
+/// <key>'s who as src/next.rs makes its step: "you" if any of them is
+/// chrismo's, else the first one's (an agent step's is "agent").
+fn who_in_next(key: &str) -> String {
+    let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/next.rs")).unwrap();
+    let whos: Vec<String> = Regex::new(r#"step\("([a-z-]+)", "([a-z]+)"|agent\(hold, "([a-z-]+)""#)
+        .unwrap()
+        .captures_iter(&src)
+        .filter_map(|c| match (c.get(1), c.get(2), c.get(3)) {
+            (Some(k), Some(w), _) if k.as_str() == key => Some(w.as_str().to_string()),
+            (_, _, Some(k)) if k.as_str() == key => Some("agent".to_string()),
+            _ => None,
+        })
+        .collect();
+    if whos.iter().any(|w| w == "you") { "you".into() } else { whos.first().cloned().unwrap_or_else(|| panic!("no step {key}")) }
+}
+
 // @test "policy: a step that isn't notified never is"
 #[test]
 fn policy_a_step_that_isnt_notified_never_is() {
+    // As NEXT makes it: a first step of chrismo's notifies unless it's one
+    // of the quiet ones (#326), so only those are tried as chrismo's.
     let sd = sd();
     for k in sd.policy("q") {
         let _ = fs::remove_dir_all(sd.tmp.join("state"));

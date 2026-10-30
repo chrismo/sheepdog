@@ -71,6 +71,12 @@ Notified, once per NEXT step (src/next.rs) entered (again only after it clears):
   submit yours: ❌ a followed PR (sd act follow, #250) is chrismo's turn:
     the review of HEAD is theirs to submit on GitHub, or the branch has
     commits the PR doesn't
+  bot answer: ❌ only once chrismo's (#326): address's gate refuses and
+    nothing NEXT lists ahead clears it. As the agent's (bot, routine agent
+    work) or waiting behind what clears the gate (answer, chrismo's stored
+    answer), not notified
+Any other step of chrismo's that's first in NEXT notifies too, as ❌, except
+those below.
 Not notified:
   closed: chrismo closed it
   errors stale gh-wait: ⚠️ sd state can't be sure, so what was notified
@@ -84,10 +90,8 @@ Not notified:
     carries over, since it hides every other step
   blocked: GitHub's branch rules, often routine; the 🔧 glyph shows it
   attached: chrismo is in the branch's session; like merge-wait, keeps ready
-  bot: routine agent work, picked up when the branch is next worked on
-  review review-fix implement: the same
-  answer: chrismo's answer, stored, waiting on what clears its step's gate
-    (#326); chrismo's only when nothing listed clears it, as for bot
+  review review-fix implement: routine agent work, picked up when the branch
+    is next worked on
   behind push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
     (behind with no old base is chrismo's, but its errors step shows ⚠️ first)
   ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub

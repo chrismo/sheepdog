@@ -30,6 +30,15 @@ const RED: [&str; 20] = [
     "submit", "yours", "verify-red",
 ];
 
+/// chrismo's steps (who "you") that don't notify when first in NEXT (#326):
+/// closed, the end state (ready, blocked), chrismo mid-change (take,
+/// reset-dirty, nothing-dirty), and unsure (errors, which a behind of
+/// chrismo's comes with, stale, gh-wait). Any other step of chrismo's that's first does: a
+/// step NEXT hands chrismo is never a silent stall (bot or answer, when
+/// address's gate refuses and nothing listed clears it).
+const QUIET_YOURS: [&str; 10] =
+    ["closed", "ready", "blocked", "take", "reset-dirty", "nothing-dirty", "errors", "stale", "gh-wait", "behind"];
+
 /// What sd state's next steps mean to the pass. carry: sd state is unsure,
 /// so what was notified, what failed and the stale clock carry over. hold:
 /// an agent step hides every other step, so what was notified and failed
@@ -157,7 +166,11 @@ fn reason(step: &Value) -> Value {
 fn classify(s: &Value) -> Class {
     let next: &[Value] = at(s, "next").as_array().map_or(&[], Vec::as_slice);
     let k: Vec<&str> = next.iter().map(|x| at(x, "key").as_str().unwrap_or("")).collect();
-    let red: Vec<Value> = next.iter().filter(|x| at(x, "key").as_str().is_some_and(|k| RED.contains(&k))).map(reason).collect();
+    let notifies = |i: usize, x: &Value| {
+        let key = at(x, "key").as_str().unwrap_or("");
+        RED.contains(&key) || (i == 0 && at(x, "who") == "you" && !QUIET_YOURS.contains(&key))
+    };
+    let red: Vec<Value> = next.iter().enumerate().filter(|(i, x)| notifies(*i, x)).map(|(_, x)| reason(x)).collect();
     let waiting = !next.iter().any(|x| at(x, "who").as_str().is_some_and(|w| w != "wait"));
     let unsure = k.contains(&"errors") || k.contains(&"stale") || k.contains(&"gh-wait");
     let (glyph, reasons, note) = match k.as_slice() {
@@ -1245,6 +1258,31 @@ mod tests {
         }
         assert!(RED.contains(&"failed"));
         assert!(RED.contains(&"verify-red"), "a failed verify is chrismo's until #325's part 2 hands it to the agent");
+    }
+
+    #[test]
+    fn classify_a_first_step_thats_chrismos_notifies_whatever_its_key_326() {
+        // Address refused with nothing ahead clearing it: NEXT hands bot or
+        // answer to chrismo, and that's ❌, notified.
+        for k in ["bot", "answer", "some-new-key"] {
+            let c = of(&[step(k, "you"), step("ci-wait", "wait")]);
+            assert_eq!((c.glyph, c.reasons.clone()), ("❌", vec![json!({"key": k, "msg": format!("say {k}")})]), "{k}");
+        }
+        // The agent's or waiting, it isn't; nor chrismo's behind another step.
+        assert_eq!((glyph(&[step("bot", "agent")]), of(&[step("bot", "agent")]).reasons.len()), ("🔧", 0));
+        assert_eq!((glyph(&[step("answer", "wait")]), of(&[step("answer", "wait")]).reasons.len()), ("⏳", 0));
+        let behind = [step("push", "run"), step("bot", "you")];
+        assert_eq!((glyph(&behind), of(&behind).reasons.len()), ("🔧", 0));
+        // Alongside a red step, both notify, in NEXT's order.
+        let c = of(&[step("bot", "you"), step("ci-red", "agent")]);
+        assert_eq!(c.reasons, vec![json!({"key": "bot", "msg": "say bot"}), json!({"key": "ci-red", "msg": "say ci-red"})]);
+        // chrismo's steps that stay quiet keep their glyph.
+        for (k, g) in [("closed", "🔧"), ("ready", "🔧"), ("blocked", "🔧"), ("take", "🔧"), ("reset-dirty", "🔧"), ("nothing-dirty", "🔧"), ("behind", "🔧"), ("errors", "⚠️")] {
+            let c = of(&[step(k, "you"), step("ci-wait", "wait")]);
+            assert_eq!((c.glyph, c.reasons.len()), (g, 0), "{k}");
+        }
+        assert_eq!(glyph(&[step("ready", "you")]), "✅");
+        assert_eq!(glyph(&[step("closed", "you")]), "🚫");
     }
 
     #[test]
