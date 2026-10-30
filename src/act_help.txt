@@ -116,10 +116,12 @@ Verbs:
             left for the agent. While address's gate refuses for a reason
             --force overrides, the answer is stored instead (below) and
             exits 0, except on a restack that would conflict: that restack
-            would drop the question. So is a ci-fix answer while CI may yet
-            be red at HEAD (unpushed, not run on HEAD yet, pending, blocked,
-            cancelled); once it passed at HEAD, the question is moot, and
-            answer refuses. Spends tokens
+            would drop the question. A ci-fix answer is stored the same way
+            while CI may yet be red at HEAD (unpushed, not run on HEAD yet,
+            pending, blocked, cancelled); once it passed at HEAD, the
+            question is moot, and answer refuses. Stored, it says whether
+            sd watch runs it once a push or CI run clears the gate, or what
+            is chrismo's to clear first. Spends tokens
   restack   rebase --onto the parent (the default branch once the parent
             merged), check the branch's own change came through unchanged,
             else roll back; never pushes. When the old base isn't an

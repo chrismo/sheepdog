@@ -141,6 +141,25 @@ fn len(v: &Value) -> usize {
     v.as_array().map_or(0, Vec::len)
 }
 
+/// Whether NEXT offers sd act push for <s>: something to push, and nothing
+/// holding it (a failed verify, a CI config change for review, someone
+/// else's commits, an undone restack, an unpushed parent, nothing to
+/// ship). sd act answer reads it too (#326).
+pub fn push_offered(s: &Value) -> bool {
+    let off = |p: &str| at(s, p) == &Value::Bool(false);
+    let n = |p: &str| val::n(s, p);
+    let on = |p: &str| val::on(s, p);
+    let pr_null = is_null(s, "pr");
+    let open = pr_null || at(s, "pr.state").as_str() == Some("OPEN");
+    let reset_away = on("push.remote_ours") && n("push.behind") > 0.0 && n("push.ahead") == 0.0;
+    let dropping = reset_away && on("push.remote_made");
+    let to_push = is_null(s, "push.remote_sha") || n("push.ahead") > 0.0 || (dropping && !on("push.dirty"));
+    let foreign = off("push.remote_ours") && n("push.theirs") > 0.0;
+    let held = !at(s, "push.held").is_null() || foreign || n("sync.undone") > 0.0 || on("parent.unpushed");
+    let empty = pr_null && at(s, "sync.ahead").as_f64() == Some(0.0) && n("push.behind") == 0.0;
+    open && !on("verify.at_head") && !held && !empty && to_push
+}
+
 /// The steps for an sd state record, first is next.
 pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
@@ -283,7 +302,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     // while it stands, what would move HEAD waits: that drops the question
     let refused = dirty || (open && !asking.is_empty() && (on("push.dirty") || answer_pending));
     let push_held = foreign || undone || parent_unpushed;
-    let push_step = open && !verify_red && !ci_held && !push_held && !empty && to_push;
+    let push_step = push_offered(s);
     let addr = crate::act::address_gate(s);
     let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
     let addr_refuses = !addr_why.is_empty();

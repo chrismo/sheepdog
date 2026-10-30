@@ -184,16 +184,18 @@ pub fn gate(s: &Value) -> Gate {
 
 /// What of ci-fix's wait nothing sd watch runs clears: a cancelled run
 /// (sd watch doesn't rerun CI), or unpushed commits NEXT offers no push
-/// for: held for chrismo's review of a CI config change, or verify red on
-/// HEAD (#325).
+/// for (next::push_offered): a CI config change held for chrismo's review,
+/// a verify red on HEAD (#325), or another hold sd state names.
 fn waits_yours(s: &Value) -> Vec<String> {
-    let ahead = n(s, "push.ahead") > 0.0;
+    let held = n(s, "push.ahead") > 0.0 && !crate::next::push_offered(s);
     if t(s, "ci.verdict") == "inconclusive" {
         vec!["the cancelled CI (rerun it: gh run rerun, or rwx retry)".into()]
-    } else if ahead && !at(s, "push.held").is_null() {
+    } else if held && !at(s, "push.held").is_null() {
         vec!["the held CI config change (review it, then sd act push)".into()]
-    } else if ahead && on(s, "verify.at_head") {
+    } else if held && on(s, "verify.at_head") {
         vec!["the verify red on HEAD (fix it, then sd act verify)".into()]
+    } else if held {
+        vec!["the unpushed commits NEXT won't push (sd state says why)".into()]
     } else {
         vec![]
     }
