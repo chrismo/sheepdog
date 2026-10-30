@@ -861,7 +861,7 @@ fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clear
     sd.rm("claude.prompt");
     sd.state(&[r#".ci.verdict = "pending""#]);
     let r = sd.ok(&["answer", "keep THREE"]);
-    assert_has(&r, &["NEXT offers it, so sd watch runs it"]);
+    assert_has(&r, &["(NEXT then offers ci-fix, so sd watch runs ci-fix)"]);
     for (edit, yours) in [
         (r#".ci.verdict = "inconclusive""#, "the cancelled CI (rerun it: gh run rerun, or rwx retry)"),
         (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "the held CI config change (review it, then sd act push)"),

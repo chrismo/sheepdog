@@ -349,7 +349,7 @@ pub fn going_on(step: &str, a: &super::Args) {
 pub fn answer_waits(b: &str, step: &str, why: &str, once: &str, yours: &[String], a: &super::Args) -> String {
     let still = if a.stored { "still " } else { "" };
     let then = if yours.is_empty() {
-        " (NEXT offers it, so sd watch runs it)".to_string()
+        format!(" (NEXT then offers {step}, so sd watch runs {step})")
     } else {
         format!("; nothing sd watch runs clears {}, so that's yours to clear", yours.join("; "))
     };

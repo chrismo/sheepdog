@@ -787,7 +787,7 @@ fn a_stored_address_answer_says_sd_watch_runs_it_only_when_a_push_clears_the_gat
     // a push NEXT offers clears it
     sd.state(&[TWO_OWED, ".push.ahead = 1"]);
     let r = sd.ok(&["answer", "call it bar"]);
-    assert_has(&r, &["your answer is stored", "NEXT offers it, so sd watch runs it"]);
+    assert_has(&r, &["your answer is stored", "(NEXT then offers address, so sd watch runs address)"]);
     assert_lacks(&r, "yours to clear");
     // nothing NEXT runs clears these: chrismo is told what's theirs
     for (edit, yours) in [
