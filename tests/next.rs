@@ -614,6 +614,11 @@ fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
     assert_eq!(keys(&e![&q]), "question");
     assert_eq!(step("question", "say", &e![&q]), "the agent asks (ci-fix): Which test is right?; CI is green at HEAD now, so it's moot: sd act ack --question drops it");
     assert_eq!(step("question", "cmd", &e![&q]), "sd act ack --question");
+    // no CI ran at HEAD: moot too, said without a verdict word
+    assert_eq!(
+        step("question", "say", &e![r#".ci.verdict = "none""#, &q]),
+        "the agent asks (ci-fix): Which test is right?; no CI ran at HEAD, so it's moot: sd act ack --question drops it"
+    );
     // red at HEAD: as before
     assert_eq!(step("question", "cmd", &e![&red, &q]), r#"sd act answer "<your answer>""#);
     // a give-up keeps its other ways on

@@ -381,7 +381,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 let (say, then) = if addr_moot {
                     (format!("the agent {did} (address): {asked}; nothing is owed now, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
                 } else if ci_moot {
-                    (format!("the agent {did} (ci-fix): {asked}; CI is {} at HEAD now, so it's moot: sd act ack --question drops it{and}", t("ci.verdict")), cmd("sd act ack --question"))
+                    let ci = if t("ci.verdict") == "green" { "CI is green at HEAD now" } else { "no CI ran at HEAD" };
+                    (format!("the agent {did} (ci-fix): {asked}; {ci}, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
                 } else if !ci_waits.is_empty() {
                     (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
                 } else if asking == "address" && addr_refuses {
