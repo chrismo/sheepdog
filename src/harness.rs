@@ -266,9 +266,14 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     } else if !b.is_empty() && result.is_ok() {
         failed::clear(b);
     } else if !b.is_empty() {
-        // A harness that exited 0 failed only sd's parse: the reply's last
-        // line (a brace, a fence) wouldn't say so (#324).
-        let why = if out.ok { "no usable result in the reply".to_string() } else { failed::why(out.timed_out, &said, &out.stderr, status) };
+        // pi exiting 0 failed only sd's parse of its fenced reply: the
+        // reply's last line (a brace, a fence) wouldn't say so (#324).
+        // claude's said names its error result, exit 0 or not.
+        let why = if out.ok && h != "claude" {
+            "no usable result in the reply".to_string()
+        } else {
+            failed::why(out.timed_out, &said, &out.stderr, status)
+        };
         failed::record(b, s.label(), h, &why);
     }
     result.map(|results| Ran { results, session: sid }).map_err(Stop::Failed)
@@ -716,6 +721,8 @@ mod tests {
         assert_eq!(fenced("...remain unrun, as requested.```json\n{\"ok\": true}\n```\n"), "{\"ok\": true}\n");
         assert_eq!(fenced("Done: ```json \n{\"a\": 1}\n```\nthen ```json\n{\"b\": 2}\n```"), "{\"b\": 2}\n");
         assert_eq!(fenced("see ```json\n{\"unclosed\": 2}\n"), "");
+        // prose that only names the fence is buffered until the real one resets it
+        assert_eq!(fenced("I'll answer in ```json\nprose\n```json\n{\"ok\": true}\n```"), "{\"ok\": true}\n");
     }
 
     #[test]
