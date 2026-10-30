@@ -4,6 +4,20 @@
 // worktree beside the main one with start's setup hook run; the PR number and
 // reviewer mode recorded; enrolled. stdout is only the worktree's path.
 //
+// A checkout already there is used as it is (#358), as start does (#252): no
+// fetch into it, no reset, no setup hook. Which one, first match:
+// - the branch already following PR <n>, whatever it's called (no fetch at
+//   all, so a repeat follow just prints its path);
+// - the branch checked out where follow runs, when it's the PR's: it shares a
+//   commit with the PR's head that the default branch doesn't have (so cd
+//   into a gh pr checkout and follow it);
+// - review/<n>, if it's the PR's by the same test.
+// A branch's worktree is made, with the hook, when it has none. pr-head, if
+// none is recorded, is where branch and PR last met (their merge-base), so
+// fetch keeps any commits of the branch's own. Refused: a branch that is an
+// author's or another PR's, two branches following the PR, a review/<n> that
+// isn't the PR's, a registered worktree whose directory is gone.
+//
 // fetch (A1): the author's pushes, force-pushes too, taken as they come: the
 // branch reset to the PR's head, unless the worktree has changes or the
 // branch has commits no fetched head had, which are chrismo's.
@@ -12,7 +26,7 @@ use super::bookkeeping::enroll_mark;
 use super::commands::status;
 use super::die;
 use super::review::short;
-use super::start::{destination, git_on_stderr, start_hook};
+use super::start::{destination, git_on_stderr, start_default, start_hook, start_point};
 use crate::git::{git, git_out, is_ancestor, main_worktree, pr_head_ref, rev, show_ref, worktree_for};
 use std::path::Path;
 
@@ -51,35 +65,112 @@ fn fetch_pr(dest: &str, n: &str, remote: &str) -> String {
     rev(".", dest)
 }
 
-pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
-    let src = git_out(".", &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| die("not inside a worktree"));
-    let dst = destination(&main_worktree("."), b);
-    if Path::new(&dst).exists() {
-        die(format!("{dst} already exists"));
+/// The branch following PR <n>; dies when more than one does.
+fn following(n: &str) -> Option<String> {
+    let all = git_out(".", &["config", "--get-regexp", r"^branch\..*\.sd-pr$"]).unwrap_or_default();
+    let found: Vec<&str> = all
+        .lines()
+        .filter_map(|l| l.split_once(' ').filter(|(_, v)| *v == n))
+        .filter_map(|(k, _)| k.strip_prefix("branch.")?.strip_suffix(".sd-pr"))
+        .filter(|b| reviewing(b) && show_ref(".", &format!("refs/heads/{b}")))
+        .collect();
+    if found.len() > 1 {
+        die(format!("PR #{n} is followed on more than one branch: {}", found.join(" ")));
     }
-    if show_ref(".", &format!("refs/heads/{b}")) {
-        die(format!("{b} already exists"));
+    found.first().map(|b| b.to_string())
+}
+
+/// Where <b> and the PR's head <pr_head> last met, when that's past the
+/// default branch <main>: so <b> is the PR's.
+fn met(b: &str, pr_head: &str, main: Option<&str>) -> Option<String> {
+    let mb = git_out(".", &["merge-base", &format!("refs/heads/{b}"), pr_head])?;
+    if main.is_some_and(|m| is_ancestor(".", &mb, m)) {
+        return None;
     }
-    let pr_head = fetch_pr(&pr_head_ref(b), n, remote);
-    let keys = [("sd-pr", n), ("sd-mode", REVIEWER)];
-    for (k, v) in keys {
+    Some(mb)
+}
+
+/// Dies when <b> is another PR's or an author's.
+fn unclaimed(b: &str, n: &str) {
+    let get = |k: &str| git_out(".", &["config", "--get", &format!("branch.{b}.{k}")]).filter(|v| !v.is_empty());
+    if let Some(m) = get("sd-pr").filter(|m| m != n) {
+        if reviewing(b) {
+            die(format!("{b} already follows PR #{m}"));
+        }
+        die(format!("{b} is PR #{m}'s"));
+    }
+    if !reviewing(b) && (get("sheepdog").as_deref() == Some("true") || get("sd-task").is_some()) {
+        die(format!("{b} is an author's branch (sd act start or enroll): sd act follow won't make it a reviewer's"));
+    }
+}
+
+/// <b> following PR <n> in its worktree, made beside the main one if it has
+/// none (<b> made too, at <from>, if given) and the setup hook run there;
+/// pr-head recorded at <pr_head> unless one is. Prints the worktree's path;
+/// the exit code.
+fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>) -> i32 {
+    let wt = worktree_for(".", b);
+    if !wt.is_empty() && !Path::new(&wt).is_dir() {
+        die(format!("{b} is checked out at {wt}, which is gone: git worktree prune, then follow again"));
+    }
+    let made = wt.is_empty();
+    let dst = if made { destination(&main_worktree("."), b) } else { wt };
+    if made {
+        if Path::new(&dst).exists() {
+            die(format!("{dst} already exists"));
+        }
+        let add = match from {
+            Some(f) => ["worktree", "add", "-b", b, &dst, f].to_vec(),
+            None => ["worktree", "add", &dst, b].to_vec(),
+        };
+        if !git_on_stderr(&add) {
+            die("git worktree add failed");
+        }
+    } else {
+        eprintln!("sd act: {b} is already checked out at {dst}; using it");
+    }
+    for (k, v) in [("sd-pr", n), ("sd-mode", REVIEWER)] {
         let o = git(".", &["config", &format!("branch.{b}.{k}"), v]);
         if !o.ok {
             eprint!("{}", o.stderr);
             std::process::exit(o.code);
         }
     }
-    if !git_on_stderr(&["worktree", "add", "-b", b, &dst, &pr_head]) {
-        for (k, _) in keys {
-            git(".", &["config", "--unset", &format!("branch.{b}.{k}")]);
+    if let Some(h) = pr_head.filter(|_| !show_ref(".", &pr_head_ref(b))) {
+        let o = git(".", &["update-ref", &pr_head_ref(b), h]);
+        if !o.ok {
+            eprint!("{}", o.stderr);
+            die(format!("couldn't record the PR's head for {b}"));
         }
-        die("git worktree add failed");
     }
     enroll_mark(b);
     eprintln!("enrolled {b}");
-    let rc = if start_hook(&src, &dst, b) { 0 } else { 1 };
+    let rc = if made && !start_hook(src, &dst, b) { 1 } else { 0 };
     println!("{dst}");
     rc
+}
+
+pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
+    let src = git_out(".", &["rev-parse", "--show-toplevel"]).unwrap_or_else(|| die("not inside a worktree"));
+    if let Some(f) = following(n) {
+        return settle(&src, &f, n, None, None);
+    }
+    let fetched = format!("refs/sheepdog/{b}/pr-fetched");
+    let pr_head = fetch_pr(&fetched, n, remote);
+    git(".", &["update-ref", "-d", &fetched]);
+    let main = start_default(remote).and_then(|d| start_point(remote, &d));
+    let here = git_out(".", &["branch", "--show-current"]).unwrap_or_default();
+    let mine = (!here.is_empty()).then(|| met(&here, &pr_head, main.as_deref())).flatten();
+    if let Some(mb) = mine {
+        unclaimed(&here, n);
+        return settle(&src, &here, n, Some(&mb), None);
+    }
+    if !show_ref(".", &format!("refs/heads/{b}")) {
+        return settle(&src, b, n, Some(&pr_head), Some(&pr_head));
+    }
+    unclaimed(b, n);
+    let mb = met(b, &pr_head, main.as_deref()).unwrap_or_else(|| die(format!("{b} already exists and isn't PR #{n}'s")));
+    settle(&src, b, n, Some(&mb), None)
 }
 
 pub fn fetch(b: &str, remote: &str) {
