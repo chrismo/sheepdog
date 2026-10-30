@@ -165,6 +165,11 @@ fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, St
     } else {
         if verdict {
             verify_red::clear(wt, b);
+        } else if let Some(h) = verify_red::at_head(wt, b).filter(|_| !before.is_empty()) {
+            r.line(&format!(
+                "verify passed on uncommitted changes; the red record at {} stands (commit, or rerun on a clean tree, to clear it)",
+                &h[..7]
+            ));
         }
         return Ok(cmd);
     }

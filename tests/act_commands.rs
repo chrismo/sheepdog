@@ -143,6 +143,41 @@ mod verify {
     }
 
     #[test]
+    fn a_pass_on_a_dirty_tree_says_the_red_record_at_head_stands_325() {
+        let sd = sd();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        sd.write("scratch.txt", "stray\n");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        let sha7 = &sd.head_sha()[..7];
+        let line = format!("verify passed on uncommitted changes; the red record at {sha7} stands (commit, or rerun on a clean tree, to clear it)");
+        assert!(has_line(&r.output, &line), "{}", r.output);
+        assert!(sd.verify_red().is_some());
+    }
+
+    #[test]
+    fn a_pass_on_a_dirty_tree_with_no_red_record_at_head_says_nothing_of_one_325() {
+        let sd = sd();
+        sd.write("scratch.txt", "stray\n");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        assert_lacks(&r.output, "red record");
+
+        fs::remove_file(sd.cwd.join("scratch.txt")).unwrap();
+        verify_cmd(&sd, "false");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        sd.git(&["commit", "-q", "--allow-empty", "-m", "moved"]);
+        sd.write("scratch.txt", "stray\n");
+        verify_cmd(&sd, "true");
+        let r = sd.run(&["verify"]);
+        assert_eq!(r.status, 0);
+        assert_lacks(&r.output, "red record");
+    }
+
+    #[test]
     fn a_failure_on_a_dirty_tree_isnt_recorded_against_head_325() {
         let sd = sd();
         sd.write("file.txt", "half-done\n");

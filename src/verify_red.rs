@@ -36,3 +36,10 @@ pub fn clear(wt: &str, b: &str) {
         eprintln!("sd: warning: couldn't remove the failed verify on {b}, so NEXT and ship still count HEAD red; git update-ref -d {r}");
     }
 }
+
+/// HEAD's sha when the record is on it.
+pub fn at_head(wt: &str, b: &str) -> Option<String> {
+    let rec: serde_json::Value = serde_json::from_str(&git_out(wt, &["cat-file", "blob", &name(b)])?).ok()?;
+    let head = git_out(wt, &["rev-parse", "HEAD"])?;
+    (rec.get("head")?.as_str()? == head).then_some(head)
+}
