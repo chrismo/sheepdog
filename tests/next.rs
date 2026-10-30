@@ -475,6 +475,12 @@ fn bot_items_address_refuses_with_nothing_ahead_to_clear_it_are_chrismo_s_326() 
         "address 2 bot items: sd act address refuses while restack due, and it would conflict: clear that first, or sd act address --force"
     );
     assert_eq!(step("bot", "cmd", &closed), "sd act address --force");
+    // sync unknown, with no step for it
+    let unknown = e![".threads.owed_bot = 2", ".sync.up_to_date = null"];
+    assert_eq!(keys(&unknown), "bot");
+    assert_eq!(step("bot", "say", &unknown), "address 2 bot items: sd act address refuses while sync with main unknown: clear that first, or sd act address --force");
+    // behind a step that blocks first, it stays the agent's
+    assert_eq!(step("bot", "who", &e![".threads.owed_bot = 2", ".session.locked = true"]), "agent");
 }
 
 #[test]
