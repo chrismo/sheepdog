@@ -10,7 +10,7 @@
 
 mod common;
 
-use common::{assert_has, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
+use common::{assert_has, assert_lacks, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
 use std::fs;
 
 // By number, PR #<n> from a fork's their-fix, its head origin's
@@ -233,6 +233,55 @@ fn follow_adopts_a_same_repo_prs_branch_checked_out_tracking_it() {
 }
 
 #[test]
+fn follow_adopts_a_fork_prs_checkout_tracking_the_forks_branch_by_url_behind_the_pr() {
+    let mut sd = sd();
+    let fork = sd.path("fork.git");
+    sd.git(&["init", "-q", "--bare", &fork]);
+    sd.git_in("other", &["push", "-q", &fork, "their-fix"]);
+    sd.git(&["fetch", "-q", &fork, "their-fix:their-fix"]);
+    sd.git(&["config", "branch.their-fix.remote", &fork]);
+    sd.git(&["config", "branch.their-fix.merge", "refs/heads/their-fix"]);
+    sd.git(&["worktree", "add", "-q", &sd.path("their-fix"), "their-fix"]);
+    let theirs = sd.author_pushes("more", false);
+    sd.git_in("other", &["push", "-q", &fork, "their-fix"]);
+    sd.cd("their-fix");
+    let r = sd.run_sep(&["follow", "7"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("their-fix"));
+    sd.ok(&["fetch"]);
+    assert_eq!(sd.git(&["rev-parse", "HEAD"]), theirs);
+}
+
+#[test]
+fn follow_says_nothing_of_a_review_branch_checked_out_here_and_takes_it() {
+    let mut sd = sd();
+    sd.git(&["fetch", "-q", "origin", "refs/pull/7/head:review/7"]);
+    sd.git(&["worktree", "add", "-q", &sd.path("review-7"), "review/7"]);
+    sd.cd("review-7");
+    let r = sd.run_sep(&["follow", "7"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, sd.path("review-7"));
+    assert_lacks(&r.stderr, "isn't PR #7's");
+}
+
+#[test]
+fn follow_with_no_default_branch_adopts_the_checkout_tracking_the_pr_and_refuses_an_untracked_review_branch() {
+    let mut sd = sd();
+    sd.checkout_by_hand("their-fix", "their-fix");
+    sd.git(&["fetch", "-q", "origin", "refs/pull/7/head:review/7"]);
+    sd.git(&["branch", "-m", "main", "trunk"]);
+    sd.git(&["update-ref", "-d", "refs/remotes/origin/main"]);
+    sd.git(&["update-ref", "-d", "refs/remotes/origin/HEAD"]);
+    sd.git_in("origin.git", &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+    sd.git_in("origin.git", &["update-ref", "-d", "refs/heads/main"]);
+    let r = sd.run(&["follow", "7"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["review/7 already exists, and with no default branch to tell by, follow can't say it's PR #7's"]);
+    sd.cd("their-fix");
+    assert_eq!(sd.out(&["follow", "7"]), sd.path("their-fix"));
+}
+
+#[test]
 fn follow_from_the_branch_a_stacked_pr_is_on_makes_review_n_and_leaves_the_base_alone() {
     let mut sd = sd();
     sd.git_in("other", &["switch", "-qc", "base", "main"]);
@@ -247,7 +296,7 @@ fn follow_from_the_branch_a_stacked_pr_is_on_makes_review_n_and_leaves_the_base_
     let r = sd.run_sep(&["follow", "7"]);
     assert_eq!(r.status, 0, "{}", r.stderr);
     assert_eq!(r.output, sd.path("review-7"));
-    assert_has(&r.stderr, &["sd act: base isn't PR #7's checkout (it doesn't track refs/pull/7/head or a branch at its head); making review/7"]);
+    assert_has(&r.stderr, &["sd act: base isn't PR #7's checkout (its upstream isn't at the PR's head); making review/7"]);
     assert!(sd.git_try(&["config", "--get", "branch.base.sd-mode"]).is_none());
 }
 
