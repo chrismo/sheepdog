@@ -113,7 +113,10 @@ Verbs:
             marker. The question is dropped once the agent has run; a new
             needs-input records a new one. Refuses with no question, one
             that no longer stands, or an address question with no bot item
-            left for the agent. Spends tokens
+            left for the agent. While address's gate refuses, the answer is
+            stored instead (below) and exits 0, except on a restack that
+            would conflict: that restack would drop the question. Spends
+            tokens
   restack   rebase --onto the parent (the default branch once the parent
             merged), check the branch's own change came through unchanged,
             else roll back; never pushes. When the old base isn't an
@@ -279,6 +282,13 @@ restack --resolve's (#257): gave-up, already-on-target, conflict markers
 left, or past 3 stops. Its rebase rolled back, so HEAD and the worktree
 don't move: it stands until the target moves too, and sd act answer can't
 go on from it; resolve it by hand (sd act restack says how), or ack it.
+
+Stored answers (#326): an answer whose step can't run yet is kept in
+refs/sheepdog/<b>/answer, keyed to the question's record, so a question
+asked anew or dropped never gets it. The step that asked, run with no
+answer, goes on with it once its gate clears, and the step running uses
+it up. sd act ack --question drops it with the question; forget and sd
+watch's sweep drop it with the branch's other refs.
 
 Sessions (#69): an agent step forks the branch's session
 (branch.<b>.sd-session; claude --resume --fork-session, pi --fork) under a

@@ -80,6 +80,11 @@ pub fn rev(dir: &str, r: &str) -> String {
     git_out(dir, &["rev-parse", "-q", "--verify", &format!("{r}^{{commit}}")]).unwrap_or_default()
 }
 
+/// The object <r> names, whatever its type (a record's blob), else "".
+pub fn oid(dir: &str, r: &str) -> String {
+    git_out(dir, &["rev-parse", "-q", "--verify", r]).unwrap_or_default()
+}
+
 pub fn is_ancestor(dir: &str, a: &str, b: &str) -> bool {
     git_ok(dir, &["merge-base", "--is-ancestor", a, b])
 }

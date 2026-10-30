@@ -6,8 +6,8 @@ use super::commands::{command, status, verify_autofix};
 use super::hold::{hold_gate, hold_since, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, question_answered, question_ask,
-                  question_gate, question_say, step_session, step_store};
+use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base,
+                  question_answered, question_ask, question_gate, question_say, step_session, step_store, with_stored_answer};
 use super::{cfg, die, lock_recheck, state_json, Args};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
@@ -387,9 +387,18 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         return true;
     }
     if !a.force && !g.soft.is_empty() {
+        // not for a restack: it moves HEAD, dropping the question (#326)
+        if answering && !g.conflict {
+            answer_store(b, "address", &a.answer);
+            println!("{}", answer_waits(b, "address", &g.soft.join("; ")));
+            return true;
+        }
         eprintln!("sd act: not addressing {b}:");
         for why in &g.soft {
             eprintln!("  - {why}");
+        }
+        if answering {
+            eprintln!("a restack would drop the question, so the answer can't wait for one: sd act answer --force answers now");
         }
         eprintln!("(--force to run anyway)");
         std::process::exit(1);
@@ -530,6 +539,8 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
 /// included, so NEXT doesn't hand the worktree on mid-step (#170). It runs
 /// in the branch's worktree.
 pub fn address(b: &str, remote: &str, a: &Args) {
+    let stored = with_stored_answer(b, "address", a);
+    let a = stored.as_ref().unwrap_or(a);
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         die(format!("{b} isn't checked out in any worktree"));

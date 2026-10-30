@@ -5,7 +5,7 @@
 use super::commands::step_timeout;
 use super::start::start_default;
 use super::{attached_check, cfg, die, lock_recheck, or_die, repo_remote};
-use crate::git::{git, git_input, git_out, rev, show_ref, strip_nl, worktree_for, worktree_mark};
+use crate::git::{git, git_input, git_out, oid, rev, show_ref, strip_nl, worktree_for, worktree_mark};
 use crate::val::{at, on, t};
 use crate::{config, harness, json, running, state};
 use regex::Regex;
@@ -288,12 +288,54 @@ pub fn answer_prompt(answer: &str, items: &str) -> String {
     p
 }
 
-/// Once the answer reached the agent, its question is done; a new one it
-/// asks is recorded anew.
+/// Once the answer reached the agent, its question is done, and a stored
+/// answer with it; a new one it asks is recorded anew.
 pub fn question_answered(b: &str, answering: bool) {
     if answering {
         must(&["update-ref", "-d", &format!("refs/sheepdog/{b}/question")]);
+        answer_drop(b);
     }
+}
+
+// ── chrismo's answer, waiting on its step's gate (#326) ──────────────────────
+
+/// refs/sheepdog/<b>/answer's blob: chrismo's answer, keyed to the
+/// question record's blob <question>, so a question asked anew never gets it.
+fn answer_record(question: &str, step: &str, text: &str) -> String {
+    json::to_string(&json!({"question": question, "step": step, "text": text})) + "\n"
+}
+
+/// Store <text> as the answer to <b>'s standing <step> question.
+pub fn answer_store(b: &str, step: &str, text: &str) {
+    let q = oid(".", &format!("refs/sheepdog/{b}/question"));
+    let rec = answer_record(&q, step, text);
+    let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
+    let msg = format!("sd act answer: {step} can't run yet");
+    if q.is_empty() || !obj.ok || !git(".", &["update-ref", "-m", &msg, &format!("refs/sheepdog/{b}/answer"), &strip_nl(obj.stdout)]).ok {
+        die(format!("couldn't store the answer on {b}"));
+    }
+}
+
+pub fn answer_drop(b: &str) {
+    git(".", &["update-ref", "-d", &format!("refs/sheepdog/{b}/answer")]);
+}
+
+/// <a> with the answer stored for <b>'s standing <step> question, when <a>
+/// brings none: the step goes on with it once its gate clears.
+pub fn with_stored_answer(b: &str, step: &str, a: &super::Args) -> Option<super::Args> {
+    if !a.answer.is_empty() {
+        return None;
+    }
+    let q = state::question_state(".", b, &rev(".", &format!("refs/heads/{b}"))).ok()??;
+    let answer = at(&q, "answer").as_str().filter(|_| on(&q, "at_head") && t(&q, "step") == step)?.to_string();
+    eprintln!("sd act: going on with your stored answer to the {step} agent's question");
+    Some(super::Args { answer, ..a.clone() })
+}
+
+/// What sd act answer says when <step>'s gate refuses <why> and the answer
+/// waits.
+pub fn answer_waits(b: &str, step: &str, why: &str) -> String {
+    format!("{step} refuses on {b} while {why}: your answer is stored, and {step} goes on with it once that clears (NEXT offers it, so sd watch runs it)")
 }
 
 #[cfg(test)]

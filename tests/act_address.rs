@@ -731,6 +731,75 @@ fn sd_act_answer_resumes_addresss_session_with_the_answer_then_drops_the_questio
     assert!(!sd.has_question());
 }
 
+const TWO_OWED: &str = r#".threads.owed_bot = 2 | .threads.items += [{id: "T2", type: "thread", kind: "bot", path: "file.txt", line: 1, outdated: false, last: "review-bot"}]"#;
+
+fn has_answer(sd: &Sd) -> bool {
+    sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/answer"]).is_some()
+}
+
+#[test]
+fn sd_act_answer_stores_the_answer_while_addresss_gate_refuses_and_address_goes_on_with_it_once_that_clears_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    let sid = sd.git(&["config", "branch.feat.sd-session"]);
+    sd.rm("claude.args");
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    let r = sd.run(&["answer", "call it bar"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["1 unpushed commit(s)", "your answer is stored", "goes on with it once that clears"]);
+    assert!(!sd.ran("claude.args"));
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/answer"]);
+    assert_eq!(jq(&["-r", ".text"], &rec), "call it bar");
+    assert_eq!(jq(&["-r", ".question"], &rec), sd.rev("refs/sheepdog/feat/question"));
+    assert_eq!(sd.question(".step"), "address");
+    // the gate cleared: address goes on with it, and it's used up
+    sd.two_owed();
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["going on with your stored answer to the address agent's question"]);
+    assert_has(&sd.fx("claude.args"), &["call it bar"]);
+    assert_eq!(sd.after("--resume"), sid);
+    assert!(!sd.has_question());
+    assert!(!has_answer(&sd));
+}
+
+#[test]
+fn an_answer_cant_wait_on_a_restack_that_would_drop_its_question_nor_go_to_another_question_326() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    sd.rm("claude.args");
+    sd.state(&[TWO_OWED, ".sync.up_to_date = false | .sync.behind = 2 | .sync.conflict = true"]);
+    let r = sd.run(&["answer", "call it bar"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["restack due, and it would conflict", "a restack would drop the question", "sd act answer --force"]);
+    assert!(!has_answer(&sd));
+    // stored, then the agent asks anew at the same HEAD: the answer isn't for that one
+    sd.state(&[TWO_OWED, ".push.ahead = 1"]);
+    sd.ok(&["answer", "call it bar"]);
+    let again = jq(&["-c", r#".text = "And the other one?""#], &sd.git(&["cat-file", "blob", "refs/sheepdog/feat/question"]));
+    let blob = sd.git_with(&[], Some(&format!("{again}\n")), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/question", &blob]);
+    sd.two_owed();
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not running address on feat: its agent asked", "And the other one?"]);
+    assert!(!sd.ran("claude.args"));
+    // ack --question drops a stored answer with it
+    sd.ok(&["ack", "--question"]);
+    assert!(!has_answer(&sd));
+}
+
 // @test "sd act answer hands address the items owed now, so one that came after the question gets an answer (#178)"
 #[test]
 fn sd_act_answer_hands_address_the_items_owed_now_so_one_that_came_after_the_question_gets_an_answer_178() {

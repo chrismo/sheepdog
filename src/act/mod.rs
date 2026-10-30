@@ -56,7 +56,7 @@ pub fn repo_remote() -> String {
 }
 
 /// The flags every verb shares.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Args {
     pub force: bool,
     pub accept: bool,

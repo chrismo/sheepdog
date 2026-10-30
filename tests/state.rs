@@ -2669,6 +2669,13 @@ fn question_stands_at_head_with_the_worktree_the_step_left_nexts_question_step_1
     assert_eq!(r.field(".question.step"), "ci-fix");
     assert_eq!(r.field(".question.at_head"), "true");
     assert_eq!(r.field(".next[0].key"), "question");
+    assert_eq!(r.field(".question.answer"), "null");
+    // chrismo's answer stored for it (#326); one for another question isn't
+    let q = sd.git(&["rev-parse", "refs/sheepdog/feat/question"]);
+    sd.put_blob("refs/sheepdog/feat/answer", &format!(r#"{{"question": "{q}", "step": "ci-fix", "text": "keep it"}}"#));
+    assert_eq!(sd.state(&[]).field(".question.answer"), "keep it");
+    sd.put_blob("refs/sheepdog/feat/answer", r#"{"question": "0000", "step": "ci-fix", "text": "keep it"}"#);
+    assert_eq!(sd.state(&[]).field(".question.answer"), "null");
     let r = sd.run(&[]);
     assert_has(&r.output, &["? ci-fix asks"]);
     let r = sd.run(&["--long"]);
