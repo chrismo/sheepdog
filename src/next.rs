@@ -18,7 +18,10 @@
 // stored for the question stands in for its question step: the bot step goes
 // on with it once the gate clears, an answer step waits behind what clears it
 // till then, and the steps that would move HEAD, dropping the question
-// (restacks, agent fixes, review), wait for it.
+// (restacks, agent fixes, review), wait for it. A ci-fix question follows
+// ci-fix's gate (src/act/ci_fix.rs) the same way: its stored answer runs as
+// the ci-red step once CI is red at HEAD, and CI passing at HEAD makes the
+// question moot.
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -75,6 +78,7 @@
 // Field reads follow the SuperDB query this replaced (src/val.rs), and an
 // equality holds only between two present values.
 
+use crate::act::CiFixGate;
 use crate::val::{self, at, sj, text};
 use serde_json::{json, Value};
 
@@ -275,7 +279,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             || (need_review && !fixing)
             || restack_due
             || (pr_null && !empty && !dropping));
-    let answer_pending = open && stored && asking == "address";
+    let answer_pending = open && stored && (asking == "address" || asking == "ci-fix");
     // while it stands, what would move HEAD waits: that drops the question
     let refused = dirty || (open && !asking.is_empty() && (on("push.dirty") || answer_pending));
     let push_held = foreign || undone || parent_unpushed;
@@ -286,7 +290,14 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     let bot = open && bot_blocking > 0.0 && asking != "address" && !refused;
     let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
     let addr_moot = asking == "address" && addr.hard.is_none() && n("threads.owed_bot") == 0.0;
-    let resume = answer_pending && !addr_moot;
+    let ci = if asking == "ci-fix" { crate::act::ci_fix_gate(s) } else { CiFixGate::Runs };
+    let ci_moot = matches!(ci, CiFixGate::Moot(_));
+    let ci_waits = match &ci {
+        CiFixGate::Waits { why, .. } => why.clone(),
+        _ => String::new(),
+    };
+    let resume = answer_pending && asking == "address" && !addr_moot;
+    let resume_ci = answer_pending && asking == "ci-fix" && !ci_moot;
 
     let branch = t("branch");
     let target = t("sync.target");
@@ -363,12 +374,16 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !asking.is_empty() && (!answer_pending || addr_moot) {
+            if open && !asking.is_empty() && (!answer_pending || addr_moot || ci_moot) {
                 let answer = "sd act answer \"<your answer>\"";
                 let did = if is("question.kind", "gave-up") { "gave up" } else { "asks" };
+                let and = if stored { ", and your answer" } else { "" };
                 let (say, then) = if addr_moot {
-                    let and = if stored { ", and your answer" } else { "" };
                     (format!("the agent {did} (address): {asked}; nothing is owed now, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
+                } else if ci_moot {
+                    (format!("the agent {did} (ci-fix): {asked}; CI is {} at HEAD now, so it's moot: sd act ack --question drops it{and}", t("ci.verdict")), cmd("sd act ack --question"))
+                } else if !ci_waits.is_empty() {
+                    (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: answer it with sd act answer, and it runs once CI is red at HEAD"), cmd(answer))
                 } else if asking == "address" && addr_refuses {
                     answer_refused(s, &addr, &addr_why, &asked, push_step || (ci_held && !push_held))
                 } else if asking == "resolve" {
@@ -461,6 +476,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
             if ci_red && asking != "ci-fix" && !refused {
                 agent(hold, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
+            } else if resume_ci && ci == CiFixGate::Runs {
+                agent(hold, "ci-red", format!("fix CI: {}, going on with your answer to its question", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else {
                 None
             },
@@ -709,6 +726,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
+            if resume_ci && !ci_waits.is_empty() {
+                step("answer", "wait", format!("your answer to the ci-fix agent's question waits while {ci_waits}"), None)
+            } else {
+                None
+            },
             if has_pr && parent_closed {
                 step("parent-closed", "you",
                     format!("{parent} (#{}) was closed without merging: decide what this PR targets", t("parent.pr.number")),
@@ -777,7 +799,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     // step that doesn't clear the gate (attached, take), it stays an agent
     // step: that step blocks first.
     let first = out.first().map(|st| text(&st["key"])).unwrap_or_default();
-    if (first == "bot" || (first == "answer" && resume)) && addr_refuses {
+    if (first == "bot" || (first == "answer" && asking == "address")) && addr_refuses {
         let force = Some("sd act address --force".to_string());
         let (say, cmd) = if addr.hard.is_some() {
             ("clear that first", None)

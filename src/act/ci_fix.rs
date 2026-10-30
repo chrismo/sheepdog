@@ -163,6 +163,7 @@ pub fn gate(s: &Value) -> Gate {
             return waits("CI was cancelled".into(), "CI was cancelled, not red: rerun it (gh run rerun, or rwx retry), then wait".into())
         }
         v @ ("green" | "none") if at_head => return Gate::Moot(format!("CI is {v} on {b}; nothing to fix")),
+        v @ ("green" | "none") => return waits(format!("CI is {v}, but not on HEAD"), format!("CI is {v} on {b}; nothing to fix")),
         v => return waits(format!("CI is {v}"), format!("CI is {v} on {b}; nothing to fix")),
     }
     if !on(s, "ci.for_head") {
@@ -397,7 +398,7 @@ mod tests {
         assert_eq!(why(gate(&st(json!({"ci.verdict": "inconclusive"})))), "CI was cancelled");
         assert_eq!(why(gate(&st(json!({"ci.for_head": false})))), "CI's red is for abcdef1, not HEAD");
         assert_eq!(why(gate(&st(json!({"push.ahead": 2})))), "2 unpushed commit(s)");
-        assert_eq!(why(gate(&st(json!({"ci.verdict": "green", "push.ahead": 1})))), "CI is green");
+        assert_eq!(why(gate(&st(json!({"ci.verdict": "green", "push.ahead": 1})))), "CI is green, but not on HEAD");
         assert_eq!(gate(&st(json!({"ci.verdict": "green"}))), Gate::Moot("CI is green on feat; nothing to fix".into()));
         assert_eq!(gate(&st(json!({"pr.state": "MERGED"}))), Gate::Hard("PR #7 is merged; nothing to fix".into()));
     }

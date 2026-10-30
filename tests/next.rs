@@ -585,6 +585,58 @@ fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_
     assert_eq!(keys(&e![&st, ".threads.owed_bot = 1", &a]), "bot");
 }
 
+#[test]
+fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
+    let q = asked("ci-fix", true);
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    let ahead = e![&red, ".push.ahead = 1", ".ci.for_head = false", r#".ci.sha = "h0""#, &q];
+    assert_eq!(keys(&ahead), "question push");
+    assert_eq!(
+        step("question", "say", &ahead),
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI's red is for h0, not HEAD: answer it with sd act answer, and it runs once CI is red at HEAD"
+    );
+    assert_eq!(step("question", "cmd", &ahead), r#"sd act answer "<your answer>""#);
+    let pending = e![r#".ci.verdict = "pending""#, &q];
+    assert_eq!(keys(&pending), "question ci-wait");
+    assert_eq!(
+        step("question", "say", &pending),
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI is pending: answer it with sd act answer, and it runs once CI is red at HEAD"
+    );
+    // CI passed at HEAD: nothing left to fix
+    assert_eq!(keys(&e![&q]), "question");
+    assert_eq!(step("question", "say", &e![&q]), "the agent asks (ci-fix): Which test is right?; CI is green at HEAD now, so it's moot: sd act ack --question drops it");
+    assert_eq!(step("question", "cmd", &e![&q]), "sd act ack --question");
+    // red at HEAD: as before
+    assert_eq!(step("question", "cmd", &e![&red, &q]), r#"sd act answer "<your answer>""#);
+}
+
+#[test]
+fn a_stored_ci_fix_answer_runs_as_the_ci_red_step_once_ci_is_red_at_head_and_waits_on_ci_till_then_326() {
+    let a = answered("ci-fix");
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    // the agent's edits are uncommitted: they're the answer's to go on from
+    let now = e![&red, ".push.dirty = true", &a];
+    assert_eq!(keys(&now), "ci-red");
+    assert_eq!(step("ci-red", "who", &now), "agent");
+    assert_eq!(step("ci-red", "say", &now), "fix CI: test, going on with your answer to its question");
+    assert_eq!(step("ci-red", "cmd", &now), "sd act ci-fix");
+    // the push goes first, then CI on HEAD
+    let ahead = e![&red, ".push.ahead = 1", ".ci.for_head = false", r#".ci.sha = "h0""#, &a];
+    assert_eq!(keys(&ahead), "push answer");
+    assert_eq!(step("answer", "who", &ahead), "wait");
+    assert_eq!(step("answer", "say", &ahead), "your answer to the ci-fix agent's question waits while CI's red is for h0, not HEAD");
+    assert_eq!(keys(&e![r#".ci.verdict = "pending""#, &a]), "ci-wait answer");
+    // passed at HEAD: moot
+    assert_eq!(keys(&e![&a]), "question");
+    assert_eq!(
+        step("question", "say", &e![&a]),
+        "the agent asks (ci-fix): Which test is right?; CI is green at HEAD now, so it's moot: sd act ack --question drops it, and your answer"
+    );
+    // what would move HEAD waits for it
+    assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "ci-red");
+    assert_eq!(keys(&e![&red, STACKED, &a]), "ci-red");
+}
+
 // @test "bot items that are only info: chrismo reads them, then acks"
 #[test]
 fn bot_items_that_are_only_info_chrismo_reads_them_then_acks() {
