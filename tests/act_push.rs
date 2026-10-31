@@ -210,6 +210,22 @@ fn rewritten_with_someone_elses_commit_on_the_remote_refused_even_with_force() {
     assert_eq!(sd.tracks("feat"), "origin/main");
 }
 
+// Someone else's commit pulled here, one of ours on top: the remote head is
+// in the reflog, so only who made the commits says they aren't all ours (#356).
+#[test]
+fn commits_someone_else_made_on_the_branch_refused_unless_force_356() {
+    let sd = sd();
+    sd.upstream("theirs");
+    sd.git(&["pull", "-q", "--ff-only", "origin", "feat"]);
+    sd.commit("mine");
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not pushing feat:", "someone else made commits on the branch", "sync.foreign_authors", "--force"]);
+    assert_ne!(sd.remote("feat"), sd.rev("feat"));
+    assert_eq!(sd.run(&["push", "--force"]).status, 0);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
+}
+
 // @test "a pushed commit reset away locally: the remote head is ours, so it's force-pushed with a lease (#86)"
 #[test]
 fn a_pushed_commit_reset_away_locally_the_remote_head_is_ours_so_its_force_pushed_with_a_lease_86() {
@@ -288,7 +304,7 @@ fn someones_fast_forward_taken_a_commit_on_top_pushed_then_both_reset_away_not_o
     sd.git(&["fetch", "-q", "origin"]);
     sd.git(&["merge", "-q", "--ff-only", "origin/feat"]);
     sd.commit("mine");
-    sd.ok(&["push"]);
+    sd.ok(&["push", "--force"]); // their commit is on the branch (#356)
     let pushed = sd.remote("feat");
     sd.git(&["reset", "-q", "--hard", "HEAD~2"]);
     let r = sd.run(&["push"]);
@@ -327,7 +343,7 @@ fn someones_commit_taken_then_replayed_by_a_restack_and_pushed_then_reset_away_s
     sd.git(&["rebase", "-q", "origin/main"]);
     assert_eq!(sd.git(&["log", "-1", "--format=%ae"]), "them@example.com");
     assert_eq!(sd.git(&["log", "-1", "--format=%ce"]), "t@example.com");
-    sd.ok(&["push"]);
+    sd.ok(&["push", "--force"]); // their commit is on the branch (#356)
     let pushed = sd.remote("feat");
     assert_eq!(pushed, sd.rev("feat"));
     sd.git(&["reset", "-q", "--hard", "HEAD~1"]);
@@ -375,7 +391,7 @@ fn a_restack_past_a_colleagues_squash_merged_commit_drops_it_from_the_branch_pus
     sd.git(&["fetch", "-q", "origin"]);
     sd.git(&["merge", "-q", "--ff-only", "origin/feat"]);
     sd.commit("mine");
-    sd.ok(&["push"]);
+    sd.ok(&["push", "--force"]); // their commit is on the branch (#356)
     sd.main_moves(true, "other.txt", "theirs", "theirs (#1)", true);
     sd.git(&["fetch", "-q", "origin"]);
     sd.git(&["rebase", "-q", "origin/main"]);

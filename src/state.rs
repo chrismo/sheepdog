@@ -739,6 +739,7 @@ struct Facts {
     by_tree: bool,
     conflict: Value,
     replays_parent: Value,
+    foreign_authors: Value,
     undone: i64,
     remote_sha: String,
     ahead: i64,
@@ -996,7 +997,7 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone, "replays_parent": s.replays_parent},
+                 "undone": s.undone, "replays_parent": s.replays_parent, "foreign_authors": s.foreign_authors},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "held": s.held},
@@ -1124,6 +1125,41 @@ fn replays_parent(dir: &str, head: &str, old_base: &str, parent_merged: &Value, 
     let Some(list) = git_out(dir, &["rev-list", "--topo-order", &format!("{old_base}..{head}")]) else { return Value::Null };
     let commits = parent_commits(parent_pr);
     json!(list.lines().filter(|c| commits.contains(*c)).collect::<Vec<_>>())
+}
+
+/// O4: <branch>'s worktree has uncommitted changes (#143, #178); null when
+/// it's checked out nowhere or git status fails.
+fn worktree_dirty(dir: &str, branch: &str) -> Value {
+    let wt = worktree_for(dir, branch);
+    if wt.is_empty() {
+        return Value::Null;
+    }
+    let o = git(&wt, &["--no-optional-locks", "status", "--porcelain"]);
+    if o.ok {
+        json!(!o.stdout.is_empty())
+    } else {
+        Value::Null
+    }
+}
+
+/// O4: the author and committer emails on <head> past <not> other than
+/// user.email, case aside, newest first (#356). null for a followed PR
+/// (#250), with no target (<not>'s first) or user.email, or when git fails.
+fn foreign_authors(dir: &str, head: &str, reviewer: bool, not: &[&str]) -> Value {
+    if reviewer || not.first().is_none_or(|t| t.is_empty()) {
+        return Value::Null;
+    }
+    let Some(me) = git_out(dir, &["config", "user.email"]).filter(|m| !m.is_empty()) else { return Value::Null };
+    let mut args = vec!["log", "--format=%ae%n%ce", head, "--not"];
+    args.extend(not.iter().copied().filter(|r| !r.is_empty()));
+    let Some(people) = git_out(dir, &args) else { return Value::Null };
+    let mut out: Vec<&str> = Vec::new();
+    for p in people.lines() {
+        if !p.eq_ignore_ascii_case(&me) && !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
+            out.push(p);
+        }
+    }
+    json!(out)
 }
 
 /// sd state --json <branch>: its record, NEXT included, as seen from <dir>,
@@ -1380,16 +1416,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     if remote_ours == true && ahead == 0 && push_behind > 0 {
         remote_made = json!(made_here(dir, &format!("{head}..{remote_sha}")));
     }
-    // dirty: the worktree has uncommitted changes (#143, #178); null when the
-    // branch is checked out nowhere or git status fails.
-    let mut dirty = Value::Null;
-    let wt = worktree_for(dir, branch);
-    if !wt.is_empty() {
-        let o = git(&wt, &["--no-optional-locks", "status", "--porcelain"]);
-        if o.ok {
-            dirty = json!(!o.stdout.is_empty());
-        }
-    }
+    let dirty = worktree_dirty(dir, branch);
     // An agent step's commit that changed CI config (sd act's branch.<b>.sd-held:
     // the commit, then the paths): held until sd act push, or until the commit
     // is on the remote some other way (#124).
@@ -1532,6 +1559,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let facts = Facts {
         branch: branch.into(),
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
+        foreign_authors: foreign_authors(dir, &head, reviewer, &[&target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         head: head.clone(),
         task: cfg("sd-task"),
         reviewer,

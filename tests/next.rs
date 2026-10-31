@@ -979,6 +979,28 @@ fn ci_config_held_with_verify_red_at_head_no_sd_act_push_offered_348() {
     assert_eq!(step("ci-config", "cmd", &e![".push.ahead = 1", held, &red(false)]), "sd act push");
 }
 
+// sd act push refuses commits someone else made on the branch (#356), so
+// NEXT offers chrismo the look and the forced push in its place.
+#[test]
+fn commits_someone_else_made_hold_the_push_chrismo_looks_then_forces_it_356() {
+    let them = r#".sync.foreign_authors = ["them@example.com", "bot@example.com"]"#;
+    let st = e![".push.ahead = 1", them];
+    assert_eq!(keys(&st), "foreign-authors");
+    assert_eq!(step("foreign-authors", "who", &st), "you");
+    assert_eq!(
+        step("foreign-authors", "say", &st),
+        "commits on feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' origin/main..feat), then push them"
+    );
+    assert_eq!(step("foreign-authors", "cmd", &st), "sd act push --force");
+    // nothing to push: nothing held
+    assert_eq!(keys(&e![them]), "ready");
+    // another hold goes first; --force would override it too
+    assert_eq!(keys(&e![".push.ahead = 1", them, &red(true)]), "verify-red");
+    let held = r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#;
+    assert_eq!(keys(&e![".push.ahead = 1", them, held]), "foreign-authors ci-config");
+    assert_eq!(keys(&e![".push.ahead = 1", ".sync.foreign_authors = []"]), "push");
+}
+
 // @test "a restack undone from outside sheepdog: redo it by hand, then sd act push (#47)"
 #[test]
 fn a_restack_undone_from_outside_sheepdog_redo_it_by_hand_then_sd_act_push_47() {

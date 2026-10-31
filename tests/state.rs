@@ -2098,6 +2098,54 @@ fn push_theirs_is_null_when_the_remote_head_is_ours() {
     assert_eq!(r.field(".push.theirs"), "null");
 }
 
+// A commit someone else pushed, pulled here: the reflog has the remote head
+// now, so remote_ours can't tell; the author can (#356).
+#[test]
+fn sync_foreign_authors_names_who_else_made_the_branchs_commits_after_a_pull_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), "[]");
+    sd.git_in("other", &["fetch", "-q"]);
+    sd.git_in("other", &["switch", "-q", "feat"]);
+    fs::write(sd.tmp.join("other/x.txt"), "x\n").unwrap();
+    sd.git_in("other", &["add", "x.txt"]);
+    sd.git_in("other", &["-c", "user.email=Them@Example.com", "commit", "-qm", "theirs"]);
+    sd.git_in("other", &["push", "-q", "origin", "feat"]);
+    sd.git(&["pull", "-q", "--ff-only"]);
+    sd.write("y.txt", "y\n");
+    sd.git(&["add", "y.txt"]);
+    // ours to author, someone else's to commit (a cherry-pick, say)
+    sd.git(&["-c", "user.email=bot@example.com", "commit", "-qm", "picked", "--author=Tester <t@example.com>"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".push.remote_ours"), "true");
+    assert_eq!(r.field_c(".sync.foreign_authors"), r#"["bot@example.com","Them@Example.com"]"#, "newest first");
+}
+
+// Commits on the target, merged in, aren't the branch's own (#356).
+#[test]
+fn sync_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    fs::write(sd.tmp.join("other/m.txt"), "m\n").unwrap();
+    sd.git_in("other", &["add", "m.txt"]);
+    sd.git_in("other", &["-c", "user.email=them@example.com", "commit", "-qm", "on main"]);
+    sd.git_in("other", &["push", "-q", "origin", "main"]);
+    sd.git(&["fetch", "-q"]);
+    sd.git(&["merge", "-q", "--no-edit", "origin/main"]);
+    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), "[]");
+}
+
+// Without user.email nothing is known to be ours: unknown, not everyone (#356).
+#[test]
+fn sync_foreign_authors_is_null_without_user_email_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.git(&["config", "user.email", ""]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync | has(\"foreign_authors\")"), "true");
+    assert_eq!(r.field(".sync.foreign_authors"), "null");
+}
+
 // ── freshness: GitHub's SHAs vs the local remote-tracking refs ──────────────
 
 // @test "fresh: remote-tracking refs match GitHub"

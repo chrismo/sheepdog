@@ -35,7 +35,7 @@ pub const MIGRATED: &[Migrated] = &[
 /// own fetch: sd state doesn't fetch.
 pub fn push(d: &Derived) -> Gate {
     let Derived {
-        open, verify_red, undone, parent_unpushed,
+        open, verify_red, undone, parent_unpushed, foreign_authors,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
@@ -57,8 +57,11 @@ pub fn push(d: &Derived) -> Gate {
         rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
         rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
         rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
+        rule(FOREIGN_AUTHORS, Level::Soft, *foreign_authors, "look at them, then sd act push --force"),
     ])
 }
+
+pub const FOREIGN_AUTHORS: &str = "someone else made commits on the branch (sd state --json: sync.foreign_authors): look at them first";
 
 /// address's reasons; address::said puts each in the record's words.
 pub mod addr {
@@ -93,7 +96,7 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
         unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
-        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _,
+        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _,
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
@@ -292,6 +295,12 @@ mod tests {
         let d = Derived { open: true, parent_unpushed: true, verify_red: true, ..Derived::default() };
         assert_eq!(push(&d), Gate::Soft(vec!["verify is red at HEAD".into(), "the parent branch isn't on the remote yet".into()]));
         assert!(matches!(push(&Derived::default()), Gate::Soft(_)));
+    }
+
+    #[test]
+    fn push_refuses_commits_someone_else_made_on_the_branch_unless_forced_356() {
+        let d = Derived { open: true, foreign_authors: true, ..Derived::default() };
+        assert_eq!(push(&d), Gate::Soft(vec![FOREIGN_AUTHORS.into()]));
     }
 
     #[test]

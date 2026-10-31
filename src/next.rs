@@ -167,6 +167,34 @@ pub(crate) fn push_step(d: &Derived) -> bool {
     d.to_push && !d.empty && !d.ci_held && push_runs(d)
 }
 
+/// The remote has commits this copy never had: chrismo looks.
+fn foreign_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
+    if !(d.open && d.foreign) {
+        return None;
+    }
+    let branch = val::t(s, "branch");
+    step("foreign", "you",
+        format!("{remote}/{branch} has {} this copy has never had", plural(at(s, "push.theirs"), "commit")),
+        cmd(format!("git log HEAD..{remote}/{branch}")),
+    )
+}
+
+/// Commits someone else made on the branch, when they're all that holds a
+/// push (#356): chrismo looks, then forces it.
+fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
+    if !(d.foreign_authors && d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: false, ..d.clone() })) {
+        return None;
+    }
+    let (branch, target) = (val::t(s, "branch"), val::t(s, "sync.target"));
+    step("foreign-authors", "you",
+        format!(
+            "commits on {branch} by {}: look (git log --format='%h %ae %ce %s' {remote}/{target}..{branch}), then push them",
+            sj(at(s, "sync.foreign_authors"), ", ")
+        ),
+        cmd("sd act push --force"),
+    )
+}
+
 /// The steps for an sd state record, first is next.
 pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
@@ -323,14 +351,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if open && d.foreign {
-                step("foreign", "you",
-                    format!("{remote}/{branch} has {} this copy has never had", plural(g("push.theirs"), "commit")),
-                    cmd(format!("git log HEAD..{remote}/{branch}")),
-                )
-            } else {
-                None
-            },
+            foreign_step(d, s, remote),
             if open && d.owed_human {
                 step("human", "you",
                     format!("reply to {}", plural(g("threads.owed_human"), "human item")),
@@ -523,6 +544,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
+            foreign_authors_step(d, s, remote),
             // after what holds the push, which its say points up to
             if open && d.ci_held {
                 let paths = sj(g("push.held.paths"), ", ");
