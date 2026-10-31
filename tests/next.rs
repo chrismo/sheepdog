@@ -4,7 +4,8 @@
 // test's title above it.
 
 use serde_json::{json, Value};
-use sheepdog::next::{lines, steps};
+use sheepdog::act::gates::parity;
+use sheepdog::next::{lines, steps, Derived};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -92,9 +93,14 @@ fn state(edits: &[String]) -> Value {
     serde_json::from_str(&s).unwrap()
 }
 
-/// The next steps for READY with the edits applied.
+/// The next steps for READY with the edits applied. Each one checks that
+/// NEXT offers no migrated verb its gate refuses (#348).
 fn next(edits: &[String]) -> Value {
-    steps(&state(edits), "origin").unwrap()
+    let s = state(edits);
+    let out = steps(&s, "origin").unwrap();
+    let off = parity(&Derived::new(&s), out.as_array().unwrap());
+    assert!(off.is_empty(), "{}", off.join("; "));
+    out
 }
 
 fn keys(edits: &[String]) -> String {
