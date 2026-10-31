@@ -1,5 +1,5 @@
 // sd view (#376): a local server on 127.0.0.1 for the Flock page, every
-// enrolled branch from the watcher's cache. Each test starts it on a free
+// branch from the watcher's cache. Each test starts it on a free
 // port (--port 0, --no-open) against a fixture $SHEEPDOG_STATE_DIR, reads the
 // URL it prints, and asks over plain TCP.
 

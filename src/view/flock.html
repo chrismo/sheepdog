@@ -134,7 +134,7 @@ function render(f) {
   const repos = [...new Set(bs.map(b => b.repo))].join(", ");
   const eb = document.getElementById("eyebrow");
   eb.classList.remove("stale");
-  eb.textContent = `${bs.length} enrolled branch${bs.length === 1 ? "" : "es"}${repos ? " · " + repos : ""}`;
+  eb.textContent = `${bs.length} branch${bs.length === 1 ? "" : "es"}${repos ? " · " + repos : ""}`;
   document.getElementById("summary").innerHTML = GROUPS.filter(([w]) => counts[w]).map(([w, name]) =>
     `<span class="sum" style="--sc:${color(w)}"><b>${counts[w]}</b>${name.toLowerCase()}</span>`).join("");
   document.getElementById("groups").innerHTML = bs.length ? GROUPS.map(([w, name]) => {

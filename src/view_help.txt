@@ -1,5 +1,5 @@
-sd view - the Flock page: every enrolled branch, where its PR stands and who
-moves next, live in the browser.
+sd view - the Flock page: every branch sd watch tracks, where its PR stands
+and who moves next, live in the browser.
 
 Usage: sd view [--port <n>] [--no-open]
 
@@ -7,7 +7,9 @@ Usage: sd view [--port <n>] [--no-open]
   browser, then serves until Ctrl-C. The page reads the state each sd watch
   pass caches, and asks again every 30s. It shows the last pass's time: with
   the watcher stopped, that time stops moving. It only reads; nothing on it
-  acts yet.
+  acts yet. A branch is there from its first pass, and stays until the
+  watcher drops its cache: after it's unenrolled, or once its merge is
+  notified.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

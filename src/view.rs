@@ -112,4 +112,7 @@ fn serve(stream: TcpStream, port: u16, state: &Path) {
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
+    // Unread request bytes at close can make the OS reset the connection
+    // before the client reads the response.
+    let _ = stream.shutdown(std::net::Shutdown::Write);
 }
