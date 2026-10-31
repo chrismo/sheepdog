@@ -6,7 +6,7 @@
 // stopped, with the edits in it (#270).
 
 use super::attached_during;
-use super::step::{agent_rules, step_session, step_store};
+use super::step::{agent_rules, spend_held, step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
@@ -154,6 +154,10 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
     let range = format!("{}..{}", r.old_base, r.old_head);
     let replayed = git_out(".", &["log", "--reverse", "--no-merges", "--topo-order", "--format=%h %s", &range]).unwrap_or_default();
+    // step_session's spend gate would die with the rebase stopped.
+    if let Some(why) = spend_held(b) {
+        return Err(format!("not running resolve on {b}: {why}; {}", r.back()).into());
+    }
     // implement's settings and session, logged in usage.sup as its own step.
     let mut s = step_session(b, "implement", harness, force, false);
     let guidance = step_guidance("resolvePrompt", b, r.old_base, &lib_dir().join("prompts").join("resolve.md")).map_err(|e| {

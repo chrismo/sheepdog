@@ -862,6 +862,20 @@ fn three_agent_steps_failed_in_a_row_one_you_step_in_place_of_the_agent_steps_ru
     assert_eq!(keys(&e![&three, r#".spend = {"usd": 30, "budget": 25}"#, ".threads.owed_bot = 2"]), "budget");
 }
 
+// A step whose cost is unknown isn't $0 (#349): with a budget set, held, its steps named.
+#[test]
+fn a_step_of_unknown_cost_with_a_budget_held_naming_the_steps_349() {
+    let two = r#".spend = {"usd": 1, "budget": 25, "unknown": [{"time": "t1", "step": "implement", "session": "s1"}, {"time": "t2", "step": "review", "session": "s2"}]}"#;
+    assert_eq!(keys(&e![two, ".threads.owed_bot = 2"]), "budget");
+    assert_eq!(
+        step("budget", "say", &e![two, ".threads.owed_bot = 2"]),
+        "can't tell what 2 steps on this branch cost (implement at t1, session s1; review at t2, session s2), so nothing spends: set their cost_usd in usage.sup, or take over"
+    );
+    // no budget, nothing to hold; none unknown, as usual
+    assert_eq!(keys(&e![two, ".spend.budget = 0", ".threads.owed_bot = 2"]), "bot");
+    assert_eq!(keys(&e![two, ".spend.unknown = []", ".threads.owed_bot = 2"]), "bot");
+}
+
 // @test "spend unknown (usage.sup unreadable) with a budget: held as if over it (#121)"
 #[test]
 fn spend_unknown_usage_sup_unreadable_with_a_budget_held_as_if_over_it_121() {

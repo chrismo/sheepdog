@@ -280,6 +280,42 @@ fn describe_the_agent_writes_title_and_body_read_only_from_the_task_and_diff() {
     assert!(!allow.contains("Edit") && !allow.contains("Write"), "{allow}");
 }
 
+// The verbs enforce settings.branchBudget themselves, not only NEXT (#349):
+// --force doesn't spend past it, and a step of unknown cost holds too.
+#[test]
+fn describe_refused_past_settings_branchbudget_even_with_force_349() {
+    let sd = sd();
+    sd.write_global(r#"{"settings": {"branchBudget": 2}}"#);
+    sd.spent("feat", "implement", "2.5");
+    let r = sd.run(&["describe", "--force"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not running describe on feat: spent $2.50 on this branch, past settings.branchBudget ($2.00): raise it, or take over"]);
+    assert!(!sd.fx_exists("claude.args"));
+    sd.write_global(r#"{"settings": {"branchBudget": 3}}"#);
+    sd.spent("feat", "review", "null");
+    let r = sd.run(&["describe"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not running describe on feat: can't tell what 1 step on this branch cost (review at 2026-10-30T00:00:00Z, session s1)"]);
+    assert!(!sd.fx_exists("claude.args"));
+    // No budget, no guard.
+    sd.write_global(r#"{"settings": {"branchBudget": 0}}"#);
+    sd.ok(&["describe"]);
+}
+
+// ship-parent's command is sd act ship <parent>: its describe answers to
+// the parent's own budget, whichever branch NEXT came from (#148).
+#[test]
+fn ship_past_the_branchs_budget_is_refused_before_describe_or_push_148() {
+    let sd = sd();
+    sd.write_global(r#"{"settings": {"branchBudget": 2}}"#);
+    sd.spent("feat", "implement", "2.5");
+    let r = sd.run(&["ship"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not running describe on feat: spent $2.50"]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.remote("feat"), "");
+}
+
 // @test "describe: settings.describePrompt replaces the guidance; read-only stays"
 #[test]
 fn describe_settings_describeprompt_replaces_the_guidance_read_only_stays() {

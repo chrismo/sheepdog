@@ -88,6 +88,7 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     if !force && matches!(t(&s, "review.local.status").as_str(), "covered" | "rewritten-same") {
         die(format!("local review already covers {}; --force to review again", short(&head)));
     }
+    super::step::spend_gate(b, "review");
     if running::holding(b, "review", || reviewed(b, &wt, &s, &base, &head)).is_none() {
         std::process::exit(1);
     }

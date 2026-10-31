@@ -5,9 +5,9 @@
 use super::commands::step_timeout;
 use super::start::start_default;
 use super::{attached_check, cfg, die, lock_recheck, or_die, repo_remote};
-use crate::git::{git, git_input, git_out, oid, rev, show_ref, strip_nl, worktree_for, worktree_mark};
+use crate::git::{git, git_input, git_out, main_worktree, oid, rev, show_ref, strip_nl, worktree_for, worktree_mark};
 use crate::val::{at, on, t};
-use crate::{config, harness, json, rules, running, state};
+use crate::{config, harness, json, next, rules, running, state, usage};
 use serde_json::{json, Value};
 
 /// <run> in <b>'s worktree, given its path, marked running as <step> for
@@ -59,6 +59,7 @@ fn branch_config(b: &str, key: &str) -> String {
 /// written yet (#14). <harness> is --harness's, else the branch's own.
 pub fn step_session(b: &str, step: &str, harness: &str, force: bool, answering: bool) -> Session {
     attached_check(b, &format!("running the {step} step on {b}"), force);
+    spend_gate(b, step);
     let stored_h = branch_config(b, "sd-harness");
     let cfg = or_die(config::step(step, b, if harness.is_empty() { &stored_h } else { harness }));
     let h = t(&cfg, "harness");
@@ -71,6 +72,26 @@ pub fn step_session(b: &str, step: &str, harness: &str, force: bool, answering: 
         ("new", String::new())
     };
     Session { cfg, harness: h, id: harness::new_session(), mode, parent, timeout: step_timeout(b) }
+}
+
+/// Refuse, at zero tokens, an agent step on <b> while NEXT's budget step
+/// holds it (#121, #349): past settings.branchBudget, or with spend it
+/// can't tell. --force doesn't override it; raising the budget does.
+pub fn spend_gate(b: &str, step: &str) {
+    if let Some(why) = spend_held(b) {
+        die(format!("not running {step} on {b}: {why}"));
+    }
+}
+
+/// next::budget_hold of <b>'s spend as sd state reports it.
+pub fn spend_held(b: &str) -> Option<String> {
+    let budget = or_die(config::get_text("settings.branchBudget", b, true));
+    let budget: Value = serde_json::from_str(&budget).unwrap_or(Value::Null);
+    let spend = match usage::spend(&main_worktree("."), b) {
+        Some(s) => json!({"usd": s.usd, "unknown": s.unknown, "budget": budget}),
+        None => json!({"usd": null, "unknown": null, "budget": budget}),
+    };
+    next::budget_hold(&json!({"spend": spend}))
 }
 
 /// Whether a step on <h> forks the branch's session <sid>, which belongs

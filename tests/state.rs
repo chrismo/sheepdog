@@ -4086,7 +4086,7 @@ fn spend_this_repos_steps_on_the_branch_summed_from_usage_sup_and_settings_branc
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".spend"), r#"{"usd":0,"budget":25}"#);
+    assert_eq!(r.field_c(".spend"), r#"{"usd":0,"unknown":[],"budget":25}"#);
     sd.usage_row("feat", "1.5", None);
     sd.usage_row("feat", "2.25", None);
     sd.usage_row("other", "9.", None);
@@ -4094,7 +4094,7 @@ fn spend_this_repos_steps_on_the_branch_summed_from_usage_sup_and_settings_branc
     sd.usage_row("feat", "3.", None);
     sd.sd_config(&["set", "--json", "settings.branchBudget", "10"]);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".spend"), r#"{"usd":6.75,"budget":10}"#);
+    assert_eq!(r.field_c(".spend"), r#"{"usd":6.75,"unknown":[],"budget":10}"#);
 }
 
 // @test "spend: past settings.branchBudget, NEXT is chrismo's instead of the agent's"
@@ -4111,6 +4111,29 @@ fn spend_past_settings_branchbudget_next_is_chrismos_instead_of_the_agents() {
     assert_eq!(
         r.lines()[1],
         "NEXT  you    spent $2.50 on this branch, past settings.branchBudget ($2.00): raise it, or take over  → sd act attach"
+    );
+}
+
+// A step sd stopped on a signal, or one killed with no cap, has no known
+// cost: not $0 (#349). NEXT holds the branch and names the step.
+#[test]
+fn spend_a_step_whose_cost_is_unknown_is_named_and_next_holds_the_branch_349() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.git(&["update-ref", "refs/sheepdog/feat/local", "HEAD"]);
+    sd.pr_fixture("feat", &[&format!(".reviewThreads.nodes = [{}]", thread("Bot", "copilot", "Bot", "copilot"))]);
+    sd.usage_row("feat", "1.5", None);
+    sd.append_usage(&format!(
+        r#"{{time:2026-10-23T00:00:00Z,repo:"{}",branch:"feat",step:"implement",harness:"claude",session:"s1",mode:"new",status:143,cost_usd:null,context:9000}}"#,
+        sd.path("work")
+    ));
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c(".spend"), r#"{"usd":1.5,"unknown":[{"time":"2026-10-23T00:00:00Z","step":"implement","session":"s1"}],"budget":25}"#);
+    let r = sd.run(&[]);
+    assert_eq!(r.status, 0);
+    assert_eq!(
+        r.lines()[1],
+        "NEXT  you    can't tell what 1 step on this branch cost (implement at 2026-10-23T00:00:00Z, session s1), so nothing spends: set its cost_usd in usage.sup, or take over  → sd act attach"
     );
 }
 

@@ -369,7 +369,7 @@ fn harness_run_a_resumed_claude_steps_cost_is_what_its_sessions_total_gained_the
     sd.claude_out("1.5");
     sd.step(&[], &["claude", "sid1", "resume", "30", "more", "{}"]);
     assert_eq!(sd.usage_last(&cost), "0.75|1.5");
-    // The branch's spend is the steps', not the totals' (2.625): sd state sums cost_usd (src/state.rs).
+    // The branch's spend is the steps', not the totals' (2.625): sd state sums cost_usd (src/usage.rs).
     let spend: f64 = sd.usage().iter().filter(|u| u["branch"] == "feat").filter_map(|u| u["cost_usd"].as_f64()).sum();
     assert_eq!(spend, 1.625);
 }

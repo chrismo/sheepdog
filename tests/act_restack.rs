@@ -928,6 +928,24 @@ fn resolve_the_agent_resolves_a_predicted_conflict_base_pinned_its_change_is_unr
     assert_eq!(sd.git(&["status", "--porcelain"]), "");
 }
 
+// Past settings.branchBudget the agent never runs, and the rebase it would
+// have resolved is rolled back, not left stopped (#349).
+#[test]
+fn resolve_past_settings_branchbudget_rolls_the_rebase_back_the_agent_never_runs_349() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let before = sd.rev("feat");
+    sd.verb_ok("config", &["set", "--global", "--json", "settings.branchBudget", "2"]);
+    sd.spent("feat", "implement", "2.5");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["spent $2.50 on this branch, past settings.branchBudget ($2.00)"]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert!(!sd.rebase_in_progress());
+    assert_eq!(sd.rev("feat"), before);
+}
+
 // @test "--resolve: usage.sup logs the agent's step as resolve, not implement (#150)"
 #[test]
 fn resolve_usage_sup_logs_the_agents_step_as_resolve_not_implement_150() {

@@ -1625,6 +1625,8 @@ fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_ca
     let marker = sd.path("repo/.git/sheepdog/feat-x.running");
     for sig in [libc::SIGTERM, libc::SIGINT] {
         let (st, err) = implement_signalled(&mut sd, sig);
+        // Its cost is unknown, which holds the branch (#349): no budget, no hold.
+        sd.verb_ok("config", &["set", "--global", "--json", "settings.branchBudget", "0"]);
         assert_eq!(st.signal(), Some(sig), "{st:?}");
         assert!(!Path::new(&marker).exists(), "signal {sig}: the marker is left");
         let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
@@ -1634,6 +1636,20 @@ fn implement_a_term_or_int_to_sd_ends_it_of_that_signal_with_no_marker_and_no_ca
         assert_eq!(sd.git_status(&["cat-file", "-e", "refs/sheepdog/feat-x/failed"]), 128, "signal {sig}: counted as a failure");
         assert_has(&err, &["sd: implement stopped by a signal, not counted as a failure"]);
     }
+}
+
+// A step stopped after a billed turn cost an unknown amount: not $0, so the
+// next agent step on the branch is refused till chrismo says what (#349).
+#[test]
+fn implement_after_a_step_stopped_by_a_signal_is_refused_its_cost_unknown_349() {
+    let mut sd = sd();
+    sd.started(TASK);
+    implement_signalled(&mut sd, libc::SIGTERM);
+    sd.rm("started");
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not running implement on feat-x: can't tell what 1 step on this branch cost (implement at "]);
+    assert!(!sd.ran("started"));
 }
 
 // @test "implement: a TERM to sd leaves the failure record as it was: the signal's sender counts it (#270)"
