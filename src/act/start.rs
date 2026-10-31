@@ -19,12 +19,10 @@
 use super::bookkeeping::enroll_mark;
 use super::{die, or_die, Args};
 use crate::config::set_branch_profile;
-use crate::git::{common_dir, git, git_ok, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for};
-use crate::proc::{self, executable};
-use std::io::stderr;
-use std::os::fd::AsFd;
+use crate::git::{common_dir, git, git_ok, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for, Git};
+use crate::proc::{self, executable, on_stderr};
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 
 /// The remote's default branch as fetched: <remote>/HEAD, else main or
 /// master, remote or local.
@@ -68,12 +66,6 @@ pub(super) fn destination(main: &str, b: &str) -> String {
     format!("{}/{}", parent.trim_end_matches('/'), b.replace('/', "-"))
 }
 
-/// <c> with its stdout on sd's stderr: start's stdout is only the path.
-fn on_stderr(mut c: Command) -> std::io::Result<ExitStatus> {
-    let err = stderr().as_fd().try_clone_to_owned()?;
-    c.stdout(Stdio::from(err)).status()
-}
-
 /// The shell's $? for <st>, 1 when it couldn't run.
 fn code(st: std::io::Result<ExitStatus>) -> i32 {
     st.map_or(1, proc::code)
@@ -115,9 +107,7 @@ pub(super) fn git_or_die(args: &[&str], what: &str) {
 
 /// git, its output on stderr as git writes it; false when it failed.
 pub(super) fn git_on_stderr(args: &[&str]) -> bool {
-    let mut c = Command::new("git");
-    c.args(args);
-    code(on_stderr(c)) == 0
+    Git::new(".", args).on_stderr()
 }
 
 /// implement in the new worktree, in its own process as bash's subshell had

@@ -7,7 +7,7 @@
 
 use super::attached_during;
 use super::step::{agent_rules, spend_held, step_session, step_store};
-use crate::git::{git, git_out, rebase_head, strip_nl};
+use crate::git::{git, git_out, rebase_head, strip_nl, Git};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::proc;
@@ -15,7 +15,6 @@ use crate::val::t;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 const CAP: usize = 3;
 
@@ -134,11 +133,11 @@ fn marked(wt: &str, files: &[String]) -> Vec<String> {
 fn worktree_tree(wt: &str) -> Option<String> {
     let dir = proc::private_dir("sd-resolve")?;
     let index = dir.join("index");
-    let step = |args: &[&str]| Command::new("git").arg("-C").arg(wt).args(args).env("GIT_INDEX_FILE", &index).output().ok().filter(|o| o.status.success());
+    let step = |args: &[&str]| Some(Git::new(wt, args).env("GIT_INDEX_FILE", &index).run()).filter(|o| o.ok);
     let tree = step(&["read-tree", "HEAD"])
         .and_then(|_| step(&["add", "-A"]))
         .and_then(|_| step(&["write-tree"]))
-        .map(|o| strip_nl(String::from_utf8_lossy(&o.stdout).into_owned()));
+        .map(|o| strip_nl(o.stdout));
     let _ = fs::remove_dir_all(&dir);
     tree
 }
@@ -233,8 +232,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             return Err(gave_up(why.clone(), format!("{why}; {}", r.back())));
         }
         git(wt, &["add", "-A"]);
-        let cont = Command::new("git").args(["-C", wt, "rebase", "--continue"]).env("GIT_EDITOR", "true").output();
-        if cont.is_ok_and(|o| o.status.success()) {
+        if Git::new(wt, &["rebase", "--continue"]).env("GIT_EDITOR", "true").run().ok {
             break;
         }
         if rebase_head(wt).is_none() {

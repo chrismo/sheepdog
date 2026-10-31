@@ -10,11 +10,10 @@ use super::hold::hold_after;
 use super::resolve::{resolve_conflicts, Halt, Rebase};
 use super::step::{question_gate, resolve_gave_up};
 use super::{die, no_base_why, plural, state_json, Args};
-use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for};
+use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for, Git};
 use crate::{proc, running};
 use crate::val::{at, sj, t, text};
 use serde_json::Value;
-use std::process::Command;
 
 #[derive(Debug, PartialEq)]
 enum Gate {
@@ -293,11 +292,8 @@ fn restack_by_tree(wt: &str, b: &str, old_base: &str, old_head: &str, new_base: 
     }
     let new = crate::git::strip_nl(c.stdout);
     // Not "reset: moving to" in the reflog: stacked_on counts this commit as the branch's own.
-    let st = Command::new("git")
-        .args(["-C", wt, "reset", "--quiet", "--hard", &new])
-        .env("GIT_REFLOG_ACTION", "sd act restack by tree")
-        .status();
-    if !st.is_ok_and(|s| s.success()) {
+    let reset = Git::new(wt, &["reset", "--quiet", "--hard", &new]).env("GIT_REFLOG_ACTION", "sd act restack by tree");
+    if !reset.inherit() {
         die(format!("git reset --hard {} failed in {wt}", short(&new, 7)));
     }
 }

@@ -27,13 +27,14 @@ fn not_found(prog: &str) -> Out {
 }
 
 pub fn run(prog: &str, args: &[&str], dir: Option<&str>, input: Option<&[u8]>) -> Out {
-    let mut c = Command::new(prog);
-    c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    capture(command(prog, args, dir), input)
+}
+
+/// <c> run with its stdout and stderr captured, <input> on its stdin.
+pub fn capture(mut c: Command, input: Option<&[u8]>) -> Out {
+    c.stdout(Stdio::piped()).stderr(Stdio::piped());
     c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
-    if let Some(d) = dir {
-        c.current_dir(d);
-    }
-    let Ok(mut child) = c.spawn() else { return not_found(prog) };
+    let Ok(mut child) = c.spawn() else { return not_found(&c.get_program().to_string_lossy()) };
     if let Some(i) = input {
         let mut stdin = child.stdin.take().expect("piped");
         let i = i.to_vec();
@@ -97,6 +98,13 @@ fn text(b: &Buf) -> String {
 /// The shell's $?: a command killed by a signal is 128 + the signal.
 pub fn code(st: ExitStatus) -> i32 {
     st.code().unwrap_or_else(|| 128 + st.signal().unwrap_or(0))
+}
+
+/// <c> with its stdout on sd's stderr: start's stdout is only the path.
+pub fn on_stderr(mut c: Command) -> std::io::Result<ExitStatus> {
+    use std::os::fd::AsFd;
+    let err = std::io::stderr().as_fd().try_clone_to_owned()?;
+    c.stdout(Stdio::from(err)).status()
 }
 
 /// A regular file with an x bit: what command -v would run.
