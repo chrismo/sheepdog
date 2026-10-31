@@ -94,7 +94,7 @@ fn probe(r: &mut Report, v: &str) {
     match VERIFIED.iter().find(|(name, _)| *name == h) {
         Some((_, ok)) if *ok == v => println!("{h} {v}: the version last verified"),
         Some((_, ok)) => println!("{h} {v}: verified against {ok}; once the checks pass, bump harness::VERIFIED"),
-        None => {}
+        None => println!("{h} {v}: never verified; once the checks pass, add it to harness::VERIFIED"),
     }
     flags(r);
     let block = match config::get_global(&format!("harnesses.{h}"), true) {

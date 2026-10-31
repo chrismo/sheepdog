@@ -22,9 +22,9 @@ use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-/// The harness versions `sd harness probe` last passed on. pi's is #79's,
-/// read from its --help before the probe: its steps there were unchecked.
-pub const VERIFIED: [(&str, &str); 2] = [("claude", "2.1.316"), ("pi", "0.99.1")];
+/// The harness versions `sd harness probe` last passed on. pi has none yet:
+/// #79 read 0.99.1's --help, but no probe has passed on a pi.
+pub const VERIFIED: [(&str, &str); 1] = [("claude", "2.1.316")];
 
 // Denied whatever the caller's tool lists allow: the pipeline commits, pushes
 // and talks to GitHub.

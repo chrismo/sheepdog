@@ -12,6 +12,6 @@ Verbs:
            with why, and the version against the one last verified
            (harness::VERIFIED). Nonzero on any FAIL, or with no harness
            installed. Run it after a harness upgrade; once it passes, bump
-           VERIFIED. The steps run in a temp dir on sd config's
+           (or add) the harness's VERIFIED version. The steps run in a temp dir on sd config's
            harnesses.<h> block, claude's capped at 1 USD each, and leave
            their transcripts where the harness keeps them. Spends tokens

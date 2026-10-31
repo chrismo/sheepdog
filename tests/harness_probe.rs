@@ -1,7 +1,7 @@
 // Black-box tests of sd harness probe (#347, src/harness/probe.rs): the
 // built binary, run as sd-harness through a link (tests/common). claude and
 // pi are fakes that keep the internals the probe checks, as the installed
-// ones did when harness::VERIFIED was last bumped: their --version and
+// claude did when harness::VERIFIED was last bumped: their --version and
 // --help, a result object (claude) or fenced reply (pi), and a transcript
 // that a fork copies. A knob file in $FX breaks one of them. PATH is the
 // fakes and the system's bin dirs only: the real harnesses are never run.
@@ -29,16 +29,18 @@ while [ $# -gt 0 ]; do
 done
 d="$CLAUDE_CONFIG_DIR/projects/-tmp-probe"
 mkdir -p "$d"
-cents=1
+cents=2
 if [ -n "$parent" ]; then
-  cat "$d/$parent.jsonl" > "$d/$sid.jsonl"
-  cents=$(( $(cat "$FX/cents-$parent") + 1 ))
+  [ -e "$FX/fork-fresh" ] || cat "$d/$parent.jsonl" > "$d/$sid.jsonl"
+  if [ -e "$FX/step-cost" ]; then cents=1; else cents=$(( $(cat "$FX/cents-$parent") + 1 )); fi
 fi
 echo "$cents" > "$FX/cents-$sid"
 [ -e "$FX/no-transcript" ] ||
   echo '{"type":"assistant","isSidechain":false,"message":{"role":"assistant","model":"claude-x","usage":{"input_tokens":3,"cache_creation_input_tokens":100,"cache_read_input_tokens":0,"output_tokens":5}}}' >> "$d/$sid.jsonl"
 said=$(cat "$FX/claude-sid" 2>/dev/null || echo "$sid")
-printf '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"ok":true},"session_id":"%s","total_cost_usd":0.%02d}\n' "$said" "$cents"
+cost=$(printf ',"total_cost_usd":0.%02d' "$cents")
+[ -e "$FX/no-cost" ] && cost=
+printf '{"type":"result","subtype":"success","is_error":false,"result":"","structured_output":{"ok":true},"session_id":"%s"%s}\n' "$said" "$cost"
 "#;
 
 const PI: &str = r#"#!/usr/bin/env bash
@@ -58,8 +60,10 @@ done
 d="$PI_CODING_AGENT_SESSION_DIR/--tmp-probe--"
 mkdir -p "$d"
 f="$d/2026-10-31T00-00-00-000Z_$sid.jsonl"
-if [ -n "$parent" ]; then cat "$d"/*_"$parent".jsonl > "$f"; else echo "{\"type\":\"session\",\"id\":\"$sid\"}" > "$f"; fi
-echo '{"type":"message","message":{"role":"assistant","usage":{"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":12,"cost":{"total":0.001}}}}' >> "$f"
+if [ -n "$parent" ] && [ ! -e "$FX/fork-fresh" ]; then cat "$d"/*_"$parent".jsonl > "$f"; else echo "{\"type\":\"session\",\"id\":\"$sid\"}" > "$f"; fi
+cost=0.001
+[ -e "$FX/no-cost" ] && cost=0
+echo "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input\":10,\"output\":2,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":12,\"cost\":{\"total\":$cost}}}}" >> "$f"
 if [ -e "$FX/pi-fails" ]; then cat "$FX/pi-fails" >&2; exit 1; fi
 if [ -e "$FX/pi-reply" ]; then cat "$FX/pi-reply"; else printf 'Done.\n\n```json\n{"ok": true}\n```\n'; fi
 "#;
@@ -93,8 +97,11 @@ fn verified(h: &str) -> &'static str {
     VERIFIED.iter().find(|(name, _)| *name == h).map(|(_, v)| *v).unwrap()
 }
 
-/// The fakes on a PATH without the real harnesses, at their verified
-/// versions; their transcripts in the temp dir; a global config whose
+/// pi's version in the fakes: one VERIFIED has never had.
+const PI_VERSION: &str = "0.99.1";
+
+/// The fakes on a PATH without the real harnesses, claude at its verified
+/// version; their transcripts in the temp dir; a global config whose
 /// harness blocks set a model.
 fn sd() -> Sd {
     let mut sd = Sd::for_verb("harness");
@@ -112,7 +119,7 @@ fn sd() -> Sd {
     sd.fake("claude", CLAUDE);
     sd.fake("pi", PI);
     sd.fx("claude-version", verified("claude"));
-    sd.fx("pi-version", verified("pi"));
+    sd.fx("pi-version", PI_VERSION);
     sd.fx("claude-help", CLAUDE_HELP);
     sd.fx("pi-help", PI_HELP);
     sd.write_global(r#"{"harnesses": {"claude": {"model": "opus"}, "pi": {"provider": "cf", "model": "kimi"}}}"#);
@@ -145,11 +152,15 @@ fn probe_passes_harnesses_that_keep_the_internals_sheepdog_depends_on() {
     let r = sd.probe(&[]);
     assert_eq!(r.status, 0, "{}", r.output);
     for h in ["claude", "pi"] {
-        assert_has(
-            &r.output,
-            &[&format!("{h} {}: the version last verified", verified(h)), &format!("{h}: ok: flags"), &format!("{h}: ok: step"), &format!("{h}: ok: fork")],
-        );
+        assert_has(&r.output, &[&format!("{h}: ok: flags"), &format!("{h}: ok: step"), &format!("{h}: ok: fork")]);
     }
+    assert_has(
+        &r.output,
+        &[
+            &format!("claude {}: the version last verified", verified("claude")),
+            &format!("pi {PI_VERSION}: never verified; once the checks pass, add it to harness::VERIFIED"),
+        ],
+    );
     assert_lacks(&r.output, "FAIL");
     // The flags run_step passes, the harness block's typed ones among them.
     let args = sd.fx_read("claude-args");
@@ -233,6 +244,50 @@ fn probe_fails_a_step_that_leaves_no_transcript() {
     let r = sd.probe(&["claude"]);
     assert_eq!(r.status, 1, "{}", r.output);
     assert_has(&r.output, &["claude: FAIL: step: no transcript for "]);
+}
+
+#[test]
+fn probe_fails_a_claude_result_without_total_cost_usd() {
+    let sd = sd();
+    sd.fx("no-cost", "");
+    let r = sd.probe(&["claude"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["claude: FAIL: step: the result has no total_cost_usd: "]);
+}
+
+#[test]
+fn probe_fails_a_tally_that_lacks_a_field() {
+    let sd = sd();
+    sd.fx("no-cost", "");
+    let r = sd.probe(&["pi"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["pi: FAIL: step: the transcript's tally lacks cost: "]);
+}
+
+#[test]
+fn probe_fails_a_fork_that_doesnt_carry_its_parents_transcript() {
+    let sd = sd();
+    sd.fx("fork-fresh", "");
+    let r = sd.probe(&[]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(
+        &r.output,
+        &[
+            "claude: ok: step",
+            "claude: FAIL: fork: its transcript has 1 entries, its parent's 1: it doesn't carry the parent's",
+            "pi: ok: step",
+            "pi: FAIL: fork: its transcript has 1 turns, its parent's 1: it doesn't carry the parent's",
+        ],
+    );
+}
+
+#[test]
+fn probe_fails_a_claude_fork_whose_cost_isnt_a_running_total() {
+    let sd = sd();
+    sd.fx("step-cost", "");
+    let r = sd.probe(&["claude"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["claude: ok: step", "claude: FAIL: fork: its total_cost_usd 0.01 is under its parent's 0.02: not a running total"]);
 }
 
 #[test]
