@@ -185,13 +185,22 @@ fn step(r: &mut Report, block: &Value, dir: &str, parent: Option<&Left>) -> Opti
     None
 }
 
+fn without_cap(extra: &mut Vec<&str>) {
+    while let Some(i) = extra.iter().position(|a| *a == "--max-budget-usd" || a.starts_with("--max-budget-usd=")) {
+        let n = if extra[i] == "--max-budget-usd" { 2 } else { 1 };
+        extra.drain(i..(i + n).min(extra.len()));
+    }
+}
+
 /// Runs <s> in <dir> as run_step would, and checks what it left.
 fn ran(s: &Step, dir: &str) -> Result<Left, String> {
     let h = s.harness;
     let args = t(s.settings, "args");
-    let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
+    let mut extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
     let mut typed = typed_flags(h, s.settings);
     if h == "claude" {
+        // The help promises the probe's cap, so a cap in args, 0 among them, doesn't replace it.
+        without_cap(&mut extra);
         typed.extend(step_cap(BUDGET, &extra)?.0);
     }
     let mut c = step_command(s, &typed, &extra)?;

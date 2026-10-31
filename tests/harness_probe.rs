@@ -175,6 +175,20 @@ fn probe_passes_harnesses_that_keep_the_internals_sheepdog_depends_on() {
 }
 
 #[test]
+fn probe_keeps_its_own_cap_whatever_the_harness_blocks_args_say() {
+    for cap in ["--max-budget-usd 0", "--max-budget-usd=50"] {
+        let sd = sd();
+        sd.write_global(&format!(r#"{{"harnesses": {{"claude": {{"model": "opus", "args": "{cap}"}}}}}}"#));
+        let r = sd.probe(&["claude"]);
+        assert_eq!(r.status, 0, "{cap}: {}", r.output);
+        let args = sd.fx_read("claude-args");
+        assert_has(&args, &["--max-budget-usd\n1\n"]);
+        assert_lacks(&args, "--max-budget-usd\n0");
+        assert_lacks(&args, "--max-budget-usd=");
+    }
+}
+
+#[test]
 fn probe_names_the_harnesses_given_and_only_those() {
     let sd = sd();
     let r = sd.probe(&["pi"]);
