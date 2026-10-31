@@ -198,8 +198,6 @@ derived! {
     over_budget: bool,
     /// FAIL_LIMIT agent steps failed in a row.
     failed_out: bool,
-    /// Any of the three: agent steps become chrismo's.
-    hold: bool,
 
     // An agent's question (#167, #326).
     /// The step whose question stands at HEAD, else empty.
@@ -430,7 +428,6 @@ impl Derived {
         self.budget_unread = budgeted && j.nul("spend.usd");
         self.over_budget = budgeted && !j.nul("spend.usd") && j.n("spend.usd") > j.n("spend.budget");
         self.failed_out = j.n("failed.count") >= super::FAIL_LIMIT;
-        self.hold = self.budget_unread || self.over_budget || self.failed_out;
     }
 
     fn question(&mut self, s: &Value, j: &J) {
@@ -549,7 +546,7 @@ pub mod arb {
     pub const SEEDS: [u64; 4] = [1, 0x5eed, 0xdead_beef, 348];
 
     pub fn cases() -> usize {
-        std::env::var("SD_GEN_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(500)
+        std::env::var("SD_GEN_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(500).max(1)
     }
 
     /// <d> with every field reset to its default that <fails> doesn't need.
@@ -571,9 +568,13 @@ pub mod arb {
 
     /// Panics with the shrunk builder call, to paste as a regression test.
     pub fn check(what: &str, holds: impl Fn(&Derived) -> Result<(), String>) {
+        check_n(what, cases(), holds);
+    }
+
+    pub fn check_n(what: &str, cases: usize, holds: impl Fn(&Derived) -> Result<(), String>) {
         for seed in SEEDS {
             let mut r = Rng::new(seed);
-            for _ in 0..cases() {
+            for _ in 0..cases {
                 let d = Derived::random(&mut r);
                 if holds(&d).is_err() {
                     let small = shrink(d, |x| holds(x).is_err());
@@ -587,7 +588,7 @@ pub mod arb {
 
 #[cfg(test)]
 mod tests {
-    use super::arb::{check, shrink, Rng};
+    use super::arb::{check_n, shrink, Rng};
     use super::*;
     use serde_json::json;
 
@@ -632,6 +633,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "Derived { foreign: true, ..Derived::default() }")]
     fn check_panics_with_the_shrunk_value() {
-        check("no foreign", |d| if d.foreign { Err("foreign".into()) } else { Ok(()) });
+        check_n("no foreign", 50, |d| if d.foreign { Err("foreign".into()) } else { Ok(()) });
     }
 }

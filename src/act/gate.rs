@@ -82,8 +82,8 @@ pub fn decide(gate: Gate, force: bool, doing: &str) -> Enforced {
             out.push("(--force to run anyway)".into());
             Enforced::Refuse(out)
         }
-        Gate::Soft(_) | Gate::Go => Enforced::Run(vec![]),
-        Gate::Warn(ws) => Enforced::Run(ws),
+        Gate::Go => Enforced::Run(vec![]),
+        Gate::Soft(ws) | Gate::Warn(ws) => Enforced::Run(ws),
     }
 }
 
@@ -151,13 +151,13 @@ mod tests {
     }
 
     #[test]
-    fn decide_refuses_hard_and_unforced_soft_runs_go_warn_and_forced_soft() {
+    fn decide_refuses_hard_and_unforced_soft_and_warns_what_force_overrode() {
         assert_eq!(decide(Gate::Hard("no PR".into()), true, "x"), Enforced::Refuse(vec!["no PR".into()]));
         assert_eq!(decide(Gate::Done("on main".into()), false, "x"), Enforced::Done("on main".into()));
         let soft = || Gate::Soft(vec!["taken over".into(), "not pushed".into()]);
         let want = ["not restacking feat:", "  - taken over", "  - not pushed", "(--force to run anyway)"];
         assert_eq!(decide(soft(), false, "restacking feat"), Enforced::Refuse(want.map(String::from).to_vec()));
-        assert_eq!(decide(soft(), true, "restacking feat"), Enforced::Run(vec![]));
+        assert_eq!(decide(soft(), true, "restacking feat"), Enforced::Run(vec!["taken over".into(), "not pushed".into()]));
         assert_eq!(decide(Gate::Warn(vec!["CI is still running".into()]), false, "x"), Enforced::Run(vec!["CI is still running".into()]));
         assert_eq!(decide(Gate::Go, false, "x"), Enforced::Run(vec![]));
     }

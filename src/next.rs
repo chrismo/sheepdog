@@ -228,8 +228,8 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let hold = &hold_step(d, s);
     let addr = crate::act::address_gate(s);
     let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
-    let ci_waits = match crate::act::ci_fix_gate(s) {
-        crate::act::CiFixGate::Waits { why, .. } if d.ci_waits => why,
+    let ci_waits = match d.ci_waits.then(|| crate::act::ci_fix_gate(s)) {
+        Some(crate::act::CiFixGate::Waits { why, .. }) => why,
         _ => String::new(),
     };
     let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
