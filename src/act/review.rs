@@ -134,26 +134,26 @@ fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
         die(format!("the reviewer printed no JSON list ({reviewer})"))
     };
     let shown = o.stdout.trim_end_matches('\n');
-    let flagged = at(&s, "flags").as_array().map_or(0, Vec::len);
+    let flagged = at(s, "flags").as_array().map_or(0, Vec::len);
     if flagged > 0 {
-        eprintln!("sd act: {flagged} flagged for chrismo in {}..{} (not a gate):", short(&base), short(&head));
-        eprint!("{}", flag_lines(&s));
+        eprintln!("sd act: {flagged} flagged for chrismo in {}..{} (not a gate):", short(base), short(head));
+        eprint!("{}", flag_lines(s));
     }
     let (n, blocking) = (findings.len(), blocking(&findings));
     let findings_ref = format!("refs/sheepdog/{b}/findings");
     if blocking == 0 {
-        pin_write(".", b, "local", &head, &base).unwrap_or_else(|e| die(e));
+        pin_write(".", b, "local", head, base).unwrap_or_else(|e| die(e));
         must(git(".", &["update-ref", "-d", &findings_ref]));
         let nits = if n == 0 { String::new() } else { format!(" ({})", plural(n, "nit")) };
-        println!("clean: {b} at {} reviewed against {}; pinned local{nits}", short(&head), short(&base));
+        println!("clean: {b} at {} reviewed against {}; pinned local{nits}", short(head), short(base));
         if n > 0 {
             println!("{shown}");
         }
         return;
     }
     let prev = git(".", &["cat-file", "blob", &findings_ref]);
-    let round = round(if prev.ok { &prev.stdout } else { "" }, on(&s, "review.findings.at_head"));
-    let rec = record(&head, &base, round, &findings);
+    let round = round(if prev.ok { &prev.stdout } else { "" }, on(s, "review.findings.at_head"));
+    let rec = record(head, base, round, &findings);
     let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
     if !obj.ok || !git(".", &["update-ref", "-m", &format!("review round {round}"), &findings_ref, &strip_nl(obj.stdout)]).ok {
         die("couldn't record the findings");

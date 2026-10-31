@@ -147,9 +147,18 @@ means the sandbox, so run it outside.
 `main`, as one task, `cargo-test`. Its filter lists the files the tests read
 from the repo (`src/`, `tests/`, `lib/prompts/`, `lib/review-rules.md`,
 `install.sh`, `bin/sd`, the Cargo files): a test that starts reading another
-one needs it added there, or a change to that file won't rerun the task. A
-push to a branch with an open PR starts a run; `sd state` reports its result.
-To read a run:
+one needs it added there, or a change to that file won't rerun the task.
+Two lint tasks run beside it: `clippy` and `shellcheck` (`shellcheck
+install.sh`). `clippy` fails on any warning (`cargo clippy --all-targets
+--locked -- -D warnings`) and runs the lint ratchet (`cargo test --locked
+--test lint_ratchet -- --ignored`): every function over clippy's length or
+cognitive-complexity cap is listed in `tests/lint-ratchet.txt` at its score,
+and may not grow or be joined by a new one: split the function instead.
+Shrinking one needs no edit to the list (#354 recalibrates it). The clippy
+and shellcheck commands above are cheap, so run them locally before pushing;
+CI's versions (Rust 1.90.0, Ubuntu 24.04's shellcheck) are the ones that
+count. A push to a branch with an open PR starts a run; `sd state` reports its
+result. To read a run:
 
 ```bash
 rwx runs list --branch <branch>
