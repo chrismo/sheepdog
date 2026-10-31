@@ -96,6 +96,30 @@ Pick whichever fits the task; one piece of work can use both. The sandbox's
 AGENTS.md has its rules and the setup that keeps sheepdog's state there away
 from chrismo's real config, glyphs and launchd job.
 
+### Asking chrismo to decide
+
+chrismo doesn't write the code, so a decision handed over in prose, or two
+agents' contradicting answers relayed side by side, is hard to place. Put
+each decision on a card:
+
+- **The question**, in one sentence that stands on its own.
+- **Each side**: who holds it, the claim, and its evidence marked **seen**
+  (file:line, test, command output, issue #) or **theory** (reasoning only).
+  Another agent's claim stays theory until you check its citation.
+- **The split**: the one fact or assumption the sides differ on.
+- **Your pick**, and what would change it.
+
+Ask with your harness's structured-question tool when it has one: one
+question per decision, your pick first and marked recommended, each
+option's evidence in a line. Otherwise write the cards as text, numbered.
+A page is for more decisions than one round of questions holds, or one too
+tangled to compare without seeing the sides together.
+
+Before asking, check the cheap evidence: a cited line or a test anyone can
+run often makes the contradiction go away. After the answer, record it
+where the work lives (issue comments, the doc that asked), and say when
+chrismo picked against your pick.
+
 ## Development
 
 This is a TDD repo: write a failing test first, then make it pass. Every test
