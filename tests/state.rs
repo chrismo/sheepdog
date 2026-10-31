@@ -3215,6 +3215,17 @@ fn threads_reviews_and_comments_listed_in_branch_sd_handled_are_not_owed() {
     assert_eq!(r.field(r#"[.threads.items[].id] | join(",")"#), "R2");
 }
 
+#[test]
+fn threads_unposted_is_branch_sd_unposted_the_owed_set_of_a_round_whose_replies_didnt_post_357() {
+    let sd = sd();
+    sd.feat();
+    sd.pr_fixture("feat", &[]);
+    assert_eq!(sd.state(&[]).field(".threads.unposted | length"), "0");
+    sd.git(&["config", "--add", "branch.feat.sd-unposted", "T1"]);
+    sd.git(&["config", "--add", "branch.feat.sd-unposted", "R2"]);
+    assert_eq!(sd.state(&[]).field(r#".threads.unposted | join(",")"#), "T1,R2");
+}
+
 // @test "threads: by_type counts owed bot items of each type"
 #[test]
 fn threads_by_type_counts_owed_bot_items_of_each_type() {

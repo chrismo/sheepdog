@@ -781,6 +781,7 @@ struct Facts {
     ignore: Value,
     ignore_body: Vec<Regex>,
     handled: Vec<String>,
+    unposted: Vec<String>,
     refs: Vec<(String, String)>,
     enrolled: String,
     harness: String,
@@ -1030,7 +1031,7 @@ fn assemble(s: &Facts) -> Value {
                     "by_type": gh(json!({"thread": cnt("thread"), "review": cnt("review"), "comment": cnt("comment")})),
                     "blocking": gh(json!(owed.iter().filter(|o| o["mark"] == "!").count())),
                     "info": gh(json!(owed.iter().filter(|o| o["mark"] == "i").count())),
-                    "items": owed},
+                    "items": owed, "unposted": s.unposted},
         "bot": {"command": jn(&s.bot_command), "timeout": s.bot_timeout},
         "session": {"enrolled": s.enrolled == "true", "harness": jn(&s.harness), "profile": s.profile, "id": jn(&s.session),
                     "locked": !s.lock.is_empty(), "running": s.running},
@@ -1042,6 +1043,11 @@ fn assemble(s: &Facts) -> Value {
 }
 
 // ── observe ──────────────────────────────────────────────────────────────────
+
+/// Every value of branch.<branch>.<key>.
+fn config_all(dir: &str, branch: &str, key: &str) -> Vec<String> {
+    git_out(dir, &["config", "--get-all", &format!("branch.{branch}.{key}")]).map(|s| s.lines().map(str::to_string).collect()).unwrap_or_default()
+}
 
 fn cfg_text(dir: &str, path: &str, b: &str, as_json: bool) -> Result<String, String> {
     config::get_text_in(dir, path, b, as_json).map_err(config_failed)
@@ -1516,9 +1522,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     }
 
     let running = running::state(dir, branch).ok_or_else(|| fail("couldn't read the branch's running marker"))?;
-    let handled: Vec<String> = git_out(dir, &["config", "--get-all", &format!("branch.{branch}.sd-handled")])
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default();
+    let (handled, unposted) = (config_all(dir, branch, "sd-handled"), config_all(dir, branch, "sd-unposted"));
     let refs: Vec<(String, String)> = git(dir, &["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/sheepdog/{branch}/")])
         .stdout
         .lines()
@@ -1583,6 +1587,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         ignore,
         ignore_body,
         handled,
+        unposted,
         refs,
         enrolled: cfg("sheepdog"),
         harness: cfg("sd-harness"),

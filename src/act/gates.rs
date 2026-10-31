@@ -32,7 +32,7 @@ pub fn push(d: &Derived) -> Gate {
     let Derived {
         open, verify_red, undone, parent_unpushed,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
-        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, draft: _, review_required: _,
+        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
         to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
@@ -61,6 +61,7 @@ pub mod addr {
     pub const UNREAD: &str = "can't read the PR from GitHub";
     pub const NOTHING: &str = "nothing to address";
     pub const LOCKED: &str = "taken over (the branch's sd-lock is set)";
+    pub const UNPOSTED: &str = "its last round's replies didn't post, and nothing new is owed";
     pub const CONFLICT: &str = "restack due, and it would conflict";
     pub const SYNC_UNKNOWN: &str = "sync with the target unknown";
     pub const DIVERGED: &str = "diverged from the remote branch";
@@ -75,8 +76,8 @@ pub mod addr {
 pub fn address(d: &Derived) -> Gate {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
-        own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _, owed_human: _,
-        bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _,
+        unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
+        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _,
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, old_base_null: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
@@ -102,6 +103,7 @@ pub fn address(d: &Derived) -> Gate {
         rule(addr::LOCKED, Level::Soft, yes(*locked), "the branch's session exits"),
         rule(addr::CONFLICT, Level::Soft, conflict, "sd act restack --resolve"),
         rule(addr::SYNC_UNKNOWN, Level::Soft, !conflict && up_to_date.is_none(), "sd state's errors say why"),
+        rule(addr::UNPOSTED, Level::Soft, *unposted, "a new bot item, or sd act address --force"),
         // last: address::yours drops it when a push clears it
         rule(push.unwrap_or(addr::UNPUSHED), Level::Soft, push.is_some(), "sd act push"),
         rule(addr::BEHIND, Level::Warn, no(*up_to_date) && !conflict, "sd act restack"),
@@ -197,6 +199,12 @@ mod tests {
         assert!(!address_pushes(&Derived { unpushed: true, foreign: true, ..owed() }));
         assert!(address_pushes(&Derived { behind_remote: true, dropping: true, ..owed() }));
         assert!(!address_pushes(&Derived { behind_remote: true, ..owed() }));
+    }
+
+    #[test]
+    fn address_holds_a_round_whose_replies_didnt_post_till_a_new_item_or_force_357() {
+        assert_eq!(address(&Derived { unposted: true, ..owed() }), soft(&[addr::UNPOSTED]));
+        assert_eq!(address(&Derived { unposted: true, unpushed: true, ..owed() }), soft(&[addr::UNPOSTED, addr::UNPUSHED]));
     }
 
     #[test]

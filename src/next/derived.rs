@@ -84,6 +84,9 @@ derived! {
     bot_blocking: f64 => |r: &mut arb::Rng| r.pick(&[0.0, 1.0, 2.0]),
     /// Info bot items are owed a read.
     info: bool,
+    /// Bot items are owed, every one handed to an address round whose
+    /// replies didn't post (threads.unposted, #357).
+    unposted: bool,
     /// The PR is a draft.
     draft: Option<bool>,
     /// GitHub requires a review.
@@ -331,6 +334,10 @@ impl Derived {
         self.owed_bot = j.g("threads.owed_bot").as_f64().map(|n| n > 0.0);
         self.bot_blocking = j.n("threads.owed_bot") - j.n("threads.info");
         self.info = j.n("threads.info") > 0.0;
+        let owed: Vec<&Value> =
+            j.g("threads.items").as_array().into_iter().flatten().filter(|it| it["kind"] == "bot").map(|it| &it["id"]).collect();
+        let unposted = j.g("threads.unposted").as_array();
+        self.unposted = !owed.is_empty() && unposted.is_some_and(|u| owed.iter().all(|id| u.contains(id)));
         self.draft = j.flag("pr.draft");
         self.review_required = j.is("pr.review_decision", "REVIEW_REQUIRED");
         self.merge_state = j.g("pr.merge_state").as_str().unwrap_or("UNKNOWN").to_string();
@@ -587,6 +594,20 @@ mod tests {
         assert!(!d.behind_target, "unknown sync is not behind");
         let d = Derived::new(&json!({"sync": {"up_to_date": false}}));
         assert!(d.behind_target);
+    }
+
+    #[test]
+    fn unposted_holds_while_every_owed_bot_item_was_in_the_round_whose_replies_didnt_post_357() {
+        let rec = |owed: &[&str], unposted: Value| {
+            let mut items: Vec<Value> = owed.iter().map(|id| json!({"id": id, "kind": "bot"})).collect();
+            items.push(json!({"id": "H1", "kind": "human"}));
+            Derived::new(&json!({"threads": {"items": items, "unposted": unposted}})).unposted
+        };
+        assert!(rec(&["T1"], json!(["T1", "T2"])));
+        assert!(!rec(&["T1", "T3"], json!(["T1", "T2"])), "a new item is owed");
+        assert!(!rec(&[], json!(["T1"])), "nothing owed");
+        assert!(!rec(&["T1"], json!([])));
+        assert!(!rec(&["T1"], Value::Null));
     }
 
     #[test]

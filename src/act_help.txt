@@ -356,7 +356,8 @@ Config (sd config show):
 
 State (git config): branch.<b>.sheepdog, .sd-task, .sd-parent, .sd-pr, .sd-mode
 (reviewer: sd act follow's), .sd-session,
-.sd-harness, .sd-handled, .sd-lock ("<pid>@<host> <time>" while attached),
+.sd-harness, .sd-handled, .sd-unposted (the items of an address round whose
+replies didn't post), .sd-lock ("<pid>@<host> <time>" while attached),
 .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
 .sd-accepted-after (the .sd-bot-triggered that review --accept followed),

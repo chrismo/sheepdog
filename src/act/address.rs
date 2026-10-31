@@ -514,7 +514,19 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         eprintln!("sd act: {e}");
         die("not pushed, so nothing posted");
     }
-    post(b, &t(&s, "pr.url"), &plan)
+    let posted = post(b, &t(&s, "pr.url"), &plan);
+    unposted(b, if posted { &[] } else { &ids });
+    posted
+}
+
+/// branch.<b>.sd-unposted := <ids>, the owed set of a round whose replies
+/// didn't all post; address refuses it till a new item comes (#357).
+fn unposted(b: &str, ids: &[String]) {
+    let key = format!("branch.{b}.sd-unposted");
+    git(".", &["config", "--unset-all", &key]);
+    if !ids.iter().all(|id| git(".", &["config", "--add", &key, id]).ok) {
+        eprintln!("sd act: warning: couldn't record {key}, so NEXT may offer address on these items again");
+    }
 }
 
 /// address, marked running for all of it, commit, verify and posting

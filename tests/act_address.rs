@@ -426,6 +426,26 @@ fn runs_in_the_branchs_worktree_wherever_its_called_from() {
     assert_eq!(sd.git_in("feat-wt", &["log", "-1", "--format=%s"]), "Uppercase three");
 }
 
+#[test]
+fn a_round_whose_replies_didnt_post_is_recorded_and_refused_till_forced_and_a_posted_round_clears_it_357() {
+    let sd = sd();
+    let r = sd.run_env(&[("GH_FAIL_OP", "addPullRequestReviewThreadReply")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["config", "--get-all", "branch.feat.sd-unposted"]), "T1");
+    // sd state reports it, and nothing new is owed
+    sd.state(&[r#".threads.unposted = ["T1"]"#]);
+    sd.rm("claude.args");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["its last round's replies didn't post, and nothing new is owed", "--force"]);
+    assert!(!sd.ran("claude.args"));
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "done", commit_message: null, summary: "replied", items: [{id: "T1", action: "reply", reply: "Already done."}]}"#);
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git_try(&["config", "--get-all", "branch.feat.sd-unposted"]), None);
+}
+
 // ── the happy path ───────────────────────────────────────────────────────────
 
 // @test "fixed thread: agent's edit committed, pushed, replied to, resolved"

@@ -171,5 +171,7 @@ and [] turns it off.
 State: branch.<name>.pr-{parent,tend,harness,session,lock}, branch.<name>.sd-pr
 (the PR's number, written here), branch.<name>.sd-handled
 (multi-valued: node ids of bot reviews/comments already dealt with),
+branch.<name>.sd-unposted (multi-valued: the owed ids of an address round
+whose replies didn't post; threads.unposted),
 branch.<name>.sd-bot-triggered (when sd act trigger posted its comment),
 branch.<name>.sd-accepted-after (the sd-bot-triggered sd act review --accept followed).
