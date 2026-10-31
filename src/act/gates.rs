@@ -38,13 +38,15 @@ pub fn push(d: &Derived) -> Gate {
         ci_moot: _, ci_waits: _, ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
         bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
-    let rule = |name, refuses: bool, clears| Rule { name, level: Level::Soft, refuses, clears };
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
     judge(&[
-        rule("the PR is merged or closed", !open, "reopen it, or start a new branch"),
-        rule("verify is red at HEAD", *verify_red, "fix it, then sd act verify"),
-        rule("the restack was undone: some of the target's commits are copies here, and pushing would publish them", *undone,
-            "redo the restack (sd state's NEXT says how)"),
-        rule("the parent branch isn't on the remote yet", *parent_unpushed, "ship it first (sd act ship <parent>)"),
+        // Hard, so a --force meant for another refusal can't publish the
+        // copies; if the guess is wrong, git push by hand still works.
+        rule("not pushing: the restack was undone: some of the target's commits are copies here, and pushing would publish them \
+              (if they aren't, git push by hand)", Level::Hard, *undone, "redo the restack (sd state's NEXT says how)"),
+        rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
+        rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
+        rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
     ])
 }
 
@@ -74,13 +76,16 @@ mod tests {
     }
 
     #[test]
-    fn push_refuses_an_undone_restack_a_red_verify_an_unpushed_parent_and_a_closed_pr_unless_forced() {
-        let d = Derived { open: true, undone: true, verify_red: true, ..Derived::default() };
-        let Gate::Soft(why) = push(&d) else { panic!("{:?}", push(&d)) };
-        assert_eq!(why.len(), 2);
-        assert!(why[1].starts_with("the restack was undone"), "{why:?}");
-        assert!(matches!(push(&Derived { open: true, parent_unpushed: true, ..Derived::default() }), Gate::Soft(_)));
+    fn push_refuses_a_red_verify_an_unpushed_parent_and_a_closed_pr_unless_forced() {
+        let d = Derived { open: true, parent_unpushed: true, verify_red: true, ..Derived::default() };
+        assert_eq!(push(&d), Gate::Soft(vec!["verify is red at HEAD".into(), "the parent branch isn't on the remote yet".into()]));
         assert!(matches!(push(&Derived::default()), Gate::Soft(_)));
+    }
+
+    #[test]
+    fn push_refuses_an_undone_restack_even_forced() {
+        let d = Derived { open: true, undone: true, verify_red: true, ..Derived::default() };
+        assert!(matches!(push(&d), Gate::Hard(why) if why.starts_with("not pushing: the restack was undone")));
     }
 
     #[test]
