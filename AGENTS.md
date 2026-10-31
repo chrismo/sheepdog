@@ -22,7 +22,8 @@ reasoning. These are the rules agents build by:
    cost; an agent runs only for judgment. The verbs that run one are
    `implement`, `address`, `ci-fix`, `answer`, `describe`, `review`,
    `restack --resolve`, and `start` and `ship` when they run implement or
-   describe; `sd act --help` marks them "Spends tokens". Every other verb is zero tokens.
+   describe; `sd act --help` marks them "Spends tokens", as `sd harness
+   --help` marks `probe`. Every other verb is zero tokens.
 2. **The pipeline drives; agents are workers.** The pipeline initiates every
    step and hands an agent one bounded task; the agent edits, and sheepdog
    commits, pushes and talks to GitHub. Agents never need to know the
