@@ -342,7 +342,8 @@ fn unpushed_and_locked_every_reason_listed_nothing_run() {
 #[test]
 fn a_restack_conflict_and_a_diverged_remote_are_refused() {
     let sd = sd();
-    sd.state(&[".sync.up_to_date = false | .sync.conflict = true | .push.diverged = true"]);
+    // as sd state has it: diverged is ahead and behind both
+    sd.state(&[".sync.up_to_date = false | .sync.conflict = true | .push.diverged = true | .push.ahead = 1 | .push.behind = 1"]);
     let r = sd.run(&["address"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["conflict"]);
@@ -380,6 +381,17 @@ fn force_runs_past_the_soft_refusals() {
     let r = sd.run(&["address", "--force"]);
     assert_eq!(r.status, 0);
     assert!(sd.ran("claude.args"));
+}
+
+// @test "--force past a soft refusal still warns behind main and CI running"
+#[test]
+fn force_past_a_soft_refusal_still_warns_behind_main_and_ci_running() {
+    let sd = sd();
+    sd.state(&[r#".push.ahead = 1 | .sync.up_to_date = false | .sync.behind = 10 | .ci.verdict = "pending""#]);
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0);
+    assert!(sd.ran("claude.args"));
+    assert_has(&r.output, &["warning", "unpushed", "behind main by 10", "CI is still running"]);
 }
 
 // @test "CI still running only warns"
@@ -423,6 +435,35 @@ fn runs_in_the_branchs_worktree_wherever_its_called_from() {
     assert_eq!(r.status, 0);
     assert_eq!(sd.fx("agent.cwd"), sd.path("feat-wt"));
     assert_eq!(sd.git_in("feat-wt", &["log", "-1", "--format=%s"]), "Uppercase three");
+}
+
+#[test]
+fn a_round_whose_replies_didnt_post_is_recorded_and_refused_till_forced_and_a_posted_round_clears_it_357() {
+    let sd = sd();
+    let r = sd.run_env(&[("GH_FAIL_OP", "addPullRequestReviewThreadReply")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["config", "--get-all", "branch.feat.sd-unposted"]), "T1");
+    // sd state reports it, and nothing new is owed
+    sd.state(&[r#".threads.unposted = ["T1"]"#]);
+    sd.rm("claude.args");
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["its last round's replies didn't post, and nothing new is owed", "--force"]);
+    assert!(!sd.ran("claude.args"));
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "done", commit_message: null, summary: "replied", items: [{id: "T1", action: "reply", reply: "Already done."}]}"#);
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git_try(&["config", "--get-all", "branch.feat.sd-unposted"]), None);
+}
+
+#[test]
+fn a_round_whose_replies_didnt_post_records_each_thread_with_its_last_comment_357() {
+    let sd = sd();
+    sd.state(&[r#".threads.items[0].last_id = "C1""#]);
+    let r = sd.run_env(&[("GH_FAIL_OP", "addPullRequestReviewThreadReply")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["config", "--get-all", "branch.feat.sd-unposted"]), "T1@C1");
 }
 
 // ── the happy path ───────────────────────────────────────────────────────────

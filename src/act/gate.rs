@@ -53,6 +53,11 @@ pub fn judge(rules: &[Rule]) -> Gate {
     }
 }
 
+/// <rules>' Warn reasons that refuse, which judge drops from a worse verdict.
+pub fn warnings(rules: &[Rule]) -> Vec<String> {
+    rules.iter().filter(|r| r.level == Level::Warn && r.refuses).map(|r| r.name.to_string()).collect()
+}
+
 /// Proof the verb's gate let it run: only enforce makes one.
 #[must_use]
 #[derive(Debug)]

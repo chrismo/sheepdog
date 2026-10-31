@@ -490,6 +490,31 @@ fn bot_items_address_refuses_with_nothing_ahead_to_clear_it_are_chrismo_s_326() 
 }
 
 #[test]
+fn bot_items_a_round_already_took_whose_replies_didnt_post_are_chrismo_s_till_a_new_one_comes_357() {
+    let owed = |ids: &[&str]| {
+        let items: Vec<Value> = ids.iter().map(|id| json!({"id": id, "type": "thread", "kind": "bot"})).collect();
+        format!(".threads.owed_bot = {} | .threads.items = {}", ids.len(), json!(items))
+    };
+    let unposted = r#".threads.unposted = ["T1", "T2"]"#;
+    let same = e![&owed(&["T1"]), unposted];
+    assert_eq!(keys(&same), "bot");
+    assert_eq!(step("bot", "who", &same), "you");
+    assert_eq!(
+        step("bot", "say", &same),
+        "address 1 bot item: sd act address refuses while its last round's replies didn't post, and nothing new is owed: clear that first, or sd act address --force"
+    );
+    assert_eq!(step("bot", "cmd", &same), "sd act address --force");
+    // a new item: the agent's again, with the old ones
+    let new = e![&owed(&["T1", "T3"]), unposted];
+    assert_eq!(step("bot", "who", &new), "agent");
+    assert_eq!(step("bot", "cmd", &new), "sd act address");
+    // a thread is keyed on its last comment: a bot comment since the round makes it new
+    let commented = |last: &str| e![&owed(&["T1"]), &format!(".threads.items[0].last_id = \"{last}\""), r#".threads.unposted = ["T1@C1"]"#];
+    assert_eq!(step("bot", "who", &commented("C1")), "you");
+    assert_eq!(step("bot", "who", &commented("C2")), "agent");
+}
+
+#[test]
 fn an_address_question_its_gate_refuses_takes_the_answer_now_unless_a_restack_would_drop_it_326() {
     let q = asked("address", true);
     let ahead = e![".threads.owed_bot = 1", ".push.ahead = 1", &q];

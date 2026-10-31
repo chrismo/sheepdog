@@ -20,7 +20,7 @@ mod review;
 mod ship;
 mod start;
 mod step;
-pub(crate) use address::{gate as address_gate, Gate as AddressGate};
+pub(crate) use address::said as address_said;
 pub(crate) use ci_fix::{gate as ci_fix_gate, Gate as CiFixGate};
 pub use gate::{enforce, judge, Gate, Go, Level, Rule};
 

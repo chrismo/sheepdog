@@ -3162,6 +3162,14 @@ fn threads_inline_thread_items_are_typed_thread() {
     assert_eq!(r.field(".threads.items[0].path"), "file.txt");
 }
 
+// @test "threads: a thread item carries its last comment's id, so a new bot comment makes it new (#357)"
+#[test]
+fn threads_a_thread_item_carries_its_last_comments_id_357() {
+    let sd = sd();
+    sd.feat_pr(&[&format!(".reviewThreads.nodes = [{}]", thread("Bot", "copilot", "Bot", "copilot")), ".reviewThreads.nodes[0].last.nodes[0].id = \"C9\""]);
+    assert_eq!(sd.state(&[]).field(".threads.items[0].last_id"), "C9");
+}
+
 // @test "threads: bot review bodies are owed; empty bodies and humans' are not"
 #[test]
 fn threads_bot_review_bodies_are_owed_empty_bodies_and_humans_are_not() {
@@ -3213,6 +3221,17 @@ fn threads_reviews_and_comments_listed_in_branch_sd_handled_are_not_owed() {
     let r = sd.state(&[]);
     assert_eq!(r.field(".threads.owed_bot"), "1");
     assert_eq!(r.field(r#"[.threads.items[].id] | join(",")"#), "R2");
+}
+
+#[test]
+fn threads_unposted_is_branch_sd_unposted_the_owed_set_of_a_round_whose_replies_didnt_post_357() {
+    let sd = sd();
+    sd.feat();
+    sd.pr_fixture("feat", &[]);
+    assert_eq!(sd.state(&[]).field(".threads.unposted | length"), "0");
+    sd.git(&["config", "--add", "branch.feat.sd-unposted", "T1"]);
+    sd.git(&["config", "--add", "branch.feat.sd-unposted", "R2"]);
+    assert_eq!(sd.state(&[]).field(r#".threads.unposted | join(",")"#), "T1,R2");
 }
 
 // @test "threads: by_type counts owed bot items of each type"
