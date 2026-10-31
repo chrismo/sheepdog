@@ -3,6 +3,8 @@
 
 mod pass;
 
+pub(crate) use pass::json_files;
+
 use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};
 use crate::proc::{self, executable};

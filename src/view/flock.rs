@@ -5,7 +5,8 @@
 use crate::val::{at, n, on, t};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
+use crate::watch::json_files;
+use std::path::Path;
 
 pub const STAGES: [&str; 7] = ["build", "push", "ci", "review", "bot", "threads", "merge"];
 
@@ -29,6 +30,41 @@ fn count(n: f64, one: &str) -> String {
     format!("{n} {one}{}", if n == 1.0 { "" } else { "s" })
 }
 
+/// A review pin covering HEAD, as sd state's covers() reads it.
+fn covers(s: &Value, pin: &str) -> bool {
+    matches!(t(s, &format!("{pin}.status")).as_str(), "covered" | "rewritten-same")
+}
+
+/// Checks on an older SHA give no verdict (O5).
+fn ci(s: &Value) -> (&'static str, String) {
+    let (status, text) = match t(s, "ci.verdict").as_str() {
+        "none" => ("skip", "no checks"),
+        _ if at(s, "ci.for_head") == &Value::Bool(false) => ("todo", "old head"),
+        "green" => ("done", "green"),
+        "red" => ("red", "red"),
+        "pending" => ("todo", "running"),
+        "inconclusive" => ("todo", "cancelled"),
+        v => return ("todo", v.into()),
+    };
+    (status, text.into())
+}
+
+/// Covering HEAD with replied false is a trigger the bot hasn't answered.
+fn bot(s: &Value) -> (&'static str, String) {
+    if covers(s, "review.bot") {
+        return match at(s, "review.bot.replied") {
+            Value::Bool(false) => ("todo", "waiting".into()),
+            _ => ("done", String::new()),
+        };
+    }
+    match t(s, "review.bot.status").as_str() {
+        _ if t(s, "bot.command").is_empty() => ("skip", "no botCommand".into()),
+        "uncovered" => ("todo", format!("{} since", n(s, "review.bot.uncovered"))),
+        "rewritten-changed" => ("todo", "rewritten".into()),
+        _ => ("todo", "not asked".into()),
+    }
+}
+
 /// skip is "not set up": no CI checks, no botCommand.
 fn base(s: &Value, stage: &str) -> (&'static str, String) {
     let pr = !at(s, "pr").is_null();
@@ -39,24 +75,14 @@ fn base(s: &Value, stage: &str) -> (&'static str, String) {
         "push" if on(s, "sync.conflict") => ("red", "conflict".into()),
         "push" if n(s, "sync.behind") > 0.0 => ("done", format!("{} behind", n(s, "sync.behind"))),
         "push" => ("done", String::new()),
-        "ci" => match t(s, "ci.verdict").as_str() {
-            "green" => ("done", "green".into()),
-            "red" => ("red", "red".into()),
-            "none" => ("skip", "no checks".into()),
-            "pending" => ("todo", "running".into()),
-            "inconclusive" => ("todo", "cancelled".into()),
-            v => ("todo", v.into()),
-        },
-        "review" if t(s, "review.local.status") == "covered" => ("done", "clean".into()),
+        "ci" => ci(s),
+        "review" if covers(s, "review.local") => ("done", "clean".into()),
+        "review" if covers(s, "review.accepted") => ("done", "accepted".into()),
         "review" if on(s, "review.findings.at_head") && n(s, "review.findings.n") > 0.0 => (
             "red",
             format!("{} · round {}", count(n(s, "review.findings.n"), "finding"), n(s, "review.findings.round")),
         ),
-        "bot" => match t(s, "review.bot.status").as_str() {
-            "covered" | "replied" => ("done", String::new()),
-            "none" | "" if t(s, "bot.command").is_empty() => ("skip", "no botCommand".into()),
-            st => ("todo", st.into()),
-        },
+        "bot" => bot(s),
         "threads" if !pr => ("todo", String::new()),
         "threads" => match n(s, "threads.owed_bot") + n(s, "threads.owed_human") {
             0.0 => ("done", String::new()),
@@ -103,17 +129,6 @@ pub fn card(repo: &str, branch: &str, doc: Option<&Value>) -> Value {
     };
     json!({"repo": repo, "branch": branch, "glyph": at(doc, "glyph"), "pr": pr,
            "usd": at(s, "spend.usd"), "lead": lead, "stages": stages(s)})
-}
-
-fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            json_files(&p, out);
-        } else if p.extension().is_some_and(|x| x == "json") {
-            out.push(p);
-        }
-    }
 }
 
 /// GET /api/flock: {at: the last pass's time or null, branches: [card]},
@@ -203,9 +218,33 @@ mod tests {
     fn a_bot_is_not_set_up_without_a_bot_command() {
         assert_eq!(one(open(), "bot"), "skip:no botCommand");
         let s = with(open(), "bot.command", json!("@bot review"));
-        assert_eq!(one(s, "bot"), "todo:none");
-        let s = with(open(), "review.bot.status", json!("replied"));
-        assert_eq!(one(s, "bot"), "done:");
+        assert_eq!(one(s, "bot"), "todo:not asked");
+    }
+
+    #[test]
+    fn a_bot_covering_head_is_done_once_it_replied() {
+        let bot = |v: Value| with(with(open(), "bot.command", json!("@bot review")), "review.bot", v);
+        assert_eq!(one(bot(json!({"status": "covered", "replied": false})), "bot"), "todo:waiting");
+        assert_eq!(one(bot(json!({"status": "covered", "replied": true})), "bot"), "done:");
+        assert_eq!(one(bot(json!({"status": "rewritten-same", "replied": null})), "bot"), "done:");
+        assert_eq!(one(bot(json!({"status": "uncovered", "uncovered": 2})), "bot"), "todo:2 since");
+        assert_eq!(one(bot(json!({"status": "rewritten-changed"})), "bot"), "todo:rewritten");
+    }
+
+    #[test]
+    fn review_is_done_when_local_or_accepted_covers_head() {
+        let s = with(open(), "review.local.status", json!("rewritten-same"));
+        assert_eq!(one(s, "review"), "done:clean");
+        let s = with(with(open(), "review.local.status", json!("uncovered")), "review.accepted.status", json!("covered"));
+        assert_eq!(one(s, "review"), "done:accepted");
+    }
+
+    #[test]
+    fn ci_on_an_older_head_is_no_verdict() {
+        let s = with(with(open(), "ci.verdict", json!("red")), "ci.for_head", json!(false));
+        assert_eq!(one(s, "ci"), "todo:old head");
+        let s = with(with(open(), "ci.verdict", json!("none")), "ci.for_head", json!(false));
+        assert_eq!(one(s, "ci"), "skip:no checks");
     }
 
     #[test]

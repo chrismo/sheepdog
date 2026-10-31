@@ -10,7 +10,7 @@
 mod flock;
 
 use crate::config::state_dir;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
@@ -50,9 +50,17 @@ pub fn run(argv: &[String]) -> ExitCode {
         let _ = Command::new(opener).arg(&url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
     let state = state_dir();
-    for stream in listener.incoming().flatten() {
-        let state = state.clone();
-        std::thread::spawn(move || serve(stream, port, Path::new(&state)));
+    for stream in listener.incoming() {
+        match stream {
+            Ok(stream) => {
+                let state = state.clone();
+                std::thread::spawn(move || serve(stream, port, Path::new(&state)));
+            }
+            Err(e) => {
+                eprintln!("sd view: {e}");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
     }
     ExitCode::SUCCESS
 }
@@ -95,7 +103,7 @@ fn respond(method: &str, path: &str, host: &str, port: u16, state: &Path) -> (&'
 
 fn serve(stream: TcpStream, port: u16, state: &Path) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let mut r = BufReader::new(&stream);
+    let mut r = BufReader::new((&stream).take(16 * 1024));
     let Some((method, path, host)) = read_request(&mut r) else { return };
     let (status, ctype, body) = respond(&method, &path, &host, port, state);
     let mut w = &stream;

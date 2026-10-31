@@ -407,7 +407,7 @@ fn unsure_why(note: Option<&str>, s: &Value) -> String {
     words.map_or("its reasons couldn't be read".into(), |w| w.join("; "))
 }
 
-fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let Ok(ft) = e.file_type() else { continue };
