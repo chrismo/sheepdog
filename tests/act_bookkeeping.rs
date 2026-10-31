@@ -281,6 +281,25 @@ fn forget_unenrolls_and_deletes_refs_sheepdog_branch() {
     assert_eq!(sd.pins("feat"), "");
 }
 
+// usage.sup is keyed on the branch's name: forget starts its spend over, so
+// a branch made again under the name doesn't inherit the old one's (#349).
+#[test]
+fn forget_starts_the_branchs_spend_over_349() {
+    let mut sd = sd();
+    sd.env.push(("SHEEPDOG_STATE_DIR".into(), sd.path("state")));
+    sd.no_prs();
+    sd.spent("feat", "implement", "30.");
+    sd.spent("other", "implement", "1.");
+    sd.spent("feat", "review", "null");
+    sd.ok(&["forget"]);
+    let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
+    let last = usage.lines().last().unwrap();
+    assert_has(last, &[&format!(r#",repo:"{}",branch:"feat",reset:true}}"#, sd.git(&["rev-parse", "--show-toplevel"]))]);
+    sd.spent("feat", "implement", "0.5");
+    let spend = sd.verb_ok("state", &["--json"]);
+    assert_has(&spend, &[r#""spend":{"usd":0.5,"unknown":[],"budget":25}"#]);
+}
+
 // @test "forget: a named branch; other branches' pins stay"
 #[test]
 fn forget_a_named_branch_other_branches_pins_stay() {

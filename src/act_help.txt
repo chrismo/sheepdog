@@ -93,7 +93,8 @@ Verbs:
             branch file and stored description too (#283)
   forget    the branch is done (merged, abandoned): unenroll it and delete
             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
-            and its stored description. --remove, once its PR merged: also
+            and its stored description, and start its spend over (a reset
+            row in usage.sup, #349). --remove, once its PR merged: also
             remove its worktree and delete the branch, which ends sd state's
             merged step (#153). Refuses, changing nothing, unless the PR
             merged with the branch's tip in it, and when the worktree has

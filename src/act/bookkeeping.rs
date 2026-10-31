@@ -4,7 +4,7 @@
 use super::{die, no_base_why, state_json};
 use crate::git::{self, git, git_input, git_ok, git_out, is_ancestor, main_worktree, rev, stacked_on, stacked_unclear, worktree_for};
 use crate::proc::Out;
-use crate::running;
+use crate::{running, time, usage};
 use crate::val::{at, sj, t};
 use serde_json::Value;
 use std::path::Path;
@@ -201,6 +201,7 @@ pub fn forget(b: &str, remove: bool) {
         println!("deleted {b} (was {})", short(&tip));
     }
     unenroll(b);
+    usage::append(&usage::reset_record(&time::now_utc().0, &main_worktree("."), b));
     let pins = must(git(".", &["for-each-ref", "--format=delete %(refname)", &format!("refs/sheepdog/{b}/")])).stdout;
     must(git_input(".", &["update-ref", "--stdin"], Some(pins.as_bytes())));
     if let Some(f) = crate::config::describe_file(".", b) {

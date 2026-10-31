@@ -92,7 +92,7 @@ Reports, for <branch> (default: the current one):
             the usage record (usage.sup, src/usage.rs); unknown: the steps
             whose cost isn't known (cost_usd null: stopped by a signal, or
             killed with no cap, after a billed turn), {time, step, session}
-            each; budget:
+            each; both since sd act forget last reset it; budget:
             settings.branchBudget (USD, 25; 0 is none). Past it, or with a
             step of unknown cost, NEXT hands the agent's steps to chrismo
             (#121, #349)

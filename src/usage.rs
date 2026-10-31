@@ -128,7 +128,8 @@ fn total_in(text: &str, session: &str) -> f64 {
 /// unknown cost isn't $0 (#349): cost_usd is null for a step sd stopped on a
 /// signal, and for one killed with no cap. A null cost with a null context
 /// is a step whose transcript has no billed turn (it failed to start), so
-/// it spent nothing. skipped: the lines that aren't whole records.
+/// it spent nothing. Only the rows after the branch's last reset count
+/// (reset_record). skipped: the lines that aren't whole records.
 #[derive(Debug, Default, PartialEq)]
 pub struct Spend {
     pub usd: f64,
@@ -150,6 +151,11 @@ fn spend_in(text: &str, repo: &str, b: &str) -> Option<Spend> {
         if field("repo") != Some(repo) || field("branch") != Some(b) {
             continue;
         }
+        if r.get("reset").is_some_and(|v| v == true) {
+            out.usd = 0.0;
+            out.unknown.clear();
+            continue;
+        }
         let ran = r.get("context").is_some_and(|c| !c.is_null());
         match r.get("cost_usd").and_then(Value::as_f64) {
             Some(c) => out.usd += c,
@@ -158,6 +164,13 @@ fn spend_in(text: &str, repo: &str, b: &str) -> Option<Spend> {
         }
     }
     Some(out)
+}
+
+/// The row sd act forget appends (#349): usage.sup is keyed on (repo,
+/// branch name), so a branch made again under the name would otherwise
+/// start at the old one's spend.
+pub fn reset_record(time: &str, repo: &str, b: &str) -> String {
+    format!("{{time:{time},repo:{},branch:{},reset:true}}", sup_string(repo), sup_string(b))
 }
 
 /// spend_in over usage.sup; no file is no spend.
@@ -368,6 +381,16 @@ mod tests {
         assert_eq!((s.usd, s.skipped), (1.75, 2));
         // Shaped like a record but not one: the file can't be read.
         assert_eq!(spend_in(&format!("{text}{{time:soon}}\n"), "/r", "feat"), None);
+    }
+
+    #[test]
+    fn spend_starts_over_after_the_branchs_last_reset_349() {
+        let reset = |b: &str| reset_record("2026-10-31T00:00:00Z", "/r", b) + "\n";
+        let text = [row("/r", "feat", "30."), row("/r", "feat", "null").replace("input:1", "context:9"), row("/r", "other", "2."), reset("feat"), reset("other").replace("/r", "/elsewhere"), row("/r", "feat", "0.5")].concat();
+        let s = spend_in(&text, "/r", "feat").unwrap();
+        assert_eq!(s, Spend { usd: 0.5, unknown: vec![], skipped: 0 });
+        assert_eq!(spend_in(&text, "/r", "other").unwrap().usd, 2.0);
+        assert_eq!(reset_record("2026-10-31T00:00:00Z", "/r", "feat"), r#"{time:2026-10-31T00:00:00Z,repo:"/r",branch:"feat",reset:true}"#);
     }
 
     #[test]
