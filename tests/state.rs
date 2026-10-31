@@ -1282,6 +1282,78 @@ fn sync_squash_merged_parent_retargets_to_main_and_replays_only_our_change() {
     assert_eq!(r.field(".sync.conflict"), "false");
 }
 
+// A restack after a merged parent replays old_base..HEAD: the parent's PR
+// commits in it, newest first, are the wrong base sd act restack refuses (#348).
+#[test]
+fn sync_merged_parent_base_below_its_commits_replays_parent_lists_them_newest_first_348() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent"]);
+    sd.commit("p.txt", "p1");
+    sd.commit("p.txt", "p2");
+    sd.git(&["push", "-q", "origin", "parent"]);
+    let (p1, p2) = (sd.git(&["rev-parse", "parent~1"]), sd.git(&["rev-parse", "parent"]));
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("c.txt", "c");
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &sd.git(&["rev-parse", "main"])]);
+    sd.squash_merged("parent");
+    sd.git(&["fetch", "-q"]);
+    sd.pr_fixture("parent", &[r#".state = "MERGED""#, &head_oid(&p2), &all_commits(&[&p1, &p2])]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.up_to_date"), "false");
+    assert_eq!(r.field_c(".sync.replays_parent"), format!(r#"["{p2}","{p1}"]"#));
+    // Pinned past them, the restack replays only the branch's own commit.
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &p2]);
+    assert_eq!(sd.state(&[]).field_c(".sync.replays_parent"), "[]");
+}
+
+// Only a restack after a merged parent is checked: an open parent's lists
+// nothing, up to date or not (#348).
+#[test]
+fn sync_replays_parent_is_empty_with_an_open_parent_348() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent"]);
+    sd.commit("p.txt", "p1");
+    sd.git(&["push", "-q", "origin", "parent"]);
+    let p1 = sd.git(&["rev-parse", "parent"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("c.txt", "c");
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &sd.git(&["rev-parse", "main"])]);
+    sd.pr_fixture("parent", &[&all_commits(&[&p1])]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.up_to_date"), "true");
+    assert_eq!(r.field_c(".sync.replays_parent"), "[]");
+    sd.git(&["switch", "-q", "parent"]);
+    sd.commit("p.txt", "p2");
+    sd.git(&["push", "-q", "origin", "parent"]);
+    let r = sd.state(&["feat"]);
+    assert_eq!(r.field(".sync.up_to_date"), "false");
+    assert_eq!(r.field_c(".sync.replays_parent"), "[]");
+}
+
+// Nor with no restack due: main merged into the branch keeps the merged
+// parent's commit past the target, but there's nothing to replay (#348).
+#[test]
+fn sync_replays_parent_is_empty_with_a_merged_parent_and_head_already_on_the_target_348() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent"]);
+    sd.commit("p.txt", "p1");
+    sd.git(&["push", "-q", "origin", "parent"]);
+    let p1 = sd.git(&["rev-parse", "parent"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("c.txt", "c");
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &sd.git(&["rev-parse", "main"])]);
+    sd.squash_merged("parent");
+    sd.git(&["fetch", "-q"]);
+    sd.git(&["merge", "-q", "--no-edit", "origin/main"]);
+    sd.pr_fixture("parent", &[r#".state = "MERGED""#, &head_oid(&p1), &all_commits(&[&p1])]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.up_to_date"), "true");
+    assert_eq!(r.field_c(".sync.replays_parent"), "[]");
+}
+
 // @test "sync: the base pin is the old base when it is an ancestor"
 #[test]
 fn sync_the_base_pin_is_the_old_base_when_it_is_an_ancestor() {
