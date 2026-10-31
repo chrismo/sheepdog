@@ -18,10 +18,11 @@
 // stored for the question stands in for its question step: the bot step goes
 // on with it once the gate clears, an answer step waits behind what clears it
 // till then, and the steps that would move HEAD, dropping the question
-// (restacks, agent fixes, review), wait for it. A ci-fix question follows
-// ci-fix's gate (src/act/ci_fix.rs) the same way: its stored answer runs as
-// the ci-red step once CI is red at HEAD, and CI passing at HEAD makes the
-// question moot.
+// (restacks, agent fixes, review), wait for it. The ci-red step, and a
+// ci-fix question, follow gates::ci_fix (src/act/gates.rs, #348): a stored
+// answer runs as the ci-red step once CI is red at HEAD and a fix can be
+// pushed, and CI passing at HEAD, or none running there, makes the question
+// moot.
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -162,7 +163,7 @@ fn push_runs(d: &Derived) -> bool {
 }
 
 /// A held CI config change isn't offered: chrismo's own push approves it.
-fn push_step(d: &Derived) -> bool {
+pub(crate) fn push_step(d: &Derived) -> bool {
     d.to_push && !d.empty && !d.ci_held && push_runs(d)
 }
 
@@ -257,8 +258,10 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let fixes = crate::act::gates::implement_fixes(d) && implement.runs();
     let addr = crate::act::gates::address(d);
     let addr_why = refusal(crate::act::address_said(crate::act::gates::address(d), s));
-    let ci_waits = match d.ci_waits.then(|| crate::act::ci_fix_gate(s)) {
-        Some(crate::act::CiFixGate::Waits { why, .. }) => why,
+    let ci_rules = crate::act::gates::ci_fix_rules(d);
+    let (ci_fix, ci_once) = (crate::act::judge(&ci_rules), crate::act::gates::ci_fix_once(&ci_rules));
+    let ci_waits = match (&ci_fix, asking) {
+        (crate::act::Gate::Soft(why), "ci-fix") => why.join("; "),
         _ => String::new(),
     };
     let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
@@ -340,7 +343,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if open && !asking.is_empty() && !d.answer_pending {
-                question_step(d, s, &asked, &addr, &addr_why, &ci_waits)
+                question_step(d, s, &asked, &addr, &addr_why, (&ci_waits, ci_once))
             } else {
                 None
             },
@@ -421,9 +424,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if d.ci_red && asking != "ci-fix" && !d.refused {
+            if ci_fix.runs() && asking != "ci-fix" && !d.refused {
                 agent(hold, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
-            } else if d.resume_ci && d.ci_runs {
+            } else if d.resume_ci && ci_fix.runs() {
                 agent(hold, "ci-red", format!("fix CI: {}, going on with your answer to its question", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else {
                 None
@@ -675,7 +678,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if d.resume_ci && d.ci_waits {
+            if d.resume_ci && !ci_waits.is_empty() {
                 step("answer", "wait", format!("your answer to the ci-fix agent's question waits while {ci_waits}"), None)
             } else {
                 None
@@ -734,8 +737,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     finish(d, all, &addr, &addr_why)
 }
 
-/// The question step (#167, #326); <asked> is the question's first line.
-fn question_step(d: &Derived, s: &Value, asked: &str, addr: &Gate, addr_why: &str, ci_waits: &str) -> Option<Value> {
+/// The question step (#167, #326); <asked> is the question's first line, and
+/// ci-fix runs once <ci_once> while <ci_waits>.
+fn question_step(d: &Derived, s: &Value, asked: &str, addr: &Gate, addr_why: &str, (ci_waits, ci_once): (&str, &str)) -> Option<Value> {
     let t = |p: &str| val::t(s, p);
     let is = |p: &str, lit: &str| at(s, p).as_str() == Some(lit);
     let asking = d.asking.as_str();
@@ -747,8 +751,8 @@ fn question_step(d: &Derived, s: &Value, asked: &str, addr: &Gate, addr_why: &st
     } else if d.ci_moot {
         let ci = if t("ci.verdict") == "green" { "CI is green at HEAD now" } else { "no CI ran at HEAD" };
         (format!("the agent {did} (ci-fix): {asked}; {ci}, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
-    } else if d.ci_waits {
-        (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
+    } else if !ci_waits.is_empty() {
+        (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, &format!("once {ci_once}"))), cmd(answer))
     } else if asking == "address" && !addr.runs() {
         answer_refused(s, d, addr, addr_why, asked, push_step(d) || (d.ci_held && push_runs(d)))
     } else if asking == "resolve" {

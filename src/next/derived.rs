@@ -161,8 +161,8 @@ derived! {
     parent_merged: Option<bool>,
 
     // CI (O5).
-    /// CI is red on HEAD, with nothing to push.
-    ci_red: bool,
+    /// CI's verdict on the SHA it read (ci.verdict); none when absent.
+    ci_verdict: String => |r: &mut arb::Rng| r.pick(&["red", "green", "none", "pending", "blocked", "inconclusive", "odd"]).to_string(),
     /// CI is blocked on HEAD: a check didn't start, or wants approval.
     ci_blocked: bool,
     /// CI was cancelled.
@@ -210,12 +210,8 @@ derived! {
     stored: bool,
     /// An address question with nothing owed: moot.
     addr_moot: bool,
-    /// A ci-fix question CI passing at HEAD made moot.
+    /// A ci-fix question ci-fix's gate says is done: CI passed at HEAD, or none ran.
     ci_moot: bool,
-    /// ci-fix waits on CI (a ci-fix question only).
-    ci_waits: bool,
-    /// ci-fix's gate runs, or no ci-fix question stands.
-    ci_runs: bool,
     /// A stored answer to address's question goes on.
     resume: bool,
     /// A stored answer to ci-fix's question goes on.
@@ -407,7 +403,7 @@ impl Derived {
     fn ci(&mut self, j: &J) {
         self.ci_for_head = j.flag("ci.for_head");
         let at_head = yes(self.ci_for_head);
-        self.ci_red = self.has_pr && j.is("ci.verdict", "red") && at_head && !self.to_push;
+        self.ci_verdict = j.g("ci.verdict").as_str().unwrap_or("none").to_string();
         self.ci_blocked = j.is("ci.verdict", "blocked") && at_head;
         self.ci_inconclusive = j.is("ci.verdict", "inconclusive");
         self.ci_pending = j.is("ci.verdict", "pending");
@@ -448,12 +444,10 @@ impl Derived {
         self.asking = if at_head { val::t(s, "question.step") } else { String::new() };
         // chrismo's answer, stored while its step's gate refused (#326)
         self.stored = at_head && !j.nul("question.answer");
-        // the fields address's gate reads are set by now
+        // the fields address's and ci-fix's gates read are set by now
         self.addr_moot = self.asking == "address" && matches!(crate::act::gates::address(self), crate::act::Gate::Done(_));
-        let ci = if self.asking == "ci-fix" { crate::act::ci_fix_gate(s) } else { crate::act::CiFixGate::Runs };
-        self.ci_moot = matches!(ci, crate::act::CiFixGate::Moot(_));
-        self.ci_waits = matches!(ci, crate::act::CiFixGate::Waits { .. });
-        self.ci_runs = ci == crate::act::CiFixGate::Runs;
+        let ci = crate::act::gates::ci_fix(self);
+        self.ci_moot = self.asking == "ci-fix" && matches!(ci, crate::act::Gate::Done(_));
         // a stored answer to a moot question has nothing to go on with
         self.resume = self.open && self.stored && self.asking == "address" && !self.addr_moot;
         self.resume_ci = self.open && self.stored && self.asking == "ci-fix" && !self.ci_moot;
@@ -462,7 +456,7 @@ impl Derived {
         self.dirty = self.open
             && dirty
             && self.asking.is_empty()
-            && (self.ci_red
+            && (ci.runs()
                 || self.bot_blocking > 0.0
                 || self.fix_due
                 || (self.need_review && !self.fixing)

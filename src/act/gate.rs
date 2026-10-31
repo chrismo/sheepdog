@@ -44,24 +44,33 @@ pub enum Level {
 }
 
 /// One line of a verb's gate: when it <refuses>, <name> is the reason, and
-/// <clears> what makes it go away (NEXT's line for it).
+/// <clears> what makes it go away (NEXT's line for it). <yours>: nothing sd
+/// watch runs clears it (#355); false promises that sd watch will.
 pub struct Rule {
     pub name: &'static str,
     pub level: Level,
     pub refuses: bool,
     pub clears: &'static str,
+    pub yours: bool,
+}
+
+/// The rules judge reports: the most severe refusals, in source order.
+pub fn reported(rules: &[Rule]) -> Vec<&Rule> {
+    let Some(worst) = rules.iter().filter(|r| r.refuses).map(|r| r.level).min() else { return vec![] };
+    rules.iter().filter(|r| r.level == worst && r.refuses).collect()
 }
 
 /// The most severe of <rules>' refusals, not the first in source order. Hard
 /// and Done report their first rule; Soft and Warn every one.
 pub fn judge(rules: &[Rule]) -> Gate {
-    let Some(worst) = rules.iter().filter(|r| r.refuses).map(|r| r.level).min() else { return Gate::Go };
-    let mut why = rules.iter().filter(|r| r.level == worst && r.refuses).map(|r| r.name.to_string());
-    match worst {
-        Level::Hard => Gate::Hard(why.next().unwrap_or_default()),
-        Level::Done => Gate::Done(why.next().unwrap_or_default()),
-        Level::Soft => Gate::Soft(why.collect()),
-        Level::Warn => Gate::Warn(why.collect()),
+    let shown = reported(rules);
+    let Some(first) = shown.first() else { return Gate::Go };
+    let why = || shown.iter().map(|r| r.name.to_string()).collect();
+    match first.level {
+        Level::Hard => Gate::Hard(first.name.into()),
+        Level::Done => Gate::Done(first.name.into()),
+        Level::Soft => Gate::Soft(why()),
+        Level::Warn => Gate::Warn(why()),
     }
 }
 
@@ -104,12 +113,20 @@ pub fn decide(gate: Gate, force: bool, doing: &str) -> Enforced {
 
 /// Die on a refusal; None when there is nothing to do.
 pub fn enforce(gate: Gate, force: bool, doing: &str) -> Option<Go> {
+    enforce_leaving(gate, force, doing, "")
+}
+
+/// enforce, ending a refusal with <left>, what it leaves behind, if any.
+pub fn enforce_leaving(gate: Gate, force: bool, doing: &str, left: &str) -> Option<Go> {
     match decide(gate, force, doing) {
         Enforced::Refuse(lines) => {
             let (first, rest) = lines.split_first().map_or(("", &[][..]), |(f, r)| (f.as_str(), r));
             eprintln!("sd act: {first}");
             for l in rest {
                 eprintln!("{l}");
+            }
+            if !left.is_empty() {
+                eprintln!("sd act: {left}");
             }
             std::process::exit(crate::harness::failed_status())
         }
@@ -131,7 +148,7 @@ mod tests {
     use super::*;
 
     fn rule(name: &'static str, level: Level, refuses: bool) -> Rule {
-        Rule { name, level, refuses, clears: "" }
+        Rule { name, level, refuses, clears: "", yours: true }
     }
 
     /// Soft "locked", Warn "pending", Hard "undone" and Hard "closed", each
