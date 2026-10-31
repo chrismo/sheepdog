@@ -260,6 +260,13 @@ running marker (sd state shows it), restack (--resolve too), push, ship,
 autofix, verify and fetch refuse before they write anything, --force or not,
 as attach and forget --remove do: wait for it to end, or kill it.
 
+Branch budget (#121, #349): implement, address, ci-fix, describe (ship and
+start's too), answer, review and restack --resolve refuse to run their
+agent, --force or not, while sd state's NEXT holds the branch for its
+spend: past settings.branchBudget, or with a step of unknown cost in
+usage.sup. Raise the budget, or set the step's cost_usd. restack --resolve
+rolls its rebase back first.
+
 Usage limits (#269): a verb whose agent step stopped on its harness's
 usage limit exits 75, isn't counted in the failure record, and writes limit
 in SHEEPDOG_STATE_DIR, so sd watch starts no agent step before the reset.

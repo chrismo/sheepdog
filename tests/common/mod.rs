@@ -412,4 +412,16 @@ impl Sd {
     pub fn write(&self, name: &str, content: &str) {
         fs::write(self.cwd.join(name), content).unwrap();
     }
+
+    /// Appends to $SHEEPDOG_STATE_DIR (tmp/state)/usage.sup a <step> on
+    /// cwd's repo's <branch> that ran turns and cost <cost> (a SUP float, or
+    /// null).
+    #[allow(dead_code)]
+    pub fn spent(&self, branch: &str, step: &str, cost: &str) {
+        use std::io::Write;
+        let repo = self.git(&["rev-parse", "--show-toplevel"]);
+        fs::create_dir_all(self.tmp.join("state")).unwrap();
+        let mut f = fs::OpenOptions::new().create(true).append(true).open(self.tmp.join("state/usage.sup")).unwrap();
+        writeln!(f, r#"{{time:2026-10-30T00:00:00Z,repo:"{repo}",branch:"{branch}",step:"{step}",harness:"claude",session:"s1",mode:"new",status:0,cost_usd:{cost},context:1000}}"#).unwrap();
+    }
 }

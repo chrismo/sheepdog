@@ -103,6 +103,19 @@ impl Sd {
     }
 }
 
+// The local review spends too: past settings.branchBudget it's refused, the
+// reviewer never runs, --force or not (#349).
+#[test]
+fn past_settings_branchbudget_the_reviewer_never_runs_349() {
+    let sd = sd();
+    sd.verb_ok("config", &["set", "--global", "--json", "settings.branchBudget", "2"]);
+    sd.spent("feat", "review", "2.5");
+    let r = sd.run(&["review", "--force"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not running review on feat: spent $2.50 on this branch, past settings.branchBudget ($2.00): raise it, or take over"]);
+    assert!(!sd.tmp.join("fx/reviewer.env").exists());
+}
+
 // @test "clean: pins local at HEAD with the branch's base"
 #[test]
 fn clean_pins_local_at_head_with_the_branchs_base() {

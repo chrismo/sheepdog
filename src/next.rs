@@ -60,8 +60,9 @@
 // step whose cost is unknown (spend.unknown, #349), with a budget set, holds
 // the same way: a cost guard fails closed. spends() makes
 // that swap, agent() for agent steps; the dedupe at the end keeps the first.
-// Not guarded: ship-parent, whose describe spends on the parent; this state
-// has only this branch's spend, so the parent's budget isn't checked here.
+// The verbs refuse the same way (budget_hold, sd act's spend_gate), so
+// ship-parent, whose describe spends on the parent, is held there, against
+// the parent's own budget: this state has only this branch's spend (#148).
 //
 // After FAIL_LIMIT agent steps failed in a row (failed, #242), the agent
 // steps go to chrismo the same way.
@@ -170,6 +171,23 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     Ok(Value::Array(offer(&Derived::new(s), s, remote)))
 }
 
+/// Why the agent steps are held for <s>'s spend (spend.usd, .unknown and
+/// .budget), if they are; sd act's spend gate asks it too (#349).
+pub fn budget_hold(s: &Value) -> Option<String> {
+    budget_say(&Derived::new(s), s)
+}
+
+fn budget_say(d: &Derived, s: &Value) -> Option<String> {
+    if d.budget_unread {
+        Some(unread_say(at(s, "spend.unknown")))
+    } else if d.over_budget {
+        let n = |p: &str| val::n(s, p);
+        Some(format!("spent {} on this branch, past settings.branchBudget ({}): raise it, or take over", usd(n("spend.usd")), usd(n("spend.budget"))))
+    } else {
+        None
+    }
+}
+
 fn unread_say(unknown: &Value) -> String {
     let unknown = unknown.as_array().map_or(&[][..], Vec::as_slice);
     if unknown.is_empty() {
@@ -182,19 +200,9 @@ fn unread_say(unknown: &Value) -> String {
 
 /// The budget or failed step that stands in for every agent step, if any.
 fn hold_step(d: &Derived, s: &Value) -> Option<Value> {
-    let n = |p: &str| val::n(s, p);
     let t = |p: &str| val::t(s, p);
-    if d.budget_unread {
-        step("budget", "you", unread_say(at(s, "spend.unknown")), cmd("sd act attach"))
-    } else if d.over_budget {
-        step("budget", "you",
-            format!(
-                "spent {} on this branch, past settings.branchBudget ({}): raise it, or take over",
-                usd(n("spend.usd")),
-                usd(n("spend.budget"))
-            ),
-            cmd("sd act attach"),
-        )
+    if let Some(say) = budget_say(d, s) {
+        step("budget", "you", say, cmd("sd act attach"))
     } else if d.failed_out {
         step("failed", "you",
             format!(
