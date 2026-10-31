@@ -53,6 +53,13 @@ echo "$2" >> "$PS_FIXTURES/attempts"
 exit 1
 "#;
 
+/// A notifier that logs each title to $PS_FIXTURES/attempts and hangs on feat's.
+const NOTIFY_HANGS_ON_FEAT: &str = r#"#!/usr/bin/env bash
+echo "$1" >> "$PS_FIXTURES/attempts"
+[[ $1 == "repo feat" ]] && sleep 30
+printf '%s|%s\n' "$1" "$2" >> "$PS_FIXTURES/notified"
+"#;
+
 /// sd state's JSON, ready to merge; $b is the branch.
 const READY: &str = r#"{
     branch: $b, pr: {number: 7, state: "OPEN", draft: false, merge_state: "CLEAN", review_decision: null, review_requests: []},
@@ -1315,6 +1322,27 @@ fn notify_a_notifier_that_keeps_failing_is_tried_twice_then_given_up_on() {
     sd.pass();
     sd.pass();
     assert_eq!(sd.attempts(), 2);
+}
+
+#[test]
+fn notify_a_hung_notifier_times_out_counts_as_failed_and_doesnt_hold_up_the_pass_350() {
+    let sd = sd();
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.ps_fixture("feat", &[]);
+    sd.ps_fixture("other", &[]);
+    sd.fake("notify", NOTIFY_HANGS_ON_FEAT);
+    let t = Instant::now();
+    let r = sd.pass_run(&[("SHEEPDOG_WATCH_TIMEOUT", "1")]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
+    assert_has(&r.stderr, &["sd watch: notify timed out after 1s"]);
+    assert_eq!(sd.notified(), "repo other|ready to merge");
+    assert_match(&sd.last_pass(), "feat\t✅");
+    let r = sd.pass_run(&[("SHEEPDOG_WATCH_TIMEOUT", "1")]);
+    assert_has(&r.stderr, &["giving up on: ready to merge"]);
+    sd.pass_env(&[("SHEEPDOG_WATCH_TIMEOUT", "1")]);
+    assert_eq!(sd.attempts(), 3, "feat twice, other once");
 }
 
 // @test "notify: GitHub recomputing mergeability doesn't make ready re-notify"
@@ -3613,6 +3641,22 @@ fn dispatch_a_launched_step_that_stopped_on_a_usage_limit_says_so_and_isnt_count
     sd.pass();
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: stopped on a usage limit"]);
     assert_eq!(sd.failure("feat"), "");
+}
+
+#[test]
+fn dispatch_an_agent_step_chrismo_ran_by_hand_counts_toward_settings_agentsteps_350() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
+    sd.git(&["branch", "other"]);
+    let held = orphan("exec sleep 30");
+    let pid = held.to_string();
+    fs::create_dir_all(sd.marker("other").parent().unwrap()).unwrap();
+    fs::write(sd.marker("other"), format!("{pid} implement {} {}\n", time::now_utc().0, running::proc_start(&pid))).unwrap();
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    end_orphan(held);
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1"]);
+    assert_eq!(sd.acts(), "");
 }
 
 #[test]

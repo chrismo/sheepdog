@@ -335,27 +335,31 @@ fn sweep_pins(repo: &str) {
 }
 
 /// settings.notify with <title> <message> appended, else a macOS
-/// notification. Its stdout goes to stderr, out of the pass record.
-fn notify(title: &str, msg: &str) -> bool {
+/// notification, given <secs>: one that hangs has failed (#350). Its stdout
+/// goes to stderr, out of the pass record.
+fn notify(secs: u64, title: &str, msg: &str) -> bool {
     let cmd = config::get_global("settings.notify", false).unwrap_or_else(|lines| {
         config_lines(lines);
         eprintln!("sd watch: sd config failed; using the default notifier");
         String::new()
     });
-    let (mut c, what) = if cmd.is_empty() {
+    let (c, what) = if cmd.is_empty() {
         let mut c = Command::new("osascript");
         c.args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)"]);
-        c.args(["-e", "end run", title, msg]).stdout(Stdio::null());
+        c.args(["-e", "end run", title, msg]);
         (c, "osascript".to_string())
     } else {
         let mut c = Command::new("sh");
-        c.args(["-c", &format!("{cmd} \"$@\""), "_", title, msg]).stdout(std::io::stderr());
+        c.args(["-c", &format!("{cmd} \"$@\""), "_", title, msg]);
         (c, cmd)
     };
-    if c.stdin(Stdio::null()).status().is_ok_and(|s| s.success()) {
+    let o = proc::timeout_passing_stderr(secs, c);
+    eprint!("{}", o.stdout);
+    if o.ok {
         return true;
     }
-    eprintln!("sd watch: notify failed: {what}");
+    let how = if o.timed_out { format!("timed out after {secs}s") } else { "failed".into() };
+    eprintln!("sd watch: notify {how}: {what}");
     false
 }
 
@@ -579,7 +583,7 @@ impl Watch {
                 continue;
             }
             let msg = text(at(r, "msg"));
-            if notify(&title, &msg) {
+            if notify(self.timeout, &title, &msg) {
                 sent.push(key.clone());
             } else if prev_failed.contains(key) {
                 eprintln!("sd watch: giving up on: {msg}");
@@ -653,7 +657,7 @@ impl Watch {
         out.push_str(&ended);
         if let Some(u) = unenrolled {
             if self.vacuum.is_none() {
-                notify(&title, &u);
+                notify(self.timeout, &title, &u);
             }
             out.push_str(&format!("{name}\t{b}\t-\t{u}\n"));
             self.log(name, b, &u);
@@ -718,8 +722,8 @@ impl Watch {
     }
 
     /// Why an agent step isn't launched now: settings.agentSteps of them
-    /// already running, in any registered repo, or a usage limit till its
-    /// reset (crate::limit).
+    /// already running, in any registered repo, launched or run by hand
+    /// (#350), or a usage limit till its reset (crate::limit).
     fn held(&self) -> Option<String> {
         if self.agent_steps == 0 {
             return Some("settings.agentSteps 0".into());
@@ -727,7 +731,7 @@ impl Watch {
         let running = registered()
             .iter()
             .flat_map(|r| running::leases(r))
-            .filter(|l| l.live && l.deadline.is_some() && AGENT_STEPS.contains(&l.step.as_str()))
+            .filter(|l| l.live && AGENT_STEPS.contains(&l.step.as_str()))
             .count() as u64;
         if running >= self.agent_steps {
             let n = if running == 1 { "1 agent step".into() } else { format!("{running} agent steps") };
@@ -850,7 +854,7 @@ impl Watch {
         }
         let msg = format!("merged (#{pr}); the local branch is already gone");
         let line = format!("{name}\t{b}\t🏁\t{msg}\n");
-        if notify(&format!("{name} {b}"), &msg) {
+        if notify(self.timeout, &format!("{name} {b}"), &msg) {
             return (line, false);
         }
         if list(cached, "failed").contains(&json!("merged")) {
