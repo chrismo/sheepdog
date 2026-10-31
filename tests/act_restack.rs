@@ -861,6 +861,56 @@ fn parent_squash_merged_base_below_the_parents_commits_refused_no_rebase_no_agen
     assert_has(&r.output, &["already on origin/main"]);
 }
 
+impl Sd {
+    /// sd state answers for feat from a fixture: stacked on A, merged as #1,
+    /// feat behind main from main's commit, and <replays> as
+    /// sync.replays_parent.
+    fn merged_parent_state(&mut self, replays: &str) {
+        self.env.push(("SHEEPDOG_STATE_FIXTURES".into(), self.path("states")));
+        fs::create_dir_all(self.tmp.join("states")).unwrap();
+        let state = format!(
+            r#"{{"branch": "feat", "head": "{}", "errors": [], "pr": null, "session": {{"locked": false}},
+                "parent": {{"name": "A", "merged": true, "pr": {{"number": 1, "state": "MERGED", "commits": []}}}},
+                "sync": {{"target": "main", "default": "main", "up_to_date": false, "old_base": "{}", "by_tree": false,
+                         "conflict": false, "replays_parent": {replays}}}}}"#,
+            self.rev("feat"),
+            self.rev("main")
+        );
+        fs::write(self.tmp.join("states/feat.json"), state).unwrap();
+    }
+}
+
+// The wrong base is sd state's O3 fact, not a rev-list of restack's own (#348).
+#[test]
+fn the_parent_commits_sd_state_says_a_restack_would_replay_are_refused_as_a_wrong_base_348() {
+    let mut sd = sd();
+    let feat = sd.rev("feat");
+    sd.merged_parent_state(&format!(r#"["{feat}"]"#));
+    let r = sd.run(&["restack"]);
+    assert_ne!(r.status, 0);
+    let wrong = format!(
+        "wrong base: this would replay 1 of #1's commits onto origin/main; if the stack is linear, rebase past them by hand: git rebase --onto origin/main {} feat",
+        &feat[..12]
+    );
+    assert_has(&r.output, &[&wrong]);
+    assert_eq!(sd.rev("feat"), feat);
+    assert_eq!(sd.base_pin(), "");
+}
+
+// Unknown is not none: a replay sd state couldn't list refuses, as the
+// rev-list's own failure did (#348).
+#[test]
+fn a_replay_sd_state_couldnt_list_is_refused_348() {
+    let mut sd = sd();
+    let feat = sd.rev("feat");
+    sd.merged_parent_state("null");
+    let r = sd.run(&["restack"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("can't list {}..feat", sd.rev("main"))]);
+    assert_eq!(sd.rev("feat"), feat);
+    assert_eq!(sd.base_pin(), "");
+}
+
 // @test "--resolve: the agent resolves a predicted conflict; base pinned; its change is unreviewed"
 #[test]
 fn resolve_the_agent_resolves_a_predicted_conflict_base_pinned_its_change_is_unreviewed() {

@@ -19,6 +19,10 @@ Reports, for <branch> (default: the current one):
             has to ship first);
             a merged parent retargets sync to the default branch
   sync      ahead of / behind the parent? would `rebase --onto` conflict?
+            sync.replays_parent: after a merged parent, its PR's commits
+            in old_base..HEAD, newest first: a wrong base, which sd act
+            restack refuses unless it goes by tree; [] otherwise, null
+            when git can't list them
   push      local vs remote branch; whether the remote SHA is ours (reflog),
             and for a remote ahead of a reset: whether those commits were
             made here and whether the worktree has uncommitted changes;

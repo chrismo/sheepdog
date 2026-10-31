@@ -744,6 +744,7 @@ struct Facts {
     old_base: String,
     by_tree: bool,
     conflict: Value,
+    replays_parent: Value,
     undone: i64,
     remote_sha: String,
     ahead: i64,
@@ -1009,7 +1010,7 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone},
+                 "undone": s.undone, "replays_parent": s.replays_parent},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "held": s.held},
@@ -1116,6 +1117,22 @@ fn required_checks(dir: &str, base: &str) -> Result<Value, String> {
     out.sort();
     out.dedup();
     Ok(json!(out))
+}
+
+fn parent_commits(parent_pr: &Value) -> HashSet<String> {
+    arr(at(parent_pr, "allCommits.nodes")).iter().map(|n| text(at(n, "commit.oid"))).collect()
+}
+
+/// O3: the merged parent's PR commits a restack would replay (old_base..HEAD),
+/// newest first: a wrong base. [] unless the parent merged and HEAD is behind
+/// with a base; null when git can't list it.
+fn replays_parent(dir: &str, head: &str, old_base: &str, parent_merged: &Value, up_to_date: &Value, parent_pr: &Value) -> Value {
+    if old_base.is_empty() || *parent_merged != true || *up_to_date != false {
+        return json!([]);
+    }
+    let Some(list) = git_out(dir, &["rev-list", "--topo-order", &format!("{old_base}..{head}")]) else { return Value::Null };
+    let commits = parent_commits(parent_pr);
+    json!(list.lines().filter(|c| commits.contains(*c)).collect::<Vec<_>>())
 }
 
 /// sd state --json <branch>: its record, NEXT included, as seen from <dir>,
@@ -1307,8 +1324,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
             // Past the target, the branch's own commits, unless a merge kept the
             // merged parent's.
             if old_base.is_empty() {
-                let commits: HashSet<String> =
-                    arr(at(&parent_pr, "allCommits.nodes")).iter().map(|n| text(at(n, "commit.oid"))).collect();
+                let commits = parent_commits(&parent_pr);
                 let holds = !commits.is_empty()
                     && git(dir, &["rev-list", &format!("{target_ref}..{head}")]).stdout.lines().any(|c| commits.contains(c));
                 if holds {
@@ -1527,6 +1543,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let (_, now_ns) = now_utc();
     let facts = Facts {
         branch: branch.into(),
+        replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
         head: head.clone(),
         task: cfg("sd-task"),
         reviewer,
