@@ -146,12 +146,19 @@ fn len(v: &Value) -> usize {
     v.as_array().map_or(0, Vec::len)
 }
 
-/// Whether NEXT offers sd act push for <s>: something to push, and nothing
-/// holding it (a failed verify, a CI config change for review, someone
-/// else's commits, an undone restack, an unpushed parent, nothing to
-/// ship). sd act answer reads it too (#326).
+/// Whether NEXT offers sd act push for <s>; sd act answer reads it too (#326).
 pub fn push_offered(s: &Value) -> bool {
-    Derived::new(s).push_step
+    push_step(&Derived::new(s))
+}
+
+/// Whether sd act push would push: its gate, and NEXT's view of the remote.
+fn push_runs(d: &Derived) -> bool {
+    !d.foreign && crate::act::gates::push(d).runs()
+}
+
+/// A held CI config change isn't offered: chrismo's own push approves it.
+fn push_step(d: &Derived) -> bool {
+    d.to_push && !d.empty && !d.ci_held && push_runs(d)
 }
 
 /// The steps for an sd state record, first is next.
@@ -204,8 +211,9 @@ fn last_review(s: &Value) -> Option<Value> {
         .cloned()
 }
 
-/// The steps for <d>, first is next. Conditions read only <d>; <s> is the
-/// record they were derived from, for what the steps say.
+/// The steps for <d>, first is next. Which steps, and whose, come from <d>
+/// alone; <s> is the record it was derived from, which some say and cmd
+/// text still reads.
 pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let g = |p: &str| at(s, p);
     let n = |p: &str| val::n(s, p);
@@ -463,7 +471,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             if open && d.ci_held {
                 let paths = sj(g("push.held.paths"), ", ");
-                if d.push_held {
+                if !push_runs(d) {
                     step("ci-config", "you",
                         format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
                         None,
@@ -510,7 +518,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if d.push_step {
+            if push_step(d) {
                 let ahead = if nul("sync.ahead") { g("push.ahead") } else { g("sync.ahead") };
                 step("push", "run",
                     if is_null(s, "push.remote_sha") {
@@ -720,7 +728,7 @@ fn question_step(d: &Derived, s: &Value, asked: &str, addr: &crate::act::Address
     } else if d.ci_waits {
         (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
     } else if asking == "address" && d.addr_refuses {
-        answer_refused(s, addr, addr_why, asked, d.push_step || (d.ci_held && !d.push_held))
+        answer_refused(s, addr, addr_why, asked, push_step(d) || (d.ci_held && push_runs(d)))
     } else if asking == "resolve" {
         (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
     } else if is("question.kind", "gave-up") {
