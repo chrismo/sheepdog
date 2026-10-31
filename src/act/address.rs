@@ -135,6 +135,10 @@ fn gated(b: &str, s: &Value, a: &Args) -> Option<Go> {
             eprintln!("(--force to run anyway)");
             std::process::exit(1)
         }
+        Gate::Soft(why) if a.force => {
+            let warn = gates::address_warnings(&d).iter().map(|w| worded(w, s)).collect();
+            enforce(Gate::Soft([why, warn].concat()), true, &format!("addressing {b}"))
+        }
         g => enforce(g, a.force, &format!("addressing {b}")),
     }
 }

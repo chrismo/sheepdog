@@ -7,7 +7,7 @@
 // destructures Derived without .., so a new field doesn't compile until
 // every gate claims or ignores it.
 
-use super::gate::{judge, Gate, Level, Rule};
+use super::gate::{judge, warnings, Gate, Level, Rule};
 use crate::next::{no, yes};
 use crate::next::Derived;
 use serde_json::Value;
@@ -74,6 +74,16 @@ pub mod addr {
 /// sd act address. Its push carries whatever else is unpushed, so the
 /// remote must match first.
 pub fn address(d: &Derived) -> Gate {
+    judge(&address_rules(d))
+}
+
+/// address's Warn reasons, which a Soft verdict leaves out: --force still
+/// prints them.
+pub fn address_warnings(d: &Derived) -> Vec<String> {
+    warnings(&address_rules(d))
+}
+
+fn address_rules(d: &Derived) -> [Rule; 11] {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
         unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
@@ -95,7 +105,7 @@ pub fn address(d: &Derived) -> Gate {
         (false, false) => None,
     };
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
-    judge(&[
+    [
         rule(addr::NO_PR, Level::Hard, *pr_null, "sd act ship"),
         rule(addr::CLOSED, Level::Hard, *merged || *closed, "reopen it, or start a new branch"),
         rule(addr::UNREAD, Level::Hard, owed_bot.is_none(), "sd state's errors say why"),
@@ -108,7 +118,7 @@ pub fn address(d: &Derived) -> Gate {
         rule(push.unwrap_or(addr::UNPUSHED), Level::Soft, push.is_some(), "sd act push"),
         rule(addr::BEHIND, Level::Warn, no(*up_to_date) && !conflict, "sd act restack"),
         rule(addr::CI_RUNNING, Level::Warn, *ci_pending, "CI reports"),
-    ])
+    ]
 }
 
 /// Whether sd act push would clear address's push reason, when it has one:

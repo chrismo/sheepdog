@@ -383,6 +383,17 @@ fn force_runs_past_the_soft_refusals() {
     assert!(sd.ran("claude.args"));
 }
 
+// @test "--force past a soft refusal still warns behind main and CI running"
+#[test]
+fn force_past_a_soft_refusal_still_warns_behind_main_and_ci_running() {
+    let sd = sd();
+    sd.state(&[r#".push.ahead = 1 | .sync.up_to_date = false | .sync.behind = 10 | .ci.verdict = "pending""#]);
+    let r = sd.run(&["address", "--force"]);
+    assert_eq!(r.status, 0);
+    assert!(sd.ran("claude.args"));
+    assert_has(&r.output, &["warning", "unpushed", "behind main by 10", "CI is still running"]);
+}
+
 // @test "CI still running only warns"
 #[test]
 fn ci_still_running_only_warns() {
