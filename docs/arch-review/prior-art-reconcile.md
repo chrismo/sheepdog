@@ -61,7 +61,8 @@ grammar. bors adds the Rust idioms that make this safe (ideas 10, 11, 13).
 **What to pull in.** Nine ideas survived round one and nine more round two;
 the first four of each belong in the #348 scaffold, two are filed as issues
 (#356, #357), the rest are notes on existing issues. The per-tool sections
-hold the evidence.
+hold the evidence. Ideas 19 and 20 come from a harness design post read the
+same day (last section).
 
 | # | Idea | From | Where it lands |
 |---|---|---|---|
@@ -83,6 +84,8 @@ hold the evidence.
 | 16 | Seen markers advance only after the step succeeded, so a crashed step re-fires next pass | agent-orchestrator two-phase hash ack | #350 / #342: a check on when pins are written |
 | 17 | The dedup signature for a CI failure includes the log tail and check URL, not just the SHA, so a flaky rerun with new output is new and an identical rerun is not | agent-orchestrator `sendOnce` signatures | #344 ci-fix outcome; O5 |
 | 18 | Report every applicable condition in `sd state`, run one step in NEXT | agent-orchestrator `[]pendingNudge` (its earlier first-match version suppressed review feedback under red CI) | #335: the "Notified" block |
+| 19 | Unknown is not false: a `Derived` fact read from an observation that can fail is an `Option`, and a gate given `None` is `Hard` ("couldn't observe X"), never `Go` | Harness Playbook's model rulebook (no match means unknown); generalizes #349 and idea 9 | #348 step 1 |
+| 20 | Parity over generated states, not only the fixtures: a seeded generator over the `State` builder asserts both parity directions and single invariants (`gates::push` never `Go` with `sync.undone > 0`) | Harness Playbook's TLA+ invariants ("specify the impossible part") | #348 step 1, once the builder exists |
 
 Skipped, with reasons: a flat result enum returned from one long function
 (Renovate's is a dashboard report, not a guard the action reuses: the
@@ -912,3 +915,31 @@ CI nudges versus three attempts per review comment id. Skip the hook-and-paste
 model: sheepdog launches bounded headless steps, and the paste model is the
 opposite of rule 2 and was AO's main source of guard complexity (nine
 suppression outcomes in `sessionguard`).
+
+## Adjacent: the Harness Playbook (stencil.so, Can Bölük, 2026-09-02)
+
+Read on 2026-10-30 after chrismo asked how it matches these plans. It is the
+design of an agent harness (omp², the session, tools and terminal UI around
+one agent), not a PR pipeline, so it holds no decision code to compare; read
+from the article only, no source.
+
+**What matches.** Its state chapter's failure is #348's: state held in two
+places (the saved message tree, and todos, retry counters and flags outside
+it), with 2 of 17 stateful extensions found correct. "The sandbox should
+execute, not decide" is rule 2. Making non-replayable state impossible to
+write is ideas 11 and 13. Settings declared once with flags at the definition
+site is #335's `STEPS` table. "Views are projections" is #335's rendered help
+block and idea 18. Building a compaction summary from a snapshot and splicing
+it in only if the snapshot still holds is idea 3 and the push lease. Its
+Directors' verdicts (Pass, Continue, Yield, Push, Done, Fail) are the `Gate`
+enum's shape; the stack that composes them across one session's turns is
+not needed here.
+
+**What doesn't.** A journal as the authority: the harness owns all its state,
+and sheepdog observes a world others write (rule 4). The lesson still holds
+for what sheepdog does own, the seen markers, pins, pr-head refs and branch
+config: idea 16.
+
+**For sheepdog.** Ideas 19 and 20. Also noted on #342: one typed declaration
+per `branch.<b>.sd-*` key (meaning, writer, readers, whether forget clears
+it), after the post's convars.
