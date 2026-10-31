@@ -13,7 +13,7 @@ use super::{cfg, die, enforce, lock_recheck, state_json, Args, Gate, Go};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
-use crate::next::{yes, Derived};
+use crate::next::{round_key, yes, Derived};
 use crate::state::unbot;
 use crate::{proc, running};
 use crate::val::{at, sj, t, text};
@@ -519,16 +519,16 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         die("not pushed, so nothing posted");
     }
     let posted = post(b, &t(&s, "pr.url"), &plan);
-    unposted(b, if posted { &[] } else { &ids });
+    unposted(b, if posted { &[] } else { &owed[..ids.len()] });
     posted
 }
 
-/// branch.<b>.sd-unposted := <ids>, the owed set of a round whose replies
-/// didn't all post; address refuses it till a new item comes (#357).
-fn unposted(b: &str, ids: &[String]) {
+/// branch.<b>.sd-unposted := <items>' keys, the owed set of a round whose
+/// replies didn't all post; address refuses it till a new item comes (#357).
+fn unposted(b: &str, items: &[&Value]) {
     let key = format!("branch.{b}.sd-unposted");
     git(".", &["config", "--unset-all", &key]);
-    if !ids.iter().all(|id| git(".", &["config", "--add", &key, id]).ok) {
+    if !items.iter().all(|it| git(".", &["config", "--add", &key, &round_key(it)]).ok) {
         eprintln!("sd act: warning: couldn't record {key}, so NEXT may offer address on these items again");
     }
 }

@@ -301,6 +301,17 @@ impl J<'_> {
     }
 }
 
+/// Owed item <it>'s key in branch.<b>.sd-unposted (#357): a thread's id with
+/// its last comment's, so a bot comment since the round makes it new; any
+/// other item's id alone, as each new comment or review has a new one.
+pub fn round_key(it: &Value) -> String {
+    let id = val::text(&it["id"]);
+    match it["last_id"].as_str() {
+        Some(last) => format!("{id}@{last}"),
+        None => id,
+    }
+}
+
 impl Derived {
     /// The predicates of sd state record <s>.
     pub fn new(s: &Value) -> Derived {
@@ -334,10 +345,10 @@ impl Derived {
         self.owed_bot = j.g("threads.owed_bot").as_f64().map(|n| n > 0.0);
         self.bot_blocking = j.n("threads.owed_bot") - j.n("threads.info");
         self.info = j.n("threads.info") > 0.0;
-        let owed: Vec<&Value> =
-            j.g("threads.items").as_array().into_iter().flatten().filter(|it| it["kind"] == "bot").map(|it| &it["id"]).collect();
+        let owed: Vec<Value> =
+            j.g("threads.items").as_array().into_iter().flatten().filter(|it| it["kind"] == "bot").map(|it| Value::String(round_key(it))).collect();
         let unposted = j.g("threads.unposted").as_array();
-        self.unposted = !owed.is_empty() && unposted.is_some_and(|u| owed.iter().all(|id| u.contains(id)));
+        self.unposted = !owed.is_empty() && unposted.is_some_and(|u| owed.iter().all(|k| u.contains(k)));
         self.draft = j.flag("pr.draft");
         self.review_required = j.is("pr.review_decision", "REVIEW_REQUIRED");
         self.merge_state = j.g("pr.merge_state").as_str().unwrap_or("UNKNOWN").to_string();

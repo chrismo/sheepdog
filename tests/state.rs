@@ -3162,6 +3162,14 @@ fn threads_inline_thread_items_are_typed_thread() {
     assert_eq!(r.field(".threads.items[0].path"), "file.txt");
 }
 
+// @test "threads: a thread item carries its last comment's id, so a new bot comment makes it new (#357)"
+#[test]
+fn threads_a_thread_item_carries_its_last_comments_id_357() {
+    let sd = sd();
+    sd.feat_pr(&[&format!(".reviewThreads.nodes = [{}]", thread("Bot", "copilot", "Bot", "copilot")), ".reviewThreads.nodes[0].last.nodes[0].id = \"C9\""]);
+    assert_eq!(sd.state(&[]).field(".threads.items[0].last_id"), "C9");
+}
+
 // @test "threads: bot review bodies are owed; empty bodies and humans' are not"
 #[test]
 fn threads_bot_review_bodies_are_owed_empty_bodies_and_humans_are_not() {

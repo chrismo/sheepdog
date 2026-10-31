@@ -457,6 +457,15 @@ fn a_round_whose_replies_didnt_post_is_recorded_and_refused_till_forced_and_a_po
     assert_eq!(sd.git_try(&["config", "--get-all", "branch.feat.sd-unposted"]), None);
 }
 
+#[test]
+fn a_round_whose_replies_didnt_post_records_each_thread_with_its_last_comment_357() {
+    let sd = sd();
+    sd.state(&[r#".threads.items[0].last_id = "C1""#]);
+    let r = sd.run_env(&[("GH_FAIL_OP", "addPullRequestReviewThreadReply")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.git(&["config", "--get-all", "branch.feat.sd-unposted"]), "T1@C1");
+}
+
 // ── the happy path ───────────────────────────────────────────────────────────
 
 // @test "fixed thread: agent's edit committed, pushed, replied to, resolved"

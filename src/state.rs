@@ -42,7 +42,7 @@ const QUERY: &str = r#"query($owner: String!, $repo: String!, $number: Int!, $co
       reviewThreads(first: 100) { nodes {
         id isResolved isOutdated path line
         first: comments(first: 1) { nodes { author { __typename login } url body } }
-        last: comments(last: 1) { nodes { author { __typename login } } }
+        last: comments(last: 1) { nodes { id author { __typename login } } }
       } }
       reviews(last: 50) { nodes { id url state body createdAt submittedAt commit { oid } author { __typename login } } }
       comments(last: 50) { nodes { id url body createdAt author { __typename login } } }
@@ -723,6 +723,16 @@ fn owed_item(id: &Value, ty: &str, path: Value, line: Value, outdated: Value, ki
     Value::Object(m)
 }
 
+/// Review thread <t>'s owed item, opened by <first>. It carries its last
+/// comment's id: a bot comment since an unposted round makes it new (#357).
+fn thread_item(t: &Value, first: &Value, kind: &str) -> Value {
+    let last = at(t, "last.nodes").get(0).unwrap_or(&NULL);
+    let mut d = detail(first);
+    d.insert("last_id".into(), at(last, "id").clone());
+    let field = |k| at(t, k).clone();
+    owed_item(at(t, "id"), "thread", field("path"), field("line"), field("isOutdated"), kind, at(last, "author.login").clone(), "!", d)
+}
+
 struct Facts {
     reviewer: bool,
     branch: String,
@@ -869,17 +879,7 @@ fn assemble(s: &Facts) -> Value {
             continue;
         }
         let kind = if is_bot(&or_empty(at(&first, "author").clone()), &bots) { "bot" } else { "human" };
-        owed.push(owed_item(
-            at(t, "id"),
-            "thread",
-            at(t, "path").clone(),
-            at(t, "line").clone(),
-            at(t, "isOutdated").clone(),
-            kind,
-            last.clone(),
-            "!",
-            detail(&or_empty(first)),
-        ));
+        owed.push(thread_item(t, &or_empty(first), kind));
     }
     let handled: HashSet<&str> = s.handled.iter().map(String::as_str).collect();
     let typed = reviews.iter().map(|n| (n, "review")).chain(comments.iter().map(|n| (n, "comment")));

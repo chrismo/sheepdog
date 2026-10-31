@@ -508,6 +508,10 @@ fn bot_items_a_round_already_took_whose_replies_didnt_post_are_chrismo_s_till_a_
     let new = e![&owed(&["T1", "T3"]), unposted];
     assert_eq!(step("bot", "who", &new), "agent");
     assert_eq!(step("bot", "cmd", &new), "sd act address");
+    // a thread is keyed on its last comment: a bot comment since the round makes it new
+    let commented = |last: &str| e![&owed(&["T1"]), &format!(".threads.items[0].last_id = \"{last}\""), r#".threads.unposted = ["T1@C1"]"#];
+    assert_eq!(step("bot", "who", &commented("C1")), "you");
+    assert_eq!(step("bot", "who", &commented("C2")), "agent");
 }
 
 #[test]

@@ -79,7 +79,7 @@
 // equality holds only between two present values.
 
 mod derived;
-pub use derived::Derived;
+pub use derived::{round_key, Derived};
 #[cfg(test)]
 pub(crate) use derived::arb as derived_arb;
 pub(crate) use derived::{no, yes};
