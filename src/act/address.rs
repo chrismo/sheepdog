@@ -326,19 +326,26 @@ fn decision(it: &Map<String, Value>, head: &str) -> Value {
     decisions::entry(&format!("bot-{}", field(it, "action")), head, &place(it), &said, &field(it, "reply"))
 }
 
-/// post, and each item it answered on the PR goes on the decisions record.
+/// post, and each item it answered on the PR goes on the decisions record,
+/// before exiting when marking items handled failed.
 fn post_and_record(b: &str, pr_url: &str, plan: &[Map<String, Value>]) -> bool {
     let mut answered = vec![];
     let ok = post(b, pr_url, plan, &mut answered);
     let head = rev(".", &format!("refs/heads/{b}"));
     decisions::append(b, &answered.iter().map(|it| decision(it, &head)).collect::<Vec<_>>());
-    ok
+    ok.unwrap_or_else(|code| std::process::exit(code))
 }
 
 /// The replies posted and threads resolved (all but pushback), then the PR
 /// comment, whose items go in branch.<b>.sd-handled; each item answered
-/// goes in <answered>. False when any failed.
-fn post<'p>(b: &str, pr_url: &str, plan: &'p [Map<String, Value>], answered: &mut Vec<&'p Map<String, Value>>) -> bool {
+/// goes in <answered>. False when any failed; Err(<git's exit code>) when
+/// writing sd-handled failed.
+fn post<'p>(
+    b: &str,
+    pr_url: &str,
+    plan: &'p [Map<String, Value>],
+    answered: &mut Vec<&'p Map<String, Value>>,
+) -> Result<bool, i32> {
     let prefix = cfg("settings.replyPrefix", b).trim_end_matches('\n').to_string();
     let mut ok = true;
     for it in plan.iter().filter(|it| !is_ask(it) && field(it, "type") == "thread") {
@@ -359,7 +366,7 @@ fn post<'p>(b: &str, pr_url: &str, plan: &'p [Map<String, Value>], answered: &mu
         }
         answered.push(it);
     }
-    let Some(body) = pr_comment(&prefix, plan) else { return ok };
+    let Some(body) = pr_comment(&prefix, plan) else { return Ok(ok) };
     // By URL, not {owner}/{repo}: gh's default repo may be a fork.
     let q = "query($url: URI!) { resource(url: $url) { ... on PullRequest { id } } }";
     let pr_id = gql(&[("url", pr_url), ("query", q)])
@@ -370,18 +377,19 @@ fn post<'p>(b: &str, pr_url: &str, plan: &'p [Map<String, Value>], answered: &mu
     let posted = pr_id.is_some_and(|id| gql(&[("query", q), ("subject", &id), ("body", &body)]).is_some());
     if !posted {
         eprintln!("sd act: posting the PR comment failed");
-        return false;
+        return Ok(false);
     }
+    let in_it: Vec<_> = plan.iter().filter(|it| in_comment(it)).collect();
+    answered.extend(&in_it);
     let handled = format!("branch.{b}.sd-handled");
-    for it in plan.iter().filter(|it| in_comment(it)) {
-        answered.push(it);
+    for it in in_it {
         let o = git(".", &["config", "--add", &handled, &field(it, "id")]);
         if !o.ok {
             eprint!("{}", o.stderr);
-            std::process::exit(o.code);
+            return Err(o.code);
         }
     }
-    ok
+    Ok(ok)
 }
 
 /// The commit message the agent gave, else a default.

@@ -34,6 +34,8 @@ done
 op=$(grep -oE 'addPullRequestReviewThreadReply|resolveReviewThread|addComment|nodes\(ids|resource\(url' <<<"$q" | head -1)
 jq -nc --arg op "${op%%(*}" '{op: $op, args: $ARGS.positional}' --args "${fields[@]}" >> "$FX/gh.log"
 [[ ${GH_FAIL_OP:-} == "${op%%(*}" ]] && { echo "gh: boom" >&2; exit 1; }
+# GH_LOCK_CONFIG=1: the PR comment posts, then git config can't be written.
+[[ -n ${GH_LOCK_CONFIG:-} && $op == addComment ]] && touch "$(git rev-parse --git-common-dir)/config.lock"
 case $op in
   'nodes(ids') # like GitHub: only the asked-for ids, in order
     jq --args '.data.nodes as $n | .data.nodes = [$ARGS.positional[] | ltrimstr("ids[]=") as $id | ($n[] | select(.id == $id))]' \
@@ -1103,6 +1105,24 @@ fn a_bot_reply_that_didnt_post_isnt_on_the_decisions_record_343() {
     let r = sd.run_env(&[("GH_FAIL_OP", "addPullRequestReviewThreadReply")], &["address"]);
     assert_ne!(r.status, 0);
     assert!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/decisions"]).is_none());
+}
+
+// What posted is on record even when marking the PR comment's items handled
+// fails after it.
+#[test]
+fn replies_posted_stay_on_the_decisions_record_when_marking_handled_fails_343() {
+    let sd = sd();
+    sd.state(&[r#".threads.owed_bot = 2 | .threads.items = [
+    {id: "R1", type: "review", kind: "bot", path: null, line: null, outdated: null, last: "review-bot"},
+    {id: "T1", type: "thread", kind: "bot", path: "file.txt", line: 3, outdated: false, last: "review-bot"}]"#]);
+    sd.result(
+        r#"{outcome: "done", commit_message: "Address review", summary: "",
+            items: [{id: "R1", action: "fixed", reply: "Added the line."},
+                    {id: "T1", action: "pushback", reply: "Lowercase is the convention."}]}"#,
+    );
+    let r = sd.run_env(&[("GH_LOCK_CONFIG", "1")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(decisions(&sd, "[.kind, .about]"), "[\"bot-pushback\",\"file.txt:3\"]\n[\"bot-fixed\",\"review body\"]");
 }
 
 // chrismo's answer is a decision on record (#343): the question it answered,
