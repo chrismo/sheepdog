@@ -314,6 +314,16 @@ answer, goes on with it once its gate clears, and the step running uses
 it up. sd act ack --question drops it with the question; forget and sd
 watch's sweep drop it with the branch's other refs.
 
+Decisions (#343): what was settled on a branch after its task goes on
+refs/sheepdog/<b>/decisions, one JSON line each ({kind, head, about,
+finding, text, at}), appended and never rewritten: a finding a review-fix
+round declined (with why), one review --accept left standing, chrismo's
+answer through sd act answer (with the question), and bot feedback address
+answered on the PR. The local reviewer gets them (SHEEPDOG_DECISIONS) and so
+does a review-fix round, each under "Decisions on record", so a settled
+finding isn't raised round after round. They see only these facts, never
+the branch's session. forget and sd watch's sweep drop it with the rest.
+
 Sessions (#69): an agent step forks the branch's session
 (branch.<b>.sd-session; claude --resume --fork-session, pi --fork) under a
 new id, or starts a new one when there's none or it's past

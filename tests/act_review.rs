@@ -18,6 +18,7 @@ use std::time::Duration;
 
 const REVIEWER: &str = r#"#!/usr/bin/env bash
 { echo "base=$SHEEPDOG_BASE"; echo "head=$SHEEPDOG_HEAD"; echo "task=$SHEEPDOG_TASK"; echo "cwd=$PWD"; } > "$FX/reviewer.env"
+printf '%s' "$SHEEPDOG_DECISIONS" > "$FX/reviewer.decisions"
 [[ -e $FX/reviewer.fail ]] && { echo "reviewer: boom" >&2; exit 1; }
 cat "$FX/findings.json"
 "#;
@@ -95,6 +96,11 @@ impl Sd {
     /// `"$SD_ACT" review >/dev/null 2>&1`, which must succeed.
     fn review(&self) {
         self.ok(&["review"]);
+    }
+
+    /// The decisions record (#343), one JSON line each, through jq -c <filter>.
+    fn decisions(&self, filter: &str) -> String {
+        jq(&["-c", filter], &self.git(&["cat-file", "blob", "refs/sheepdog/feat/decisions"]))
     }
 
     fn write_findings_ref(&self, json: &str) {
@@ -353,6 +359,44 @@ fn accept_pins_accepted_at_head_with_its_base_clears_findings_runs_no_reviewer()
     assert_ne!(sd.git_status(&["config", "--get", "branch.feat.sd-accepted-after"]), 0);
     assert!(!sd.fx_exists("reviewer.env"));
     assert!(!sd.has_findings_ref());
+}
+
+// The findings chrismo accepts standing go on the decisions record, so a
+// later round doesn't raise them again (#343); a fixed one or a nit wasn't
+// accepted, and a decline's reason goes with it.
+#[test]
+fn accept_records_each_blocking_finding_it_leaves_standing_as_a_decision_343() {
+    let sd = sd();
+    sd.write_findings_ref(
+        r#"{"head": "h0", "base": "b0", "round": 2, "findings": [
+          {"file": "file.txt", "line": 3, "severity": "error", "body": "c?", "id": "1"},
+          {"file": "file.txt", "line": 1, "severity": "nit", "body": "a?"},
+          {"file": "file.txt", "line": 2, "severity": "warning", "body": "b?", "action": "fixed", "reply": ""},
+          {"file": "file.txt", "line": 4, "severity": "error", "body": "d?", "action": "declined", "reply": "d is right"}]}"#,
+    );
+    sd.ok(&["review", "--accept"]);
+    let head = sd.rev("HEAD");
+    assert_eq!(
+        sd.decisions(r#"[.kind, .head, .about, .finding, .text]"#),
+        format!("[\"accepted\",\"{head}\",\"file.txt:3\",\"c?\",\"\"]\n[\"accepted\",\"{head}\",\"file.txt:4\",\"d?\",\"d is right\"]")
+    );
+}
+
+// The reviewer gets the decisions on record (#343), listed for its prompt;
+// none is an empty SHEEPDOG_DECISIONS.
+#[test]
+fn the_reviewer_gets_the_decisions_on_record_343() {
+    let sd = sd();
+    sd.review();
+    assert_eq!(fs::read_to_string(sd.tmp.join("fx/reviewer.decisions")).unwrap(), "");
+    let line = r#"{"kind": "declined", "head": "1234567890", "about": "file.txt:3", "finding": "c?", "text": "c is right"}"#;
+    let blob = sd.git_with(&[], Some(&format!("{line}\n")), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/decisions", &blob]);
+    sd.ok(&["review", "--force"]);
+    assert_eq!(
+        fs::read_to_string(sd.tmp.join("fx/reviewer.decisions")).unwrap(),
+        "- [1234567] declined, file.txt:3: c?\n  why: c is right"
+    );
 }
 
 // @test "--accept: records the bot trigger it followed, so NEXT can order them without comparing clocks (#181)"

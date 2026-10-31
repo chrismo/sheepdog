@@ -7,7 +7,8 @@
 // path, relative ones read from SHEEPDOG_BASE so the branch can't rewrite its
 // own review; empty means .sheepdog/review.md in the base commit, else
 // lib/prompts/review.md), then the fixed reporting rules (lib/review-rules.md),
-// the task, the commits and the diff. Why a local review before the bot: #79
+// the task, the decisions on record (SHEEPDOG_DECISIONS, #343), the commits
+// and the diff. Why a local review before the bot: #79
 // (Design record).
 
 use crate::git::{self, git, strip_nl};
@@ -88,7 +89,11 @@ pub fn run(argv: &[String]) -> ExitCode {
     });
     let rules = guidance::read(&lib.join("review-rules.md")).unwrap_or_else(|e| die(e));
     let task = Some(env("SHEEPDOG_TASK")).filter(|s| !s.is_empty()).unwrap_or_else(|| "(none recorded)".into());
-    prompt += &format!("\n\n{}\n\nTask: {task}\n\nCommits ({range}):\n{commits}\n\nDiff:\n{diff}", strip_nl(rules));
+    let decided = crate::decisions::section(
+        &env("SHEEPDOG_DECISIONS"),
+        "Don't raise again a finding one of these settles, unless the change since that commit reopens it; then say which decision and what changed.",
+    );
+    prompt += &format!("\n\n{}\n\nTask: {task}{decided}\n\nCommits ({range}):\n{commits}\n\nDiff:\n{diff}", strip_nl(rules));
 
     let sid = harness::new_session();
     let what = if branch.is_empty() { range.clone() } else { format!("{branch} ({range})") };

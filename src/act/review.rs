@@ -11,7 +11,7 @@ use super::{attached_check, cfg, die, no_base_why, plural, state_json};
 use crate::config::one_value;
 use crate::git::{git, git_input, git_out, pin_write, rev, strip_nl, worktree_for};
 use crate::json;
-use crate::{harness, limit, proc, running};
+use crate::{decisions, harness, limit, proc, running};
 use crate::state::flag_lines;
 use crate::val::{at, on, t};
 use serde_json::{json, Value};
@@ -50,8 +50,23 @@ fn record(head: &str, base: &str, round: u64, findings: &[Value]) -> String {
     json::to_string(&json!({"head": head, "base": base, "round": round, "findings": findings})) + "\n"
 }
 
+/// The decisions an accept at <head> makes of the findings record <rec>:
+/// each finding that blocks and wasn't fixed stands, accepted, with the
+/// reason when the agent declined it.
+fn accepted(rec: &str, head: &str) -> Vec<Value> {
+    let Some(rec) = one_value(rec) else { return vec![] };
+    let standing = |f: &&Value| at(f, "severity").as_str() != Some("nit") && at(f, "action").as_str() != Some("fixed");
+    let why = |f: &Value| if at(f, "action").as_str() == Some("declined") { t(f, "reply") } else { String::new() };
+    let fs = at(&rec, "findings").as_array().cloned().unwrap_or_default();
+    fs.iter().filter(standing).map(|f| decisions::of_finding("accepted", head, f, &why(f))).collect()
+}
+
 fn accept(b: &str, head: &str, base: &str) {
     pin_write(".", b, "accepted", head, base).unwrap_or_else(|e| die(e));
+    let findings = git(".", &["cat-file", "blob", &format!("refs/sheepdog/{b}/findings")]);
+    if findings.ok {
+        decisions::append(b, &accepted(&findings.stdout, head));
+    }
     let after = format!("branch.{b}.sd-accepted-after");
     match git_out(".", &["config", "--get", &format!("branch.{b}.sd-bot-triggered")]) {
         Some(when) if !when.is_empty() => must(git(".", &["config", &after, &when])),
@@ -119,6 +134,7 @@ fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
     c.current_dir(wt);
     c.env("SHEEPDOG_BASE", base).env("SHEEPDOG_HEAD", head).env("SHEEPDOG_TASK", &task);
+    c.env("SHEEPDOG_DECISIONS", decisions::on_record(b));
     let o = proc::timeout_passing_stderr(secs, c);
     eprint!("{}", o.stderr);
     if !o.ok {
