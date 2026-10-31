@@ -2,7 +2,9 @@
 // branch's file says so, one line: "<pid> <step> <start time> <the pid's
 // proc_start>". sd state reads it. A step the watcher launched holds it as a
 // lease (#268), with a second line, "deadline <time>", past which the
-// watcher's reconcile ends it.
+// watcher's reconcile ends it. A KILL, or a signal sd has no handler for,
+// leaves the marker behind: the watcher's reconcile and the next sd state
+// clean it.
 
 use crate::val::t;
 use crate::{git, proc, time};
@@ -173,7 +175,7 @@ extern "C" fn at_exit() {
 /// live step holds it. A marker holding keeps (RUNNING_HELD) is left
 /// alone. A HUP, INT or TERM ends <f>'s agent at once (proc::timeout), and
 /// sd dies of it once <f> is done. The marker is removed however sd ends,
-/// short of a KILL.
+/// short of a KILL or a signal sd doesn't handle.
 pub fn during<T>(b: &str, step: &str, f: impl FnOnce() -> T) -> Option<T> {
     let Some(marker) = file(".", b) else {
         eprintln!("sd: no running marker for {b}: not in a git repository");
@@ -243,11 +245,22 @@ fn marked<T>(marker: &str, b: &str, step: &str, rest: &str, f: impl FnOnce() -> 
             return None;
         }
         held().push((marker.to_string(), line.clone()));
-        let out = f();
-        held().retain(|(m, l)| !(m == marker && *l == line));
-        release(marker, &line);
-        Some(out)
+        let _hold = Hold { marker: marker.to_string(), line };
+        Some(f())
     })
+}
+
+/// Released on drop, so a step that panics lets go of its marker too.
+struct Hold {
+    marker: String,
+    line: String,
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        held().retain(|(m, l)| !(*m == self.marker && *l == self.line));
+        release(&self.marker, &self.line);
+    }
 }
 
 #[cfg(test)]
@@ -279,6 +292,15 @@ mod tests {
         assert!(line.starts_with(&format!("{me} implement ")), "{line}");
         assert!(line.ends_with(&format!(" {}\n", proc_start(&me))), "{line}");
         assert!(!f.exists());
+    }
+
+    #[test]
+    fn a_step_that_panics_releases_its_marker_as_it_unwinds_350() {
+        let f = marker("panicked");
+        let unwound = std::panic::catch_unwind(|| during_at(path(&f), "b-panicked", "implement", || panic!("the step")));
+        assert!(unwound.is_err());
+        assert!(!f.exists());
+        assert!(!held().iter().any(|(m, _)| m == path(&f)));
     }
 
     #[test]
