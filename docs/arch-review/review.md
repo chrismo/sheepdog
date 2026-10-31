@@ -93,19 +93,26 @@ are provisional.
 1. **I12 and I13 were [assumed].** Both failed, and the passes recommend
    adopting them (as "one runner", not "one module"). If you never wanted
    gh and git centralized, close #336 and #337 and strike the invariants.
+   **Decided 2026-10-31: adopted.** One gh runner, all git through
+   git.rs; #336 and #337 stand.
 2. **"Verbs share functions, not entry points" was [assumed].** Only
    `answer.rs` breaks it (A1 covers it). Confirm or strike.
 3. **Byte-compatibility of `sd state --json` with the bash era** was
    assumed to be a shim, not a goal. Eleven unit tests pin it (tests.md
    §4). If it's a shim, those tests and `json.rs`'s comment can say so.
+   **Decided 2026-10-31: a shim.** #379 relabels them.
 4. **Observe may cache the PR number.** Both passes judged the write fine
    and the rule's wording wrong. #339 carries the AGENTS.md edit; it's your
    rule to change.
+   **Decided 2026-10-31: Observe may cache, never decide.** #339 makes
+   the AGENTS.md edit.
 5. **Rule 2's wording.** Pass C notes every contract tells the agent "the
    pipeline commits your edits", correctly. "Agents never need to know the
    pipeline exists" means "never drive it"; AGENTS.md could say that.
 6. **#133's verdict** (pass C): extract the runner now, decide on merging
    the user-facing verbs later. #344 is written that way.
+   **Decided 2026-10-31: merge the verbs now.** #344's runner is step
+   one of #133 (comments on both).
 7. **Duplicates to close** (as-built/issues.md §5): #150 is fixed in
    `step_cost` per pass B and could close against #276; the `sd-task`
    group (#281, #118, #149, #263) reads as one issue; #69 is closed but
