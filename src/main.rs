@@ -29,6 +29,7 @@ fn main() -> ExitCode {
         "harness" => sheepdog::harness::run(&rest),
         "review-local" => sheepdog::review_local::run(&rest),
         "state" => sheepdog::state::run(&rest),
+        "view" => sheepdog::view::run(&rest),
         "watch" => sheepdog::watch::run(&rest),
         "help" | "-h" | "--help" => {
             print!("{HELP}");
