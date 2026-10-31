@@ -3,8 +3,6 @@
 // token by value; Go's field is private to this module, so only enforce
 // makes one.
 
-use crate::next::Derived;
-
 /// A verb's verdict on the state. Hard can't be forced; Done means nothing
 /// to do; Soft refuses unless --force; Warn runs with a warning.
 #[must_use]
@@ -33,20 +31,20 @@ pub enum Level {
     Warn,
 }
 
-/// One line of a verb's gate: when <refuses> holds of the state, <name> is
-/// the reason, and <clears> what makes it go away (NEXT's line for it).
+/// One line of a verb's gate: when it <refuses>, <name> is the reason, and
+/// <clears> what makes it go away (NEXT's line for it).
 pub struct Rule {
     pub name: &'static str,
     pub level: Level,
-    pub refuses: fn(&Derived) -> bool,
+    pub refuses: bool,
     pub clears: &'static str,
 }
 
-/// The most severe refusal of <rules> on <d>, not the first in source order.
-/// Hard and Done report their first rule; Soft and Warn every one.
-pub fn judge(rules: &[Rule], d: &Derived) -> Gate {
-    let Some(worst) = rules.iter().filter(|r| (r.refuses)(d)).map(|r| r.level).min() else { return Gate::Go };
-    let mut why = rules.iter().filter(|r| r.level == worst && (r.refuses)(d)).map(|r| r.name.to_string());
+/// The most severe of <rules>' refusals, not the first in source order. Hard
+/// and Done report their first rule; Soft and Warn every one.
+pub fn judge(rules: &[Rule]) -> Gate {
+    let Some(worst) = rules.iter().filter(|r| r.refuses).map(|r| r.level).min() else { return Gate::Go };
+    let mut why = rules.iter().filter(|r| r.level == worst && r.refuses).map(|r| r.name.to_string());
     match worst {
         Level::Hard => Gate::Hard(why.next().unwrap_or_default()),
         Level::Done => Gate::Done(why.next().unwrap_or_default()),
@@ -115,39 +113,35 @@ pub fn enforce(gate: Gate, force: bool, doing: &str) -> Option<Go> {
 mod tests {
     use super::*;
 
-    fn rule(name: &'static str, level: Level, refuses: fn(&Derived) -> bool) -> Rule {
+    fn rule(name: &'static str, level: Level, refuses: bool) -> Rule {
         Rule { name, level, refuses, clears: "" }
+    }
+
+    /// Soft "locked", Warn "pending", Hard "undone" and Hard "closed", each
+    /// refusing as given.
+    fn four(locked: bool, pending: bool, undone: bool, closed: bool) -> [Rule; 4] {
+        [
+            rule("locked", Level::Soft, locked),
+            rule("pending", Level::Warn, pending),
+            rule("undone", Level::Hard, undone),
+            rule("closed", Level::Hard, closed),
+        ]
     }
 
     #[test]
     fn judge_reports_the_most_severe_refusal_not_the_first() {
-        let rules = [
-            rule("locked", Level::Soft, |d| d.locked == Some(true)),
-            rule("pending", Level::Warn, |d| d.ci_pending),
-            rule("undone", Level::Hard, |d| d.undone),
-            rule("closed", Level::Hard, |d| d.closed),
-        ];
-        let d = Derived { locked: Some(true), ci_pending: true, undone: true, closed: true, ..Derived::default() };
-        assert_eq!(judge(&rules, &d), Gate::Hard("undone".into()));
-        let d = Derived { locked: Some(true), ci_pending: true, ..Derived::default() };
-        assert_eq!(judge(&rules, &d), Gate::Soft(vec!["locked".into()]));
-        let d = Derived { ci_pending: true, ..Derived::default() };
-        assert_eq!(judge(&rules, &d), Gate::Warn(vec!["pending".into()]));
-        assert_eq!(judge(&rules, &Derived::default()), Gate::Go);
-        assert_eq!(judge(&[], &d), Gate::Go);
+        assert_eq!(judge(&four(true, true, true, true)), Gate::Hard("undone".into()));
+        assert_eq!(judge(&four(true, true, false, false)), Gate::Soft(vec!["locked".into()]));
+        assert_eq!(judge(&four(false, true, false, false)), Gate::Warn(vec!["pending".into()]));
+        assert_eq!(judge(&four(false, false, false, false)), Gate::Go);
+        assert_eq!(judge(&[]), Gate::Go);
     }
 
     #[test]
     fn judge_lists_every_soft_reason_in_order_and_done_outranks_soft() {
-        let rules = [
-            rule("a", Level::Soft, |d| d.locked == Some(true)),
-            rule("on it", Level::Done, |d| d.up_to_date == Some(true)),
-            rule("b", Level::Soft, |d| d.ci_pending),
-        ];
-        let d = Derived { locked: Some(true), ci_pending: true, ..Derived::default() };
-        assert_eq!(judge(&rules, &d), Gate::Soft(vec!["a".into(), "b".into()]));
-        let d = Derived { up_to_date: Some(true), ..d };
-        assert_eq!(judge(&rules, &d), Gate::Done("on it".into()));
+        let rules = |done| [rule("a", Level::Soft, true), rule("on it", Level::Done, done), rule("b", Level::Soft, true)];
+        assert_eq!(judge(&rules(false)), Gate::Soft(vec!["a".into(), "b".into()]));
+        assert_eq!(judge(&rules(true)), Gate::Done("on it".into()));
     }
 
     #[test]

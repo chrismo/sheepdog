@@ -118,10 +118,6 @@ derived! {
     parent_unpushed: bool,
     /// No PR, nothing ahead of the base and nothing behind the remote.
     empty: bool,
-    /// What holds sd act push besides CI config: foreign, undone, parent.
-    push_held: bool,
-    /// NEXT offers sd act push (next::push_offered).
-    push_step: bool,
 
     // Sync with the parent (O2, O3).
     /// The target isn't the default branch, or the parent merged: restack after it.
@@ -216,7 +212,7 @@ derived! {
     ci_moot: bool,
     /// ci-fix waits on CI (a ci-fix question only).
     ci_waits: bool,
-    /// ci-fix's gate runs (always, unless a ci-fix question stands).
+    /// ci-fix's gate runs, or no ci-fix question stands.
     ci_runs: bool,
     /// A stored answer to address's question goes on.
     resume: bool,
@@ -234,7 +230,7 @@ derived! {
     // A followed PR (#250).
     /// Commits the PR's head doesn't have, with nothing new from the author.
     rv_yours: bool,
-    /// The worktree has uncommitted changes.
+    /// A followed PR's worktree has uncommitted changes.
     rv_dirty: bool,
     /// The author pushed, or GitHub is ahead: fetch.
     rv_fetch: bool,
@@ -360,8 +356,6 @@ impl Derived {
         self.parent_unpushed = j.on("parent.unpushed");
         self.undone = j.n("sync.undone") > 0.0;
         self.empty = self.pr_null && j.g("sync.ahead").as_f64() == Some(0.0) && j.n("push.behind") == 0.0;
-        self.push_held = self.foreign || self.undone || self.parent_unpushed;
-        self.push_step = self.open && !self.verify_red && !self.ci_held && !self.push_held && !self.empty && self.to_push;
     }
 
     fn sync(&mut self, j: &J) {

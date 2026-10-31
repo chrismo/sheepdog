@@ -522,6 +522,13 @@ fn an_address_question_its_gate_refuses_takes_the_answer_now_unless_a_restack_wo
         "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict; 1 unpushed commit(s): review the agent's CI config change (.rwx/tests.yml), then sd act push; then answer it with sd act answer --force, since a restack first would drop the question"
     );
     assert_eq!(step("question", "cmd", &held), "sd act push");
+    // verify red at HEAD: sd act push refuses too (#348), so the push isn't the way
+    let red_held = e![&held, &red(true)];
+    assert_eq!(
+        step("question", "say", &red_held),
+        "the agent asks (address): Which test is right?; sd act answer refuses while restack due, and it would conflict; 1 unpushed commit(s): clear that first, or answer in its session (sd act attach), then sd act ack --question"
+    );
+    assert_eq!(step("question", "cmd", &red_held), "null");
     // nothing owed: address has nothing to go on with
     assert_eq!(keys(&e![&q]), "question");
     assert_eq!(
@@ -884,6 +891,18 @@ fn ci_config_held_where_a_push_would_be_wrong_undone_restack_foreign_parent_unpu
     assert_eq!(step("ci-config", "cmd", &e![".push.remote_ours = false", ".push.behind = 1", ".push.theirs = 1", ".push.ahead = 1", held]), "null");
     assert_eq!(step("ci-config", "cmd", &e![".parent.unpushed = true", ".push.ahead = 1", held]), "null");
     assert_eq!(step("ci-config", "say", &e![".sync.undone = 1", held]), "the agent changed CI config (.rwx/tests.yml): review it; push once the steps above are done");
+}
+
+// sd act push refuses a red verify at HEAD (#348), so the held change isn't
+// offered as sd act push either: verify-red goes first.
+#[test]
+fn ci_config_held_with_verify_red_at_head_no_sd_act_push_offered_348() {
+    let held = r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#;
+    let st = e![".push.ahead = 1", held, &red(true)];
+    assert_eq!(keys(&st), "verify-red ci-config");
+    assert_eq!(step("ci-config", "cmd", &st), "null");
+    assert_eq!(step("ci-config", "say", &st), "the agent changed CI config (.rwx/tests.yml): review it; push once the steps above are done");
+    assert_eq!(step("ci-config", "cmd", &e![".push.ahead = 1", held, &red(false)]), "sd act push");
 }
 
 // @test "a restack undone from outside sheepdog: redo it by hand, then sd act push (#47)"

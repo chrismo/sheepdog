@@ -438,6 +438,62 @@ fn the_lease_holds_when_the_remote_moves_after_the_fetch() {
     assert_eq!(sd.tracks("feat"), "origin/main");
 }
 
+// A restack, then git's advice after a rejected plain push (pull --rebase onto
+// the old remote head) replays main's commit as a copy: pushing would publish
+// it (#47, #348).
+#[test]
+fn a_restack_undone_by_a_plain_pull_refused_unless_force_nothing_pushed_47() {
+    let sd = sd();
+    let pre = sd.rev("feat");
+    sd.main_moves(true, "m.txt", "m", "main moves", false);
+    sd.git(&["fetch", "-q"]);
+    sd.git(&["rebase", "-q", "--onto", "origin/main", "main", "feat"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", "origin/main"]);
+    sd.git(&["reset", "-q", "--hard", &pre]);
+    sd.git(&["cherry-pick", "origin/main"]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not pushing feat:", "the restack was undone", "--force"]);
+    assert_eq!(sd.remote("feat"), pre);
+    assert_eq!(sd.run(&["push", "--force"]).status, 0);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
+}
+
+// sd act verify's record of a failed verify at HEAD (#325).
+#[test]
+fn verify_red_at_head_refused_unless_force_nothing_pushed_348() {
+    let sd = sd();
+    sd.commit("local");
+    let head = sd.rev("HEAD");
+    let rec = format!(r#"{{"head": "{head}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z"}}"#);
+    let blob = sd.git_with(&[], Some(&rec), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/verify-red", blob.trim()]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not pushing feat:", "verify is red at HEAD", "--force"]);
+    assert_ne!(sd.remote("feat"), head);
+    assert_eq!(sd.run(&["push", "--force"]).status, 0);
+    assert_eq!(sd.remote("feat"), head);
+}
+
+// gh fails here, so sd state answers from a fixture with the PR closed.
+#[test]
+fn a_closed_or_merged_pr_refused_unless_force_nothing_pushed_348() {
+    for state in ["CLOSED", "MERGED"] {
+        let mut sd = sd();
+        sd.env = vec![("SHEEPDOG_STATE_FIXTURES".to_string(), sd.path("states"))];
+        fs::create_dir_all(sd.tmp.join("states")).unwrap();
+        fs::write(sd.tmp.join("states/feat.json"), format!(r#"{{"pr": {{"number": 7, "state": "{state}"}}}}"#)).unwrap();
+        sd.commit("local");
+        let r = sd.run(&["push"]);
+        assert_eq!(r.status, 1, "{state}");
+        assert_has(&r.output, &["not pushing feat:", "the PR is merged or closed", "--force"]);
+        assert_ne!(sd.remote("feat"), sd.rev("feat"));
+        assert_eq!(sd.run(&["push", "--force"]).status, 0, "{state}");
+        assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    }
+}
+
 // @test "taken over: refused unless --force"
 #[test]
 fn taken_over_refused_unless_force() {
