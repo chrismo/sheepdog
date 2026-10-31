@@ -469,22 +469,6 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if open && d.ci_held {
-                let paths = sj(g("push.held.paths"), ", ");
-                if !push_runs(d) {
-                    step("ci-config", "you",
-                        format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
-                        None,
-                    )
-                } else {
-                    step("ci-config", "you",
-                        format!("the agent changed CI config ({paths}): review, then sd act push"),
-                        cmd("sd act push"),
-                    )
-                }
-            } else {
-                None
-            },
             if d.empty && yes(d.push_dirty) {
                 step("nothing-dirty", "you",
                     format!(
@@ -515,6 +499,23 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                     ),
                     cmd("sd act verify"),
                 )
+            } else {
+                None
+            },
+            // after what holds the push, which its say points up to
+            if open && d.ci_held {
+                let paths = sj(g("push.held.paths"), ", ");
+                if !push_runs(d) {
+                    step("ci-config", "you",
+                        format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
+                        None,
+                    )
+                } else {
+                    step("ci-config", "you",
+                        format!("the agent changed CI config ({paths}): review, then sd act push"),
+                        cmd("sd act push"),
+                    )
+                }
             } else {
                 None
             },

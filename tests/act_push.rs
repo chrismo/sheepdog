@@ -459,6 +459,41 @@ fn a_restack_undone_by_a_plain_pull_refused_unless_force_nothing_pushed_47() {
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
 }
 
+// sd act verify's record of a failed verify at HEAD (#325).
+#[test]
+fn verify_red_at_head_refused_unless_force_nothing_pushed_348() {
+    let sd = sd();
+    sd.commit("local");
+    let head = sd.rev("HEAD");
+    let rec = format!(r#"{{"head": "{head}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z"}}"#);
+    let blob = sd.git_with(&[], Some(&rec), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/verify-red", blob.trim()]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.output, &["not pushing feat:", "verify is red at HEAD", "--force"]);
+    assert_ne!(sd.remote("feat"), head);
+    assert_eq!(sd.run(&["push", "--force"]).status, 0);
+    assert_eq!(sd.remote("feat"), head);
+}
+
+// gh fails here, so sd state answers from a fixture with the PR closed.
+#[test]
+fn a_closed_or_merged_pr_refused_unless_force_nothing_pushed_348() {
+    for state in ["CLOSED", "MERGED"] {
+        let mut sd = sd();
+        sd.env = vec![("SHEEPDOG_STATE_FIXTURES".to_string(), sd.path("states"))];
+        fs::create_dir_all(sd.tmp.join("states")).unwrap();
+        fs::write(sd.tmp.join("states/feat.json"), format!(r#"{{"pr": {{"number": 7, "state": "{state}"}}}}"#)).unwrap();
+        sd.commit("local");
+        let r = sd.run(&["push"]);
+        assert_eq!(r.status, 1, "{state}");
+        assert_has(&r.output, &["not pushing feat:", "the PR is merged or closed", "--force"]);
+        assert_ne!(sd.remote("feat"), sd.rev("feat"));
+        assert_eq!(sd.run(&["push", "--force"]).status, 0, "{state}");
+        assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    }
+}
+
 // @test "taken over: refused unless --force"
 #[test]
 fn taken_over_refused_unless_force() {
