@@ -3426,6 +3426,164 @@ fn dispatch_not_while_a_step_runs_or_the_session_is_attached() {
     }
 }
 
+// ── auto-forget: a pass runs the merged step (#270) ─────────────────────────
+
+impl Sd {
+    /// feat in its own worktree at wt/, one commit past main, its PR #7
+    /// merged at that tip, on a PR the viewer authored, then <more> jq
+    /// assignments. sd act is this binary's own, reading the same fixture
+    /// as the pass's sd state; gh logs to $PS_FIXTURES/gh-calls and fails.
+    fn merged_in_wt(&mut self, more: &[&str]) {
+        self.env.retain(|(k, _)| k != "SHEEPDOG_ACT_PROGRAM");
+        self.env.push(("SHEEPDOG_STATE_FIXTURES".to_string(), self.path("ps")));
+        self.fake("gh", "#!/usr/bin/env bash\necho \"$*\" >> \"$PS_FIXTURES/gh-calls\"\nexit 1\n");
+        self.git(&["switch", "-q", "main"]);
+        self.git(&["worktree", "add", "-q", &self.path("wt"), "feat"]);
+        self.git_in("wt", &["commit", "-q", "--allow-empty", "-m", "f1"]);
+        self.merged_fixture(more);
+    }
+
+    /// feat's sd state: its PR merged at its tip, then <more>.
+    fn merged_fixture(&self, more: &[&str]) {
+        let merged = format!(
+            r#".viewer = "me" | .pr.author = "me" | .pr.state = "MERGED" | .pr.head_sha = "{}" | .push.dirty = false"#,
+            self.git(&["rev-parse", "feat"])
+        );
+        self.ps_fixture("feat", &[&[merged.as_str()], more].concat());
+    }
+
+    fn wt_exists(&self) -> bool {
+        self.tmp.join("wt").is_dir()
+    }
+}
+
+// @test "auto-forget: with settings.autoForget, a pass runs sd act forget --remove on a merged branch (#270)"
+#[test]
+fn auto_forget_a_pass_runs_forget_remove_on_a_merged_branch_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t🏁\t", "repo\tfeat\t-\tlaunched sd act forget --remove"]);
+    sd.settle("feat");
+    assert!(!sd.wt_exists());
+    assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/heads/feat"]), None);
+    assert!(!sd.enrolled("feat"));
+    assert_has(&sd.steps_log(), &["forgot feat"]);
+
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act forget --remove: ok"]);
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "feat");
+}
+
+// @test "auto-forget: the merged notification goes out once, and GitHub isn't asked about the forgotten branch (#270)"
+#[test]
+fn auto_forget_the_merged_notification_goes_out_once_and_github_isnt_asked_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(
+        sd.notified_lines(),
+        ["repo feat|merged: drop the branch's pins and enrollment, remove its worktree and delete it"]
+    );
+    sd.pass();
+    sd.pass();
+    assert_eq!(sd.notified_lines().len(), 1);
+    assert!(sd.state_files().is_empty());
+    assert_eq!(cat(&sd.ps("gh-calls")), "");
+}
+
+// @test "auto-forget: off by default, and settings.autoRun doesn't turn it on (#270)"
+#[test]
+fn auto_forget_is_off_by_default_and_auto_run_doesnt_turn_it_on_270() {
+    let mut sd = sd();
+    sd.merged_in_wt(&[]);
+    for cfg in ["{}", r#"{"settings":{"autoRun":true}}"#, r#"{"settings":{"autoRun":true,"autoForget":false}}"#] {
+        sd.write_cfg(cfg);
+        sd.pass();
+        assert_lacks(&sd.last_pass(), "sd act");
+        assert!(sd.wt_exists(), "{cfg}");
+        assert!(sd.enrolled("feat"), "{cfg}");
+    }
+}
+
+// @test "auto-forget: settings.autoForget doesn't turn on the other steps (#270)"
+#[test]
+fn auto_forget_doesnt_turn_on_the_other_steps_270() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+}
+
+// @test "auto-forget: not on a worktree with uncommitted or untracked changes (#270)"
+#[test]
+fn auto_forget_not_on_a_dirty_worktree_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    // The pass runs its own git status: sd state's push.dirty isn't what it reads.
+    fs::write(sd.tmp.join("wt/notes"), "mine\n").unwrap();
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t🏁\t"]);
+    assert_lacks(&sd.last_pass(), "sd act");
+    assert!(sd.wt_exists());
+    assert!(sd.enrolled("feat"));
+}
+
+// @test "auto-forget: not on a branch with commits the merged PR doesn't have (#270)"
+#[test]
+fn auto_forget_not_on_a_branch_with_commits_the_pr_doesnt_have_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    sd.git_in("wt", &["commit", "-q", "--allow-empty", "-m", "after the merge"]);
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "sd act");
+    assert!(sd.wt_exists());
+    assert!(sd.enrolled("feat"));
+}
+
+// @test "auto-forget: not on an untracked file status.showUntrackedFiles=no hides from sd state (#270)"
+#[test]
+fn auto_forget_not_on_an_untracked_file_status_hides_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    sd.git(&["config", "status.showUntrackedFiles", "no"]);
+    fs::write(sd.tmp.join("wt/notes"), "mine\n").unwrap();
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "sd act");
+    assert!(sd.wt_exists());
+    assert!(sd.enrolled("feat"));
+}
+
+// @test "auto-forget: not while the branch is attached or a step runs on it (#270)"
+#[test]
+fn auto_forget_not_while_attached_or_a_step_runs_270() {
+    let mut sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoForget":true}}"#);
+    sd.merged_in_wt(&[]);
+    for (why, more) in [
+        ("running", r#".session.running = {step: "implement", pid: 1, since: "2026-10-23T00:00:00Z"}"#),
+        ("attached", ".session.locked = true"),
+    ] {
+        if why == "attached" {
+            sd.git(&["config", "branch.feat.sd-lock", "session"]);
+        }
+        sd.merged_fixture(&[more]);
+        sd.pass();
+        assert_has(&sd.last_pass(), &["repo\tfeat\t"]);
+        assert_lacks(&sd.last_pass(), "sd act");
+        assert!(sd.wt_exists(), "{why}");
+        assert!(sd.enrolled("feat"), "{why}");
+    }
+}
+
 #[test]
 fn dispatch_a_failed_step_is_tried_once_a_pass_and_says_why() {
     let sd = sd();
