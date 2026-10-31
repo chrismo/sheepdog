@@ -832,7 +832,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             "settings.verify",
             "settings.verify is empty: the agent steps can't build or run the tests, and `sd act verify` checks nothing; set it with `sd config set --repo settings.verify '<command>'`".into(),
         ));
-    } else if !crate::act::plain_words(&verify)
+    } else if !crate::rules::plain_words(&verify)
         && allow_empty
         && all_steps.iter().any(|(_, v)| v.get("harness").and_then(Value::as_str) == Some("claude"))
     {
@@ -1471,5 +1471,13 @@ mod tests {
     fn step_refuses_an_unknown_step_or_harness_with_sd_configs_lines() {
         assert_eq!(step("deploy", "", ""), Err(vec!["unknown step: deploy (address ci-fix describe implement review)".into()]));
         assert_eq!(step("review", "", "codex"), Err(vec!["unknown harness: codex (claude pi)".into()]));
+    }
+
+    #[test]
+    fn config_doesnt_depend_on_act() {
+        let code = include_str!("config.rs").split("#[cfg(test)]").next().unwrap();
+        for needle in ["crate::act", "super::act"] {
+            assert!(!code.contains(needle), "config.rs reaches act via {needle}");
+        }
     }
 }

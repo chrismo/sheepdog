@@ -9,6 +9,7 @@ pub mod limit;
 pub mod next;
 pub mod proc;
 pub mod review_local;
+pub mod rules;
 pub mod running;
 pub mod state;
 pub mod time;
