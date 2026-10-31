@@ -56,8 +56,9 @@
 // Past settings.branchBudget (spend.budget; 0 is none), nothing spends tokens
 // on the branch: the first agent step becomes chrismo's, the rest go, and the
 // run steps stay (#121). So does open-pr: sd act ship describes the branch
-// when its description is stale, which spends. Spend that can't be read, with
-// a budget set, holds the same way: a cost guard fails closed. spends() makes
+// when its description is stale, which spends. Spend that can't be read, or a
+// step whose cost is unknown (spend.unknown, #349), with a budget set, holds
+// the same way: a cost guard fails closed. spends() makes
 // that swap, agent() for agent steps; the dedupe at the end keeps the first.
 // Not guarded: ship-parent, whose describe spends on the parent; this state
 // has only this branch's spend, so the parent's budget isn't checked here.
@@ -169,15 +170,22 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     Ok(Value::Array(offer(&Derived::new(s), s, remote)))
 }
 
+fn unread_say(unknown: &Value) -> String {
+    let unknown = unknown.as_array().map_or(&[][..], Vec::as_slice);
+    if unknown.is_empty() {
+        return "can't tell what this branch has spent (sd state's errors say why), so nothing spends: fix the usage record, or take over".into();
+    }
+    let named: Vec<String> = unknown.iter().map(|u| format!("{} at {}, session {}", val::t(u, "step"), val::t(u, "time"), val::t(u, "session"))).collect();
+    let (steps, its) = if unknown.len() == 1 { ("1 step".to_string(), "its") } else { (format!("{} steps", unknown.len()), "their") };
+    format!("can't tell what {steps} on this branch cost ({}), so nothing spends: set {its} cost_usd in usage.sup, or take over", named.join("; "))
+}
+
 /// The budget or failed step that stands in for every agent step, if any.
 fn hold_step(d: &Derived, s: &Value) -> Option<Value> {
     let n = |p: &str| val::n(s, p);
     let t = |p: &str| val::t(s, p);
     if d.budget_unread {
-        step("budget", "you",
-            "can't tell what this branch has spent (sd state's errors say why), so nothing spends: fix the usage record, or take over",
-            cmd("sd act attach"),
-        )
+        step("budget", "you", unread_say(at(s, "spend.unknown")), cmd("sd act attach"))
     } else if d.over_budget {
         step("budget", "you",
             format!(

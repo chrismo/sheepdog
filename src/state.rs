@@ -7,13 +7,12 @@ use crate::git::{
     stacked_unclear, strip_nl, worktree_for, worktree_mark,
 };
 use crate::time::{epoch_ns, now_utc};
-use crate::usage::{self, sup_record};
+use crate::usage;
 use crate::val::{at, n, on, sj, t, text, NULL};
 use crate::{config, git, json, next, proc, running};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
 use std::process::ExitCode;
 use std::sync::OnceLock;
 
@@ -98,37 +97,14 @@ fn fail(msg: impl std::fmt::Display) -> String {
 
 // ── usage.sup: what the branch has spent (#121) ──────────────────────────────
 
-/// This repo's <branch> cost so far, in USD, by usage.sup's cost_usd; 0 with
-/// no record. A line that isn't a whole record is skipped with a warning;
-/// one shaped like a record that still doesn't parse is an Err.
-fn branch_spend(dir: &str, b: &str) -> Result<Value, ()> {
-    let file = usage::file();
-    let text = match fs::read(&file) {
-        Ok(t) if !t.is_empty() => String::from_utf8_lossy(&t).into_owned(),
-        _ => return Ok(json!(0)),
-    };
-    let (spend, skipped) = spend_in(&text, &main_worktree(dir), b);
-    if skipped > 0 {
-        eprintln!("sd state: warning: {skipped} line(s) of {file} aren't usage records; their cost isn't counted");
+/// This repo's <branch> spend, usd and unknown (usage::Spend), warning of
+/// lines that aren't records; None when usage.sup can't be read.
+fn branch_spend(dir: &str, b: &str) -> Option<(Value, Value)> {
+    let s = usage::spend(&main_worktree(dir), b)?;
+    if s.skipped > 0 {
+        eprintln!("sd state: warning: {} line(s) of {} aren't usage records; their cost isn't counted", s.skipped, usage::file());
     }
-    spend
-}
-
-/// usage.sup's text summed for <repo>'s <b>, and how many lines aren't records.
-fn spend_in(text: &str, repo: &str, b: &str) -> (Result<Value, ()>, usize) {
-    let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(text).split('\n').collect();
-    let skipped = lines.iter().filter(|l| !usage::shaped(l)).count();
-    let mut sum: Option<f64> = None;
-    for l in lines.iter().filter(|l| usage::shaped(l)) {
-        let Some(r) = sup_record(l) else { return (Err(()), skipped) };
-        let field = |k: &str| r.get(k).and_then(Value::as_str);
-        if field("repo") == Some(repo) && field("branch") == Some(b) {
-            if let Some(c) = r.get("cost_usd").and_then(Value::as_f64) {
-                sum = Some(sum.unwrap_or(0.0) + c);
-            }
-        }
-    }
-    (Ok(sum.map_or(json!(0), |s| json!(s))), skipped)
+    Some((json!(s.usd), Value::Array(s.unknown)))
 }
 
 // ── records sd act keeps under refs/sheepdog/<b>/ ────────────────────────────
@@ -792,7 +768,8 @@ struct Facts {
     rl_remaining: Value,
     rl_reset: String,
     rl_limited: bool,
-    spend: Value,
+    /// usd and unknown.
+    spend: (Value, Value),
     branch_budget: Value,
     errors: Vec<String>,
 }
@@ -1034,7 +1011,7 @@ fn assemble(s: &Facts) -> Value {
         "bot": {"command": jn(&s.bot_command), "timeout": s.bot_timeout},
         "session": {"enrolled": s.enrolled == "true", "harness": jn(&s.harness), "profile": s.profile, "id": jn(&s.session),
                     "locked": !s.lock.is_empty(), "running": s.running},
-        "spend": {"usd": s.spend, "budget": s.branch_budget},
+        "spend": {"usd": s.spend.0, "unknown": s.spend.1, "budget": s.branch_budget},
         "stored": {"handled": s.handled, "refs": refs},
         "rate_limit": {"cost": s.rl_cost, "remaining": s.rl_remaining, "reset_at": jn(&s.rl_reset), "limited": s.rl_limited},
         "errors": s.errors
@@ -1144,9 +1121,9 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         Err(lines) => return Err(config_failed(lines)),
     };
     let mut errors: Vec<String> = Vec::new();
-    let spend = branch_spend(dir, branch).unwrap_or_else(|()| {
+    let spend = branch_spend(dir, branch).unwrap_or_else(|| {
         errors.push(format!("usage: can't read {}", usage::file()));
-        Value::Null
+        (Value::Null, Value::Null)
     });
     let ignore_body = compile_all(&raw_json(&ignore_body_text))
         .ok_or_else(|| fail(format!("botIgnoreBody has an invalid regex: {ignore_body_text}")))?;
@@ -1872,50 +1849,6 @@ pub fn run(argv: &[String]) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn row(repo: &str, branch: &str, cost: &str) -> String {
-        format!(
-            "{{time:2026-10-16T20:33:06Z,repo:\"{repo}\",branch:\"{branch}\",step:\"review\",harness:\"claude\",session:\"a\",mode:\"new\",status:0,cost_usd:{cost},input:1}}\n"
-        )
-    }
-
-    // Was lib/sheepdog.bats: "branch_spend: this repo's branch's cost_usd summed over usage.sup; 0 with none"
-    #[test]
-    fn branch_spend_this_repos_branchs_cost_usd_summed_over_usage_sup_0_with_none() {
-        assert_eq!(spend_in("", "/r", "feat").0, Ok(json!(0)));
-        let text = [
-            row("/r", "feat", "1.25"),
-            row("/r", "other", "4."),
-            row("/elsewhere", "feat", "8."),
-            row("/r", "feat", "null"),
-            row("/r", "feat", "0.5"),
-        ]
-        .concat();
-        let (spend, skipped) = spend_in(&text, "/r", "feat");
-        assert_eq!(json::to_string(&spend.unwrap()), "1.75");
-        assert_eq!(skipped, 0);
-    }
-
-    // Was lib/sheepdog.bats: "branch_spend: a line that isn't a whole record (a cut-off append, a stray edit) is skipped, with a warning"
-    #[test]
-    fn branch_spend_a_line_that_isnt_a_whole_record_is_skipped_with_a_warning() {
-        let text = format!(
-            "{}not sup {{\n{{time:2026-10-16T20:34:06Z,repo:\"/r\",branch:\"fe\n{}",
-            row("/r", "feat", "1.25"),
-            row("/r", "feat", "0.5")
-        );
-        let (spend, skipped) = spend_in(&text, "/r", "feat");
-        assert_eq!(json::to_string(&spend.unwrap()), "1.75");
-        assert_eq!(skipped, 2);
-        // Shaped like a record but not one: the file can't be read.
-        assert!(spend_in(&format!("{text}{{time:soon}}\n"), "/r", "feat").0.is_err());
-    }
-
-    #[test]
-    fn spend_sums_floats_as_super_did_and_prints_a_whole_sum_without_a_point() {
-        let text = [row("/r", "feat", "1.5"), row("/r", "feat", "1.5")].concat();
-        assert_eq!(json::to_string(&spend_in(&text, "/r", "feat").0.unwrap()), "3");
-    }
 
     #[test]
     fn is_test_matches_names_paths_and_directories_as_bash_globs() {

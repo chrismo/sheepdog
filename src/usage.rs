@@ -123,6 +123,51 @@ fn total_in(text: &str, session: &str) -> f64 {
     total
 }
 
+/// What a branch's steps cost by usage.sup (#121): the known costs summed,
+/// and the steps whose cost isn't known, {time, step, session} each. An
+/// unknown cost isn't $0 (#349): cost_usd is null for a step sd stopped on a
+/// signal, and for one killed with no cap. A null cost with a null context
+/// is a step whose transcript has no billed turn (it failed to start), so
+/// it spent nothing. skipped: the lines that aren't whole records.
+#[derive(Debug, Default, PartialEq)]
+pub struct Spend {
+    pub usd: f64,
+    pub unknown: Vec<Value>,
+    pub skipped: usize,
+}
+
+/// usage.sup's text summed for <repo>'s <b>; None when a line shaped like
+/// a record still doesn't parse.
+fn spend_in(text: &str, repo: &str, b: &str) -> Option<Spend> {
+    let mut out = Spend::default();
+    for l in text.lines() {
+        if !shaped(l) {
+            out.skipped += 1;
+            continue;
+        }
+        let r = sup_record(l)?;
+        let field = |k: &str| r.get(k).and_then(Value::as_str);
+        if field("repo") != Some(repo) || field("branch") != Some(b) {
+            continue;
+        }
+        let ran = r.get("context").is_some_and(|c| !c.is_null());
+        match r.get("cost_usd").and_then(Value::as_f64) {
+            Some(c) => out.usd += c,
+            None if ran => out.unknown.push(json!({"time": field("time"), "step": field("step"), "session": field("session")})),
+            None => {}
+        }
+    }
+    Some(out)
+}
+
+/// spend_in over usage.sup; no file is no spend.
+pub fn spend(repo: &str, b: &str) -> Option<Spend> {
+    match fs::read(file()) {
+        Ok(t) => spend_in(&String::from_utf8_lossy(&t), repo, b),
+        Err(_) => Some(Spend::default()),
+    }
+}
+
 /// One step, as the harness saw it.
 pub struct Step<'a> {
     pub time: &'a str,
@@ -155,8 +200,9 @@ pub struct Step<'a> {
 /// next step's cost counts from the last one known, and may count the
 /// killed step's real spend again. A step stopped by a signal to sd isn't
 /// charged (#177): a Ctrl-C a few seconds in would count the whole cap
-/// against branchBudget. Its cost is unknown (null) and not estimated; a
-/// resume's running total counts its spend in the next step's cost.
+/// against branchBudget. Its cost is unknown (null) and not estimated, which
+/// holds a budgeted branch till chrismo sets it (#349): no later fork's
+/// total counts it (#276).
 pub fn record(s: &Step) -> String {
     let claude = s.harness == "claude";
     let (o, a, b) = (s.o, s.a, s.b);
@@ -277,6 +323,51 @@ mod tests {
         // A line shaped like the session's record that doesn't read: unknown.
         text += "{time:2026-10-16T20:33:06Z,session:\"s\",oops}\n";
         assert_eq!(total_in(&text, "s"), 0.0);
+    }
+
+    fn row(repo: &str, branch: &str, cost: &str) -> String {
+        format!(
+            "{{time:2026-10-16T20:33:06Z,repo:\"{repo}\",branch:\"{branch}\",step:\"review\",harness:\"claude\",session:\"a\",mode:\"new\",status:0,cost_usd:{cost},input:1}}\n"
+        )
+    }
+
+    // Was lib/sheepdog.bats: "branch_spend: this repo's branch's cost_usd summed over usage.sup; 0 with none"
+    #[test]
+    fn spend_is_this_repos_branchs_cost_usd_summed_0_with_none() {
+        assert_eq!(spend_in("", "/r", "feat"), Some(Spend::default()));
+        let text = [row("/r", "feat", "1.25"), row("/r", "other", "4."), row("/elsewhere", "feat", "8."), row("/r", "feat", "0.5")].concat();
+        let s = spend_in(&text, "/r", "feat").unwrap();
+        assert_eq!((s.usd, s.skipped), (1.75, 0));
+        assert!(s.unknown.is_empty());
+    }
+
+    #[test]
+    fn spend_sums_floats_as_super_did_and_prints_a_whole_sum_without_a_point() {
+        let s = spend_in(&[row("/r", "feat", "1.5"), row("/r", "feat", "1.5")].concat(), "/r", "feat").unwrap();
+        assert_eq!(crate::json::to_string(&json!(s.usd)), "3");
+        assert_eq!(crate::json::to_string(&json!(Spend::default().usd)), "0");
+    }
+
+    #[test]
+    fn a_step_whose_cost_is_unknown_isnt_0_its_named_349() {
+        let null = |session: &str, context: &str| {
+            format!("{{time:2026-10-23T00:00:00Z,repo:\"/r\",branch:\"feat\",step:\"implement\",harness:\"claude\",session:\"{session}\",mode:\"new\",status:143,cost_usd:null,total_cost_usd:null,estimated:false,context:{context}}}\n")
+        };
+        let text = [row("/r", "feat", "1.25"), null("s1", "9000"), row("/r", "other", "null"), null("s2", "null"), row("/r", "feat", "0.5")].concat();
+        let s = spend_in(&text, "/r", "feat").unwrap();
+        assert_eq!(s.usd, 1.75);
+        // s2's transcript has no billed turn: it never started, so spent nothing.
+        assert_eq!(s.unknown, vec![json!({"time": "2026-10-23T00:00:00Z", "step": "implement", "session": "s1"})]);
+    }
+
+    // Was lib/sheepdog.bats: "branch_spend: a line that isn't a whole record (a cut-off append, a stray edit) is skipped, with a warning"
+    #[test]
+    fn a_line_that_isnt_a_whole_record_is_skipped_and_counted() {
+        let text = format!("{}not sup {{\n{{time:2026-10-16T20:34:06Z,repo:\"/r\",branch:\"fe\n{}", row("/r", "feat", "1.25"), row("/r", "feat", "0.5"));
+        let s = spend_in(&text, "/r", "feat").unwrap();
+        assert_eq!((s.usd, s.skipped), (1.75, 2));
+        // Shaped like a record but not one: the file can't be read.
+        assert_eq!(spend_in(&format!("{text}{{time:soon}}\n"), "/r", "feat"), None);
     }
 
     #[test]

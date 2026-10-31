@@ -188,7 +188,8 @@ derived! {
     bot_waiting: bool,
 
     // Spend and failures (#121, #242).
-    /// A budget is set and the spend can't be read: a cost guard fails closed.
+    /// A budget is set and the spend can't be read, or a step's cost is
+    /// unknown (#349): a cost guard fails closed.
     budget_unread: bool,
     /// The spend is past settings.branchBudget.
     over_budget: bool,
@@ -419,7 +420,7 @@ impl Derived {
 
     fn spend(&mut self, j: &J) {
         let budgeted = !j.nul("spend") && j.n("spend.budget") > 0.0;
-        self.budget_unread = budgeted && j.nul("spend.usd");
+        self.budget_unread = budgeted && (j.nul("spend.usd") || j.len("spend.unknown") > 0);
         self.over_budget = budgeted && !j.nul("spend.usd") && j.n("spend.usd") > j.n("spend.budget");
         self.failed_out = j.n("failed.count") >= super::FAIL_LIMIT;
     }
