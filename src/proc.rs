@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn with_timeout_kills_the_whole_group_and_says_so_as_the_bash_did() {
+    fn with_timeout_kills_the_whole_group_and_says_so() {
         let dir = std::env::temp_dir().join(format!("sd-proc-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();

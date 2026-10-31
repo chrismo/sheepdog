@@ -1,6 +1,7 @@
 // usage.sup (#121): one line of Super (SUP) per agent step, in
-// $SHEEPDOG_STATE_DIR, written byte for byte as super wrote it for the bash
-// harness_usage, so lines from either read the same. claude's numbers are
+// $SHEEPDOG_STATE_DIR, in the shape super wrote for the bash harness_usage,
+// so sup_record reads lines from before the port too; the shape may change
+// with sup_record (#379). claude's numbers are
 // from its JSON output, its tokens per step; pi's, which prints none, are
 // what its transcript gained during the step; null when there are none. The
 // cost is the harness's estimate, not how it was billed.
@@ -275,10 +276,10 @@ pub fn append(rec: &str) {
 mod tests {
     use super::*;
 
-    // ci/fixtures/usage.json (gone with it), the input the bash USAGE_Q
-    // was stress-tested on, and what super 0.3.0 made of it.
+    // A format test: the lines began as super 0.3.0's for the bash version's
+    // fixture and may change (#379), as long as sup_record reads them.
     #[test]
-    fn record_writes_what_the_bash_usage_q_wrote() {
+    fn record_writes_one_sup_line_per_step_that_sup_record_reads() {
         let rows = [
             ("2026-10-16T20:33:06Z", "/Users/chrismo/modev/sheepdog", "sd-63-bot-wait", "review", "claude", "6ece45cb-0000-4000-8000-000000000000", "new", 0, 61000, 5.0, 0.0,
              json!({"type": "result", "is_error": false, "total_cost_usd": 0.7948558, "duration_ms": 60512, "num_turns": 14, "usage": {"input_tokens": 22, "cache_creation_input_tokens": 41234, "cache_read_input_tokens": 512345, "output_tokens": 4321}}),
@@ -355,7 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn spend_sums_floats_as_super_did_and_prints_a_whole_sum_without_a_point() {
+    fn spend_sums_floats_and_prints_a_whole_sum_without_a_point() {
         let s = spend_in(&[row("/r", "feat", "1.5"), row("/r", "feat", "1.5")].concat(), "/r", "feat").unwrap();
         assert_eq!(crate::json::to_string(&json!(s.usd)), "3");
         assert_eq!(crate::json::to_string(&json!(Spend::default().usd)), "0");
