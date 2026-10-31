@@ -78,7 +78,12 @@
 // Field reads follow the SuperDB query this replaced (src/val.rs), and an
 // equality holds only between two present values.
 
-use crate::act::CiFixGate;
+mod derived;
+pub use derived::Derived;
+#[cfg(test)]
+pub(crate) use derived::arb as derived_arb;
+use derived::{no, yes};
+
 use crate::val::{self, at, sj, text};
 use serde_json::{json, Value};
 
@@ -146,18 +151,7 @@ fn len(v: &Value) -> usize {
 /// else's commits, an undone restack, an unpushed parent, nothing to
 /// ship). sd act answer reads it too (#326).
 pub fn push_offered(s: &Value) -> bool {
-    let off = |p: &str| at(s, p) == &Value::Bool(false);
-    let n = |p: &str| val::n(s, p);
-    let on = |p: &str| val::on(s, p);
-    let pr_null = is_null(s, "pr");
-    let open = pr_null || at(s, "pr.state").as_str() == Some("OPEN");
-    let reset_away = on("push.remote_ours") && n("push.behind") > 0.0 && n("push.ahead") == 0.0;
-    let dropping = reset_away && on("push.remote_made");
-    let to_push = is_null(s, "push.remote_sha") || n("push.ahead") > 0.0 || (dropping && !on("push.dirty"));
-    let foreign = off("push.remote_ours") && n("push.theirs") > 0.0;
-    let held = !at(s, "push.held").is_null() || foreign || n("sync.undone") > 0.0 || on("parent.unpushed");
-    let empty = pr_null && at(s, "sync.ahead").as_f64() == Some(0.0) && n("push.behind") == 0.0;
-    open && !on("verify.at_head") && !held && !empty && to_push
+    Derived::new(s).push_step
 }
 
 /// The steps for an sd state record, first is next.
@@ -165,88 +159,19 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
         return Err("sd state JSON must be one record".into());
     }
-    let g = |p: &str| at(s, p);
-    let on = |p: &str| val::on(s, p);
-    let off = |p: &str| g(p) == &Value::Bool(false);
-    let n = |p: &str| val::n(s, p);
-    let nul = |p: &str| g(p).is_null();
-    let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
-    let eq = |a: &str, b: &str| !nul(a) && !nul(b) && g(a) == g(b);
-    let ne = |a: &str, b: &str| !nul(a) && !nul(b) && g(a) != g(b);
-    let status_in = |p: &str, set: &[&str]| g(p).get("status").and_then(Value::as_str).is_some_and(|x| set.contains(&x));
-    let covers = |p: &str| status_in(p, &["covered", "rewritten-same"]);
-    let trails = |p: &str| status_in(p, &["uncovered", "rewritten-changed", "unknown"]);
-    let t = |p: &str| val::t(s, p);
+    Ok(Value::Array(offer(&Derived::new(s), s, remote)))
+}
 
-    let pr_null = is_null(s, "pr");
-    let open = pr_null || is("pr.state", "OPEN");
-    let has_pr = is("pr.state", "OPEN");
-    let foreign = off("push.remote_ours") && n("push.theirs") > 0.0;
-    let bot_blocking = n("threads.owed_bot") - n("threads.info");
-    let reset_away = on("push.remote_ours") && n("push.behind") > 0.0 && n("push.ahead") == 0.0;
-    let dropping = reset_away && on("push.remote_made");
-    let taken = reset_away && off("push.remote_made");
-    let held = reset_away && (off("push.remote_made") || (on("push.remote_made") && on("push.dirty")));
-    let unpushed = is_null(s, "push.remote_sha") || n("push.ahead") > 0.0;
-    let to_push = unpushed || (dropping && !on("push.dirty"));
-    let ci_held = !nul("push.held");
-    let chase = ne("sync.target", "sync.default") || on("parent.merged");
-    let undone = n("sync.undone") > 0.0;
-    let merge_state = g("pr.merge_state").as_str().unwrap_or("UNKNOWN").to_string();
-    let gh_behind = is("pr.merge_state", "BEHIND");
-    let ci_ok = is("ci.verdict", "green") || is("ci.verdict", "none");
-    // sd state reads the required checks of every draft: null is a failed read
-    let draft_ready = on("pr.draft") && !(unpushed || reset_away) && !foreign && ci_ok && !is_null(s, "ci.required");
-    let review_required = is("pr.review_decision", "REVIEW_REQUIRED");
-    let off_default = ne("pr.base", "sync.default");
-    let stacked = off_default && (is("parent.pr.state", "OPEN") || on("parent.merged"));
-    let parent_closed = off_default && is("parent.pr.state", "CLOSED");
-    let parent_unpushed = on("parent.unpushed");
-    let old_base_null = is_null(s, "sync.old_base");
-    let no_base = old_base_null && chase;
-    let restack = if old_base_null {
-        format!("git rebase {remote}/{}", t("sync.target"))
-    } else {
-        let ob = t("sync.old_base");
-        format!("git rebase --onto {remote}/{} {}", t("sync.target"), &ob[..ob.len().min(12)])
-    };
-    let any_cover = covers("review.local") || covers("review.bot") || covers("review.accepted");
-    let reviewed = trails("review.local") || trails("review.bot") || trails("review.accepted");
-    let need_review = (is("pr.state", "OPEN") || reviewed || off("review.findings.at_head")) && !any_cover;
-    let fixing = on("review.findings.at_head") && !any_cover;
-    // an accept stands in for the local review, never for the bot (#181); it ends a silent bot wait
-    // only when made after that trigger: it recorded the trigger it followed (no clocks compared, #63)
-    let bot_due = !nul("bot.command") && (covers("review.local") || covers("review.accepted")) && !covers("review.bot");
-    let bot_late = n("review.bot.waited") > n("bot.timeout");
-    let bot_waiting = covers("review.bot")
-        && off("review.bot.replied")
-        && !(covers("review.accepted") && bot_late && eq("review.accepted.after", "review.bot.triggered"));
-    let own_base = eq("branch", "sync.default") || eq("sync.target", "branch");
-    let empty = pr_null && g("sync.ahead").as_f64() == Some(0.0) && n("push.behind") == 0.0;
-    let tasked = g("task").as_str().is_some_and(|x| !x.is_empty());
-    let asking = if on("question.at_head") { t("question.step") } else { String::new() };
-    let asked = if on("question.at_head") {
-        t("question.text").split('\n').find(|l| l.chars().any(|c| !matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '))).unwrap_or("").to_string()
-    } else {
-        String::new()
-    };
-    // chrismo's answer, stored while its step's gate refused (#326)
-    let stored = on("question.at_head") && !nul("question.answer");
-    let last_review = ["review.local", "review.bot", "review.accepted"]
-        .iter()
-        .filter(|p| status_in(p, &["uncovered"]))
-        .map(|p| at(g(p), "uncovered"))
-        .filter(|v| !v.is_null())
-        .min_by(|a, b| a.as_f64().partial_cmp(&b.as_f64()).unwrap_or(std::cmp::Ordering::Equal))
-        .cloned();
-    let budget = if nul("spend") || n("spend.budget") <= 0.0 {
-        None
-    } else if nul("spend.usd") {
+/// The budget or failed step that stands in for every agent step, if any.
+fn hold_step(d: &Derived, s: &Value) -> Option<Value> {
+    let n = |p: &str| val::n(s, p);
+    let t = |p: &str| val::t(s, p);
+    if d.budget_unread {
         step("budget", "you",
             "can't tell what this branch has spent (sd state's errors say why), so nothing spends: fix the usage record, or take over",
             cmd("sd act attach"),
         )
-    } else if n("spend.usd") > n("spend.budget") {
+    } else if d.over_budget {
         step("budget", "you",
             format!(
                 "spent {} on this branch, past settings.branchBudget ({}): raise it, or take over",
@@ -255,13 +180,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             ),
             cmd("sd act attach"),
         )
-    } else {
-        None
-    };
-    let hold = budget.or_else(|| {
-        if n("failed.count") < FAIL_LIMIT {
-            return None;
-        }
+    } else if d.failed_out {
         step("failed", "you",
             format!(
                 "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it",
@@ -269,78 +188,75 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             ),
             rerun(&t("failed.step")).or_else(|| cmd(format!("git update-ref -d refs/sheepdog/{}/failed", t("branch")))),
         )
-    });
-    let hold = &hold;
+    } else {
+        None
+    }
+}
 
-    let verify_red = open && on("verify.at_head");
-    let ci_red = has_pr && is("ci.verdict", "red") && on("ci.for_head") && !to_push;
-    let fix_due = fixing && !on("review.findings.declined") && n("review.findings.round") < n("review.findings.cap");
-    let behind_target = off("sync.up_to_date");
-    let conflict = behind_target && on("sync.conflict");
-    let chase_behind = behind_target && !on("sync.conflict") && chase;
-    let gh_restack = has_pr && !on("sync.conflict") && gh_behind;
-    let restack_due = open
-        && !undone
-        && !parent_closed
-        && if conflict {
-            !on("sync.by_tree")
-        } else if behind_target && chase {
-            !old_base_null
-        } else {
-            gh_restack
-        };
-    let dirty = open
-        && on("push.dirty")
-        && asking.is_empty()
-        && (ci_red
-            || bot_blocking > 0.0
-            || fix_due
-            || (need_review && !fixing)
-            || restack_due
-            || (pr_null && !empty && !dropping));
+/// The commits since the oldest review that trails HEAD, if counted.
+fn last_review(s: &Value) -> Option<Value> {
+    ["review.local", "review.bot", "review.accepted"]
+        .iter()
+        .filter(|p| at(s, p).get("status").and_then(Value::as_str) == Some("uncovered"))
+        .map(|p| at(at(s, p), "uncovered"))
+        .filter(|v| !v.is_null())
+        .min_by(|a, b| a.as_f64().partial_cmp(&b.as_f64()).unwrap_or(std::cmp::Ordering::Equal))
+        .cloned()
+}
+
+/// The steps for <d>, first is next. Conditions read only <d>; <s> is the
+/// record they were derived from, for what the steps say.
+pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
+    let g = |p: &str| at(s, p);
+    let n = |p: &str| val::n(s, p);
+    let nul = |p: &str| g(p).is_null();
+    let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
+    let t = |p: &str| val::t(s, p);
+    let restack = if d.old_base_null {
+        format!("git rebase {remote}/{}", t("sync.target"))
+    } else {
+        let ob = t("sync.old_base");
+        format!("git rebase --onto {remote}/{} {}", t("sync.target"), &ob[..ob.len().min(12)])
+    };
+    let asking = d.asking.as_str();
+    let asked = if asking.is_empty() {
+        String::new()
+    } else {
+        t("question.text").split('\n').find(|l| l.chars().any(|c| !matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '))).unwrap_or("").to_string()
+    };
+    let last_review = last_review(s);
+    let hold = &hold_step(d, s);
     let addr = crate::act::address_gate(s);
     let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
-    let addr_refuses = !addr_why.is_empty();
-    let addr_moot = asking == "address" && addr.hard.is_none() && n("threads.owed_bot") == 0.0;
-    let ci = if asking == "ci-fix" { crate::act::ci_fix_gate(s) } else { CiFixGate::Runs };
-    let ci_moot = matches!(ci, CiFixGate::Moot(_));
-    let ci_waits = match &ci {
-        CiFixGate::Waits { why, .. } => why.clone(),
+    let ci_waits = match d.ci_waits.then(|| crate::act::ci_fix_gate(s)) {
+        Some(crate::act::CiFixGate::Waits { why, .. }) => why,
         _ => String::new(),
     };
-    // a stored answer to a moot question has nothing to go on with
-    let resume = open && stored && asking == "address" && !addr_moot;
-    let resume_ci = open && stored && asking == "ci-fix" && !ci_moot;
-    let answer_pending = resume || resume_ci;
-    // while it stands, what would move HEAD waits: that drops the question
-    let refused = dirty || (open && !asking.is_empty() && (on("push.dirty") || answer_pending));
-    let push_held = foreign || undone || parent_unpushed;
-    let push_step = push_offered(s);
-    let bot = open && bot_blocking > 0.0 && asking != "address" && !refused;
     let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
 
     let branch = t("branch");
     let target = t("sync.target");
     let parent = t("parent.name");
     let one = |k: &str, a: &str, b: &str| if n(k) == 1.0 { a } else { b }.to_string();
+    let open = d.open;
 
-    let all: Vec<Option<Value>> = if own_base {
+    let all: Vec<Option<Value>> = if d.own_base {
         vec![step("default", "you", format!("on {branch}: start a branch"), cmd("sd act start"))]
-    } else if !nul("session.running") {
+    } else if d.running {
         vec![step("running", "wait",
             format!("{} running since {}", t("session.running.step"), t("session.running.since")),
             None,
         )]
-    } else if is("mode", "reviewer") {
+    } else if d.reviewer {
         let again = match &last_review {
             Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
-            None if reviewed => "review again: the PR was rewritten since the last review".into(),
+            None if d.reviewed => "review again: the PR was rewritten since the last review".into(),
             None => "review the PR's change".into(),
         };
-        reviewer(s, hold, again)
+        reviewer(d, s, hold, again)
     } else {
         vec![
-            if is("pr.state", "MERGED") {
+            if d.merged {
                 step("merged", "run",
                     "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
                     cmd("sd act forget --remove"),
@@ -348,8 +264,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if is("pr.state", "CLOSED") { step("closed", "you", "PR closed without merging", None) } else { None },
-            if open && len(g("errors")) > 0 {
+            if d.closed { step("closed", "you", "PR closed without merging", None) } else { None },
+            if open && d.errors {
                 step("errors", "you",
                     format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
                     cmd("sd state --json"),
@@ -357,7 +273,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && off("fresh") {
+            if open && d.stale {
                 step("stale", "run",
                     "fetch: GitHub is ahead of your remote refs, so the steps below may be wrong",
                     cmd(format!("git fetch --prune {remote}")),
@@ -365,12 +281,12 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && len(g("lag")) > 0 {
+            if open && d.lagging {
                 step("gh-wait", "wait", "GitHub hasn't seen the push yet, so the steps below may be wrong", None)
             } else {
                 None
             },
-            if open && on("session.locked") {
+            if open && yes(d.locked) {
                 step("attached", "wait",
                     "attached: the branch's session is open interactively; agent steps wait until it exits",
                     None,
@@ -378,7 +294,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && foreign {
+            if open && d.foreign {
                 step("foreign", "you",
                     format!("{remote}/{branch} has {} this copy has never had", plural(g("push.theirs"), "commit")),
                     cmd(format!("git log HEAD..{remote}/{branch}")),
@@ -386,7 +302,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && n("threads.owed_human") > 0.0 {
+            if open && d.owed_human {
                 step("human", "you",
                     format!("reply to {}", plural(g("threads.owed_human"), "human item")),
                     cmd("sd state --long"),
@@ -394,32 +310,13 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !asking.is_empty() && !answer_pending {
-                let answer = "sd act answer \"<your answer>\"";
-                let did = if is("question.kind", "gave-up") { "gave up" } else { "asks" };
-                let and = if stored { ", and your answer" } else { "" };
-                let (say, then) = if addr_moot {
-                    (format!("the agent {did} (address): {asked}; nothing is owed now, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
-                } else if ci_moot {
-                    let ci = if t("ci.verdict") == "green" { "CI is green at HEAD now" } else { "no CI ran at HEAD" };
-                    (format!("the agent {did} (ci-fix): {asked}; {ci}, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
-                } else if !ci_waits.is_empty() {
-                    (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
-                } else if asking == "address" && addr_refuses {
-                    answer_refused(s, &addr, &addr_why, &asked, push_step || (ci_held && !push_held))
-                } else if asking == "resolve" {
-                    (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
-                } else if is("question.kind", "gave-up") {
-                    (format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again"), cmd(answer))
-                } else {
-                    (format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"), cmd(answer))
-                };
-                step("question", "you", say, then)
+            if open && !asking.is_empty() && !d.answer_pending {
+                question_step(d, s, &asked, &addr, &addr_why, &ci_waits)
             } else {
                 None
             },
-            if open && undone {
-                let pin = if no_base {
+            if open && d.undone {
+                let pin = if d.no_base {
                     format!(
                         "; no base to redo it from on {target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {parent} at>), then sd act restack"
                     )
@@ -432,12 +329,12 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                         t("sync.undone"),
                         one("sync.undone", "is a copy", "are copies")
                     ),
-                    if no_base { None } else { cmd(format!("{restack} && sd act push")) },
+                    if d.no_base { None } else { cmd(format!("{restack} && sd act push")) },
                 )
             } else {
                 None
             },
-            if open && parent_unpushed {
+            if open && d.parent_unpushed {
                 step("ship-parent", "run",
                     format!("ship the parent first: {parent} isn't on {remote} yet"),
                     cmd(format!("sd act ship {parent}")),
@@ -445,13 +342,13 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !undone && !parent_closed && conflict {
-                if on("sync.by_tree") {
+            if open && !d.undone && !d.parent_closed && d.conflict {
+                if yes(d.by_tree) {
                     step("conflict", "you",
                         format!("restack onto {target} by tree conflicts, which --resolve can't do: resolve it by hand (sd act restack says how)"),
                         cmd("sd act restack"),
                     )
-                } else if refused || asking == "resolve" {
+                } else if d.refused || asking == "resolve" {
                     None
                 } else {
                     agent(hold, "conflict", format!("restack onto {target} conflicts: resolve it"), "sd act restack --resolve")
@@ -459,15 +356,15 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && !undone && !parent_closed && chase_behind {
-                if old_base_null {
+            if open && !d.undone && !d.parent_closed && d.chase_behind {
+                if d.old_base_null {
                     step("behind", "you",
                         format!("restack onto {target} ({} behind): no base to restack from; see sd state's errors", t("sync.behind")),
                         cmd("sd state --json"),
                     )
-                } else if refused {
+                } else if d.refused {
                     None
-                } else if on("sync.by_tree") {
+                } else if yes(d.by_tree) {
                     step("behind", "run",
                         format!("restack onto {target} by tree ({} behind): its commits become one", t("sync.behind")),
                         cmd("sd act restack"),
@@ -475,7 +372,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                 } else {
                     step("behind", "run", format!("restack onto {target} ({} behind)", t("sync.behind")), cmd("sd act restack"))
                 }
-            } else if gh_restack && !undone && !parent_closed && !refused {
+            } else if d.gh_restack && !d.undone && !d.parent_closed && !d.refused {
                 step("behind", "run",
                     format!(
                         "restack onto {} ({} behind): GitHub requires branches to be up to date",
@@ -487,7 +384,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if dirty && !dropping {
+            if d.dirty && !d.dropping {
                 step("dirty", "you",
                     "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
                     cmd("git status"),
@@ -495,14 +392,14 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if ci_red && asking != "ci-fix" && !refused {
+            if d.ci_red && asking != "ci-fix" && !d.refused {
                 agent(hold, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
-            } else if resume_ci && ci == CiFixGate::Runs {
+            } else if d.resume_ci && d.ci_runs {
                 agent(hold, "ci-red", format!("fix CI: {}, going on with your answer to its question", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else {
                 None
             },
-            if has_pr && is("ci.verdict", "blocked") && on("ci.for_head") && !to_push {
+            if d.has_pr && d.ci_blocked && !d.to_push {
                 step("ci-blocked", "you",
                     format!(
                         "CI blocked: {} didn't start or want approval; an agent can't fix that",
@@ -513,25 +410,25 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if bot && !addr_refuses {
+            if d.bot && !d.addr_refuses {
                 address()
-            } else if resume && !addr_refuses {
+            } else if d.resume && !d.addr_refuses {
                 agent(hold, "bot", format!("address {}, going on with your answer to its question", plural(g("threads.owed_bot"), "bot item")), "sd act address")
             } else {
                 None
             },
             // only once nothing else moves without chrismo (#168)
             if open
-                && bot_blocking == 0.0
-                && n("threads.info") > 0.0
-                && !to_push
-                && !need_review
-                && !fixing
-                && !bot_due
-                && !bot_waiting
-                && !restack_due
-                && !is("ci.verdict", "inconclusive")
-                && !(stacked && on("parent.merged"))
+                && d.bot_blocking == 0.0
+                && d.info
+                && !d.to_push
+                && !d.need_review
+                && !d.fixing
+                && !d.bot_due
+                && !d.bot_waiting
+                && !d.restack_due
+                && !d.ci_inconclusive
+                && !(d.stacked && yes(d.parent_merged))
             {
                 step("read", "you",
                     format!("read {} in sd state --long, then ack", plural(g("threads.info"), "bot item")),
@@ -540,7 +437,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && taken {
+            if open && d.taken {
                 let them = one("push.behind", "it", "them");
                 step("take", "you",
                     format!(
@@ -552,7 +449,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && dropping && on("push.dirty") {
+            if open && d.dropping && yes(d.push_dirty) {
                 step("reset-dirty", "you",
                     format!(
                         "{remote}/{branch} has {} reset away here, and the worktree has uncommitted changes: commit them (then sd act push replaces the remote {}), or remove them (git reset --hard; git clean for untracked files)",
@@ -564,9 +461,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && ci_held {
+            if open && d.ci_held {
                 let paths = sj(g("push.held.paths"), ", ");
-                if push_held {
+                if d.push_held {
                     step("ci-config", "you",
                         format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
                         None,
@@ -580,26 +477,26 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if empty && on("push.dirty") {
+            if d.empty && yes(d.push_dirty) {
                 step("nothing-dirty", "you",
                     format!(
                         "nothing to ship, and the worktree has uncommitted changes: commit them{}",
-                        if tasked { ", or remove them and sd act implement" } else { "" }
+                        if d.tasked { ", or remove them and sd act implement" } else { "" }
                     ),
                     None,
                 )
-            } else if empty && tasked {
-                if len(g("errors")) == 0 && asking != "implement" {
+            } else if d.empty && d.tasked {
+                if !d.errors && asking != "implement" {
                     agent(hold, "implement", format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
                 } else {
                     None
                 }
-            } else if empty {
+            } else if d.empty {
                 step("nothing", "you", "nothing to ship: commit, or record a task", None)
             } else {
                 None
             },
-            if verify_red {
+            if d.verify_red {
                 let sha = t("verify.sha");
                 step("verify-red", "you",
                     format!(
@@ -613,12 +510,12 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if push_step {
+            if d.push_step {
                 let ahead = if nul("sync.ahead") { g("push.ahead") } else { g("sync.ahead") };
                 step("push", "run",
                     if is_null(s, "push.remote_sha") {
                         format!("push: not on {remote} yet")
-                    } else if on("push.diverged") {
+                    } else if val::on(s, "push.diverged") {
                         format!(
                             "force-push {} (rewritten); a plain git push is rejected, and pulling would undo the rewrite",
                             plural(ahead, "commit")
@@ -633,20 +530,20 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if bot && addr_refuses {
+            if d.bot && d.addr_refuses {
                 address()
-            } else if resume && addr_refuses {
+            } else if d.resume && d.addr_refuses {
                 // it runs address, and the rewrite below may offer --force
                 spends(hold, step("answer", "wait", format!("your answer to the address agent's question waits while {addr_why}"), None))
             } else {
                 None
             },
-            if pr_null && len(g("errors")) == 0 && !verify_red && !parent_unpushed && !ci_held && !empty && !refused {
+            if d.pr_null && !d.errors && !d.verify_red && !d.parent_unpushed && !d.ci_held && !d.empty && !d.refused {
                 spends(hold, step("open-pr", "run", "ship: push, open a draft PR", cmd("sd act ship")))
             } else {
                 None
             },
-            if has_pr && draft_ready && !verify_red && !need_review && !bot_due && !bot_waiting {
+            if d.has_pr && d.draft_ready && !d.verify_red && !d.need_review && !d.bot_due && !d.bot_waiting {
                 step("draft", "run",
                     format!(
                         "{}: mark the PR ready for review",
@@ -657,9 +554,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if open && fixing && (asking == "review-fix" || (refused && fix_due)) {
+            if open && d.fixing && (asking == "review-fix" || (d.refused && d.fix_due)) {
                 None
-            } else if open && fix_due {
+            } else if open && d.fix_due {
                 agent(hold, "review-fix", format!(
                         "fix {} (round {}/{})",
                         plural(g("review.findings.n"), "review finding"),
@@ -668,9 +565,9 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                     ),
                     "sd act implement",
                 )
-            } else if open && fixing {
+            } else if open && d.fixing {
                 let findings = plural(g("review.findings.n"), "review finding");
-                let what = if on("review.findings.declined") {
+                let what = if yes(d.findings_declined) {
                     format!("the agent declined {findings}")
                 } else {
                     format!("{findings} after {} rounds", t("review.findings.round"))
@@ -682,17 +579,17 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
                     ),
                     cmd("sd act review --accept"),
                 )
-            } else if open && need_review && !refused && !verify_red {
+            } else if open && d.need_review && !d.refused && !d.verify_red {
                 let say = match &last_review {
                     Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
-                    None if reviewed => "review again: the branch was rewritten since the last review".into(),
+                    None if d.reviewed => "review again: the branch was rewritten since the last review".into(),
                     None => "review the branch's change".into(),
                 };
                 agent(hold, "review", say, "sd act review")
             } else {
                 None
             },
-            if has_pr && !to_push && !held && !foreign && !verify_red && bot_due {
+            if d.has_pr && !d.to_push && !d.held && !d.foreign && !d.verify_red && d.bot_due {
                 step("bot-trigger", "run",
                     format!("trigger the review bot ({})", t("bot.command")),
                     cmd("sd act trigger"),
@@ -700,17 +597,17 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && is("ci.verdict", "inconclusive") {
+            if d.has_pr && d.ci_inconclusive {
                 step("ci-rerun", "run", "rerun cancelled CI", cmd("gh pr checks"))
             } else {
                 None
             },
-            if has_pr && bot_waiting && !bot_late {
+            if d.has_pr && d.bot_waiting && !d.bot_late {
                 step("bot-wait", "wait", format!("waiting on the review bot ({})", t("bot.command")), None)
             } else {
                 None
             },
-            if has_pr && bot_waiting && bot_late {
+            if d.has_pr && d.bot_waiting && d.bot_late {
                 step("bot-silent", "you",
                     format!(
                         "the review bot hasn't answered in {} min: check it, trigger it again, or accept HEAD as reviewed (sd act review --accept)",
@@ -721,11 +618,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && !to_push && !held && (is("ci.verdict", "pending") || off("ci.for_head")) {
-                let say = if is("ci.verdict", "pending") {
+            if d.has_pr && !d.to_push && !d.held && (d.ci_pending || no(d.ci_for_head)) {
+                let say = if d.ci_pending {
                     let missing = g("ci.missing");
                     if len(g("ci.pending")) == 0 && len(missing) > 0 {
-                        let draft = if on("pr.draft") {
+                        let draft = if yes(d.draft) {
                             format!(
                                 "; if {} on a draft, undraft by hand (gh pr ready)",
                                 if len(missing) == 1 { "it never runs" } else { "they never run" }
@@ -748,12 +645,12 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if resume_ci && !ci_waits.is_empty() {
+            if d.resume_ci && d.ci_waits {
                 step("answer", "wait", format!("your answer to the ci-fix agent's question waits while {ci_waits}"), None)
             } else {
                 None
             },
-            if has_pr && parent_closed {
+            if d.has_pr && d.parent_closed {
                 step("parent-closed", "you",
                     format!("{parent} (#{}) was closed without merging: decide what this PR targets", t("parent.pr.number")),
                     None,
@@ -761,7 +658,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && stacked && on("parent.merged") {
+            if d.has_pr && d.stacked && yes(d.parent_merged) {
                 step("retarget", "run",
                     format!("{} already merged: point this PR at {}", t("pr.base"), t("sync.default")),
                     cmd("sd act retarget"),
@@ -769,7 +666,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && review_required {
+            if d.has_pr && d.review_required {
                 let reqs = g("pr.review_requests");
                 step("review-wait", "wait",
                     if len(reqs) > 0 {
@@ -782,7 +679,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && stacked && !on("parent.merged") {
+            if d.has_pr && d.stacked && !yes(d.parent_merged) {
                 step("parent-wait", "wait",
                     format!("waiting on {parent} (#{}) to merge first", t("parent.pr.number")),
                     None,
@@ -790,8 +687,8 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             } else {
                 None
             },
-            if has_pr && !review_required && !stacked && !parent_closed && !gh_behind && !on("pr.draft") && !bot_waiting {
-                match merge_state.as_str() {
+            if d.has_pr && !d.review_required && !d.stacked && !d.parent_closed && !d.gh_behind && !yes(d.draft) && !d.bot_waiting {
+                match d.merge_state.as_str() {
                     "CLEAN" | "UNSTABLE" | "HAS_HOOKS" => step("ready", "you", "ready to merge", cmd("gh pr merge")),
                     "UNKNOWN" => step("merge-wait", "wait", "GitHub hasn't decided whether it can merge yet", None),
                     m => step("blocked", "you",
@@ -804,8 +701,40 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
             },
         ]
     };
+    finish(d, all, &addr_why)
+}
 
-    // The first budget or failed step stands in for every agent step; the rest go.
+/// The question step (#167, #326); <asked> is the question's first line.
+fn question_step(d: &Derived, s: &Value, asked: &str, addr: &crate::act::AddressGate, addr_why: &str, ci_waits: &str) -> Option<Value> {
+    let t = |p: &str| val::t(s, p);
+    let is = |p: &str, lit: &str| at(s, p).as_str() == Some(lit);
+    let asking = d.asking.as_str();
+    let answer = "sd act answer \"<your answer>\"";
+    let did = if is("question.kind", "gave-up") { "gave up" } else { "asks" };
+    let and = if d.stored { ", and your answer" } else { "" };
+    let (say, then) = if d.addr_moot {
+        (format!("the agent {did} (address): {asked}; nothing is owed now, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
+    } else if d.ci_moot {
+        let ci = if t("ci.verdict") == "green" { "CI is green at HEAD now" } else { "no CI ran at HEAD" };
+        (format!("the agent {did} (ci-fix): {asked}; {ci}, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
+    } else if d.ci_waits {
+        (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
+    } else if asking == "address" && d.addr_refuses {
+        answer_refused(s, addr, addr_why, asked, d.push_step || (d.ci_held && !d.push_held))
+    } else if asking == "resolve" {
+        (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
+    } else if is("question.kind", "gave-up") {
+        (format!("the agent gave up ({asking}): {asked}; guide it with sd act answer, fix it by hand, or sd act ack --question to let it try again"), cmd(answer))
+    } else {
+        (format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"), cmd(answer))
+    };
+    step("question", "you", say, then)
+}
+
+/// The steps as listed: the first budget or failed step stands in for every
+/// agent step, address refused with nothing ahead of it is chrismo's, and an
+/// end state is listed only alone.
+fn finish(d: &Derived, all: Vec<Option<Value>>, addr_why: &str) -> Vec<Value> {
     let mut seen_hold = false;
     let mut out: Vec<Value> = Vec::new();
     for st in all.into_iter().flatten() {
@@ -821,11 +750,11 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     // step that doesn't clear the gate (attached, take), it stays an agent
     // step: that step blocks first.
     let first = out.first().map(|st| text(&st["key"])).unwrap_or_default();
-    if (first == "bot" || (first == "answer" && asking == "address")) && addr_refuses {
+    if (first == "bot" || (first == "answer" && d.asking == "address")) && d.addr_refuses {
         let force = Some("sd act address --force".to_string());
-        let (say, cmd) = if addr.hard.is_some() {
+        let (say, cmd) = if d.addr_hard {
             ("clear that first", None)
-        } else if first == "answer" && addr.conflict {
+        } else if first == "answer" && d.addr_conflict {
             ("a restack would drop the question, so sd act address --force runs it now, or sd act ack --question drops both", force)
         } else {
             ("clear that first, or sd act address --force", force)
@@ -840,7 +769,7 @@ pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if out.len() > 1 && matches!(out[out.len() - 1]["key"].as_str(), Some("ready" | "merge-wait" | "blocked")) {
         out.pop();
     }
-    Ok(Value::Array(out))
+    out
 }
 
 /// The question step for an address question that address's gate <g>
@@ -883,26 +812,15 @@ fn waits_say(s: &Value, once: &str) -> String {
     }
 }
 
+
 /// A followed PR's steps (#250).
-fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>> {
+fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>> {
     let g = |p: &str| at(s, p);
-    let on = |p: &str| val::on(s, p);
     let n = |p: &str| val::n(s, p);
-    let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
-    let covers = |p: &str| g(p).get("status").and_then(Value::as_str).is_some_and(|x| matches!(x, "covered" | "rewritten-same"));
-    let open = is("pr.state", "OPEN");
-    // Commits the PR's head doesn't have, with nothing new from the author:
-    // chrismo's (sd act fetch refuses them).
-    let yours = open && n("push.ahead") > 0.0 && n("push.behind") == 0.0;
-    let dirty = open && on("push.dirty");
-    let pushed = n("push.behind") > 0.0 || on("push.author_pushed");
-    let fetch = open && !yours && !dirty && (g("fresh") == &Value::Bool(false) || pushed);
-    let current = open && !yours && !fetch;
-    let pending = on("review.github.pending");
-    let submitted = on("review.github.at_head") && !pending;
-    let local = covers("review.local") || covers("review.accepted") || on("review.findings.at_head");
+    let pushed = n("push.behind") > 0.0 || val::on(s, "push.author_pushed");
+    let current = d.rv_current;
     vec![
-        if is("pr.state", "MERGED") {
+        if d.merged {
             step("merged", "run",
                 "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
                 cmd("sd act forget --remove"),
@@ -910,12 +828,12 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
         } else {
             None
         },
-        if is("pr.state", "CLOSED") {
+        if d.closed {
             step("closed", "you", "PR closed without merging: forget the branch, and remove its worktree", cmd("sd act forget"))
         } else {
             None
         },
-        if !is("pr.state", "MERGED") && !is("pr.state", "CLOSED") && len(g("errors")) > 0 {
+        if !d.merged && !d.closed && d.errors {
             step("errors", "you",
                 format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
                 cmd("sd state --json"),
@@ -923,7 +841,7 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
         } else {
             None
         },
-        if yours {
+        if d.rv_yours {
             step("yours", "you",
                 format!(
                     "{} has {} the PR doesn't: move {} to a branch of your own; review and fetch wait",
@@ -936,7 +854,7 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
         } else {
             None
         },
-        if dirty {
+        if d.rv_dirty {
             step("dirty", "you",
                 "the worktree has uncommitted changes, which review and fetch refuse: discard them (git reset --hard; git clean for untracked files)",
                 cmd("git status"),
@@ -944,21 +862,21 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
         } else {
             None
         },
-        if fetch {
+        if d.rv_fetch {
             let say = if pushed { "the author pushed: take it" } else { "fetch: GitHub is ahead of your remote refs" };
             step("fetch", "run", say, cmd("sd act fetch"))
         } else {
             None
         },
-        if current && !dirty && !submitted && !local {
+        if current && !d.rv_dirty && !d.rv_submitted && !d.rv_local {
             agent(hold, "review", again, "sd act review")
         } else {
             None
         },
-        if current && ((!submitted && local) || pending) {
-            let say = if pending {
+        if current && ((!d.rv_submitted && d.rv_local) || d.rv_pending) {
+            let say = if d.rv_pending {
                 "finish your pending review on GitHub".to_string()
-            } else if on("review.findings.at_head") && n("review.findings.n") > 0.0 {
+            } else if val::on(s, "review.findings.at_head") && n("review.findings.n") > 0.0 {
                 format!("{} at HEAD (sd state --long): put them in your review on GitHub", plural(g("review.findings.n"), "review finding"))
             } else {
                 "the reviewer found nothing at HEAD: approve or comment on GitHub".to_string()
@@ -967,7 +885,7 @@ fn reviewer(s: &Value, hold: &Option<Value>, again: String) -> Vec<Option<Value>
         } else {
             None
         },
-        if current && submitted {
+        if current && d.rv_submitted {
             step("author-wait", "wait",
                 format!("you reviewed HEAD ({}): waiting on the author", val::t(s, "review.github.state").to_lowercase().replace('_', " ")),
                 None,

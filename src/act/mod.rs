@@ -8,6 +8,8 @@ mod ci_fix;
 mod commands;
 mod describe;
 mod follow;
+pub mod gate;
+pub mod gates;
 mod github;
 mod hold;
 mod implement;
@@ -21,6 +23,7 @@ mod step;
 pub(crate) use step::plain_words;
 pub(crate) use address::{gate as address_gate, Gate as AddressGate};
 pub(crate) use ci_fix::{gate as ci_fix_gate, Gate as CiFixGate};
+pub use gate::{enforce, judge, Gate, Go, Level, Rule};
 
 use crate::git::{self, git, git_out};
 use crate::proc;
