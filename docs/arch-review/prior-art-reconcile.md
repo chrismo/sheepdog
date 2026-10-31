@@ -67,7 +67,7 @@ same day (last section).
 | # | Idea | From | Where it lands |
 |---|---|---|---|
 | 1 | Two-phase gate: compute every predicate into a struct, then one ordered match to the verdict | bors-ng `patch_preflight`; Sortie `reactionTriageGate` | #348 step 1, #335's `Derived` |
-| 2 | Tests: a `State` builder with defaults, one field overridden per test, asserting what was not offered too | Kodiak `create_mergeable` + recording fake | #348 parity test; #351 |
+| 2 | Tests: a `Derived` builder with defaults, one field overridden per test, asserting what was not offered too | Kodiak `create_mergeable` + recording fake | #348 parity test; #351 |
 | 3 | Re-observe immediately before acting; the gate takes fresh state, not NEXT's | Symphony `revalidate_issue_for_dispatch`; Kodiak refetch per pass | #348 step 2 onward; check every verb uses `state::observe`'s result |
 | 4 | `Done` derives from observed state, never a local marker | Kodiak checks `bot_reviews` before approving | #348; invariant I11 as a gate rule |
 | 5 | Author-set foreign-modification test over `base..head`, cached by head SHA | Renovate `isBranchModified` | #356 |
@@ -78,14 +78,14 @@ same day (last section).
 | 10 | A gate is a flat list of named predicates; the name is the reason; render as a checklist with match marks and a "clears when" line | Mergify `conditions.py` rendering; bors `check_pr_approval_validity -> Option<Comment>` | #348 step 1; #335's help text |
 | 11 | A `Go` token the verb's act fn takes by value, so a verb cannot run without asking its gate; `#[must_use]` on `Gate` | bors `ExclusiveLockProof` | #348 step 1: parity by construction, beside the test |
 | 12 | Hard vs Soft by substitution: re-evaluate the gate with the CI conditions replaced by true; if it still fails, it is Hard | Mergify `checks_status.py` | #348 step 1 |
-| 13 | Destructure `State` with no `..` inside the gate module, so a new State field fails to compile until a gate claims or ignores it | bors `pr_needs_update_in_db` | #348 step 1 |
+| 13 | Destructure `Derived` with no `..` inside the gate module, so a new field fails to compile until a gate claims or ignores it | bors `pr_needs_update_in_db` | #348 step 1 |
 | 14 | Weight each refusal so the reported reason is the most severe, not the first in source order | Tide `requirementDiff` | #348 / #335 |
 | 15 | A pre-act sanity check that returns typed errors the caller maps to repairs, not refusals | bors `sanity_check_pr` + `SanityCheckError` | #348 step 2 onward |
 | 16 | Seen markers advance only after the step succeeded, so a crashed step re-fires next pass | agent-orchestrator two-phase hash ack | #350 / #342: a check on when pins are written |
 | 17 | The dedup signature for a CI failure includes the log tail and check URL, not just the SHA, so a flaky rerun with new output is new and an identical rerun is not | agent-orchestrator `sendOnce` signatures | #344 ci-fix outcome; O5 |
 | 18 | Report every applicable condition in `sd state`, run one step in NEXT | agent-orchestrator `[]pendingNudge` (its earlier first-match version suppressed review feedback under red CI) | #335: the "Notified" block |
 | 19 | Unknown is not false: a `Derived` fact read from an observation that can fail is an `Option`, and a gate given `None` is `Hard` ("couldn't observe X"), never `Go` | Harness Playbook's model rulebook (no match means unknown); generalizes #349 and idea 9 | #348 step 1 |
-| 20 | Parity over generated states, not only the fixtures: a seeded generator over the `State` builder asserts both parity directions and single invariants (`gates::push` never `Go` with `sync.undone > 0`) | Harness Playbook's TLA+ invariants ("specify the impossible part") | #348 step 1, once the builder exists |
+| 20 | Parity over generated states, not only the fixtures: a hand-written seeded generator (xorshift, no dev-dependency) over the `Derived` builder asserts both parity directions and single invariants (`gates::push` never `Go` with `sync.undone > 0`); a failure shrinks by resetting fields to their defaults, leaving a builder call to paste as a regression test | Harness Playbook's TLA+ invariants ("specify the impossible part") | #348 step 1, once the builder exists |
 
 Skipped, with reasons: a flat result enum returned from one long function
 (Renovate's is a dashboard report, not a guard the action reuses: the
@@ -582,7 +582,7 @@ machinery do not fit a CLI.
 **For sheepdog.** Idea 11 (a zero-size `Go` token the act fn takes by value,
 as `ExclusiveLockProof`: a verb cannot run without having asked its gate,
 parity by construction beside the registry test), idea 13 (no-`..`
-destructuring of `State` inside the gate module), idea 15 (the pre-act
+destructuring of `Derived` inside the gate module), idea 15 (the pre-act
 sanity check that returns typed errors the caller maps to repairs), idea 10's
 second half (`Gate::Hard(Reason)` whose `Display` is both NEXT's line and the
 verb's stderr, one wording source). Consider `QueueStatus<'a>`'s borrowed
@@ -943,3 +943,13 @@ config: idea 16.
 **For sheepdog.** Ideas 19 and 20. Also noted on #342: one typed declaration
 per `branch.<b>.sd-*` key (meaning, writer, readers, whether forget clears
 it), after the post's convars.
+
+**`State` means `Derived`.** There is no typed `State` struct: `next::steps`
+takes the state as a `serde_json::Value` (`src/next.rs:164`), and so do the
+verbs. Ideas 2, 13 and 20 apply to `Derived`, the typed struct #348's step 1
+extracts; the generator tests the decisions over it, and the fixtures in
+`tests/next.rs` keep testing how the JSON becomes `Derived`. Decided
+2026-10-31 by chrismo: idea 20's generator is hand-written, not `proptest`
+(a flat struct with defaults needs neither strategies nor its shrinker, and
+CI would compile some 15-20 more crates; revisit if `Derived` gains nested
+fields).
