@@ -1,7 +1,8 @@
 // push (A3), and ship's and ci-fix's push.
 
-use super::{die, plural};
+use super::{die, enforce, gates, plural, state_json, Go};
 use crate::git::{self, commits_not_ours, count, git, git_ok, git_out, made_here, remote_default, rev, strip_nl, worktree_for};
+use crate::next::Derived;
 
 pub fn push(b: &str, remote: &str, force: bool) {
     if !git::branch_exists(b) {
@@ -14,7 +15,14 @@ pub fn push(b: &str, remote: &str, force: bool) {
     if b == remote_default(".", remote) {
         die(format!("not pushing {b}: it's the default branch; start a branch (sd act start <branch> \"<task>\")"));
     }
-    push_branch(b, remote).unwrap_or_else(|e| die(e));
+    let s = state_json(".", b).unwrap_or_else(|e| {
+        eprint!("{e}");
+        die("sd state failed")
+    });
+    let d = Derived::new(&s);
+    if let Some(go) = enforce(gates::push(&d), force, &format!("pushing {b}")) {
+        publish(go, b, remote);
+    }
     // chrismo pushing is the approval of what an agent changed in CI config.
     let held = format!("branch.{b}.sd-held");
     if git_ok(".", &["config", "--get", &held]) {
@@ -25,6 +33,10 @@ pub fn push(b: &str, remote: &str, force: bool) {
         }
         println!("released the CI config hold on {b}");
     }
+}
+
+fn publish(_: Go, b: &str, remote: &str) {
+    push_branch(b, remote).unwrap_or_else(|e| die(e));
 }
 
 /// Publish <b> as fetched just now. Rewritten history, or a pushed commit

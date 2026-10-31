@@ -3,10 +3,11 @@
 // fixture and on generated states, whose fields are drawn independently on
 // purpose: parity must hold on every state, not only those sd state makes.
 // A Migrated's offered reads steps' key and who, which offer takes from
-// Derived alone (tested below); cmd and say also read the record. A gate here destructures Derived without
-// .., so a new field doesn't compile until each gate claims or ignores it.
+// Derived alone (tested below); cmd and say also read the record. Each gate
+// destructures Derived without .., so a new field doesn't compile until
+// every gate claims or ignores it.
 
-use super::gate::Gate;
+use super::gate::{judge, Gate, Level, Rule};
 use crate::next::Derived;
 use serde_json::Value;
 
@@ -18,7 +19,36 @@ pub struct Migrated {
     pub gate: fn(&Derived) -> Gate,
 }
 
-pub const MIGRATED: &[Migrated] = &[];
+pub const MIGRATED: &[Migrated] = &[Migrated { verb: "push", offered: |steps| steps.iter().any(|s| s["key"] == "push"), gate: push }];
+
+/// sd act push. What's on the remote is push_branch's to judge, after its
+/// own fetch: sd state doesn't fetch.
+pub fn push(d: &Derived) -> Gate {
+    let Derived {
+        open, verify_red, undone, parent_unpushed,
+        own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
+        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, foreign: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
+        to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
+        conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
+        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_red: _, ci_blocked: _, ci_inconclusive: _,
+        ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, fixing: _,
+        findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
+        failed_out: _, asking: _, stored: _, addr_refuses: _, addr_hard: _, addr_conflict: _, addr_moot: _,
+        ci_moot: _, ci_waits: _, ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
+        bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
+    } = d;
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
+    judge(&[
+        // Hard, so a --force meant for another refusal can't publish the
+        // copies; if the guess is wrong, git push by hand still works.
+        rule("not pushing: the restack was undone: some of the target's commits are copies here, and pushing would publish them \
+              (if they aren't, git push by hand)", Level::Hard, *undone, "redo the restack (sd state's NEXT says how)"),
+        rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
+        rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
+        rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
+    ])
+}
 
 /// Each verb NEXT's <steps> offer while its gate refuses (runs() false).
 pub fn parity(d: &Derived, steps: &[Value]) -> Vec<String> {
@@ -37,6 +67,31 @@ mod tests {
     use super::*;
     use crate::next::derived_arb::check;
     use serde_json::json;
+
+    #[test]
+    fn push_goes_on_an_open_pr_or_none_whatever_the_remote_says() {
+        let open = Derived { open: true, ..Derived::default() };
+        assert_eq!(push(&open), Gate::Go);
+        assert_eq!(push(&Derived { foreign: true, to_push: false, ..open }), Gate::Go);
+    }
+
+    #[test]
+    fn push_refuses_a_red_verify_an_unpushed_parent_and_a_closed_pr_unless_forced() {
+        let d = Derived { open: true, parent_unpushed: true, verify_red: true, ..Derived::default() };
+        assert_eq!(push(&d), Gate::Soft(vec!["verify is red at HEAD".into(), "the parent branch isn't on the remote yet".into()]));
+        assert!(matches!(push(&Derived::default()), Gate::Soft(_)));
+    }
+
+    #[test]
+    fn push_refuses_an_undone_restack_even_forced() {
+        let d = Derived { open: true, undone: true, verify_red: true, ..Derived::default() };
+        assert!(matches!(push(&d), Gate::Hard(why) if why.starts_with("not pushing: the restack was undone")));
+    }
+
+    #[test]
+    fn push_never_runs_with_an_undone_restack_on_generated_states() {
+        check("push with undone", |d| if d.undone && push(d).runs() { Err("push runs".into()) } else { Ok(()) });
+    }
 
     /// The record from tests/next.rs's READY, which disagrees with most
     /// generated values: the steps' keys and who must not change with it.
