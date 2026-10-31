@@ -596,6 +596,10 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
     /// The bats setup's agent half (the state dir, $FX, the fake claude) and
     /// implement_setup: a task, an agent that adds "d  " (trailing spaces,
     /// so verify fails), its result, and a verify that rejects them.
+    /// gh fails in this file's fixture, so sd state has errors, and implement
+    /// refuses the task unforced, as NEXT does (#348).
+    const IMPLEMENT: &[&str] = &["implement", "--force"];
+
     fn implement_setup() -> Sd {
         let mut sd = sd();
         sd.env = vec![("SHEEPDOG_STATE_DIR".into(), sd.path("state")), ("FX".into(), sd.path("fx"))];
@@ -632,7 +636,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
     fn implement_a_failed_verify_runs_autofix_when_it_changes_the_tree_verify_runs_again() {
         let sd = implement_setup();
         autofix_cmd(&sd, "sed -i.bak 's/ *$//' file.txt && rm file.txt.bak");
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_eq!(r.status, 0);
         assert_has(&r.output, &["autofix committed"]);
         assert_has(&r.output, &["verify passed"]);
@@ -646,7 +650,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
     #[test]
     fn implement_a_failed_verify_with_no_autofix_fails_as_before() {
         let sd = implement_setup();
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_ne!(r.status, 0);
         assert_has(&r.output, &["verify failed"]);
         assert_lacks(&r.output, "autofix");
@@ -661,7 +665,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
     fn implement_autofix_that_changes_nothing_doesnt_rerun_verify_the_failure_stands() {
         let sd = implement_setup();
         autofix_cmd(&sd, "true");
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_ne!(r.status, 0);
         assert_has(&r.output, &["autofix changed nothing"]);
         assert_has(&r.output, &["verify failed"]);
@@ -672,7 +676,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
     fn implement_autofix_failing_after_it_changed_files_reverted_the_verify_failure_stands() {
         let sd = implement_setup();
         autofix_cmd(&sd, "echo half >> file.txt; exit 1");
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_ne!(r.status, 0);
         assert_has(&r.output, &["reverted"]);
         assert_has(&r.output, &["verify failed"]);
@@ -685,7 +689,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
     fn implement_autofix_commits_but_verify_still_fails_nonzero_the_autofix_commit_stays() {
         let sd = implement_setup();
         autofix_cmd(&sd, "echo more >> file.txt");
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_ne!(r.status, 0);
         assert_has(&r.output, &["autofix committed"]);
         assert_has(&r.output, &["verify failed"]);
@@ -699,7 +703,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         let sd = implement_setup();
         sd.set_global("settings.verify", "echo touched >> file.txt");
         autofix_cmd(&sd, "echo ran > autofix-ran");
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_ne!(r.status, 0);
         assert_has(&r.output, &["changed files"]);
         assert_lacks(&r.output, "clean tree");
@@ -712,7 +716,7 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         let sd = implement_setup();
         sd.agent("#!/usr/bin/env bash\nprintf \"%s\\n\" a b c d > file.txt\n");
         autofix_cmd(&sd, "echo ran > autofix-ran");
-        let r = sd.run(&["implement"]);
+        let r = sd.run(IMPLEMENT);
         assert_eq!(r.status, 0);
         assert!(!sd.exists("autofix-ran"));
     }

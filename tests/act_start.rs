@@ -1338,7 +1338,12 @@ fn implement_a_branch_with_no_base_pin_and_no_remote_still_gets_its_guidance() {
     sd.git(&["commit", "-qm", "init"]);
     sd.git(&["switch", "-qc", "feat"]);
     sd.git(&["config", "branch.feat.sd-task", "add c"]);
-    sd.ok(&["implement"]);
+    // with no target ref, sd state can't say what's ahead of it (#348): NEXT offers nothing
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not implementing feat:", "how far feat is ahead of main is unknown", "(--force to run anyway)"]);
+    assert!(!sd.ran("claude.args"));
+    sd.ok(&["implement", "--force"]);
     assert_eq!(sd.prompt_head(), "Local repo guidance.");
 }
 
@@ -1354,7 +1359,7 @@ fn implement_with_no_base_to_trust_the_branchs_own_sheepdog_is_ignored() {
     sd.git(&["add", "."]);
     sd.git(&["commit", "-qm", "init"]);
     sd.git(&["config", "branch.feat.sd-task", "add c"]);
-    sd.ok(&["implement"]);
+    sd.ok(&["implement", "--force"]); // no remote: ahead of the target unknown
     assert_ne!(sd.prompt_head(), "Branch-written guidance.");
     assert_has(&sd.prompt(), &["Implement the task below"]);
 }
@@ -1373,7 +1378,7 @@ fn implement_on_the_default_branch_itself_its_own_sheepdog_is_not_trusted() {
     sd.git(&["add", "."]);
     sd.git(&["commit", "-qm", "the agent's commit"]);
     sd.git(&["config", "branch.main.sd-task", "add c"]);
-    sd.ok(&["implement", "main"]);
+    sd.ok(&["implement", "--force", "main"]); // no remote: ahead of the target unknown
     assert_has(&sd.prompt(), &["Implement the task below"]);
 }
 
@@ -1454,7 +1459,7 @@ fn implement_on_a_branch_ahead_of_its_target_refuses_at_zero_tokens_unless_force
     sd.rm("claude.args");
     let r = sd.run(&["implement"]);
     assert_ne!(r.status, 0);
-    assert_has(&r.output, &["nothing to implement: feat-x is already 1 commit ahead of main; --force to implement its task anyway"]);
+    assert_has(&r.output, &["not implementing feat-x:", "nothing to implement: feat-x is already 1 commit ahead of main", "(--force to run anyway)"]);
     assert!(!sd.ran("claude.args"));
     sd.ok(&["implement", "--force"]);
     assert!(sd.ran("claude.args"));
@@ -1468,6 +1473,24 @@ fn implement_a_review_fix_round_still_runs_once_the_task_is_done_241() {
     sd.findings_at("HEAD", "1");
     sd.ok(&["implement"]);
     assert_has(&sd.prompt(), &["b should be B"]);
+}
+
+// Past settings.reviewRounds the findings are chrismo's (review-decide); the
+// verb ran another round anyway until gates::implement (#348).
+#[test]
+fn implement_a_fix_round_past_settings_review_rounds_refuses_at_zero_tokens_even_forced_348() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.ok(&["implement"]);
+    sd.write_global(r#"{"settings": {"reviewRounds": 2}}"#);
+    sd.findings_at("HEAD", "2");
+    sd.rm("claude.args");
+    for args in [&["implement"][..], &["implement", "--force"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["the review findings on feat-x had their 2 rounds (settings.reviewRounds)"]);
+        assert!(!sd.ran("claude.args"));
+    }
 }
 
 // @test "implement: with its question standing, a rerun refuses before the agent runs; an ack lets it (#167)"

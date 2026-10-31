@@ -62,7 +62,11 @@ Verbs:
             act review) go into the prompt, each answered on its own (see
             review). Refuses, at zero tokens, a branch already ahead of its
             target with no findings to fix: NEXT offers implement only
-            before the branch's first commit (#241).
+            before the branch's first commit (#241); and unless --force, the
+            task when sd state can't read the target, the remote has commits
+            the branch doesn't, or sd state has errors, and either on a
+            merged or closed PR. A fix round past settings.reviewRounds is
+            chrismo's, even with --force. NEXT asks the same gate (#348).
             Spends tokens
   follow   a teammate's PR <number>, to review it (#250): its head
             (refs/pull/<number>/head, a fork's PR too) on the branch
@@ -324,7 +328,9 @@ failed step did.
   restack, push, ship   run even if taken over
   ship            ship though verify is red at HEAD
   implement, review, describe   the same
-  implement       run though the branch is already ahead of its target
+  implement       run though the branch is already ahead of its target (or
+                  that's unknown), the remote has commits it doesn't, sd
+                  state has errors, or the PR is merged or closed
   review          review again a HEAD the local review already covers
   attach          take over a lock another attach still holds
   ci-fix          run again on a red the agent already called flaky

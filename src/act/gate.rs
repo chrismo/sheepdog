@@ -20,6 +20,18 @@ impl Gate {
     pub fn runs(&self) -> bool {
         matches!(self, Gate::Go | Gate::Warn(_))
     }
+
+    /// The same verdict with each reason put in <word>'s words.
+    pub fn worded(self, word: impl Fn(&str) -> String) -> Gate {
+        let all = |ws: Vec<String>| ws.iter().map(|w| word(w)).collect();
+        match self {
+            Gate::Hard(why) => Gate::Hard(word(&why)),
+            Gate::Done(why) => Gate::Done(word(&why)),
+            Gate::Soft(ws) => Gate::Soft(all(ws)),
+            Gate::Warn(ws) => Gate::Warn(all(ws)),
+            Gate::Go => Gate::Go,
+        }
+    }
 }
 
 /// How severe a rule's refusal is, most severe first.
@@ -159,6 +171,14 @@ mod tests {
         assert_eq!(decide(soft(), true, "restacking feat"), Enforced::Run(vec!["taken over".into(), "not pushed".into()]));
         assert_eq!(decide(Gate::Warn(vec!["CI is still running".into()]), false, "x"), Enforced::Run(vec!["CI is still running".into()]));
         assert_eq!(decide(Gate::Go, false, "x"), Enforced::Run(vec![]));
+    }
+
+    #[test]
+    fn worded_words_every_reason_and_keeps_the_verdict() {
+        let up = |w: &str| w.to_uppercase();
+        assert_eq!(Gate::Soft(vec!["a".into(), "b".into()]).worded(up), Gate::Soft(vec!["A".into(), "B".into()]));
+        assert_eq!(Gate::Hard("no".into()).worded(up), Gate::Hard("NO".into()));
+        assert_eq!(Gate::Go.worded(up), Gate::Go);
     }
 
     #[test]

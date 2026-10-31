@@ -625,6 +625,7 @@ fn as_today(sd: &Sd, r: &common::Run) {
 #[test]
 fn attach_after_a_failed_implement_with_its_edits_left_resumes_its_session_270() {
     let sd = sd();
+    nothing_ahead(&sd);
     sd.fake("claude", FAILING_IMPLEMENTER);
     let r = sd.run(&["implement"]);
     assert_ne!(r.status, 0, "{}", r.output);
@@ -756,6 +757,7 @@ fn attach_a_failed_steps_session_with_no_transcript_isnt_resumed_270() {
 #[test]
 fn implement_refused_while_attached_nothing_runs() {
     let sd = sd();
+    nothing_ahead(&sd);
     let sleeper = sd.live_lock();
     let r = sd.run(&["implement"]);
     assert_ne!(r.status, 0);
@@ -842,6 +844,13 @@ fn force_runs_an_agent_step_over_a_live_lock() {
     assert_eq!(sd.git(&["status", "--porcelain"]), "");
 }
 
+/// An origin/main at feat's HEAD: the fixture has no remote, and with no
+/// target sd state can't say feat's task is still to do, which implement
+/// refuses unforced (#348).
+fn nothing_ahead(sd: &Sd) {
+    sd.git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+}
+
 /// IMPLEMENTER, setting branch.feat.sd-lock to <lock> as it edits: an attach
 /// that came in while the step ran.
 fn implementer_locking(lock: &str) -> String {
@@ -854,6 +863,7 @@ fn attached_during_implement_or_locked_by_hand_nothing_committed_the_edits_left_
     let attach = Holder::new();
     for lock in [lock_by(attach.pid()), "set by hand".to_string()] {
         let sd = sd();
+        nothing_ahead(&sd);
         sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add d"}"#);
         sd.fake("claude", &implementer_locking(&lock));
         let before = sd.git(&["rev-parse", "HEAD"]);
@@ -871,6 +881,7 @@ fn attached_during_implement_or_locked_by_hand_nothing_committed_the_edits_left_
 #[test]
 fn a_stale_lock_set_during_implement_doesnt_stop_the_commit_270() {
     let sd = sd();
+    nothing_ahead(&sd);
     sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add d"}"#);
     sd.fake("claude", &implementer_locking(&lock_by(dead_pid())));
     let r = sd.run(&["implement"]);

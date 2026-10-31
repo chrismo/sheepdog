@@ -125,6 +125,8 @@ derived! {
     empty: bool,
 
     // Sync with the parent (O2, O3).
+    /// Commits ahead of the target (sync.ahead > 0); None when sync.ahead is null.
+    ahead_target: Option<bool>,
     /// The target isn't the default branch, or the parent merged: restack after it.
     chase: bool,
     /// A restack was undone: some of the target's commits are copies here (#47).
@@ -371,7 +373,8 @@ impl Derived {
         self.ci_held = !j.nul("push.held");
         self.parent_unpushed = j.on("parent.unpushed");
         self.undone = j.n("sync.undone") > 0.0;
-        self.empty = self.pr_null && j.g("sync.ahead").as_f64() == Some(0.0) && j.n("push.behind") == 0.0;
+        self.ahead_target = j.g("sync.ahead").as_f64().map(|n| n > 0.0);
+        self.empty = self.pr_null && no(self.ahead_target) && j.n("push.behind") == 0.0;
     }
 
     fn sync(&mut self, j: &J) {
