@@ -1,8 +1,14 @@
 // The harness adapter: the per-harness code (#79 Design record, rule 3): the
 // headless steps, the TUI sd act attach opens, and the tool-rule wording a
-// step's prompt needs. `sd harness` runs a step or tallies a session from the
-// command line; sd --help doesn't list it: tests/harness.rs drives run_step
-// through it (#203).
+// step's prompt needs. None of what it reads of a harness is a contract: the
+// flags, the result object, where transcripts are and what their lines say.
+// `sd harness probe` (probe.rs, #347) checks the installed harnesses against
+// it; VERIFIED is the versions it last passed on. `sd harness run` and
+// `tally` run a step or tally a session from the command line, test seams
+// its help doesn't list: tests/harness.rs drives run_step through them
+// (#203).
+
+mod probe;
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
@@ -15,6 +21,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+
+/// The harness versions `sd harness probe` last passed on. pi has none yet:
+/// #79 read 0.99.1's --help, but no probe has passed on a pi.
+pub const VERIFIED: [(&str, &str); 1] = [("claude", "2.1.316")];
 
 // Denied whatever the caller's tool lists allow: the pipeline commits, pushes
 // and talks to GitHub.
@@ -158,45 +168,25 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
     let mut typed = typed_flags(h, s.settings);
     let (mut cap, mut cap_note) = (0.0, String::new());
-    let mut c = match h {
-        "claude" => {
-            let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
-                for l in lines {
-                    eprintln!("sd config: {l}");
-                }
-                eprintln!("sd config failed");
-                Stop::Failed(1)
-            })?;
-            let (flags, c, note) = step_cap(&budget, &extra).map_err(|e| {
-                eprintln!("{e}");
-                Stop::Failed(1)
-            })?;
-            typed.extend(flags);
-            (cap, cap_note) = (c, note);
-            claude_command(s)
-        }
-        "pi" => {
-            let mut c = Command::new("pi");
-            c.arg("-p");
-            if s.mode == "fork" {
-                c.args(["--fork", s.parent]);
+    if h == "claude" {
+        let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
+            for l in lines {
+                eprintln!("sd config: {l}");
             }
-            c.args(["--session-id", minted, "--tools", s.pi_tools]);
-            c
-        }
-        _ => {
-            eprintln!("unknown harness: {h} (claude or pi)");
-            return Err(Stop::Failed(1));
-        }
-    };
-    c.args(&typed).args(&extra);
-    if h == "pi" {
-        // pi has no schema flag: the prompt asks for a final ```json block.
-        c.arg(format!(
-            "{}\n\nEnd your reply with the result as one ```json fenced block matching this JSON Schema:\n{}",
-            s.prompt, s.schema
-        ));
+            eprintln!("sd config failed");
+            Stop::Failed(1)
+        })?;
+        let (flags, c, note) = step_cap(&budget, &extra).map_err(|e| {
+            eprintln!("{e}");
+            Stop::Failed(1)
+        })?;
+        typed.extend(flags);
+        (cap, cap_note) = (c, note);
     }
+    let c = step_command(s, &typed, &extra).map_err(|e| {
+        eprintln!("{e}");
+        Stop::Failed(1)
+    })?;
 
     // A fork's transcript, and claude's total_cost_usd, carry its parent's.
     let from = if s.mode == "fork" { s.parent } else { minted };
@@ -207,15 +197,7 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     // A longer one is cut to that too: a later deadline overflows Instant.
     let secs = if s.timeout == 0 { u64::from(u32::MAX) } else { s.timeout.min(u64::from(u32::MAX)) };
     let out = proc::timeout(secs, c, false);
-    let result = match (out.ok, h) {
-        (false, _) => Err(out.code),
-        (true, "claude") => claude_result(&out.stdout).ok_or(1),
-        (true, _) => objects(&fenced(&out.stdout)).ok_or(1),
-    };
-    let o = match objects(&out.stdout) {
-        Some(mut os) if h == "claude" && os.len() == 1 => os.remove(0),
-        _ => Value::Null,
-    };
+    let (result, o) = outcome(h, &out);
     let sid = ran_in(h, minted, &o);
     let limit = usage_limit(h, &o).map(|said| Limit {
         said,
@@ -277,6 +259,47 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         failed::record(b, s.label(), h, &why);
     }
     result.map(|results| Ran { results, session: sid }).map_err(Stop::Failed)
+}
+
+/// The step's command: <h>'s own flags, then <typed> and <extra>. pi has no
+/// schema flag: its prompt, last, asks for a final ```json block.
+fn step_command(s: &Step, typed: &[String], extra: &[&str]) -> Result<Command, String> {
+    let mut c = match s.harness {
+        "claude" => claude_command(s),
+        "pi" => {
+            let mut c = Command::new("pi");
+            c.arg("-p");
+            if s.mode == "fork" {
+                c.args(["--fork", s.parent]);
+            }
+            c.args(["--session-id", s.session, "--tools", s.pi_tools]);
+            c
+        }
+        h => return Err(format!("unknown harness: {h} (claude or pi)")),
+    };
+    c.args(typed).args(extra);
+    if s.harness == "pi" {
+        c.arg(format!(
+            "{}\n\nEnd your reply with the result as one ```json fenced block matching this JSON Schema:\n{}",
+            s.prompt, s.schema
+        ));
+    }
+    Ok(c)
+}
+
+/// What the step's output gave: its result objects or its failing status,
+/// and claude's one result object (Null for pi, or for anything else).
+fn outcome(h: &str, out: &proc::Out) -> (Result<Vec<Value>, i32>, Value) {
+    let result = match (out.ok, h) {
+        (false, _) => Err(out.code),
+        (true, "claude") => claude_result(&out.stdout).ok_or(1),
+        (true, _) => objects(&fenced(&out.stdout)).ok_or(1),
+    };
+    let o = match objects(&out.stdout) {
+        Some(mut os) if h == "claude" && os.len() == 1 => os.remove(0),
+        _ => Value::Null,
+    };
+    (result, o)
 }
 
 /// claude's words when its result is a usage limit's refusal: api_error
@@ -583,19 +606,28 @@ fn tally_of(h: &str, text: &str) -> Value {
            "context": turns.last().map(|v| int(n(v, "message.usage.totalTokens")))})
 }
 
+const HELP: &str = include_str!("harness_help.txt");
+
 fn usage_exit() -> ExitCode {
-    eprintln!("usage: sd harness run <harness> <session-id> <new|resume|fork> <timeout> <prompt> <json-schema> [<settings-json>]");
-    eprintln!("       sd harness tally <harness> <session-id>");
+    eprint!("{HELP}");
+    eprintln!("Test seams, unlisted above:");
+    eprintln!("  sd harness run <harness> <session-id> <new|resume|fork> <timeout> <prompt> <json-schema> [<settings-json>]");
+    eprintln!("  sd harness tally <harness> <session-id>");
     ExitCode::from(1)
 }
 
-/// sd harness: run_step and tally. The step's name, its branch, a fork's
+/// sd harness: probe, and run_step and tally. The step's name, its branch, a fork's
 /// parent and the tool lists come in the environment: HARNESS_STEP,
 /// HARNESS_BRANCH, HARNESS_PARENT, HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS,
 /// the last two required.
 pub fn run(argv: &[String]) -> ExitCode {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     match a.as_slice() {
+        ["-h" | "--help" | "help"] => {
+            print!("{HELP}");
+            ExitCode::SUCCESS
+        }
+        ["probe", names @ ..] => probe::run(names),
         ["tally", h, sid] => {
             println!("{}", json::to_string(&tally(h, sid)));
             ExitCode::SUCCESS

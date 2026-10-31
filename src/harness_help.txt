@@ -1,0 +1,17 @@
+sd harness - the agent harnesses sheepdog runs steps on: claude and pi.
+
+Usage:
+  sd harness probe [<harness>...]
+
+Verbs:
+  probe    check the harnesses named, else every one installed, against
+           the internals sheepdog reads and no harness promises: the flags
+           its steps pass (in <harness> --help), a trivial headless step's
+           result object or reply, a fork of it, and the transcripts and
+           tallies the two leave. Prints a line per check, "ok" or "FAIL"
+           with why, and the version against the one last verified
+           (harness::VERIFIED). Nonzero on any FAIL, or with no harness
+           installed. Run it after a harness upgrade; once it passes, bump
+           (or add) the harness's VERIFIED version. The steps run in a temp dir on sd config's
+           harnesses.<h> block, claude's capped at 1 USD each, and leave
+           their transcripts where the harness keeps them. Spends tokens

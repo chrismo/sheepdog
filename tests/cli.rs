@@ -18,8 +18,7 @@ fn sd() -> Sd {
     sd
 }
 
-/// The verbs src/main.rs's `match verb.as_str()` dispatches, but harness,
-/// which tests/harness.rs drives and the usage never listed.
+/// The verbs src/main.rs's `match verb.as_str()` dispatches.
 fn dispatched_verbs() -> Vec<String> {
     let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs")).unwrap();
     let arm = regex::Regex::new(r#"^        "([a-z-]*)" =>"#).unwrap();
@@ -27,7 +26,6 @@ fn dispatched_verbs() -> Vec<String> {
         .skip_while(|l| *l != "    match verb.as_str() {")
         .take_while(|l| *l != "    }")
         .filter_map(|l| arm.captures(l).map(|c| c[1].to_string()))
-        .filter(|v| v != "harness")
         .collect()
 }
 
