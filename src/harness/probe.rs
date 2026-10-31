@@ -16,12 +16,13 @@ use std::process::ExitCode;
 const HARNESSES: [&str; 2] = ["claude", "pi"];
 
 /// The words each harness's --help must still have: every flag its step and
-/// TUI commands pass (a unit test holds the list to them), and the
-/// permission mode a claude step runs in.
+/// TUI commands pass, short ones too (a unit test holds the list to them),
+/// and the permission mode a claude step runs in.
 const HELP_WORDS: [(&str, &[&str]); 2] = [
     (
         "claude",
         &[
+            "-p",
             "--session-id",
             "--resume",
             "--fork-session",
@@ -36,7 +37,7 @@ const HELP_WORDS: [(&str, &[&str]); 2] = [
             "--effort",
         ],
     ),
-    ("pi", &["--session-id", "--fork", "--tools", "--provider", "--model", "--thinking"]),
+    ("pi", &["-p", "--session-id", "--fork", "--tools", "--provider", "--model", "--thinking"]),
 ];
 
 const PROMPT: &str = "This is a probe of the harness. Do nothing else: reply with the result {\"ok\": true}.";
@@ -207,8 +208,11 @@ fn ran(s: &Step, dir: &str) -> Result<Left, String> {
     if h == "claude" {
         result_object(&o, s.session)?;
     }
-    if transcript(h, s.session).is_none() {
+    let Some(text) = transcript(h, s.session).and_then(|f| std::fs::read_to_string(f).ok()) else {
         return Err(format!("no transcript for {} where {h} keeps them", s.session));
+    };
+    if h == "pi" {
+        priced(&text)?;
     }
     let tally = tally(h, s.session);
     tallied(h, &tally)?;
@@ -245,11 +249,23 @@ fn turns(h: &str) -> &'static str {
     if h == "claude" { "entries" } else { "turns" }
 }
 
-fn tallied(h: &str, tally: &Value) -> Result<(), String> {
-    let mut need = vec![turns(h), "context"];
-    if h == "pi" {
-        need.push("cost");
+/// pi's turns each carry the cost the tally sums, 0 on a provider that
+/// charges nothing: a missing one would sum as 0 too.
+fn priced(text: &str) -> Result<(), String> {
+    let turns: Vec<Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|v| t(v, "message.role") == "assistant" && !at(v, "message.usage").is_null())
+        .collect();
+    if turns.iter().all(|v| at(v, "message.usage.cost.total").is_number()) {
+        Ok(())
+    } else {
+        Err("the transcript's turns have no usage.cost.total".to_string())
     }
+}
+
+fn tallied(h: &str, tally: &Value) -> Result<(), String> {
+    let need = [turns(h), "context"];
     let bad: Vec<&str> = need.iter().copied().filter(|k| n(tally, k) <= 0.0).collect();
     if bad.is_empty() {
         Ok(())
@@ -279,7 +295,7 @@ mod tests {
     use super::*;
 
     fn flags_of(c: &std::process::Command) -> Vec<String> {
-        c.get_args().map(|a| a.to_string_lossy().into_owned()).filter(|a| a.starts_with("--")).collect()
+        c.get_args().map(|a| a.to_string_lossy().into_owned()).filter(|a| a.starts_with('-')).collect()
     }
 
     #[test]

@@ -61,9 +61,9 @@ d="$PI_CODING_AGENT_SESSION_DIR/--tmp-probe--"
 mkdir -p "$d"
 f="$d/2026-10-31T00-00-00-000Z_$sid.jsonl"
 if [ -n "$parent" ] && [ ! -e "$FX/fork-fresh" ]; then cat "$d"/*_"$parent".jsonl > "$f"; else echo "{\"type\":\"session\",\"id\":\"$sid\"}" > "$f"; fi
-cost=0.001
-[ -e "$FX/no-cost" ] && cost=0
-echo "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"usage\":{\"input\":10,\"output\":2,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":12,\"cost\":{\"total\":$cost}}}}" >> "$f"
+usage='{"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":12,"cost":{"total":0.001}}'
+[ -e "$FX/pi-usage" ] && usage=$(cat "$FX/pi-usage")
+echo "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"usage\":$usage}}" >> "$f"
 if [ -e "$FX/pi-fails" ]; then cat "$FX/pi-fails" >&2; exit 1; fi
 if [ -e "$FX/pi-reply" ]; then cat "$FX/pi-reply"; else printf 'Done.\n\n```json\n{"ok": true}\n```\n'; fi
 "#;
@@ -225,6 +225,11 @@ fn probe_fails_a_harness_whose_help_lacks_a_flag_sheepdog_passes() {
     let r = sd.probe(&["claude"]);
     assert_eq!(r.status, 1, "{}", r.output);
     assert_has(&r.output, &["claude: FAIL: flags: claude --help lacks --fork-session acceptEdits"]);
+
+    sd.fx("pi-help", &PI_HELP.replace("--print, -p", "--print"));
+    let r = sd.probe(&["pi"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["pi: FAIL: flags: pi --help lacks -p"]);
 }
 
 #[test]
@@ -258,10 +263,24 @@ fn probe_fails_a_claude_result_without_total_cost_usd() {
 #[test]
 fn probe_fails_a_tally_that_lacks_a_field() {
     let sd = sd();
-    sd.fx("no-cost", "");
+    sd.fx("pi-usage", r#"{"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"cost":{"total":0.001}}"#);
     let r = sd.probe(&["pi"]);
     assert_eq!(r.status, 1, "{}", r.output);
-    assert_has(&r.output, &["pi: FAIL: step: the transcript's tally lacks cost: "]);
+    assert_has(&r.output, &["pi: FAIL: step: the transcript's tally lacks context: "]);
+}
+
+#[test]
+fn probe_passes_a_pi_turn_that_cost_nothing_but_fails_one_with_no_cost() {
+    let sd = sd();
+    sd.fx("pi-usage", r#"{"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":12,"cost":{"total":0}}"#);
+    let r = sd.probe(&["pi"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["pi: ok: fork"]);
+
+    sd.fx("pi-usage", r#"{"input":10,"output":2,"cacheRead":0,"cacheWrite":0,"totalTokens":12}"#);
+    let r = sd.probe(&["pi"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["pi: FAIL: step: the transcript's turns have no usage.cost.total"]);
 }
 
 #[test]
