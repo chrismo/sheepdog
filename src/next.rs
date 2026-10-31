@@ -12,7 +12,7 @@
 // stale refs are a fetch (#246). It has no time limit: a PR GitHub never
 // updates waits until chrismo sees sd watch's ⚠️ glyph.
 //
-// While address's own gate (src/act/address.rs) would refuse it, address
+// While address's own gate (src/act/gates.rs) would refuse it, address
 // comes after the steps that clear the gate, or is chrismo's when it would be
 // first; an address question's step says what clears it (#326). An answer
 // stored for the question stands in for its question step: the bot step goes
@@ -82,8 +82,9 @@ mod derived;
 pub use derived::Derived;
 #[cfg(test)]
 pub(crate) use derived::arb as derived_arb;
-use derived::{no, yes};
+pub(crate) use derived::{no, yes};
 
+use crate::act::Gate;
 use crate::val::{self, at, sj, text};
 use serde_json::{json, Value};
 
@@ -234,8 +235,8 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     };
     let last_review = last_review(s);
     let hold = &hold_step(d, s);
-    let addr = crate::act::address_gate(s);
-    let addr_why = addr.hard.iter().chain(&addr.soft).cloned().collect::<Vec<_>>().join("; ");
+    let addr = crate::act::gates::address(d);
+    let addr_why = refusal(crate::act::address_said(crate::act::gates::address(d), s));
     let ci_waits = match d.ci_waits.then(|| crate::act::ci_fix_gate(s)) {
         Some(crate::act::CiFixGate::Waits { why, .. }) => why,
         _ => String::new(),
@@ -418,9 +419,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if d.bot && !d.addr_refuses {
+            if d.bot && addr.runs() {
                 address()
-            } else if d.resume && !d.addr_refuses {
+            } else if d.resume && addr.runs() {
                 agent(hold, "bot", format!("address {}, going on with your answer to its question", plural(g("threads.owed_bot"), "bot item")), "sd act address")
             } else {
                 None
@@ -539,9 +540,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if d.bot && d.addr_refuses {
+            if d.bot && !addr.runs() {
                 address()
-            } else if d.resume && d.addr_refuses {
+            } else if d.resume && !addr.runs() {
                 // it runs address, and the rewrite below may offer --force
                 spends(hold, step("answer", "wait", format!("your answer to the address agent's question waits while {addr_why}"), None))
             } else {
@@ -710,11 +711,11 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
         ]
     };
-    finish(d, all, &addr_why)
+    finish(d, all, &addr, &addr_why)
 }
 
 /// The question step (#167, #326); <asked> is the question's first line.
-fn question_step(d: &Derived, s: &Value, asked: &str, addr: &crate::act::AddressGate, addr_why: &str, ci_waits: &str) -> Option<Value> {
+fn question_step(d: &Derived, s: &Value, asked: &str, addr: &Gate, addr_why: &str, ci_waits: &str) -> Option<Value> {
     let t = |p: &str| val::t(s, p);
     let is = |p: &str, lit: &str| at(s, p).as_str() == Some(lit);
     let asking = d.asking.as_str();
@@ -728,8 +729,8 @@ fn question_step(d: &Derived, s: &Value, asked: &str, addr: &crate::act::Address
         (format!("the agent {did} (ci-fix): {asked}; {ci}, so it's moot: sd act ack --question drops it{and}"), cmd("sd act ack --question"))
     } else if d.ci_waits {
         (format!("the agent {did} (ci-fix): {asked}; ci-fix can't go on while {ci_waits}: {}", waits_say(s, "once CI is red at HEAD")), cmd(answer))
-    } else if asking == "address" && d.addr_refuses {
-        answer_refused(s, addr, addr_why, asked, push_step(d) || (d.ci_held && push_runs(d)))
+    } else if asking == "address" && !addr.runs() {
+        answer_refused(s, d, addr, addr_why, asked, push_step(d) || (d.ci_held && push_runs(d)))
     } else if asking == "resolve" {
         (format!("the agent gave up ({asking}): {asked}; resolve it by hand (sd act restack says how), or sd act ack --question to let it try again"), cmd("sd act restack"))
     } else if is("question.kind", "gave-up") {
@@ -743,7 +744,7 @@ fn question_step(d: &Derived, s: &Value, asked: &str, addr: &crate::act::Address
 /// The steps as listed: the first budget or failed step stands in for every
 /// agent step, address refused with nothing ahead of it is chrismo's, and an
 /// end state is listed only alone.
-fn finish(d: &Derived, all: Vec<Option<Value>>, addr_why: &str) -> Vec<Value> {
+fn finish(d: &Derived, all: Vec<Option<Value>>, addr: &Gate, addr_why: &str) -> Vec<Value> {
     let mut seen_hold = false;
     let mut out: Vec<Value> = Vec::new();
     for st in all.into_iter().flatten() {
@@ -759,11 +760,11 @@ fn finish(d: &Derived, all: Vec<Option<Value>>, addr_why: &str) -> Vec<Value> {
     // step that doesn't clear the gate (attached, take), it stays an agent
     // step: that step blocks first.
     let first = out.first().map(|st| text(&st["key"])).unwrap_or_default();
-    if (first == "bot" || (first == "answer" && d.asking == "address")) && d.addr_refuses {
+    if (first == "bot" || (first == "answer" && d.asking == "address")) && !addr.runs() {
         let force = Some("sd act address --force".to_string());
-        let (say, cmd) = if d.addr_hard {
+        let (say, cmd) = if !matches!(addr, Gate::Soft(_)) {
             ("clear that first", None)
-        } else if first == "answer" && d.addr_conflict {
+        } else if first == "answer" && conflicts(addr) {
             ("a restack would drop the question, so sd act address --force runs it now, or sd act ack --question drops both", force)
         } else {
             ("clear that first, or sd act address --force", force)
@@ -781,13 +782,30 @@ fn finish(d: &Derived, all: Vec<Option<Value>>, addr_why: &str) -> Vec<Value> {
     out
 }
 
+/// A worded address refusal, as one line.
+fn refusal(g: Gate) -> String {
+    match g {
+        Gate::Hard(why) | Gate::Done(why) => why,
+        Gate::Soft(why) => why.join("; "),
+        Gate::Warn(_) | Gate::Go => String::new(),
+    }
+}
+
+fn conflicts(g: &Gate) -> bool {
+    matches!(g, Gate::Soft(why) if why.iter().any(|w| w == crate::act::gates::addr::CONFLICT))
+}
+
 /// The question step for an address question that address's gate <g>
 /// refuses. sd act answer stores an answer to run once soft reasons clear;
 /// a restack would drop the question, so a conflict is answered with
 /// --force, after the push when NEXT offers one (<can_push>).
-fn answer_refused(s: &Value, g: &crate::act::AddressGate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
+fn answer_refused(s: &Value, d: &Derived, g: &Gate, why: &str, asked: &str, can_push: bool) -> (String, Option<String>) {
     let did = if val::t(s, "question.kind") == "gave-up" { "gave up" } else { "asks" };
-    if g.hard.is_none() && !g.conflict {
+    let (soft, hard, conflict): (&[String], _, _) = match g {
+        Gate::Soft(why) => (why, false, conflicts(g)),
+        _ => (&[], true, false),
+    };
+    if !hard && !conflict {
         return (
             format!("the agent {did} (address): {asked}; address refuses while {why}: {}", waits_say(s, "once that clears")),
             cmd("sd act answer \"<your answer>\""),
@@ -795,9 +813,9 @@ fn answer_refused(s: &Value, g: &crate::act::AddressGate, why: &str, asked: &str
     }
     let head = format!("the agent {did} (address): {asked}; sd act answer refuses while {why}");
     let answer = "answer it with sd act answer --force, since a restack first would drop the question";
-    let pushes = g.push && can_push;
-    let others = g.soft.len().saturating_sub(usize::from(pushes) + usize::from(g.conflict));
-    if g.hard.is_some() || others > 0 {
+    let pushes = crate::act::gates::address_pushes(d) && can_push;
+    let others = soft.len().saturating_sub(usize::from(pushes) + usize::from(conflict));
+    if hard || others > 0 {
         (format!("{head}: clear that first, or answer in its session (sd act attach), then sd act ack --question"), None)
     } else if pushes {
         let push = if at(s, "push.held").is_null() {

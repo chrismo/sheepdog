@@ -78,8 +78,8 @@ derived! {
     locked: Option<bool>,
     /// Human items are owed a reply.
     owed_human: bool,
-    /// Bot items are owed a reply.
-    owed_bot: bool,
+    /// Bot items are owed a reply; None when GitHub couldn't be read.
+    owed_bot: Option<bool>,
     /// Bot items owed less the info ones: the blocking bot count.
     bot_blocking: f64 => |r: &mut arb::Rng| r.pick(&[0.0, 1.0, 2.0]),
     /// Info bot items are owed a read.
@@ -98,6 +98,8 @@ derived! {
     // Local vs remote (O4).
     /// The remote has commits this copy never had.
     foreign: bool,
+    /// The remote branch has commits this copy doesn't (push.behind).
+    behind_remote: bool,
     /// Our remote has commits reset away here.
     reset_away: bool,
     /// Reset away, and this branch made them: a force-push drops them.
@@ -200,12 +202,6 @@ derived! {
     asking: String => |r: &mut arb::Rng| r.pick(&["", "address", "ci-fix", "implement", "review-fix", "review", "resolve"]).to_string(),
     /// chrismo's answer is stored for it.
     stored: bool,
-    /// address's gate refuses (hard or soft).
-    addr_refuses: bool,
-    /// address's gate refuses hard.
-    addr_hard: bool,
-    /// One of address's soft reasons is a restack that would conflict.
-    addr_conflict: bool,
     /// An address question with nothing owed: moot.
     addr_moot: bool,
     /// A ci-fix question CI passing at HEAD made moot.
@@ -332,7 +328,7 @@ impl Derived {
         self.lagging = j.len("lag") > 0;
         self.locked = j.flag("session.locked");
         self.owed_human = j.n("threads.owed_human") > 0.0;
-        self.owed_bot = j.n("threads.owed_bot") > 0.0;
+        self.owed_bot = j.g("threads.owed_bot").as_f64().map(|n| n > 0.0);
         self.bot_blocking = j.n("threads.owed_bot") - j.n("threads.info");
         self.info = j.n("threads.info") > 0.0;
         self.draft = j.flag("pr.draft");
@@ -344,6 +340,7 @@ impl Derived {
 
     fn push(&mut self, j: &J) {
         self.foreign = j.off("push.remote_ours") && j.n("push.theirs") > 0.0;
+        self.behind_remote = j.n("push.behind") > 0.0;
         self.reset_away = j.on("push.remote_ours") && j.n("push.behind") > 0.0 && j.n("push.ahead") == 0.0;
         self.push_dirty = j.flag("push.dirty");
         let dirty = yes(self.push_dirty);
@@ -429,11 +426,8 @@ impl Derived {
         self.asking = if at_head { val::t(s, "question.step") } else { String::new() };
         // chrismo's answer, stored while its step's gate refused (#326)
         self.stored = at_head && !j.nul("question.answer");
-        let addr = crate::act::address_gate(s);
-        self.addr_refuses = addr.hard.is_some() || !addr.soft.is_empty();
-        self.addr_hard = addr.hard.is_some();
-        self.addr_conflict = addr.conflict;
-        self.addr_moot = self.asking == "address" && addr.hard.is_none() && !self.owed_bot;
+        // the fields address's gate reads are set by now
+        self.addr_moot = self.asking == "address" && matches!(crate::act::gates::address(self), crate::act::Gate::Done(_));
         let ci = if self.asking == "ci-fix" { crate::act::ci_fix_gate(s) } else { crate::act::CiFixGate::Runs };
         self.ci_moot = matches!(ci, crate::act::CiFixGate::Moot(_));
         self.ci_waits = matches!(ci, crate::act::CiFixGate::Waits { .. });

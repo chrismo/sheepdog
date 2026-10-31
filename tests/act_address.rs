@@ -342,7 +342,8 @@ fn unpushed_and_locked_every_reason_listed_nothing_run() {
 #[test]
 fn a_restack_conflict_and_a_diverged_remote_are_refused() {
     let sd = sd();
-    sd.state(&[".sync.up_to_date = false | .sync.conflict = true | .push.diverged = true"]);
+    // as sd state has it: diverged is ahead and behind both
+    sd.state(&[".sync.up_to_date = false | .sync.conflict = true | .push.diverged = true | .push.ahead = 1 | .push.behind = 1"]);
     let r = sd.run(&["address"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["conflict"]);

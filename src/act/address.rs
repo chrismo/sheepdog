@@ -8,13 +8,15 @@ use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base,
                   question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
-use super::{cfg, die, lock_recheck, state_json, Args};
+use super::gates::{self, addr};
+use super::{cfg, die, enforce, lock_recheck, state_json, Args, Gate, Go};
 use crate::git::{git, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
+use crate::next::{yes, Derived};
 use crate::state::unbot;
 use crate::{proc, running};
-use crate::val::{at, n, on, sj, t, text};
+use crate::val::{at, sj, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::sync::OnceLock;
@@ -63,78 +65,78 @@ const ACTIONS: [&str; 4] = ["fixed", "reply", "pushback", "ask"];
 // doesn't hand it to a loop again.
 const UNANSWERED: &str = ". The answer didn't reach the agent; sd act ack --question drops its question";
 
-/// What sd state says of addressing: a hard refusal can't be forced, soft
-/// ones can, and warnings never block. push: sd act push clears a soft
-/// reason; conflict: one is a restack that would conflict. NEXT reads it too
-/// (#326).
-#[derive(Debug, Default, PartialEq)]
-pub struct Gate {
-    pub hard: Option<String>,
-    pub soft: Vec<String>,
-    pub warn: Vec<String>,
-    pub push: bool,
-    pub conflict: bool,
-}
-
-impl Gate {
-    /// The soft reasons nothing sd watch runs clears: all but the push's
-    /// (the last one, when sd act push clears it), unless NEXT offers no
-    /// push for <s> (next::push_offered).
-    pub fn yours(&self, s: &Value) -> Vec<String> {
-        let pushed = usize::from(self.push && crate::next::push_offered(s));
-        self.soft[..self.soft.len() - pushed.min(self.soft.len())].to_vec()
-    }
-}
-
-pub fn gate(s: &Value) -> Gate {
-    let nul = |p: &str| at(s, p).is_null();
+/// <why>, one of gates::address's reasons, in record <s>'s words.
+fn worded(why: &str, s: &Value) -> String {
     let b = t(s, "branch");
-    let state = at(s, "pr.state");
-    let hard = if nul("pr") {
-        Some(format!("no PR for {b}"))
-    } else if !state.is_null() && state != "OPEN" {
-        Some(format!("PR #{} is {}", t(s, "pr.number"), text(state).to_lowercase()))
-    } else if nul("threads.owed_bot") {
-        let errors = sj(at(s, "errors"), "; ");
-        Some(if errors.is_empty() { "can't read the PR from GitHub".into() } else { format!("can't read the PR from GitHub: {errors}") })
-    } else {
-        None
-    };
-    let mut soft = vec![];
-    if on(s, "session.locked") {
-        soft.push(format!("taken over (branch.{b}.sd-lock is set)"));
+    match why {
+        addr::NO_PR => format!("no PR for {b}"),
+        addr::CLOSED => format!("PR #{} is {}", t(s, "pr.number"), text(at(s, "pr.state")).to_lowercase()),
+        addr::UNREAD => match sj(at(s, "errors"), "; ") {
+            e if e.is_empty() => why.into(),
+            e => format!("{why}: {e}"),
+        },
+        addr::NOTHING => {
+            let human = if at(s, "threads.owed_human").is_null() { "0".into() } else { t(s, "threads.owed_human") };
+            format!("nothing to address on {b} ({human} human item(s) are chrismo's)")
+        }
+        addr::LOCKED => format!("taken over (branch.{b}.sd-lock is set)"),
+        addr::SYNC_UNKNOWN if at(s, "sync.target").is_null() => "sync with the parent unknown".into(),
+        addr::SYNC_UNKNOWN => format!("sync with {} unknown", t(s, "sync.target")),
+        addr::REMOTE_MORE => format!("the remote branch has {} commit(s) you don't", t(s, "push.behind")),
+        addr::UNPUSHED if at(s, "push.remote_sha").is_null() => "not pushed".into(),
+        addr::UNPUSHED => format!("{} unpushed commit(s)", t(s, "push.ahead")),
+        addr::BEHIND => format!("behind {} by {}", t(s, "sync.target"), t(s, "sync.behind")),
+        _ => why.into(),
     }
-    let conflict = on(s, "sync.conflict");
-    if conflict {
-        soft.push("restack due, and it would conflict".into());
-    } else if nul("sync.up_to_date") {
-        let target = if nul("sync.target") { "the parent".into() } else { t(s, "sync.target") };
-        soft.push(format!("sync with {target} unknown"));
+}
+
+/// address's gate <g>, in record <s>'s words; NEXT says them too.
+pub fn said(g: Gate, s: &Value) -> Gate {
+    let all = |ws: Vec<String>| ws.iter().map(|w| worded(w, s)).collect();
+    match g {
+        Gate::Hard(why) => Gate::Hard(worded(&why, s)),
+        Gate::Done(why) => Gate::Done(worded(&why, s)),
+        Gate::Soft(ws) => Gate::Soft(all(ws)),
+        Gate::Warn(ws) => Gate::Warn(all(ws)),
+        Gate::Go => Gate::Go,
     }
-    let mut push = true;
-    if nul("push.remote_sha") {
-        soft.push("not pushed".into());
-    } else if on(s, "push.diverged") {
-        soft.push("diverged from the remote branch".into());
-        // with someone else's commits there (NEXT's foreign), a push would drop them
-        push = !(at(s, "push.remote_ours") == &Value::Bool(false) && n(s, "push.theirs") > 0.0);
-    } else if n(s, "push.behind") > 0.0 {
-        soft.push(format!("the remote branch has {} commit(s) you don't", t(s, "push.behind")));
-        // reset away here: the force-push drops them
-        push = on(s, "push.remote_ours") && on(s, "push.remote_made");
-    } else if n(s, "push.ahead") > 0.0 {
-        soft.push(format!("{} unpushed commit(s)", t(s, "push.ahead")));
-    } else {
-        push = false;
+}
+
+/// The soft reasons <why> nothing sd watch runs clears: all but the last,
+/// the push's, when NEXT offers the push that clears it.
+fn yours(why: &[String], d: &Derived, s: &Value) -> Vec<String> {
+    let pushed = usize::from(gates::address_pushes(d) && crate::next::push_offered(s));
+    why[..why.len() - pushed.min(why.len())].to_vec()
+}
+
+/// address's gate on <s>, as <a> asks: Go, or None when there's nothing to
+/// address or chrismo's answer is stored to run once a soft reason clears.
+fn gated(b: &str, s: &Value, a: &Args) -> Option<Go> {
+    let answering = !a.answer.is_empty();
+    let d = Derived::new(s);
+    match said(gates::address(&d), s) {
+        Gate::Done(line) if answering => die(format!("{line}{UNANSWERED}")),
+        // not for a restack: it moves HEAD, dropping the question (#326)
+        Gate::Soft(why) if answering && !a.force && !yes(d.sync_conflict) => {
+            answer_store(b, "address", a);
+            println!("{}", answer_waits(b, "address", &why.join("; "), "that clears", &yours(&why, &d, s), a));
+            None
+        }
+        Gate::Soft(why) if answering && !a.force => {
+            eprintln!("sd act: not addressing {b}:");
+            for w in &why {
+                eprintln!("  - {w}");
+            }
+            if a.stored {
+                eprintln!("a restack would drop the question: sd act address --force runs your stored answer now, or sd act ack --question drops both");
+            } else {
+                eprintln!("a restack would drop the question, so the answer can't wait for one: sd act answer --force answers now");
+            }
+            eprintln!("(--force to run anyway)");
+            std::process::exit(1)
+        }
+        g => enforce(g, a.force, &format!("addressing {b}")),
     }
-    let mut warn = vec![];
-    if at(s, "sync.up_to_date") == &Value::Bool(false) && !on(s, "sync.conflict") {
-        warn.push(format!("behind {} by {}", t(s, "sync.target"), t(s, "sync.behind")));
-    }
-    if t(s, "ci.verdict") == "pending" {
-        warn.push("CI is still running".into());
-    }
-    Gate { hard, soft, warn, push, conflict }
 }
 
 /// gh api graphql with these -f fields: its answer, or None (gh said why).
@@ -381,46 +383,12 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         eprint!("{e}");
         die("sd state failed")
     });
-    let g = gate(&s);
-    if let Some(why) = g.hard {
-        die(why);
-    }
+    let Some(_go) = gated(b, &s, a) else { return true };
     let no_items = vec![];
     let owed: Vec<&Value> =
         at(&s, "threads.items").as_array().unwrap_or(&no_items).iter().filter(|it| t(it, "kind") == "bot").collect();
-    if owed.is_empty() {
-        let human = if at(&s, "threads.owed_human").is_null() { "0".into() } else { t(&s, "threads.owed_human") };
-        let line = format!("nothing to address on {b} ({human} human item(s) are chrismo's)");
-        if answering {
-            die(format!("{line}{UNANSWERED}"));
-        }
-        println!("{line}");
-        return true;
-    }
-    if !a.force && !g.soft.is_empty() {
-        // not for a restack: it moves HEAD, dropping the question (#326)
-        if answering && !g.conflict {
-            answer_store(b, "address", a);
-            println!("{}", answer_waits(b, "address", &g.soft.join("; "), "that clears", &g.yours(&s), a));
-            return true;
-        }
-        eprintln!("sd act: not addressing {b}:");
-        for why in &g.soft {
-            eprintln!("  - {why}");
-        }
-        if a.stored {
-            eprintln!("a restack would drop the question: sd act address --force runs your stored answer now, or sd act ack --question drops both");
-        } else if answering {
-            eprintln!("a restack would drop the question, so the answer can't wait for one: sd act answer --force answers now");
-        }
-        eprintln!("(--force to run anyway)");
-        std::process::exit(1);
-    }
     question_gate(b, "address", a.force, answering);
     going_on("address", a);
-    for w in &g.warn {
-        eprintln!("sd-act: warning: {w}");
-    }
 
     if owed.len() > 100 {
         eprintln!("sd act: warning: over 100 owed items; taking the first 100");
@@ -571,79 +539,62 @@ pub fn address(b: &str, remote: &str, a: &Args) {
 mod tests {
     use super::*;
 
-    fn st(v: Value) -> Value {
+    fn strings(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// address's gate on an open PR owing one bot item, in sync and pushed,
+    /// with <edits> (a.b: v) applied, in the record's words.
+    fn gate_on(edits: Value) -> Gate {
         let mut s = json!({
-            "branch": "feat", "pr": {"number": 7, "url": "https://example/pr/7", "state": "OPEN"},
+            "branch": "feat", "pr": {"number": 7, "state": "OPEN"},
             "sync": {"target": "main", "behind": 0, "up_to_date": true, "conflict": false},
-            "push": {"remote_sha": "abc", "ahead": 0, "behind": 0, "diverged": false},
-            "ci": {"verdict": "green"}, "threads": {"owed_bot": 1, "owed_human": 0},
-            "session": {"locked": false}, "errors": []
+            "push": {"remote_sha": "abc", "ahead": 0, "behind": 0}, "ci": {"verdict": "green"},
+            "threads": {"owed_bot": 1, "owed_human": 0}, "session": {"locked": false}, "errors": []
         });
-        for (k, v) in v.as_object().unwrap() {
+        for (k, v) in edits.as_object().unwrap() {
             match k.split_once('.') {
                 Some((top, field)) => s[top][field] = v.clone(),
                 None => s[k] = v.clone(),
             }
         }
-        s
-    }
-
-    fn strings(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
+        said(gates::address(&Derived::new(&s)), &s)
     }
 
     #[test]
-    fn gate_goes_when_open_in_sync_and_pushed() {
-        assert_eq!(gate(&st(json!({}))), Gate::default());
-    }
-
-    #[test]
-    fn gate_no_pr_a_closed_one_or_github_unread_is_hard() {
-        assert_eq!(gate(&st(json!({"pr": null}))).hard.unwrap(), "no PR for feat");
-        assert_eq!(gate(&st(json!({"pr.state": "MERGED"}))).hard.unwrap(), "PR #7 is merged");
-        assert_eq!(gate(&st(json!({"pr.state": null}))).hard, None);
-        let unread = st(json!({"threads.owed_bot": null, "errors": ["gh (feat): boom", "again"]}));
-        assert_eq!(gate(&unread).hard.unwrap(), "can't read the PR from GitHub: gh (feat): boom; again");
-    }
-
-    #[test]
-    fn gate_soft_lists_every_reason_in_order() {
-        let s = st(json!({"session.locked": true, "sync.conflict": true, "push.diverged": true}));
+    fn said_words_each_reason_from_the_record() {
+        assert_eq!(gate_on(json!({})), Gate::Go);
+        assert_eq!(gate_on(json!({"pr": null})), Gate::Hard("no PR for feat".into()));
+        assert_eq!(gate_on(json!({"pr.state": "MERGED"})), Gate::Hard("PR #7 is merged".into()));
+        let unread = json!({"threads.owed_bot": null, "errors": ["gh (feat): boom", "again"]});
+        assert_eq!(gate_on(unread), Gate::Hard("can't read the PR from GitHub: gh (feat): boom; again".into()));
+        assert_eq!(gate_on(json!({"threads.owed_bot": 0, "threads.owed_human": 2})),
+                   Gate::Done("nothing to address on feat (2 human item(s) are chrismo's)".into()));
+        let s = json!({"session.locked": true, "sync.conflict": true, "push.ahead": 2, "push.behind": 1});
         let want = ["taken over (branch.feat.sd-lock is set)", "restack due, and it would conflict", "diverged from the remote branch"];
-        assert_eq!(gate(&s).soft, strings(&want));
-        assert_eq!(gate(&st(json!({"sync.up_to_date": null}))).soft, strings(&["sync with main unknown"]));
-        let s = st(json!({"sync.up_to_date": null, "sync.target": null}));
-        assert_eq!(gate(&s).soft, strings(&["sync with the parent unknown"]));
+        assert_eq!(gate_on(s), Gate::Soft(strings(&want)));
+        assert_eq!(gate_on(json!({"sync.up_to_date": null, "sync.target": null})), Gate::Soft(strings(&["sync with the parent unknown"])));
+        assert_eq!(gate_on(json!({"push.remote_sha": null, "push.ahead": 1})), Gate::Soft(strings(&["not pushed"])));
+        assert_eq!(gate_on(json!({"push.ahead": 1})), Gate::Soft(strings(&["1 unpushed commit(s)"])));
+        assert_eq!(gate_on(json!({"push.behind": 2})), Gate::Soft(strings(&["the remote branch has 2 commit(s) you don't"])));
+        let s = json!({"sync.up_to_date": false, "sync.behind": 10, "ci.verdict": "pending"});
+        assert_eq!(gate_on(s), Gate::Warn(strings(&["behind main by 10", "CI is still running"])));
     }
 
     #[test]
-    fn gate_soft_names_the_first_push_problem() {
-        assert_eq!(gate(&st(json!({"push.remote_sha": null, "push.ahead": 1}))).soft, strings(&["not pushed"]));
-        let s = st(json!({"push.behind": 2, "push.ahead": 1}));
-        assert_eq!(gate(&s).soft, strings(&["the remote branch has 2 commit(s) you don't"]));
-        assert_eq!(gate(&st(json!({"push.ahead": 1}))).soft, strings(&["1 unpushed commit(s)"]));
-    }
-
-    #[test]
-    fn gate_says_which_soft_reasons_a_push_or_a_restack_clears() {
-        for s in [json!({"push.remote_sha": null}), json!({"push.diverged": true, "push.behind": 1}), json!({"push.ahead": 1})] {
-            assert!(gate(&st(s)).push);
-        }
-        assert!(!gate(&st(json!({"push.behind": 2}))).push);
-        assert!(!gate(&st(json!({"push.diverged": true, "push.remote_ours": false, "push.theirs": 1}))).push);
-        assert!(gate(&st(json!({"push.diverged": true, "push.remote_ours": false, "push.theirs": 0}))).push);
-        assert!(gate(&st(json!({"push.behind": 2, "push.remote_ours": true, "push.remote_made": true}))).push);
-        let g = gate(&st(json!({"sync.conflict": true, "session.locked": true})));
-        assert!(g.conflict && !g.push);
-        assert!(!gate(&st(json!({"sync.up_to_date": null}))).conflict);
-    }
-
-    #[test]
-    fn gate_behind_with_no_conflict_and_ci_running_only_warn() {
-        let s = st(json!({"sync.up_to_date": false, "sync.behind": 10, "ci.verdict": "pending"}));
-        assert_eq!(gate(&s), Gate { warn: strings(&["behind main by 10", "CI is still running"]), ..Gate::default() });
-        let s = st(json!({"sync.up_to_date": false, "sync.conflict": true}));
-        assert!(gate(&s).warn.is_empty());
+    fn yours_leaves_out_the_push_reason_only_when_next_offers_the_push() {
+        let rec = |held: bool| {
+            let mut s = json!({"branch": "feat", "pr": {"state": "OPEN"}, "sync": {"ahead": 1}, "push": {"remote_sha": "abc", "ahead": 1}});
+            if held {
+                s["push"]["held"] = json!({"paths": [".rwx/tests.yml"]});
+            }
+            s
+        };
+        let why = strings(&["taken over", "1 unpushed commit(s)"]);
+        let s = rec(false);
+        assert_eq!(yours(&why, &Derived::new(&s), &s), strings(&["taken over"]));
+        let s = rec(true);
+        assert_eq!(yours(&why, &Derived::new(&s), &s), why);
     }
 
     fn nodes(said: &[Value]) -> Value {
