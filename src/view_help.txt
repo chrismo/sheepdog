@@ -5,8 +5,9 @@ Usage: sd view [--port <n>] [--no-open]
 
   Starts a local server on 127.0.0.1, prints its URL and opens it in the
   browser, then serves until Ctrl-C. The page reads the state each sd watch
-  pass caches, and asks again every 30s: with the watcher stopped, it shows
-  the last pass's time and goes stale. It only reads; nothing on it acts yet.
+  pass caches, and asks again every 30s. It shows the last pass's time: with
+  the watcher stopped, that time stops moving. It only reads; nothing on it
+  acts yet.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

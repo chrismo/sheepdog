@@ -88,7 +88,7 @@ footer { font-size: 0.78rem; color: var(--muted); }
     <h1>Your PRs</h1>
     <div class="summary" id="summary"></div>
     <div class="legend">
-      <span><i style="--lc:var(--you)"></i>chrismo</span>
+      <span><i style="--lc:var(--you)"></i>you</span>
       <span><i style="--lc:var(--agent)"></i>agent</span>
       <span><i style="--lc:var(--run)"></i>sheepdog</span>
       <span><i style="--lc:var(--wait)"></i>waiting</span>
@@ -103,7 +103,7 @@ footer { font-size: 0.78rem; color: var(--muted); }
 const POLL_MS = 30000;
 const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
 const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
-const SHORT = { ready: "ready", draft: "mark ready", "parent-wait": "after parent", "review-decide": "decide", review: "queued", "ci-wait": "running" };
+const SHORT = { ready: "ready", draft: "mark ready", "parent-wait": "after parent", "review-decide": "decide", review: "queued", "ci-wait": "running", "ci-red": "fix", "review-fix": "fix", bot: "address" };
 const GROUPS = [["you", "Needs you"], ["agent", "Agent next"], ["run", "sheepdog next"], ["wait", "Waiting"]];
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const color = who => `var(${WHO[who] || "--wait"})`;

@@ -1,6 +1,7 @@
 // sd view [--port <n>] [--no-open] (src/view_help.txt, #375, #376): GET / is
 // the Flock page, GET /api/flock its data from the watcher's cache. std's
-// TcpListener, one request at a time.
+// TcpListener, a thread per connection: a browser's idle preconnect socket
+// mustn't hold up the page.
 //
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
 // rebind its name to 127.0.0.1. Read-only: before anything writes, add a
@@ -50,7 +51,8 @@ pub fn run(argv: &[String]) -> ExitCode {
     }
     let state = state_dir();
     for stream in listener.incoming().flatten() {
-        serve(stream, port, Path::new(&state));
+        let state = state.clone();
+        std::thread::spawn(move || serve(stream, port, Path::new(&state)));
     }
     ExitCode::SUCCESS
 }

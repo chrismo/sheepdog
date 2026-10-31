@@ -9,21 +9,20 @@ use std::path::{Path, PathBuf};
 
 pub const STAGES: [&str; 7] = ["build", "push", "ci", "review", "bot", "threads", "merge"];
 
-/// The stage a NEXT step's key belongs to; None for the guards (running,
-/// attached, question, budget...), which hold every stage.
+/// Each stage's NEXT keys (tests check them against src/next.rs).
+const KEYS: [(&str, &[&str]); 7] = [
+    ("build", &["implement", "nothing", "nothing-dirty", "reset-dirty", "dirty", "default"]),
+    ("push", &["push", "behind", "conflict", "restack-undone", "open-pr", "retarget", "fetch", "ship-parent", "take"]),
+    ("ci", &["ci-red", "ci-wait", "ci-rerun", "ci-blocked", "ci-config", "verify-red"]),
+    ("review", &["review", "review-fix", "review-wait", "review-decide", "submit", "yours"]),
+    ("bot", &["bot-trigger", "bot-wait", "bot-silent"]),
+    // "bot" is sd act address on the bot's threads.
+    ("threads", &["bot", "answer", "human", "read"]),
+    ("merge", &["ready", "draft", "merge-wait", "blocked", "merged", "closed", "parent-wait", "author-wait", "parent-closed"]),
+];
+
 fn key_stage(key: &str) -> Option<&'static str> {
-    Some(match key {
-        "implement" | "nothing-dirty" | "reset-dirty" | "dirty" | "default" => "build",
-        "push" | "behind" | "conflict" | "restack-undone" | "open-pr" | "describe" | "retarget" | "fetch"
-        | "ship-parent" | "take" => "push",
-        "ci-wait" | "ci-fix" | "ci-rerun" | "ci-blocked" | "ci-config" | "verify-red" => "ci",
-        "review" | "review-wait" | "review-decide" | "submit" | "yours" => "review",
-        "bot" | "bot-trigger" | "bot-wait" | "bot-silent" => "bot",
-        "address" | "answer" | "human" | "read" => "threads",
-        "ready" | "draft" | "merge-wait" | "blocked" | "merged" | "parent-wait" | "author-wait" | "closed"
-        | "parent-closed" => "merge",
-        _ => return None,
-    })
+    KEYS.iter().find(|(_, ks)| ks.contains(&key)).map(|(stage, _)| *stage)
 }
 
 fn count(n: f64, one: &str) -> String {
@@ -76,8 +75,10 @@ pub fn stages(s: &Value) -> Vec<Value> {
         .map(|&stage| {
             let lit = next.iter().find(|x| key_stage(&t(x, "key")) == Some(stage));
             let (status, text) = base(s, stage);
-            match lit {
-                Some(x) => json!({"stage": stage, "status": "cur", "text": t(x, "key"), "who": at(x, "who")}),
+            match lit.map(|x| (t(x, "key"), at(x, "who"))) {
+                Some((k, _)) if k == "merged" => json!({"stage": stage, "status": "done", "text": k, "who": null}),
+                Some((k, _)) if k == "closed" => json!({"stage": stage, "status": "red", "text": k, "who": null}),
+                Some((k, who)) => json!({"stage": stage, "status": "cur", "text": k, "who": who}),
                 None => json!({"stage": stage, "status": status, "text": text, "who": null}),
             }
         })
@@ -245,10 +246,48 @@ mod tests {
         assert_eq!(t(&idle, "lead.key"), "idle");
     }
 
+    /// Keys that hold every stage, so light none.
+    const GUARDS: [&str; 9] = ["attached", "budget", "errors", "failed", "foreign", "gh-wait", "question", "running", "stale"];
+
+    /// The keys src/next.rs gives its steps.
+    fn next_keys() -> Vec<String> {
+        let re = regex::Regex::new(r#"\b(?:step|agent)\((?:hold, *)?"([a-z-]+)""#).unwrap();
+        let src = [include_str!("../next.rs"), include_str!("../next/derived.rs")].concat();
+        let mut keys: Vec<String> = re.captures_iter(&src).map(|c| c[1].to_string()).collect();
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+
     #[test]
-    fn every_agent_step_key_has_a_stage() {
-        for k in ["implement", "review", "address", "ci-fix", "describe"] {
-            assert!(key_stage(k).is_some(), "{k}");
+    fn every_key_next_gives_has_a_stage_or_is_a_guard() {
+        let keys = next_keys();
+        assert!(keys.len() > 40, "{keys:?}");
+        for k in &keys {
+            assert!(key_stage(k).is_some() != GUARDS.contains(&k.as_str()), "{k}: a stage, or a guard, not both");
         }
+    }
+
+    #[test]
+    fn the_stage_table_names_no_key_next_never_gives() {
+        let keys = next_keys();
+        for k in KEYS.iter().flat_map(|(_, ks)| ks.iter()).chain(GUARDS.iter()) {
+            assert!(keys.iter().any(|x| x == k), "{k}");
+        }
+    }
+
+    #[test]
+    fn the_bot_key_addresses_threads_and_the_fix_keys_light_their_stages() {
+        assert_eq!(key_stage("bot"), Some("threads"));
+        assert_eq!(key_stage("ci-red"), Some("ci"));
+        assert_eq!(key_stage("review-fix"), Some("review"));
+    }
+
+    #[test]
+    fn a_merged_pr_is_done_and_a_closed_one_red() {
+        let s = with(open(), "next", json!([{"key": "merged", "who": "you"}]));
+        assert_eq!(one(s, "merge"), "done:merged");
+        let s = with(open(), "next", json!([{"key": "closed", "who": "you"}]));
+        assert_eq!(one(s, "merge"), "red:closed");
     }
 }

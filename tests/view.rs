@@ -11,6 +11,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Stdio};
+use std::time::{Duration, Instant};
 
 /// A running sd view, killed when dropped.
 struct Server {
@@ -177,6 +178,18 @@ fn it_keeps_serving_after_a_request() {
     for _ in 0..3 {
         assert_eq!(s.get("/api/flock").0, 200);
     }
+}
+
+// A browser opens sockets it may never send on (preconnect): one mustn't
+// hold up the request behind it.
+#[test]
+fn an_idle_connection_doesnt_hold_up_the_next() {
+    let sd = sd();
+    let s = serve(&sd);
+    let _idle = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+    let t = Instant::now();
+    assert_eq!(s.get("/api/flock").0, 200);
+    assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
 }
 
 #[test]
