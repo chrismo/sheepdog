@@ -231,12 +231,15 @@ function renderDetail(b) {
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
       <div class="meta"><span>${prLink(b)}</span>${usd(b)}</div></div>
     <div class="dgrid">
-      <div class="col"><div class="panel flow"><h3>Flow</h3>${flowSvg(b.flow || {})}</div></div>
-      <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}</div>${owedHtml(b.owed || {})}</div>
+      <div class="col"><div class="panel flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div></div>
+      <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
 }
 
-const openId = () => { const m = location.hash.match(/^#b=(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
+function openId() {
+  const m = location.hash.match(/^#b=(.+)$/);
+  try { return m ? decodeURIComponent(m[1]) : null; } catch { return null; }
+}
 
 async function loadDetail(id) {
   const back = `<button class="back" type="button" data-back>← all branches</button>`;
@@ -245,6 +248,7 @@ async function loadDetail(id) {
     const b = r.ok ? await r.json() : null;
     if (openId() !== id) return;
     if (r.status === 404) {
+      shown = "";
       $("detail").innerHTML = `${back}<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`;
     } else if (!r.ok) {
       throw new Error(r.status);

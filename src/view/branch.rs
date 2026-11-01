@@ -83,15 +83,23 @@ fn owed(s: &Value) -> Value {
     json!({"findings": findings, "failing": failing, "question": question, "threads": threads})
 }
 
+/// None for an id the cache listing doesn't have. An unreadable file's
+/// card has null flow, next and owed.
 pub fn detail(state: &Path, id: &str) -> Option<Value> {
     let c: Cached = flock::cached(state).into_iter().find(|c| c.id == id)?;
     let mut card = flock::card(&c);
-    let s = c.doc.as_ref().map_or(&Value::Null, |d| at(d, "state"));
-    let usage = fs::read(state.join("usage.sup")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
-    let repo_dir = id.split_once('/').map_or("", |(d, _)| d);
-    card["flow"] = flow(s, &usage, repo_dir, &c.branch);
-    card["next"] = at(s, "next").clone();
-    card["owed"] = owed(s);
+    let (flow_, next, owed_) = match &c.doc {
+        None => (Value::Null, Value::Null, Value::Null),
+        Some(d) => {
+            let s = at(d, "state");
+            let usage = fs::read(state.join("usage.sup")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+            let repo_dir = id.split_once('/').map_or("", |(d, _)| d);
+            (flow(s, &usage, repo_dir, &c.branch), at(s, "next").clone(), owed(s))
+        }
+    };
+    card["flow"] = flow_;
+    card["next"] = next;
+    card["owed"] = owed_;
     Some(card)
 }
 

@@ -133,10 +133,14 @@ fn an_unreadable_cache_file_is_listed_as_unreadable() {
     let f = sd.tmp.join(format!("state/branches/{}/torn.json", sheepdog::watch::repo_key("/src/sheepdog")));
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, "{\"state\":").unwrap();
-    let b = &serve(&sd).flock()["branches"][0];
+    let s = serve(&sd);
+    let b = &s.flock()["branches"][0];
     assert_eq!(b["branch"], "torn");
     assert_eq!(b["lead"]["who"], "wait");
     assert_has(b["lead"]["say"].as_str().unwrap(), &["unreadable"]);
+    let (code, d) = branch(&s, b["id"].as_str().unwrap());
+    assert_eq!(code, 200);
+    assert_eq!((&d["flow"], &d["owed"], &d["next"]), (&Value::Null, &Value::Null, &Value::Null));
 }
 
 #[test]
