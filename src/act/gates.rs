@@ -32,10 +32,12 @@ pub const MIGRATED: &[Migrated] = &[
 ];
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
-/// own fetch: sd state doesn't fetch.
+/// own fetch: sd state doesn't fetch. Only sd act push asks this gate:
+/// ship, address and ci-fix call push_branch directly, so FOREIGN_AUTHORS
+/// (#356) doesn't hold their pushes yet (#386).
 pub fn push(d: &Derived) -> Gate {
     let Derived {
-        open, verify_red, undone, parent_unpushed,
+        open, verify_red, undone, parent_unpushed, foreign_authors,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
@@ -57,8 +59,12 @@ pub fn push(d: &Derived) -> Gate {
         rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
         rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
         rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
+        rule(FOREIGN_AUTHORS, Level::Soft, *foreign_authors, "look at them, then sd act push --force"),
     ])
 }
+
+pub const FOREIGN_AUTHORS: &str =
+    "the push would remove commits someone else made from the remote (sd state --json: push.foreign_authors): look at them first";
 
 /// address's reasons; address::said puts each in the record's words.
 pub mod addr {
@@ -93,7 +99,7 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
         unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
-        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _,
+        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _,
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
@@ -160,7 +166,7 @@ pub fn implement(d: &Derived) -> Gate {
         fixing: _, findings_declined: _,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, stale: _, lagging: _, locked: _,
         owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _,
-        verify_red: _, foreign: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
+        verify_red: _, foreign: _, foreign_authors: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
         push_dirty: _, parent_unpushed: _, empty: _, chase: _, undone: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
         restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
@@ -198,7 +204,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         pr_null, has_pr, to_push, unpushed, ci_held, verify_red, ci_verdict, ci_for_head, undone, parent_unpushed,
         own_base: _, running: _, reviewer: _, open: _, merged: _, closed: _, errors: _, stale: _, lagging: _, locked: _,
         owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _, tasked: _,
-        foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
+        foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
         empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _,
         gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
         parent_closed: _, parent_merged: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
@@ -292,6 +298,18 @@ mod tests {
         let d = Derived { open: true, parent_unpushed: true, verify_red: true, ..Derived::default() };
         assert_eq!(push(&d), Gate::Soft(vec!["verify is red at HEAD".into(), "the parent branch isn't on the remote yet".into()]));
         assert!(matches!(push(&Derived::default()), Gate::Soft(_)));
+    }
+
+    #[test]
+    fn push_refuses_to_remove_commits_someone_else_made_from_the_remote_unless_forced_356() {
+        let diverged = Derived { open: true, unpushed: true, behind_remote: true, foreign_authors: true, ..Derived::default() };
+        assert_eq!(push(&diverged), Gate::Soft(vec![FOREIGN_AUTHORS.into()]));
+        assert_eq!(push(&Derived { foreign_authors: false, ..diverged }), Gate::Go);
+    }
+
+    #[test]
+    fn push_never_removes_someone_elses_commits_unforced_on_generated_states() {
+        check("push over foreign authors", |d| if d.foreign_authors && push(d).runs() { Err("push runs".into()) } else { Ok(()) });
     }
 
     #[test]

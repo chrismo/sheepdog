@@ -739,6 +739,7 @@ struct Facts {
     by_tree: bool,
     conflict: Value,
     replays_parent: Value,
+    foreign_authors: (Value, Value),
     undone: i64,
     remote_sha: String,
     ahead: i64,
@@ -999,6 +1000,7 @@ fn assemble(s: &Facts) -> Value {
                  "undone": s.undone, "replays_parent": s.replays_parent},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
+                 "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1,
                  "held": s.held},
         "fresh": if s.gh_ok && s.parent_ok { json!(s.stale.is_empty()) } else { Value::Null },
         "stale": s.stale,
@@ -1124,6 +1126,115 @@ fn replays_parent(dir: &str, head: &str, old_base: &str, parent_merged: &Value, 
     let Some(list) = git_out(dir, &["rev-list", "--topo-order", &format!("{old_base}..{head}")]) else { return Value::Null };
     let commits = parent_commits(parent_pr);
     json!(list.lines().filter(|c| commits.contains(*c)).collect::<Vec<_>>())
+}
+
+/// O4: <branch>'s worktree has uncommitted changes (#143, #178); null when
+/// it's checked out nowhere or git status fails.
+fn worktree_dirty(dir: &str, branch: &str) -> Value {
+    let wt = worktree_for(dir, branch);
+    if wt.is_empty() {
+        return Value::Null;
+    }
+    let o = git(&wt, &["--no-optional-locks", "status", "--porcelain"]);
+    if o.ok {
+        json!(!o.stdout.is_empty())
+    } else {
+        Value::Null
+    }
+}
+
+/// O4: the author and committer emails that aren't ours (others_on) on the
+/// commits a push would remove from the remote, <removed> past <not>, newest
+/// first (#356), and those commits' ids: each one's patch-id, or its SHA
+/// when it has none (a merge, an empty commit). A commit whose id is in
+/// branch.<b>.sd-authors-seen (sd act push --force records them) was looked
+/// at, and one whose patch-id is on <target> (squash-merged alone) loses
+/// nothing: neither counts. A patch-id outlives a restack. Both [] when the
+/// push removes nothing (<removed> None), null for a followed PR
+/// (#250), without user.email, or when git fails. <viewer> is gh's login,
+/// empty when gh failed: a noreply author is then someone else's, so the
+/// push holds. Not null: unknown doesn't hold it, and a teammate's noreply
+/// address would go through with ours.
+fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
+    let unknown = (Value::Null, Value::Null);
+    if reviewer {
+        return unknown;
+    }
+    let Some(me) = git_out(dir, &["config", "user.email"]).filter(|m| !m.is_empty()) else { return unknown };
+    let Some(removed) = removed else { return (json!([]), json!([])) };
+    let mut range = vec![removed, "--not"];
+    range.extend(not.iter().copied().filter(|r| !r.is_empty()));
+    let range = |args: &[&'static str]| -> Vec<&str> { args.iter().copied().chain(range.iter().copied()).collect() };
+    let Some(log) = git_out(dir, &range(&["log", "--format=%H%x09%ae%x09%ce"])) else { return unknown };
+    let theirs: Vec<(&str, Vec<&str>)> = log
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let (sha, others) = (f.next()?, others_on(&me, viewer, f.next()?, f.next()?));
+            (!others.is_empty()).then_some((sha, others))
+        })
+        .collect();
+    let ids = if theirs.is_empty() { Some(HashMap::new()) } else {
+        patch_ids(dir, &range(&PATCH_LOG))
+    };
+    let landed = if theirs.is_empty() || target.is_empty() { Some(HashMap::new()) } else {
+        patch_ids(dir, &[&PATCH_LOG[..], &[target, "--not", removed]].concat())
+    };
+    let (Some(ids), Some(landed)) = (ids, landed) else { return unknown };
+    let mut skip = config_all(dir, branch, "sd-authors-seen");
+    skip.extend(landed.into_values());
+    let (mut out, mut unseen): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+    for (sha, others) in &theirs {
+        let id = ids.get(*sha).map_or(*sha, String::as_str);
+        if skip.iter().any(|s| s == id) {
+            continue;
+        }
+        unseen.push(id);
+        for p in others {
+            if !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
+                out.push(p);
+            }
+        }
+    }
+    (json!(out), json!(unseen))
+}
+
+/// A commit's emails other than <me>, case aside. GitHub commits its web
+/// actions (an edit, Update branch, a suggestion) as noreply@github.com, so
+/// that committer stands for the author and is never named (#356). With the
+/// account's email private it authors them as <viewer>'s noreply address,
+/// also ours.
+fn others_on<'a>(me: &str, viewer: &str, author: &'a str, committer: &'a str) -> Vec<&'a str> {
+    let mine = |e: &str| e.eq_ignore_ascii_case(me) || is_noreply_of(viewer, e);
+    let mut others = Vec::new();
+    if !mine(author) {
+        others.push(author);
+    }
+    if !mine(committer) && !committer.eq_ignore_ascii_case("noreply@github.com") {
+        others.push(committer);
+    }
+    others
+}
+
+/// <email> is <login>'s GitHub noreply address: <id>+<login>@ or (accounts
+/// from before 2017) <login>@users.noreply.github.com, case aside.
+fn is_noreply_of(login: &str, email: &str) -> bool {
+    let Some((local, domain)) = email.rsplit_once('@') else { return false };
+    let name = local.split_once('+').map_or(local, |(id, name)| if id.bytes().all(|b| b.is_ascii_digit()) { name } else { local });
+    !login.is_empty() && domain.eq_ignore_ascii_case("users.noreply.github.com") && name.eq_ignore_ascii_case(login)
+}
+
+const PATCH_LOG: [&str; 5] = ["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"];
+
+/// SHA → patch-id for the commits git <log_args> (a log -p) lists; a commit
+/// with no diff has none. None when git fails.
+fn patch_ids(dir: &str, log_args: &[&str]) -> Option<HashMap<String, String>> {
+    let patches = git(dir, log_args);
+    let o = git::git_input(dir, &["patch-id", "--stable"], Some(patches.stdout.as_bytes()));
+    if !(patches.ok && o.ok) {
+        return None;
+    }
+    Some(o.stdout.lines().filter_map(|l| l.split_once(' ')).map(|(id, sha)| (sha.to_string(), id.to_string())).collect())
 }
 
 /// sd state --json <branch>: its record, NEXT included, as seen from <dir>,
@@ -1380,16 +1491,9 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     if remote_ours == true && ahead == 0 && push_behind > 0 {
         remote_made = json!(made_here(dir, &format!("{head}..{remote_sha}")));
     }
-    // dirty: the worktree has uncommitted changes (#143, #178); null when the
-    // branch is checked out nowhere or git status fails.
-    let mut dirty = Value::Null;
-    let wt = worktree_for(dir, branch);
-    if !wt.is_empty() {
-        let o = git(&wt, &["--no-optional-locks", "status", "--porcelain"]);
-        if o.ok {
-            dirty = json!(!o.stdout.is_empty());
-        }
-    }
+    // what push_branch would replace: diverged, or a drop of commits made here
+    let removes = remote_ours == true && push_behind > 0 && (ahead > 0 || remote_made == true);
+    let dirty = worktree_dirty(dir, branch);
     // An agent step's commit that changed CI config (sd act's branch.<b>.sd-held:
     // the commit, then the paths): held until sd act push, or until the commit
     // is on the remote some other way (#124).
@@ -1532,6 +1636,8 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let facts = Facts {
         branch: branch.into(),
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
+        foreign_authors: foreign_authors(dir, branch, reviewer, &viewer, removes.then_some(remote_sha.as_str()), &target_ref,
+            &[&head, &target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         head: head.clone(),
         task: cfg("sd-task"),
         reviewer,

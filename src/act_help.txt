@@ -163,6 +163,8 @@ Verbs:
             authored and committed here (take it back with merge
             --ff-only), or when the worktree has uncommitted or untracked
             changes (a soft or mixed reset: commit or remove them first).
+            Refuses, unless --force, to remove commits someone else made
+            from the remote (sd state's push.foreign_authors, #356).
             Releases a CI config hold: chrismo pushing is the approval.
             Refuses the default branch (#159)
   verify   run settings.verify in the branch's worktree, zero tokens. Pass:
@@ -393,7 +395,8 @@ replies didn't post), .sd-lock ("<pid>@<host> <time>" while attached),
 .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
 .sd-accepted-after (the .sd-bot-triggered that review --accept followed),
-.sd-held (the CI config hold: the commit, then the paths, one per line);
+.sd-held (the CI config hold: the commit, then the paths, one per line),
+.sd-authors-seen (patch-ids of others' commits push --force took past);
 sheepdog.repo (global) lists the enrolled repos.
 
 <branch> defaults to the current one. A verb prints what it did, not what to
