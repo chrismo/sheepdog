@@ -4,7 +4,7 @@
 
 use super::{die, repo_remote};
 use crate::git::{git, git_out, is_ancestor, rev};
-use crate::proc;
+use crate::gh;
 
 /// A path covers itself and what's under it.
 const PROTECTED_DEFAULT: [&str; 7] =
@@ -162,8 +162,8 @@ fn refusal(doing: &str, paths: &[String], then: &str) -> String {
 /// commit is kept in <wt>").
 pub fn pr_gate(number: &str, url: &str, step: &str, doing: &str, left: &str) {
     let pr = if url.is_empty() { number } else { url };
-    let o = proc::run("gh", &["pr", "view", pr, "--json", "state", "--jq", ".state"], None, None);
-    let read = if o.ok { Ok(o.stdout.trim().to_string()) } else { Err(o.stderr.trim().replace('\n', " ")) };
+    let o = gh::call(&["pr", "view", pr, "--json", "state", "--jq", ".state"], gh::READ);
+    let read = if o.ok() { Ok(o.stdout.trim().to_string()) } else { Err(o.stderr.trim().replace('\n', " ")) };
     if let Some(why) = pr_refusal(number, step, doing, left, read) {
         die(why);
     }

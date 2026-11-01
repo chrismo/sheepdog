@@ -2,7 +2,7 @@
 // commits, CI and merge from GitHub, asked on demand.
 
 use super::branch;
-use crate::proc;
+use crate::gh;
 use crate::val::{at, t};
 use serde_json::{json, Value};
 
@@ -61,10 +61,10 @@ fn pr_ref(url: &str) -> Option<(&str, &str, &str, &str)> {
 fn github(url: &str) -> (Value, Value) {
     let Some((host, owner, repo, n)) = pr_ref(url) else { return (Value::Null, Value::Null) };
     let (q, o, r, num) = (format!("query={QUERY}"), format!("owner={owner}"), format!("repo={repo}"), format!("number={n}"));
-    let out = proc::with_timeout(GH_SECS, "gh", &["api", "graphql", "--hostname", host, "-f", &q, "-f", &o, "-f", &r, "-F", &num], None);
+    let out = gh::call(&["api", "graphql", "--hostname", host, "-f", &q, "-f", &o, "-f", &r, "-F", &num], GH_SECS);
     let pr = serde_json::from_str::<Value>(&out.stdout).ok().map(|v| at(&v, "data.repository.pullRequest").clone());
     match pr {
-        Some(pr) if out.ok && pr.is_object() => (history(&pr), Value::Null),
+        Some(pr) if out.ok() && pr.is_object() => (history(&pr), Value::Null),
         _ if out.stderr.trim().is_empty() => (Value::Null, json!("gh: no PR in its answer")),
         _ => (Value::Null, json!(format!("gh: {}", out.stderr.trim()))),
     }

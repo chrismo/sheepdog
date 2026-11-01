@@ -14,7 +14,7 @@ use super::{cfg, die, enforce, lock_recheck, state_json, Args, Gate, Go};
 use crate::git::{git, rev, worktree_for};
 use crate::next::{round_key, yes, Derived};
 use crate::state::unbot;
-use crate::{decisions, proc, running};
+use crate::{decisions, gh, running};
 use crate::val::{at, sj, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -143,16 +143,10 @@ fn gated(b: &str, s: &Value, a: &Args) -> Option<Go> {
     }
 }
 
-/// gh api graphql with these -f fields: its answer, or None (gh said why).
-fn gql(fields: &[(&str, &str)]) -> Option<String> {
-    let fields: Vec<String> = fields.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    let mut args = vec!["api", "graphql"];
-    for f in &fields {
-        args.extend(["-f", f.as_str()]);
-    }
-    let o = proc::run("gh", &args, None, None);
-    eprint!("{}", o.stderr);
-    o.ok.then_some(o.stdout)
+/// <c>'s answer, or None, gh's stderr passed on either way.
+fn answer(c: gh::Call) -> Option<String> {
+    eprint!("{}", c.stderr);
+    c.ok().then_some(c.stdout)
 }
 
 /// The owed items' text, from the nodes(ids:) answer <n>, each with who else
@@ -351,30 +345,19 @@ fn post<'p>(
     for it in plan.iter().filter(|it| !is_ask(it) && field(it, "type") == "thread") {
         let (id, at) = (field(it, "id"), place(it));
         let reply = format!("{prefix}{}", field(it, "reply"));
-        let q = "mutation($thread: ID!, $body: String!) {
-          addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { id } } }";
-        if gql(&[("query", q), ("thread", &id), ("body", &reply)]).is_none() {
+        if answer(gh::reply_to_thread(&id, &reply)).is_none() {
             eprintln!("sd act: replying to {at} failed");
             ok = false;
             continue;
         }
         answered.push(it);
-        let q = "mutation($thread: ID!) { resolveReviewThread(input: {threadId: $thread}) { thread { id } } }";
-        if field(it, "action") != "pushback" && gql(&[("query", q), ("thread", &id)]).is_none() {
+        if field(it, "action") != "pushback" && answer(gh::resolve_thread(&id)).is_none() {
             eprintln!("sd act: resolving {at} failed");
             ok = false;
         }
     }
     let Some(body) = pr_comment(&prefix, plan) else { return Ok(ok) };
-    // By URL, not {owner}/{repo}: gh's default repo may be a fork.
-    let q = "query($url: URI!) { resource(url: $url) { ... on PullRequest { id } } }";
-    let pr_id = gql(&[("url", pr_url), ("query", q)])
-        .and_then(|o| crate::config::one_value(&o))
-        .map(|v| t(&v, "data.resource.id"))
-        .filter(|id| !id.is_empty());
-    let q = "mutation($subject: ID!, $body: String!) { addComment(input: {subjectId: $subject, body: $body}) { clientMutationId } }";
-    let posted = pr_id.is_some_and(|id| gql(&[("query", q), ("subject", &id), ("body", &body)]).is_some());
-    if !posted {
+    if answer(gh::comment_on_pr(pr_url, &body)).is_none() {
         eprintln!("sd act: posting the PR comment failed");
         return Ok(false);
     }
@@ -427,7 +410,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     let ids: Vec<String> = owed.iter().take(100).map(|it| t(it, "id")).collect();
     let mut fields = vec![("query", NODES_Q)];
     fields.extend(ids.iter().map(|id| ("ids[]", id.as_str())));
-    let nodes = gql(&fields).unwrap_or_else(|| die("couldn't fetch the findings' text"));
+    let nodes = answer(gh::graphql(&fields, gh::READ)).unwrap_or_else(|| die("couldn't fetch the findings' text"));
     let nodes = crate::config::one_value(&nodes).unwrap_or_else(|| die("couldn't read the findings' text"));
     let bots: Vec<String> = cfg("settings.botLogin", b).lines().map(str::to_string).collect();
     let all = findings(&nodes, &bots);

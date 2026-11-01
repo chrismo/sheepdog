@@ -16,7 +16,7 @@ use super::{cfg, die, gates, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out};
 use crate::next::Derived;
-use crate::proc;
+use crate::{gh, proc};
 use crate::val::{at, sj, t, text};
 use regex::Regex;
 use serde_json::Value;
@@ -74,7 +74,7 @@ fn failed<'a>(v: &'a Value, list: &str, field: &str, failed: &[&str]) -> Vec<&'a
 }
 
 fn gh_api(path: &str) -> Value {
-    one_value(&proc::run("gh", &["api", path], None, None).stdout).unwrap_or_default()
+    one_value(&gh::call(&["api", path], gh::READ).stdout).unwrap_or_default()
 }
 
 /// The failed tasks, (key, id), in `rwx results --json`'s answer: from its
@@ -136,7 +136,7 @@ fn ci_logs(sha: &str) -> String {
         if let Some(job) = gha_job.captures(&url) {
             let (run, job) = (&job[1], &job[2]);
             logs += &format!("### failed steps (gh run view {run} --job {job} --log-failed)\n");
-            let log = proc::run("gh", &["run", "view", run, "--job", job, "--log-failed"], None, None);
+            let log = gh::call(&["run", "view", run, "--job", job, "--log-failed"], gh::LOG);
             logs += &tail(&log.stdout, CI_LOG_TAIL);
         }
     }

@@ -5,7 +5,6 @@ use super::{cfg, die, no_base_why, state_json};
 use crate::config::one_value;
 use crate::git::{git, rev, strip_nl};
 use crate::pins::{self, Pin};
-use crate::proc;
 use crate::time;
 use crate::val::{at, n, on, sj, t, text};
 use regex::Regex;
@@ -186,11 +185,9 @@ pub fn trigger(b: &str, remote: &str, force: bool) {
     }
     let (number, url) = (t(&s, "pr.number"), t(&s, "pr.url"));
     let Some((host, repo)) = pr_repo(&url) else { die(format!("can't tell PR #{number}'s repo from its URL: {url}")) };
-    let path = format!("repos/{repo}/issues/{number}/comments");
-    let body = format!("body={command}");
-    let o = proc::run("gh", &["api", &path, "--hostname", &host, "-f", &body, "--jq", r#".created_at // """#], None, None);
+    let o = crate::gh::post_issue_comment(&host, &repo, &number, &command);
     eprint!("{}", o.stderr);
-    if !o.ok {
+    if !o.ok() {
         die("posting the trigger comment failed; nothing pinned");
     }
     let mut when = strip_nl(o.stdout);
