@@ -36,7 +36,8 @@ impl Server {
     fn send(&self, method: &str, path: &str, headers: &[(&str, &str)]) -> (u16, String, String) {
         let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
         let hs: String = headers.iter().map(|(k, v)| format!("{k}: {v}\r\n")).collect();
-        write!(s, "{method} {path} HTTP/1.1\r\n{hs}Content-Length: 2\r\nConnection: close\r\n\r\n{{}}").unwrap();
+        let body = if method == "POST" { "Content-Length: 2\r\n\r\n{}" } else { "\r\n" };
+        write!(s, "{method} {path} HTTP/1.1\r\n{hs}Connection: close\r\n{body}").unwrap();
         let mut resp = String::new();
         s.read_to_string(&mut resp).unwrap();
         let (head, body) = resp.split_once("\r\n\r\n").unwrap_or((&resp, ""));
