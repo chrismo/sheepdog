@@ -30,7 +30,8 @@ use super::commands::status;
 use super::die;
 use super::review::short;
 use super::start::{destination, git_on_stderr, start_default, start_hook, start_point};
-use crate::git::{git, git_out, is_ancestor, main_worktree, pr_head_ref, rev, show_ref, worktree_for};
+use crate::git::{git, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for};
+use crate::pins::{self, Pin};
 use std::path::Path;
 
 pub const REVIEWER: &str = "reviewer";
@@ -143,7 +144,7 @@ fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>
         }
     }
     if let Some(h) = pr_head {
-        let o = git(".", &["update-ref", &pr_head_ref(b), h]);
+        let o = pins::set(".", b, Pin::PrHead, h);
         if !o.ok {
             eprint!("{}", o.stderr);
             die(format!("couldn't record the PR's head for {b}"));
@@ -159,7 +160,7 @@ fn settle(src: &str, b: &str, n: &str, pr_head: Option<&str>, from: Option<&str>
                 for (k, _) in keys {
                     git(".", &["config", "--unset", &format!("branch.{b}.{k}")]);
                 }
-                git(".", &["update-ref", "-d", &pr_head_ref(b)]);
+                pins::delete(".", b, Pin::PrHead);
             }
             die("git worktree add failed");
         }
@@ -178,9 +179,8 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
     if let Some(f) = following(n) {
         return settle(&src, &f, n, None, None);
     }
-    let fetched = format!("refs/sheepdog/{b}/pr-fetched");
-    let pr_head = fetch_pr(&fetched, n, remote);
-    git(".", &["update-ref", "-d", &fetched]);
+    let pr_head = fetch_pr(&pins::name(b, Pin::PrFetched), n, remote);
+    pins::delete(".", b, Pin::PrFetched);
     let default = start_default(remote);
     let main = default.as_deref().and_then(|d| start_point(remote, d));
     let here = git_out(".", &["branch", "--show-current"]).unwrap_or_default();
@@ -188,7 +188,7 @@ pub fn follow(b: &str, n: &str, remote: &str) -> i32 {
         unclaimed(&here, n);
         let mb = met(&here, &pr_head);
         if mb.is_none() {
-            git(".", &["update-ref", "-d", &pr_head_ref(&here)]);
+            pins::delete(".", &here, Pin::PrHead);
         }
         return settle(&src, &here, n, mb.as_deref(), None);
     }
@@ -220,15 +220,14 @@ pub fn fetch(b: &str, remote: &str) {
         die(format!("{wt} has uncommitted changes"));
     }
     let head = rev(".", &format!("refs/heads/{b}"));
-    let last = rev(".", &pr_head_ref(b));
+    let last = pins::commit(".", b, Pin::PrHead);
     // pr-head moves only once the branch has: it's what this check trusts.
     // With none recorded, the head just fetched stands in.
-    let fetched = format!("refs/sheepdog/{b}/pr-fetched");
-    let theirs = fetch_pr(&fetched, &n, remote);
+    let theirs = fetch_pr(&pins::name(b, Pin::PrFetched), &n, remote);
     let known = if last.is_empty() { &theirs } else { &last };
     if head != *known && !is_ancestor(".", &head, known) {
-        git(".", &["update-ref", "-d", &fetched]);
-        die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {} && sd act fetch", pr_head_ref(b)));
+        pins::delete(".", b, Pin::PrFetched);
+        die(format!("{b} has commits the PR never had: they're yours; move them to a branch of your own, then git reset --hard {} && sd act fetch", pins::name(b, Pin::PrHead)));
     }
     let moved = if theirs == head {
         None
@@ -237,12 +236,12 @@ pub fn fetch(b: &str, remote: &str) {
     } else {
         Some(git(&wt, &["reset", "--quiet", "--keep", &theirs]))
     };
-    git(".", &["update-ref", "-d", &fetched]);
+    pins::delete(".", b, Pin::PrFetched);
     if let Some(o) = moved.filter(|o| !o.ok) {
         eprint!("{}", o.stderr);
         die(format!("couldn't move {b} to the PR's head"));
     }
-    let o = git(".", &["update-ref", &pr_head_ref(b), &theirs]);
+    let o = pins::set(".", b, Pin::PrHead, &theirs);
     if !o.ok {
         eprint!("{}", o.stderr);
         die(format!("couldn't record the PR's head for {b}"));

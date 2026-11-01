@@ -5,7 +5,8 @@
 use super::commands::step_timeout;
 use super::start::start_default;
 use super::{attached_check, cfg, die, lock_recheck, or_die, repo_remote};
-use crate::git::{git, git_input, git_out, main_worktree, oid, rev, show_ref, strip_nl, worktree_for, worktree_mark};
+use crate::git::{git, git_out, main_worktree, rev, show_ref, worktree_for, worktree_mark};
+use crate::pins::{self, Pin};
 use crate::val::{at, on, t};
 use crate::{config, decisions, harness, json, next, rules, running, state, usage};
 use serde_json::{json, Value};
@@ -239,10 +240,7 @@ fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str, onto: 
     let head = rev(".", &format!("refs/heads/{b}"));
     let recorded = worktree_mark(wt).filter(|_| !head.is_empty()).is_some_and(|mark| {
         let rec = question_record(&head, step, &mark, text, kind, onto);
-        let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
-        let did = if kind == "gave-up" { "gave up" } else { "needs input" };
-        let msg = format!("sd act {step}: {did}");
-        obj.ok && git(".", &["update-ref", "-m", &msg, &format!("refs/sheepdog/{b}/question"), &strip_nl(obj.stdout)]).ok
+        pins::store(".", b, Pin::Question, &rec, None).ok
     });
     if !recorded {
         eprintln!("sd act: warning: couldn't record the question on {b}, so NEXT won't show it");
@@ -301,12 +299,10 @@ pub fn question_answered(b: &str, answer: &str) {
     if answer.is_empty() {
         return;
     }
-    let q = format!("refs/sheepdog/{b}/question");
-    let asked = git(".", &["cat-file", "blob", &q]);
-    if let Some(rec) = config::one_value(&asked.stdout).filter(|_| asked.ok) {
+    if let Some(rec) = pins::read(".", b, Pin::Question).and_then(|q| config::one_value(&q)) {
         decisions::append(b, &[decisions::entry("answered", &t(&rec, "head"), &t(&rec, "step"), &t(&rec, "text"), answer)]);
     }
-    must(&["update-ref", "-d", &q]);
+    pins::delete(".", b, Pin::Question).or_exit();
     answer_drop(b);
 }
 
@@ -325,17 +321,14 @@ pub fn answer_store(b: &str, step: &str, a: &super::Args) {
         return;
     }
     let text = &a.answer;
-    let q = oid(".", &format!("refs/sheepdog/{b}/question"));
-    let rec = answer_record(&q, step, text);
-    let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
-    let msg = format!("sd act answer: {step} can't run yet");
-    if q.is_empty() || !obj.ok || !git(".", &["update-ref", "-m", &msg, &format!("refs/sheepdog/{b}/answer"), &strip_nl(obj.stdout)]).ok {
+    let q = pins::oid(".", b, Pin::Question);
+    if q.is_empty() || !pins::store(".", b, Pin::Answer, &answer_record(&q, step, text), None).ok {
         die(format!("couldn't store the answer on {b}"));
     }
 }
 
 pub fn answer_drop(b: &str) {
-    git(".", &["update-ref", "-d", &format!("refs/sheepdog/{b}/answer")]);
+    pins::delete(".", b, Pin::Answer);
 }
 
 /// <a> with the answer stored for <b>'s standing <step> question, when <a>

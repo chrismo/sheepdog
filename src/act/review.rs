@@ -9,7 +9,8 @@
 use super::commands::{status, step_timeout, verify_run};
 use super::{attached_check, cfg, die, no_base_why, plural, state_json};
 use crate::config::one_value;
-use crate::git::{git, git_input, git_out, pin_write, rev, strip_nl, worktree_for};
+use crate::git::{git, git_out, rev, worktree_for};
+use crate::pins::{self, Pin};
 use crate::json;
 use crate::{decisions, harness, limit, proc, running};
 use crate::state::flag_lines;
@@ -62,10 +63,9 @@ fn accepted(rec: &str, head: &str) -> Vec<Value> {
 }
 
 fn accept(b: &str, head: &str, base: &str) {
-    pin_write(".", b, "accepted", head, base).unwrap_or_else(|e| die(e));
-    let findings = git(".", &["cat-file", "blob", &format!("refs/sheepdog/{b}/findings")]);
-    if findings.ok {
-        decisions::append(b, &accepted(&findings.stdout, head));
+    pins::review(".", b, Pin::Accepted, head, base).unwrap_or_else(|e| die(e));
+    if let Some(findings) = pins::read(".", b, Pin::Findings) {
+        decisions::append(b, &accepted(&findings, head));
     }
     let after = format!("branch.{b}.sd-accepted-after");
     match git_out(".", &["config", "--get", &format!("branch.{b}.sd-bot-triggered")]) {
@@ -74,7 +74,7 @@ fn accept(b: &str, head: &str, base: &str) {
             git(".", &["config", "--unset", &after]);
         }
     }
-    must(git(".", &["update-ref", "-d", &format!("refs/sheepdog/{b}/findings")]));
+    must(pins::delete(".", b, Pin::Findings));
     println!("accepted: {b} at {} against {}; pinned accepted", short(head), short(base));
 }
 
@@ -157,10 +157,9 @@ fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
         eprint!("{}", flag_lines(s));
     }
     let (n, blocking) = (findings.len(), blocking(&findings));
-    let findings_ref = format!("refs/sheepdog/{b}/findings");
     if blocking == 0 {
-        pin_write(".", b, "local", head, base).unwrap_or_else(|e| die(e));
-        must(git(".", &["update-ref", "-d", &findings_ref]));
+        pins::review(".", b, Pin::Local, head, base).unwrap_or_else(|e| die(e));
+        must(pins::delete(".", b, Pin::Findings));
         let nits = if n == 0 { String::new() } else { format!(" ({})", plural(n, "nit")) };
         println!("clean: {b} at {} reviewed against {}; pinned local{nits}", short(head), short(base));
         if n > 0 {
@@ -168,11 +167,9 @@ fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
         }
         return;
     }
-    let prev = git(".", &["cat-file", "blob", &findings_ref]);
-    let round = round(if prev.ok { &prev.stdout } else { "" }, on(s, "review.findings.at_head"));
-    let rec = record(head, base, round, &findings);
-    let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
-    if !obj.ok || !git(".", &["update-ref", "-m", &format!("review round {round}"), &findings_ref, &strip_nl(obj.stdout)]).ok {
+    let prev = pins::read(".", b, Pin::Findings).unwrap_or_default();
+    let round = round(&prev, on(s, "review.findings.at_head"));
+    if !pins::store(".", b, Pin::Findings, &record(head, base, round, &findings), None).ok {
         die("couldn't record the findings");
     }
     eprintln!("sd act: {} on {b}, {blocking} blocking (review round {round}); nothing pinned", plural(n, "finding"));

@@ -10,10 +10,11 @@ use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up,
                   question_answered, question_ask, question_gate, question_say, step_session, step_store};
 use super::gates::{self, imp};
 use super::{die, enforce, plural, state_json, Args};
-use crate::git::{git, git_input, git_out, rev, strip_nl};
+use crate::git::{git, git_out, rev};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::next::Derived;
+use crate::pins::{self, Pin};
 use crate::val::{at, sj, t, text};
 use crate::{decisions, json};
 use serde_json::{Map, Value};
@@ -179,9 +180,7 @@ fn answered_record(rec: &Value, fs: &[Map<String, Value>]) -> String {
 /// the round judged (#343).
 fn record_answers(b: &str, rec: &Value, fs: &[Map<String, Value>], head: &str) {
     let blob = answered_record(rec, fs);
-    let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(blob.as_bytes()));
-    let findings_ref = format!("refs/sheepdog/{b}/findings");
-    if !obj.ok || !git(".", &["update-ref", "-m", "review findings answered", &findings_ref, &strip_nl(obj.stdout)]).ok {
+    if !pins::store(".", b, Pin::Findings, &blob, None).ok {
         die("couldn't record the agent's answers to the findings");
     }
     decisions::append(b, &declines(fs, head));

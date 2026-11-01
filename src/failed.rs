@@ -7,13 +7,9 @@
 // reconcile finds past its deadline (and ends) or crashed, and sd watch
 // step's timeout; ending one on a merged or closed PR isn't counted.
 
-use crate::git::{git, git_input, strip_nl};
+use crate::pins::{self, Pin};
 use crate::{json, time};
 use serde_json::{json, Value};
-
-fn name(b: &str) -> String {
-    format!("refs/sheepdog/{b}/failed")
-}
 
 /// <prev>'s since is kept: when the run of failures began.
 fn counted(prev: Option<&Value>, step: &str, harness: &str, now: &str, error: &str) -> Value {
@@ -38,18 +34,15 @@ pub fn record(b: &str, step: &str, harness: &str, error: &str) {
 
 /// record, in the repo at <dir>.
 pub fn record_in(dir: &str, b: &str, step: &str, harness: &str, error: &str) {
-    let prev = git(dir, &["cat-file", "blob", &name(b)]);
-    let prev = serde_json::from_str::<Value>(&prev.stdout).ok().filter(|_| prev.ok).filter(Value::is_object);
+    let prev = pins::read(dir, b, Pin::Failed).and_then(|p| serde_json::from_str::<Value>(&p).ok()).filter(Value::is_object);
     let rec = json::to_string(&counted(prev.as_ref(), step, harness, &time::now_utc().0, error)) + "\n";
-    let obj = git_input(dir, &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
-    let msg = format!("sd: {step} failed");
-    if !obj.ok || !git(dir, &["update-ref", "-m", &msg, &name(b), &strip_nl(obj.stdout)]).ok {
+    if !pins::store(dir, b, Pin::Failed, &rec, None).ok {
         eprintln!("sd: warning: couldn't record the failure on {b}, so NEXT won't count it");
     }
 }
 
 pub fn clear(b: &str) {
-    git(".", &["update-ref", "-d", &name(b)]);
+    pins::delete(".", b, Pin::Failed);
 }
 
 #[cfg(test)]
