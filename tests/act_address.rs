@@ -1107,6 +1107,22 @@ fn a_bot_reply_that_didnt_post_isnt_on_the_decisions_record_343() {
     assert!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/decisions"]).is_none());
 }
 
+// A reply that posted is on record even when resolving its thread fails.
+#[test]
+fn a_bot_reply_that_posted_is_on_the_decisions_record_when_resolving_fails_343() {
+    let sd = sd();
+    sd.state(&[r#".threads.owed_bot = 1 | .threads.items = [
+    {id: "T1", type: "thread", kind: "bot", path: "file.txt", line: 3, outdated: false, last: "review-bot"}]"#]);
+    sd.result(
+        r#"{outcome: "done", commit_message: "Address review", summary: "",
+            items: [{id: "T1", action: "fixed", reply: "Done."}]}"#,
+    );
+    let r = sd.run_env(&[("GH_FAIL_OP", "resolveReviewThread")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["resolving file.txt:3 failed"]);
+    assert_eq!(decisions(&sd, "[.kind, .about, .text]"), "[\"bot-fixed\",\"file.txt:3\",\"Done.\"]");
+}
+
 // What posted is on record even when marking the PR comment's items handled
 // fails after it.
 #[test]

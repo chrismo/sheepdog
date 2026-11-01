@@ -358,13 +358,12 @@ fn post<'p>(
             ok = false;
             continue;
         }
+        answered.push(it);
         let q = "mutation($thread: ID!) { resolveReviewThread(input: {threadId: $thread}) { thread { id } } }";
         if field(it, "action") != "pushback" && gql(&[("query", q), ("thread", &id)]).is_none() {
             eprintln!("sd act: resolving {at} failed");
             ok = false;
-            continue;
         }
-        answered.push(it);
     }
     let Some(body) = pr_comment(&prefix, plan) else { return Ok(ok) };
     // By URL, not {owner}/{repo}: gh's default repo may be a fork.
