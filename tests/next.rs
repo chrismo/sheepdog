@@ -687,6 +687,18 @@ fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_
 }
 
 #[test]
+fn past_the_budget_a_moot_questions_stored_answer_still_holds_back_no_restack_341() {
+    // The spend rule is Hard in address's and ci-fix's gates, and outranks
+    // their Done: moot is read with it left out, or the zero-token restack
+    // waits on an answer that has nothing to go on with.
+    for over in [r#".spend = {"usd": 30, "budget": 25}"#, r#".spend = {"usd": null, "budget": 25}"#] {
+        for q in [answered("address"), answered("ci-fix")] {
+            assert_eq!(keys(&e![over, STACKED, &q]), "question behind", "{over} {q}");
+        }
+    }
+}
+
+#[test]
 fn a_moot_question_holds_back_nothing_whether_its_answer_is_stored_or_not_326() {
     // Round 6: a stored answer to a moot question held back ci-red, restacks
     // and review, where the same question unanswered held back none of them.

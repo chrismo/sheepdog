@@ -466,9 +466,12 @@ impl Derived {
         self.asking = if at_head { val::t(s, "question.step") } else { String::new() };
         // chrismo's answer, stored while its step's gate refused (#326)
         self.stored = at_head && !j.nul("question.answer");
-        // the fields address's and ci-fix's gates read are set by now
-        self.addr_moot = self.asking == "address" && matches!(crate::act::gates::address(self), crate::act::Gate::Done(_));
-        let ci = crate::act::gates::ci_fix(self);
+        // the fields address's and ci-fix's gates read are set by now; their
+        // spend rule is left out, as in offer: it is Hard and would outrank a
+        // Done, and NEXT's budget step holds for it (#341)
+        let unspent = Derived { budget_unread: false, over_budget: false, ..self.clone() };
+        self.addr_moot = self.asking == "address" && matches!(crate::act::gates::address(&unspent), crate::act::Gate::Done(_));
+        let ci = crate::act::gates::ci_fix(&unspent);
         self.ci_moot = self.asking == "ci-fix" && matches!(ci, crate::act::Gate::Done(_));
         // a stored answer to a moot question has nothing to go on with
         self.resume = self.open && self.stored && self.asking == "address" && !self.addr_moot;
