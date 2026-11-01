@@ -84,7 +84,9 @@ fn base(s: &Value, stage: &str) -> (&'static str, String) {
         ),
         "bot" => bot(s),
         "threads" if !pr => ("todo", String::new()),
-        "threads" => match n(s, "threads.owed_bot") + n(s, "threads.owed_human") {
+        // gh unread leaves the counts null; info bot items block nothing.
+        "threads" if at(s, "threads.owed_bot").is_null() => ("todo", "unknown".into()),
+        "threads" => match n(s, "threads.owed_bot") - n(s, "threads.info") + n(s, "threads.owed_human") {
             0.0 => ("done", String::new()),
             o => ("todo", format!("{o} owed")),
         },
@@ -120,7 +122,9 @@ pub fn card(repo: &str, branch: &str, doc: Option<&Value>) -> Value {
     };
     let s = at(doc, "state");
     let lead = match at(s, "next").get(0) {
-        None => json!({"key": "idle", "who": "wait", "say": "nothing to do", "cmd": null}),
+        // The watcher records no steps as sd state being unsure.
+        None => json!({"key": "unsure", "who": "wait", "cmd": null,
+                       "say": at(doc, "note").as_str().unwrap_or("sd state gave no next steps")}),
         Some(x) => json!({"key": at(x, "key"), "who": at(x, "who"), "say": at(x, "say"), "cmd": at(x, "cmd")}),
     };
     let pr = match at(s, "pr") {
@@ -170,7 +174,8 @@ mod tests {
 
     fn open() -> Value {
         json!({"pr": {"number": 1}, "sync": {"ahead": 1}, "ci": {"verdict": "green"},
-               "review": {"local": {"status": "covered"}, "bot": {"status": "none"}}, "next": []})
+               "review": {"local": {"status": "covered"}, "bot": {"status": "none"}},
+               "threads": {"owed_bot": 0, "owed_human": 0}, "next": []})
     }
 
     fn with(mut s: Value, path: &str, v: Value) -> Value {
@@ -281,8 +286,28 @@ mod tests {
         let c = card("r", "b", Some(&doc));
         assert_eq!(t(&c, "lead.who"), "you");
         assert_eq!(t(&c, "lead.cmd"), "gh pr merge");
-        let idle = card("r", "b", Some(&json!({"state": open()})));
-        assert_eq!(t(&idle, "lead.key"), "idle");
+    }
+
+    #[test]
+    fn no_next_steps_is_unsure_as_the_watcher_records_it() {
+        let doc = json!({"note": "sd state gave no next steps", "state": open()});
+        let c = card("r", "b", Some(&doc));
+        assert_eq!((t(&c, "lead.key"), t(&c, "lead.who")), ("unsure".into(), "wait".into()));
+        assert_eq!(t(&c, "lead.say"), "sd state gave no next steps");
+    }
+
+    #[test]
+    fn threads_gh_couldnt_read_are_unknown_not_done() {
+        let s = with(with(open(), "threads.owed_bot", Value::Null), "threads.owed_human", Value::Null);
+        assert_eq!(one(s, "threads"), "todo:unknown");
+    }
+
+    #[test]
+    fn info_bot_items_aren_t_owed() {
+        let s = with(with(open(), "threads.owed_bot", json!(3)), "threads.info", json!(2));
+        assert_eq!(one(s, "threads"), "todo:1 owed");
+        let s = with(with(open(), "threads.owed_bot", json!(2)), "threads.info", json!(2));
+        assert_eq!(one(s, "threads"), "done:");
     }
 
     /// Keys that hold every stage, so light none.
