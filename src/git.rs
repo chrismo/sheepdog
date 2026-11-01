@@ -399,8 +399,7 @@ pub fn stacked_unclear(b: &str, names: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::Repo;
-    use std::path::PathBuf;
+    use crate::test_support::{production_lines, Repo};
 
     impl Repo {
         fn sha(&self, r: &str) -> String {
@@ -845,29 +844,6 @@ mod tests {
         assert!(Regex::new("^[0-9a-f]{40}$").unwrap().is_match(&m), "{m}");
         fs::write(&q, "b").unwrap();
         assert_ne!(worktree_mark(&r.dir).unwrap(), m);
-    }
-
-    /// (file, line number, line) for each line of src/ outside a #[cfg(test)] module.
-    fn production_lines(dir: &Path, out: &mut Vec<(PathBuf, usize, String)>) {
-        for e in fs::read_dir(dir).unwrap() {
-            let p = e.unwrap().path();
-            if p.is_dir() {
-                production_lines(&p, out);
-                continue;
-            }
-            if p.extension().is_none_or(|x| x != "rs") {
-                continue;
-            }
-            let text = fs::read_to_string(&p).unwrap();
-            let mut lines = text.lines().enumerate().peekable();
-            while let Some((i, l)) = lines.next() {
-                if l == "#[cfg(test)]" && lines.peek().is_some_and(|(_, m)| m.contains("mod ") && m.ends_with('{')) {
-                    lines.by_ref().find(|(_, l)| *l == "}");
-                    continue;
-                }
-                out.push((p.clone(), i + 1, l.to_string()));
-            }
-        }
     }
 
     /// Test modules may run their own.

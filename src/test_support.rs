@@ -2,7 +2,7 @@
 
 use crate::git::{git, strip_nl};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Once;
 
@@ -52,5 +52,28 @@ impl Repo {
         let o = git(&self.dir, args);
         assert!(o.ok, "git {args:?} failed: {}", o.stderr);
         strip_nl(o.stdout)
+    }
+}
+
+/// (file, line number, line) for each line of src/ outside a #[cfg(test)] module.
+pub(crate) fn production_lines(dir: &Path, out: &mut Vec<(PathBuf, usize, String)>) {
+    for e in fs::read_dir(dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.is_dir() {
+            production_lines(&p, out);
+            continue;
+        }
+        if p.extension().is_none_or(|x| x != "rs") {
+            continue;
+        }
+        let text = fs::read_to_string(&p).unwrap();
+        let mut lines = text.lines().enumerate().peekable();
+        while let Some((i, l)) = lines.next() {
+            if l == "#[cfg(test)]" && lines.peek().is_some_and(|(_, m)| m.contains("mod ") && m.ends_with('{')) {
+                lines.by_ref().find(|(_, l)| *l == "}");
+                continue;
+            }
+            out.push((p.clone(), i + 1, l.to_string()));
+        }
     }
 }

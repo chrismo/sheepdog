@@ -147,7 +147,8 @@ pub fn commit(dir: &str, b: &str, pin: Pin) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::Repo;
+    use crate::test_support::{production_lines, Repo};
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     // @test "pin_write records the pin and the base it was taken against"
@@ -200,21 +201,6 @@ mod tests {
     }
 
 
-    /// <dir>'s .rs files, recursively, each with its text before any
-    /// #[cfg(test)]: the code a test doesn't own.
-    fn code(dir: &Path, out: &mut Vec<(String, String)>) {
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                code(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                let text = std::fs::read_to_string(&p).unwrap();
-                let live = text.split("#[cfg(test)]").next().unwrap_or("").to_string();
-                out.push((p.to_string_lossy().into_owned(), live));
-            }
-        }
-    }
-
     /// The lines in <text> where a git call writes something only this
     /// module may: update-ref that doesn't move a branch alone (no
     /// refs/heads/, or a refs/sheepdog or --stdin beside it), hash-object
@@ -259,13 +245,19 @@ git(".", &["hash-object",
     #[test]
     fn only_pins_writes_refs_sheepdog_342() {
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files = vec![];
-        code(&src, &mut files);
+        let mut lines = vec![];
+        production_lines(&src, &mut lines);
+        assert!(lines.iter().any(|(f, n, _)| f.ends_with("src/next/derived.rs") && *n > 100), "read past derived.rs's #[cfg(test)] impl");
+        let mut files: BTreeMap<&Path, Vec<(usize, &str)>> = BTreeMap::new();
+        for (f, n, l) in lines.iter().filter(|(f, _, _)| !f.ends_with("src/pins.rs")) {
+            files.entry(f).or_default().push((*n, l));
+        }
         let mut bad = vec![];
-        for (path, text) in files.iter().filter(|(p, _)| !p.ends_with("/src/pins.rs")) {
-            let lines: Vec<&str> = text.lines().collect();
-            for n in writes(text) {
-                bad.push(format!("{path}:{n}: {}", lines[n - 1].trim()));
+        for (path, file) in files {
+            let text = file.iter().map(|(_, l)| *l).collect::<Vec<_>>().join("\n");
+            for i in writes(&text) {
+                let (n, l) = file[i - 1];
+                bad.push(format!("{}:{n}: {}", path.display(), l.trim()));
             }
         }
         assert!(bad.is_empty(), "pins are written through src/pins.rs only:\n{}", bad.join("\n"));
