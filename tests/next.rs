@@ -675,7 +675,7 @@ fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
     assert_eq!(keys(&ahead), "question push");
     assert_eq!(
         step("question", "say", &ahead),
-        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI's red is for h0, not HEAD: answer it with sd act answer, and it runs once CI is red at HEAD"
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI's red isn't for HEAD; there are unpushed commits, which may be the fix already: answer it with sd act answer, and it runs once CI is red at HEAD"
     );
     assert_eq!(step("question", "cmd", &ahead), r#"sd act answer "<your answer>""#);
     let pending = e![r#".ci.verdict = "pending""#, &q];
@@ -695,6 +695,11 @@ fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
     );
     // red at HEAD: as before
     assert_eq!(step("question", "cmd", &e![&red, &q]), r#"sd act answer "<your answer>""#);
+    // red at HEAD, but a fix couldn't be pushed: it waits on that, not on CI (#348)
+    assert_eq!(
+        step("question", "say", &e![&red, ".sync.undone = 1", &q]),
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while the restack was undone, so a fix can't be pushed: answer it with sd act answer, and it runs once a fix can be pushed"
+    );
     // a give-up keeps its other ways on
     let gave_up = format!(".question = {}", json!({"step": "ci-fix", "kind": "gave-up", "sha": "h1", "text": "no idea", "at_head": true}));
     assert_eq!(
@@ -705,6 +710,21 @@ fn a_ci_fix_question_says_what_ci_fix_s_gate_waits_on_or_that_it_s_moot_326() {
     assert_eq!(
         step("question", "say", &e![".threads.owed_bot = 1", ".push.ahead = 1", &gave_up]),
         "the agent gave up (address): no idea; address refuses while 1 unpushed commit(s): guide it with sd act answer, and it runs once that clears; or fix it by hand, or sd act ack --question to let it try again"
+    );
+}
+
+// Nothing is ahead of the remote, and a push that drops commits isn't a fix (#348).
+#[test]
+fn a_ci_fix_question_names_a_drop_not_unpushed_commits_348() {
+    let q = asked("ci-fix", true);
+    let drop = e![
+        r#".ci.verdict = "red""#, ".ci.for_head = false", r#".ci.sha = "h0""#,
+        ".push.ahead = 0", ".push.behind = 1", ".push.remote_ours = true", ".push.remote_made = true", &q
+    ];
+    assert_eq!(keys(&drop), "question push");
+    assert_eq!(
+        step("question", "say", &drop),
+        "the agent asks (ci-fix): Which test is right?; ci-fix can't go on while CI's red isn't for HEAD; the remote has commits reset away here, which a push drops: answer it with sd act answer, and it runs once CI is red at HEAD"
     );
 }
 
@@ -722,7 +742,7 @@ fn a_stored_ci_fix_answer_runs_as_the_ci_red_step_once_ci_is_red_at_head_and_wai
     let ahead = e![&red, ".push.ahead = 1", ".ci.for_head = false", r#".ci.sha = "h0""#, &a];
     assert_eq!(keys(&ahead), "push answer");
     assert_eq!(step("answer", "who", &ahead), "wait");
-    assert_eq!(step("answer", "say", &ahead), "your answer to the ci-fix agent's question waits while CI's red is for h0, not HEAD");
+    assert_eq!(step("answer", "say", &ahead), "your answer to the ci-fix agent's question waits while CI's red isn't for HEAD; there are unpushed commits, which may be the fix already");
     assert_eq!(keys(&e![r#".ci.verdict = "pending""#, &a]), "ci-wait answer");
     // passed at HEAD: moot
     assert_eq!(keys(&e![&a]), "question");
@@ -733,6 +753,21 @@ fn a_stored_ci_fix_answer_runs_as_the_ci_red_step_once_ci_is_red_at_head_and_wai
     // what would move HEAD waits for it
     assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "ci-red");
     assert_eq!(keys(&e![&red, STACKED, &a]), "ci-red");
+}
+
+// #355 (round 7 of #333): no CI commit at all leaves ci.for_head null; that's
+// no CI at HEAD, so the question is moot, not a wait on CI that never comes.
+#[test]
+fn a_ci_fix_question_on_a_commit_with_no_ci_is_moot_not_a_wait_that_never_ends_355() {
+    let none = r#".ci = {"sha": null, "for_head": null, "verdict": "none", "failing": [], "pending": []}"#;
+    for (q, and) in [(asked("ci-fix", true), ""), (answered("ci-fix"), ", and your answer")] {
+        assert_eq!(keys(&e![none, &q]), "question", "{q}");
+        assert_eq!(
+            step("question", "say", &e![none, &q]),
+            format!("the agent asks (ci-fix): Which test is right?; no CI ran at HEAD, so it's moot: sd act ack --question drops it{and}")
+        );
+        assert_eq!(step("question", "cmd", &e![none, &q]), "sd act ack --question");
+    }
 }
 
 // @test "bot items that are only info: chrismo reads them, then acks"

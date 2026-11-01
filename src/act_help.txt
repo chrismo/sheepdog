@@ -130,10 +130,11 @@ Verbs:
             exits 0, except on a restack that would conflict: that restack
             would drop the question. A ci-fix answer is stored the same way
             while CI may yet be red at HEAD (unpushed, not run on HEAD yet,
-            pending, blocked, cancelled); once it passed at HEAD, the
-            question is moot, and answer refuses. Stored, it says whether
-            sd watch runs it once a push or CI run clears the gate, or what
-            is chrismo's to clear first. Spends tokens
+            pending, blocked, cancelled); once it passed at HEAD, or no
+            CI ran there, the question is moot, and answer refuses.
+            Stored, it says whether sd watch runs it once a push or CI run
+            clears the gate, or what is chrismo's to clear first. Spends
+            tokens
   restack   rebase --onto the parent (the default branch once the parent
             merged), check the branch's own change came through unchanged,
             else roll back; never pushes. When the old base isn't an
@@ -183,12 +184,19 @@ Verbs:
             checks, their logs (commit statuses and check runs over REST;
             rwx results/logs for RWX, gh run view --log-failed for GitHub
             Actions) and the local verify output, in the branch's session
-            (J2). The pipeline commits its fix, verifies, pushes. "flaky"
-            (the agent blames CI's environment) commits nothing and is
-            recorded against the red SHA, so the same red isn't handed
-            over again: rerun CI instead. Refuses on an old head or with
-            unpushed commits (push first) and on cancelled CI (rerun it).
-            Spends tokens
+            (J2). The pipeline commits its fix, verifies, pushes, asking
+            sd act push's gate first. "flaky" (the agent blames CI's
+            environment) commits nothing and is recorded against the red
+            SHA, so the same red isn't handed over again: rerun CI
+            instead. Refuses on an old head or with unpushed commits (push
+            first), on cancelled or blocked CI, and where a fix couldn't
+            be pushed: an undone restack, a parent not on the remote.
+            --force runs it anyway (past a CI wait, a flaky isn't
+            recorded) and pushes past push's own refusals, never an undone
+            restack: forced past one, the agent's fix is committed here and
+            never pushed until the restack is redone (--no-publish says so
+            up front). CI green at HEAD, or none run there: nothing to fix,
+            exit 0. Spends tokens
   review    verify, then the local reviewer (settings.localReview, default
             sd review-local) over the branch's own change, base..HEAD.
             Clean, or only nits: pin local at HEAD. Errors or warnings:

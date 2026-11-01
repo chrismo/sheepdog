@@ -234,13 +234,14 @@ fn has_line(text: &str, prefix: &str) -> bool {
 // ── gates ────────────────────────────────────────────────────────────────────
 
 // @test "CI green: nothing to fix, nothing runs"
+// The gate's Done (#348): nothing to do, so it exits 0.
 #[test]
 fn ci_green_nothing_to_fix_nothing_runs() {
     let sd = sd();
     sd.state(&[r#".ci.verdict = "green" | .ci.failing = []"#]);
     let r = sd.run(&["ci-fix"]);
-    assert_ne!(r.status, 0);
-    assert_has(&r.output, &["CI is green"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["CI is green at HEAD: nothing to fix on feat"]);
     assert!(!sd.ran("claude.args"));
 }
 
@@ -262,7 +263,7 @@ fn red_on_an_old_head_push_first_the_fix_may_already_be_there() {
     sd.state(&[r#".ci.for_head = false | .ci.sha = "0000000000000000000000000000000000000000""#]);
     let r = sd.run(&["ci-fix"]);
     assert_ne!(r.status, 0);
-    assert_has(&r.output, &["not HEAD"]);
+    assert_has(&r.output, &["CI's red isn't for HEAD", "then wait for CI on HEAD"]);
     assert!(!sd.ran("claude.args"));
 }
 
@@ -276,6 +277,43 @@ fn unpushed_commits_push_first() {
     assert_has(&r.output, &["unpushed"]);
     assert_has(&r.output, &["sd act push"]);
     assert!(!sd.ran("claude.args"));
+}
+
+// A CI wait is Soft like any other verb's (chrismo, 2026-10-31, reversing #333):
+// the cost is tokens, which branchBudget already caps.
+#[test]
+fn a_ci_wait_refuses_unforced_and_force_runs_the_agent_with_a_warning() {
+    for (edit, why) in [
+        (r#".ci.verdict = "pending" | .ci.failing = []"#, "CI is pending"),
+        (r#".ci.verdict = "inconclusive" | .ci.failing = []"#, "CI was cancelled"),
+        (".push.ahead = 1", "there are unpushed commits"),
+    ] {
+        let sd = sd();
+        sd.state(&[edit]);
+        let r = sd.run(&["ci-fix"]);
+        assert_ne!(r.status, 0, "{edit}: {}", r.output);
+        assert_has(&r.output, &["not fixing CI on feat until CI is red at HEAD", why, "--force"]);
+        assert!(!sd.ran("claude.args"), "{edit}");
+        let r = sd.run(&["ci-fix", "--force"]);
+        assert_has(&r.output, &["warning", why]);
+        assert!(sd.ran("claude.args"), "{edit}: {}", r.output);
+    }
+}
+
+// Forced past a wait, the agent is told CI may not be red at HEAD, and an
+// empty failing list reads as none reported, not "Failing checks on h: ".
+#[test]
+fn forced_past_a_ci_wait_the_agent_is_told_why_and_no_failing_checks_reads_as_none() {
+    let sd = sd();
+    sd.state(&[r#".ci.verdict = "pending" | .ci.failing = []"#]);
+    sd.result(r#"{outcome: "fixed", commit_message: null, summary: "the test wants THREE"}"#);
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    let p = sd.prompt();
+    assert_has(&p, &["sd act ci-fix was forced past its gate, so CI may not be red at HEAD:", "- CI is pending: wait for it"]);
+    assert_has(&p, &["No failing checks are reported on"]);
+    assert_lacks(&p, "Failing checks on");
+    assert_eq!(sd.subject(), "Fix CI");
 }
 
 // @test "no PR, or a closed one: refuses"
@@ -680,7 +718,53 @@ fn force_runs_again_on_a_sha_already_judged_flaky() {
     sd.rm("claude.args");
     let r = sd.run(&["ci-fix", "--force"]);
     assert_eq!(r.status, 0);
+    assert_has(&r.output, &["sd act: warning: ci-fix already judged", "red flaky; running anyway"]);
     assert!(sd.ran("claude.args"));
+}
+
+// A record would make a later unforced run (sd watch's) refuse a red no
+// agent saw (#348).
+#[test]
+fn flaky_forced_past_a_ci_wait_isnt_recorded_so_a_later_red_at_head_still_runs_348() {
+    for edit in [r#".ci.verdict = "pending" | .ci.failing = []"#, r#".ci.verdict = "pending" | .ci.failing = [] | .ci.sha = null"#] {
+        let sd = sd();
+        sd.agent_edits_nothing();
+        sd.result(r#"{outcome: "flaky", commit_message: null, summary: "a timeout in the runner"}"#);
+        sd.state(&[edit]);
+        let r = sd.run(&["ci-fix", "--force"]);
+        assert_eq!(r.status, 0, "{edit}: {}", r.output);
+        assert_has(&r.output, &["a timeout in the runner", "not recorded"]);
+        assert_eq!(sd.recorded(), None, "{edit}");
+        sd.rm("claude.args");
+        sd.state(&[]);
+        let r = sd.run(&["ci-fix"]);
+        assert_eq!(r.status, 0, "{edit}: {}", r.output);
+        assert!(sd.ran("claude.args"), "{edit}");
+    }
+}
+
+#[test]
+fn a_fix_forced_past_a_ci_wait_leaves_the_record_of_a_red_at_head_alone_348() {
+    for edit in [r#".ci.verdict = "pending" | .ci.failing = []"#, r#".ci.verdict = "pending" | .ci.failing = [] | .ci.sha = null"#] {
+        let sd = sd();
+        sd.git(&["config", "branch.feat.sd-ci-fix", "r0 flaky"]);
+        sd.state(&[edit]);
+        let r = sd.run(&["ci-fix", "--force"]);
+        assert_eq!(r.status, 0, "{edit}: {}", r.output);
+        assert_eq!(sd.recorded().as_deref(), Some("r0 flaky"), "{edit}");
+    }
+}
+
+// With no CI commit there are no logs to fetch: gh api .../commits//status
+// would 404 (#348).
+#[test]
+fn forced_with_no_ci_sha_asks_gh_for_no_logs_348() {
+    let sd = sd();
+    sd.state(&[r#".ci.verdict = "pending" | .ci.failing = [] | .ci.sha = null"#]);
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert!(sd.ran("claude.args"));
+    assert_lacks(&sd.fx("gh.calls"), "commits/");
 }
 
 // @test "fixed but changed nothing: fails"
@@ -830,7 +914,7 @@ fn answer_is_stored_while_ci_fix_s_gate_waits_on_ci_and_ci_fix_goes_on_with_it_o
     sd.state(&[".push.ahead = 1 | .ci.for_head = false | .ci.sha = \"r0\""]);
     let r = sd.run(&["answer", "keep THREE"]);
     assert_eq!(r.status, 0, "{}", r.output);
-    assert_has(&r.output, &["ci-fix refuses on feat while CI's red is for r0, not HEAD", "your answer is stored", "once CI is red at HEAD"]);
+    assert_has(&r.output, &["ci-fix refuses on feat while CI's red isn't for HEAD", "your answer is stored", "once CI is red at HEAD"]);
     assert!(!sd.ran("claude.prompt"));
     let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/answer"]);
     assert_eq!(jq(&["-r", "[.step, .text] | join(\"|\")"], &rec), "ci-fix|keep THREE");
@@ -863,16 +947,22 @@ fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clear
     let r = sd.ok(&["answer", "keep THREE"]);
     assert_has(&r, &["(NEXT then offers ci-fix, so sd watch runs ci-fix)"]);
     for (edit, yours) in [
-        (r#".ci.verdict = "inconclusive""#, "the cancelled CI (rerun it: gh run rerun, or rwx retry)"),
-        (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "the held CI config change (review it, then sd act push)"),
-        (r#".push.ahead = 1 | .verify = {at_head: true, sha: "h1", step: "ci-fix", cmd: "make test"}"#, "the verify red on HEAD (fix it, then sd act verify)"),
-        (r#".push.ahead = 1 | .parent.unpushed = true"#, "the unpushed commits NEXT won't push (sd state says why)"),
+        (r#".ci.verdict = "inconclusive""#, "CI was cancelled (rerun it: gh run rerun, or rwx retry)"),
+        (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "there are unpushed commits, held with the agent's CI config change (review it, then sd act push)"),
+        (r#".push.ahead = 1 | .verify = {at_head: true, sha: "h1", step: "ci-fix", cmd: "make test"}"#, "there are unpushed commits, held by the verify red on HEAD (fix it, then sd act verify)"),
+        (r#".push.ahead = 1 | .ci.for_head = false | .ci.sha = "r0" | .parent.unpushed = true"#, "the parent branch isn't on the remote yet (ship it first (sd act ship <parent>))"),
+        (r#".push.ahead = 1 | .push.remote_ours = false | .push.theirs = 1"#, "there are unpushed commits NEXT won't push (sd state says why)"),
     ] {
         sd.state(&[edit]);
         let r = sd.ok(&["answer", "keep THREE"]);
         assert_has(&r, &["once CI is red at HEAD", &format!("nothing sd watch runs clears {yours}, so that's yours to clear")]);
-        assert_lacks(&r, "sd watch runs it");
+        assert_lacks(&r, "so sd watch runs ci-fix");
     }
+    // red at HEAD, held only by what would refuse the fix's push (#348)
+    sd.state(&[".sync.undone = 1"]);
+    let r = sd.ok(&["answer", "keep THREE"]);
+    assert_has(&r, &["ci-fix refuses on feat while the restack was undone, so a fix can't be pushed", "once a fix can be pushed"]);
+    assert_lacks(&r, "red at HEAD");
     assert!(!sd.ran("claude.prompt"));
 }
 
@@ -885,13 +975,50 @@ fn answer_to_a_ci_fix_question_is_moot_once_ci_passed_at_head_326() {
     sd.state(&[r#".ci.verdict = "green""#]);
     let r = sd.run(&["answer", "keep THREE"]);
     assert_ne!(r.status, 0);
-    assert_has(&r.output, &["CI is green on feat", "the ci-fix agent's question is moot", "sd act ack --question"]);
+    assert_has(&r.output, &["CI is green at HEAD", "the ci-fix agent's question is moot", "sd act ack --question"]);
     assert!(!sd.ran("claude.prompt"));
     assert!(!has_answer(&sd));
     // green, but not on HEAD: CI on HEAD may yet be red
     sd.state(&[r#".ci.verdict = "green" | .ci.for_head = false | .ci.sha = "r0""#]);
     sd.ok(&["answer", "keep THREE"]);
     assert!(has_answer(&sd));
+}
+
+// #355 (round 7 of #333): blocked CI is chrismo's to start or approve, not
+// something sd watch clears, so a stored answer mustn't promise sd watch runs it.
+#[test]
+fn a_ci_fix_answer_stored_while_ci_is_blocked_is_chrismos_to_clear_not_sd_watchs_355() {
+    let sd = sd();
+    sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
+    sd.run(&["ci-fix"]);
+    sd.rm("claude.prompt");
+    sd.state(&[r#".ci.verdict = "blocked" | .ci.failing = [] | .ci.blocked = ["deploy"]"#]);
+    let r = sd.ok(&["answer", "keep THREE"]);
+    assert_lacks(&r, "so sd watch runs ci-fix");
+    assert_has(&r, &["once CI is red at HEAD", "nothing sd watch runs clears CI is blocked (start or approve its checks: gh pr checks), so that's yours to clear"]);
+    assert!(has_answer(&sd));
+    assert!(!sd.ran("claude.prompt"));
+    // on an old SHA, with a push NEXT offers: the push starts CI on HEAD
+    sd.state(&[r#".ci.verdict = "blocked" | .ci.failing = [] | .ci.blocked = ["deploy"] | .ci.for_head = false | .push.ahead = 1"#]);
+    let r = sd.ok(&["answer", "keep THREE"]);
+    assert_has(&r, &["CI is blocked, but not on HEAD", "so sd watch runs ci-fix"]);
+    assert_lacks(&r, "yours to clear");
+}
+
+// #355: with no CI at all (no CI commit, so for_head is null), the question is
+// moot, not an answer waiting on CI that never comes.
+#[test]
+fn an_answer_on_a_commit_with_no_ci_is_moot_not_stored_to_wait_forever_355() {
+    let sd = sd();
+    sd.result(r#"{outcome: "needs-input", commit_message: null, summary: "which test is right?"}"#);
+    sd.run(&["ci-fix"]);
+    sd.rm("claude.prompt");
+    sd.state(&[r#".ci = {sha: null, for_head: null, verdict: "none", failing: [], pending: []}"#]);
+    let r = sd.run(&["answer", "keep THREE"]);
+    assert_ne!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["no CI ran at HEAD", "the ci-fix agent's question is moot", "sd act ack --question"]);
+    assert!(!has_answer(&sd));
+    assert!(!sd.ran("claude.prompt"));
 }
 
 // @test "answer: refused at zero tokens with no text, no question, or one that no longer stands (#178)"
@@ -937,6 +1064,66 @@ fn verify_failing_after_the_fix_commit_kept_nothing_pushed() {
     assert_has(&r.output, &["verify failed"]);
     assert_eq!(sd.subject(), "Uppercase three");
     assert_eq!(sd.remote_feat(), before);
+}
+
+// ci-fix's push asks push's own gate (#348): with ci-fix's --force, past
+// push's Soft refusals with a warning; never past its Hard one.
+#[test]
+fn ci_fix_s_push_asks_push_s_gate_forced_past_its_soft_refusals_with_a_warning_348() {
+    let sd = sd();
+    sd.state(&[".push.ahead = 1 | .parent.unpushed = true"]);
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["sd act: warning: the parent branch isn't on the remote yet"]);
+    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
+}
+
+// An undone restack refuses before the agent runs, as a fix couldn't be
+// pushed. Forced, the agent runs, and push's Hard rule still keeps the fix.
+#[test]
+fn ci_fix_refuses_an_undone_restack_before_the_agent_runs_and_forced_never_pushes_past_it_348() {
+    let sd = sd();
+    sd.state(&[".sync.undone = 1"]);
+    let before = sd.remote_feat();
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["not fixing CI on feat until a fix can be pushed", "the restack was undone, so a fix can't be pushed: redo the restack", "--force"]);
+    assert_lacks(&r.output, "red at HEAD");
+    assert!(!sd.ran("claude.args"));
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_ne!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["not pushing: the restack was undone", &format!("the fix is committed in {}, not pushed", sd.path("repo"))]);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), before);
+}
+
+// The parent not on the remote refuses before the agent runs, with nothing
+// unpushed here too.
+#[test]
+fn ci_fix_refuses_an_unpushed_parent_before_the_agent_runs_348() {
+    let sd = sd();
+    sd.state(&[".parent.unpushed = true"]);
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["not fixing CI on feat until a fix can be pushed", "the parent branch isn't on the remote yet: ship it first", "--force"]);
+    assert_lacks(&r.output, "red at HEAD");
+    assert!(!sd.ran("claude.args"));
+}
+
+// Forced past only what would refuse the fix's push, CI is red at HEAD: the
+// agent isn't told it may not be, and a flaky verdict is recorded (#348).
+#[test]
+fn forced_past_only_a_push_refusal_the_red_is_at_head_so_flaky_is_recorded_and_the_agent_not_told_otherwise_348() {
+    let sd = sd();
+    sd.agent_edits_nothing();
+    sd.result(r#"{outcome: "flaky", commit_message: null, summary: "a timeout in the runner"}"#);
+    sd.state(&[".sync.undone = 1"]);
+    let head = sd.rev("HEAD");
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["sd act: warning: the restack was undone, so a fix can't be pushed"]);
+    assert_lacks(&sd.prompt(), "forced past its gate");
+    assert_eq!(sd.recorded().as_deref(), Some(format!("{head} flaky").as_str()));
 }
 
 // ── CI config: held for chrismo (#124) ───────────────────────────────────────

@@ -7,9 +7,8 @@
 // destructures Derived without .., so a new field doesn't compile until
 // every gate claims or ignores it.
 
-use super::gate::{judge, warnings, Gate, Level, Rule};
-use crate::next::{no, yes};
-use crate::next::Derived;
+use super::gate::{judge, reported, warnings, Gate, Level, Rule};
+use crate::next::{no, yes, Derived};
 use serde_json::Value;
 
 /// A verb whose gate NEXT asks.
@@ -29,6 +28,7 @@ pub const MIGRATED: &[Migrated] = &[
         offered: |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"),
         gate: implement,
     },
+    Migrated { verb: "ci-fix", offered: |steps| steps.iter().any(|s| s["key"] == "ci-red"), gate: ci_fix },
 ];
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
@@ -41,13 +41,14 @@ pub fn push(d: &Derived) -> Gate {
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
         to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_red: _, ci_blocked: _, ci_inconclusive: _,
+        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, fixing: _,
         findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
-        failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, ci_waits: _, ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
+        failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
         bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
-    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
+    // NEXT offers no push while one of these refuses: each is chrismo's
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
     judge(&[
         // Hard, so a --force meant for another refusal can't publish the
         // copies; if the guess is wrong, git push by hand still works.
@@ -96,10 +97,10 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
-        ci_red: _, ci_blocked: _, ci_inconclusive: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
+        ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
         need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
-        budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, ci_waits: _,
-        ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
+        budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _,
+        resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
         rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
     let conflict = yes(*sync_conflict);
@@ -109,7 +110,8 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
         (true, false) => Some(addr::UNPUSHED),
         (false, false) => None,
     };
-    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
+    // only ci-fix's NEXT reads yours (#355)
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
     [
         rule(addr::NO_PR, Level::Hard, *pr_null, "sd act ship"),
         rule(addr::CLOSED, Level::Hard, *merged || *closed, "reopen it, or start a new branch"),
@@ -161,16 +163,17 @@ pub fn implement(d: &Derived) -> Gate {
         verify_red: _, foreign: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
         push_dirty: _, parent_unpushed: _, empty: _, chase: _, undone: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_red: _, ci_blocked: _, ci_inconclusive: _,
+        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, bot_due: _, bot_late: _,
-        bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, stored: _, addr_moot: _, ci_moot: _, ci_waits: _,
-        ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
+        bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, stored: _, addr_moot: _, ci_moot: _,
+        resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
         rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
     let task = !implement_fixes(d);
     // with its own question standing, what's ahead is its work in progress
     let unasked = task && asking != "implement";
-    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
+    // only ci-fix's NEXT reads yours (#355)
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
     judge(&[
         rule(imp::NO_TASK, Level::Hard, task && !tasked, "git config branch.<b>.sd-task \"<task>\""),
         rule(imp::CAPPED, Level::Hard, !task && !fix_due, "raise settings.reviewRounds, fix them by hand, or sd act review --accept"),
@@ -180,6 +183,83 @@ pub fn implement(d: &Derived) -> Gate {
         rule(imp::AHEAD, Level::Soft, unasked && yes(*ahead_target), "sd act implement --force"),
         rule(imp::REMOTE_MORE, Level::Soft, unasked && *behind_remote, "take or drop them, as sd state's NEXT says"),
     ])
+}
+
+/// sd act ci-fix: CI red at HEAD, with nothing to push first.
+pub fn ci_fix(d: &Derived) -> Gate {
+    judge(&ci_fix_rules(d))
+}
+
+/// ci-fix's rules. Done (a question is moot) once CI passed at HEAD or none
+/// ran there, for_head null included (#355). Soft while CI may yet be red at
+/// HEAD: an answer is stored meanwhile (#326), and --force runs anyway.
+pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
+    let Derived {
+        pr_null, has_pr, to_push, unpushed, ci_held, verify_red, ci_verdict, ci_for_head, undone, parent_unpushed,
+        own_base: _, running: _, reviewer: _, open: _, merged: _, closed: _, errors: _, stale: _, lagging: _, locked: _,
+        owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _, tasked: _,
+        foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
+        empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _,
+        gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
+        parent_closed: _, parent_merged: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
+        any_cover: _, reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _,
+        bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _,
+        addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
+        answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _,
+        rv_pending: _, rv_submitted: _, rv_local: _,
+    } = d;
+    let pushes = crate::next::push_step(d);
+    let (v, at_head, settled) = (ci_verdict.as_str(), yes(*ci_for_head), !*to_push);
+    let known = matches!(v, "red" | "green" | "none" | "pending" | "blocked" | "inconclusive");
+    let rule = |name, level, refuses: bool, clears, yours| Rule { name, level, refuses, clears, yours };
+    let wait = |name, refuses: bool, clears, yours| rule(name, Level::Soft, refuses, clears, yours);
+    // to_push without unpushed is a drop: the remote's commits reset away here
+    let (unoffered, drop) = (*unpushed && !pushes, *to_push && !unpushed);
+    vec![
+        rule("no PR", Level::Hard, *pr_null, "open one", true),
+        rule("the PR is merged or closed; nothing to fix", Level::Hard, !pr_null && !has_pr, "reopen it", true),
+        rule("CI is green at HEAD", Level::Done, v == "green" && at_head && settled, "", true),
+        rule("no CI ran at HEAD", Level::Done, v == "none" && !no(*ci_for_head) && settled, "", true),
+        wait("CI is pending", v == "pending", "wait for it", false),
+        wait("CI is blocked", v == "blocked" && at_head, "start or approve its checks: gh pr checks", true),
+        wait("CI was cancelled", v == "inconclusive" && at_head, "rerun it: gh run rerun, or rwx retry", true),
+        wait("CI's verdict is unknown", !known, "sd state says why", true),
+        wait("CI's red isn't for HEAD", v == "red" && !at_head, "push if there's anything to push, then wait for CI on HEAD", false),
+        wait("CI is green, but not on HEAD", v == "green" && !at_head, "wait for CI on HEAD", false),
+        wait("CI is blocked, but not on HEAD", v == "blocked" && !at_head, "wait for CI on HEAD", false),
+        wait("CI was cancelled, but not on HEAD", v == "inconclusive" && !at_head, "wait for CI on HEAD", false),
+        wait("no CI has reported on HEAD yet", v == "none" && no(*ci_for_head), "wait for CI on HEAD", false),
+        wait("there are unpushed commits, which may be the fix already", *unpushed && pushes, "sd act push, then wait for CI on HEAD", false),
+        wait("there are unpushed commits, held with the agent's CI config change", unoffered && *ci_held, "review it, then sd act push", true),
+        wait("there are unpushed commits, held by the verify red on HEAD", unoffered && !ci_held && *verify_red, "fix it, then sd act verify", true),
+        wait("there are unpushed commits NEXT won't push", unoffered && !ci_held && !verify_red && !undone && !parent_unpushed, "sd state says why", true),
+        wait("the remote has commits reset away here, which a push drops", drop,
+             if pushes { "sd act push, then wait for CI on HEAD" } else { "sd state says why" }, !pushes),
+        // What push's gate refuses after the fix, asked before the agent runs.
+        // Soft: the agent only costs tokens, and push's Hard undone rule
+        // still keeps the copies off the remote.
+        wait(CI_FIX_PUSH_WAITS[0], *undone, "redo the restack (sd state's NEXT says how)", true),
+        wait(CI_FIX_PUSH_WAITS[1], *parent_unpushed, "ship it first (sd act ship <parent>)", true),
+    ]
+}
+
+/// ci-fix's rules that wait on push's gate, not on CI: with only these
+/// refusing, CI is red at HEAD.
+const CI_FIX_PUSH_WAITS: [&str; 2] = ["the restack was undone, so a fix can't be pushed", "the parent branch isn't on the remote yet"];
+
+/// The CI waits among ci-fix's reported <rules>: none when CI is red at HEAD.
+pub fn ci_fix_ci_waits(rules: &[Rule]) -> Vec<&Rule> {
+    reported(rules).into_iter().filter(|r| !CI_FIX_PUSH_WAITS.contains(&r.name)).collect()
+}
+
+/// What ci-fix waits for while its Soft <rules> refuse: it runs once <this>.
+pub fn ci_fix_once(rules: &[Rule]) -> &'static str {
+    let push = reported(rules).iter().any(|r| CI_FIX_PUSH_WAITS.contains(&r.name));
+    match (ci_fix_ci_waits(rules).is_empty(), push) {
+        (true, true) => "a fix can be pushed",
+        (false, true) => "CI is red at HEAD and a fix can be pushed",
+        _ => "CI is red at HEAD",
+    }
 }
 
 /// Each verb NEXT's <steps> offer while its gate refuses (runs() false).
@@ -355,6 +435,114 @@ mod tests {
     #[test]
     fn push_never_runs_with_an_undone_restack_on_generated_states() {
         check("push with undone", |d| if d.undone && push(d).runs() { Err("push runs".into()) } else { Ok(()) });
+    }
+
+    /// An open PR with CI red at HEAD and nothing to push.
+    fn red() -> Derived {
+        Derived { has_pr: true, open: true, ci_verdict: "red".into(), ci_for_head: Some(true), ..Derived::default() }
+    }
+
+    /// The names and whether each is chrismo's, of what ci-fix's gate reports.
+    fn ci_fix_said(d: &Derived) -> Vec<(&'static str, bool)> {
+        crate::act::gate::reported(&ci_fix_rules(d)).iter().map(|r| (r.name, r.yours)).collect()
+    }
+
+    #[test]
+    fn ci_fix_goes_on_red_at_head_with_nothing_to_push_and_refuses_hard_with_no_open_pr() {
+        assert_eq!(ci_fix(&red()), Gate::Go);
+        assert_eq!(ci_fix(&Derived { has_pr: false, pr_null: true, ..red() }), Gate::Hard("no PR".into()));
+        assert!(matches!(ci_fix(&Derived { has_pr: false, merged: true, ..red() }), Gate::Hard(why) if why.contains("merged")));
+    }
+
+    #[test]
+    fn ci_fix_is_done_once_ci_passed_or_none_ran_at_head_with_no_ci_commit_too_355() {
+        assert_eq!(ci_fix(&Derived { ci_verdict: "green".into(), ..red() }), Gate::Done("CI is green at HEAD".into()));
+        assert_eq!(ci_fix(&Derived { ci_verdict: "none".into(), ..red() }), Gate::Done("no CI ran at HEAD".into()));
+        // no CI commit: for_head null, none at HEAD all the same
+        assert_eq!(ci_fix(&Derived { ci_verdict: "none".into(), ci_for_head: None, ..red() }), Gate::Done("no CI ran at HEAD".into()));
+        // on another SHA, CI on HEAD may yet be red
+        let none_elsewhere = Derived { ci_verdict: "none".into(), ci_for_head: Some(false), ..red() };
+        assert_eq!(ci_fix(&none_elsewhere), Gate::Soft(vec!["no CI has reported on HEAD yet".into()]));
+    }
+
+    #[test]
+    fn ci_fix_waits_on_ci_and_says_blocked_and_cancelled_are_chrismos_to_clear_355() {
+        let on = |v: &str| ci_fix_said(&Derived { ci_verdict: v.into(), ..red() });
+        assert_eq!(on("pending"), [("CI is pending", false)]);
+        assert_eq!(on("blocked"), [("CI is blocked", true)]);
+        assert_eq!(on("inconclusive"), [("CI was cancelled", true)]);
+        assert_eq!(on("odd"), [("CI's verdict is unknown", true)]);
+        assert_eq!(ci_fix_said(&Derived { ci_for_head: Some(false), ..red() }), [("CI's red isn't for HEAD", false)]);
+        assert_eq!(ci_fix_said(&Derived { ci_for_head: None, ..red() }), [("CI's red isn't for HEAD", false)]);
+    }
+
+    #[test]
+    fn ci_fix_waits_on_unpushed_commits_chrismos_when_next_offers_no_push() {
+        let ahead = Derived { to_push: true, unpushed: true, ..red() };
+        assert_eq!(ci_fix_said(&ahead), [("there are unpushed commits, which may be the fix already", false)]);
+        let held = ci_fix_said(&Derived { ci_held: true, ..ahead.clone() });
+        assert_eq!(held, [("there are unpushed commits, held with the agent's CI config change", true)]);
+        let red_verify = ci_fix_said(&Derived { verify_red: true, ..ahead.clone() });
+        assert_eq!(red_verify, [("there are unpushed commits, held by the verify red on HEAD", true)]);
+        let parent = ci_fix_said(&Derived { parent_unpushed: true, ..ahead.clone() });
+        assert_eq!(parent, [("the parent branch isn't on the remote yet", true)]);
+        let other = ci_fix_said(&Derived { foreign: true, ..ahead });
+        assert_eq!(other, [("there are unpushed commits NEXT won't push", true)]);
+    }
+
+    // What push's gate would refuse after the fix, refused before the agent
+    // runs. Soft: the agent only costs tokens; push's own Hard undone rule
+    // still keeps the copies off the remote.
+    #[test]
+    fn ci_fix_waits_on_what_would_refuse_its_push_an_undone_restack_and_an_unpushed_parent() {
+        assert_eq!(ci_fix_said(&Derived { undone: true, ..red() }), [("the restack was undone, so a fix can't be pushed", true)]);
+        assert_eq!(ci_fix_said(&Derived { parent_unpushed: true, ..red() }), [("the parent branch isn't on the remote yet", true)]);
+    }
+
+    // Only the CI waits say CI may not be red at HEAD (#348).
+    #[test]
+    fn ci_fix_waits_for_ci_red_at_head_or_for_a_fix_to_be_pushable_by_which_rules_refuse_348() {
+        let said = |d: &Derived| {
+            let rules = ci_fix_rules(d);
+            let waits: Vec<&str> = ci_fix_ci_waits(&rules).iter().map(|r| r.name).collect();
+            (waits, ci_fix_once(&rules))
+        };
+        let pending = Derived { ci_verdict: "pending".into(), ..red() };
+        assert_eq!(said(&pending), (vec!["CI is pending"], "CI is red at HEAD"));
+        assert_eq!(said(&Derived { undone: true, ..red() }), (vec![], "a fix can be pushed"));
+        assert_eq!(said(&Derived { parent_unpushed: true, ..red() }), (vec![], "a fix can be pushed"));
+        assert_eq!(said(&Derived { undone: true, ..pending }), (vec!["CI is pending"], "CI is red at HEAD and a fix can be pushed"));
+        assert_eq!(said(&red()), (vec![], "CI is red at HEAD"));
+    }
+
+    // CI on HEAD hasn't run yet: a push starts it.
+    #[test]
+    fn ci_fix_says_blocked_and_cancelled_ci_are_chrismos_only_at_head() {
+        let old = |v: &str| Derived { ci_verdict: v.into(), ci_for_head: Some(false), ..red() };
+        assert_eq!(ci_fix_said(&old("blocked")), [("CI is blocked, but not on HEAD", false)]);
+        assert_eq!(ci_fix_said(&old("inconclusive")), [("CI was cancelled, but not on HEAD", false)]);
+        let ahead = ci_fix_said(&Derived { to_push: true, unpushed: true, ..old("blocked") });
+        assert_eq!(ahead, [("CI is blocked, but not on HEAD", false), ("there are unpushed commits, which may be the fix already", false)]);
+    }
+
+    #[test]
+    fn ci_fix_names_a_drop_not_unpushed_commits() {
+        let drop = Derived { to_push: true, reset_away: true, dropping: true, ..red() };
+        assert_eq!(ci_fix_said(&drop), [("the remote has commits reset away here, which a push drops", false)]);
+        let held = ci_fix_said(&Derived { verify_red: true, ..drop });
+        assert_eq!(held, [("the remote has commits reset away here, which a push drops", true)]);
+    }
+
+    #[test]
+    fn ci_fix_runs_only_on_red_known_at_head_with_an_open_pr_and_nothing_to_push_on_generated_states() {
+        check("ci-fix runs", |d| {
+            let fits = d.has_pr && d.ci_verdict == "red" && d.ci_for_head == Some(true) && !d.to_push && !d.undone && !d.parent_unpushed;
+            if ci_fix(d).runs() && !fits {
+                Err("ci-fix runs".into())
+            } else {
+                Ok(())
+            }
+        });
     }
 
     /// The record from tests/next.rs's READY, which disagrees with most

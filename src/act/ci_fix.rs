@@ -10,13 +10,15 @@ use super::implement::blank;
 use super::push::push_branch;
 use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base, in_worktree,
                   must, question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
-use super::{cfg, die, lock_recheck, state_json, Args};
+use super::gate::{enforce, enforce_leaving, judge, reported, Gate, Go, Rule};
+use super::{cfg, die, gates, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
+use crate::next::Derived;
 use crate::proc;
-use crate::val::{at, n, on, sj, t, text};
+use crate::val::{at, sj, t, text};
 use regex::Regex;
 use serde_json::Value;
 use std::fs;
@@ -37,6 +39,12 @@ fn short(sha: &str) -> &str {
 /// handled, and how.
 fn record(b: &str, sha: &str, how: &str) {
     must(&["config", &format!("branch.{b}.sd-ci-fix"), &format!("{sha} {how}")]);
+}
+
+/// <sha>, CI's red, when it is red at HEAD: not when forced past a CI wait,
+/// where a record would overwrite the one for a real red at HEAD.
+fn red_at_head<'a>(sha: &'a str, forced: &[String]) -> Option<&'a str> {
+    forced.is_empty().then_some(sha).filter(|s| !s.is_empty())
 }
 
 /// The record says the agent already called <sha>'s red flaky.
@@ -121,87 +129,33 @@ fn ci_logs(sha: &str) -> String {
 }
 
 /// Push the fix in <wt>, unless held for chrismo, <state>'s PR is no longer
-/// open, or <b> was attached during the step; <kept> says what is left
-/// unpushed when the push fails.
-fn publish(b: &str, wt: &str, remote: &str, state: &Value, kept: &str) {
+/// open, <b> was attached during the step, or sd act push's gate refuses on
+/// the state after the fix; <kept> says what is left unpushed when the push
+/// doesn't happen.
+fn publish(b: &str, wt: &str, remote: &str, state: &Value, force: bool, kept: &str) {
     hold_gate(b, &format!("pushing {b}"), "");
     let left = format!("the commit is kept in {wt}");
     pr_gate(&t(state, "pr.number"), &t(state, "pr.url"), "ci-fix", "pushing", &left);
     lock_recheck(b, "ci-fix", "pushing", &left);
+    let now = state_json(wt, b).unwrap_or_else(|e| {
+        eprint!("{e}");
+        die(format!("sd state failed; {kept}"))
+    });
+    if enforce_leaving(gates::push(&Derived::new(&now)), force, &format!("pushing {b}"), kept).is_none() {
+        return;
+    }
     if let Err(e) = push_branch(b, remote) {
         eprintln!("sd act: {e}");
         die(kept);
     }
 }
 
-/// What ci-fix makes of sd state <s>; NEXT reads it too (#326).
-#[derive(Debug, PartialEq)]
-pub enum Gate {
-    Runs,
-    Hard(String),
-    /// CI may yet be red at HEAD, after a push, a run or a rerun. <why> is
-    /// short, for NEXT; <msg> is what ci-fix says.
-    Waits { why: String, msg: String },
-    /// CI passed at HEAD: nothing to fix.
-    Moot(String),
-}
-
-pub fn gate(s: &Value) -> Gate {
-    let b = t(s, "branch");
-    if at(s, "pr").is_null() {
-        return Gate::Hard(format!("no PR for {b}"));
-    }
-    let pr = t(s, "pr.state");
-    if pr != "OPEN" {
-        return Gate::Hard(format!("PR #{} is {}; nothing to fix", t(s, "pr.number"), pr.to_lowercase()));
-    }
-    let waits = |why: String, msg: String| Gate::Waits { why, msg };
-    let at_head = on(s, "ci.for_head") && n(s, "push.ahead") == 0.0;
-    match at(s, "ci.verdict").as_str().unwrap_or("none") {
-        "red" => {}
-        "inconclusive" => {
-            return waits("CI was cancelled".into(), "CI was cancelled, not red: rerun it (gh run rerun, or rwx retry), then wait".into())
-        }
-        v @ ("green" | "none") if at_head => return Gate::Moot(format!("CI is {v} on {b}; nothing to fix")),
-        v @ ("green" | "none") => return waits(format!("CI is {v}, but not on HEAD"), format!("CI is {v} on {b}; nothing to fix")),
-        v => return waits(format!("CI is {v}"), format!("CI is {v} on {b}; nothing to fix")),
-    }
-    if !on(s, "ci.for_head") {
-        let red = short(&t(s, "ci.sha")).to_string();
-        return waits(
-            format!("CI's red is for {red}, not HEAD"),
-            format!("CI's red is for {red}, not HEAD: push if there is something to push, then wait for CI on HEAD"),
-        );
-    }
-    if n(s, "push.ahead") != 0.0 {
-        return waits(
-            format!("{} unpushed commit(s)", t(s, "push.ahead")),
-            format!("{b} has unpushed commits, which may be the fix already: sd act push, then wait for CI"),
-        );
-    }
-    Gate::Runs
-}
-
-/// What of ci-fix's wait nothing sd watch runs clears: a cancelled run
-/// (sd watch doesn't rerun CI), or unpushed commits NEXT offers no push
-/// for (next::push_offered): a CI config change held for chrismo's review,
-/// a verify red on HEAD (#325), or another hold sd state names.
-fn waits_yours(s: &Value) -> Vec<String> {
-    let held = n(s, "push.ahead") > 0.0 && !crate::next::push_offered(s);
-    if t(s, "ci.verdict") == "inconclusive" {
-        vec!["the cancelled CI (rerun it: gh run rerun, or rwx retry)".into()]
-    } else if held && !at(s, "push.held").is_null() {
-        vec!["the held CI config change (review it, then sd act push)".into()]
-    } else if held && on(s, "verify.at_head") {
-        vec!["the verify red on HEAD (fix it, then sd act verify)".into()]
-    } else if held {
-        vec!["the unpushed commits NEXT won't push (sd state says why)".into()]
-    } else {
-        vec![]
-    }
-}
-
-fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
+/// Fetch, read sd state, and ask gates::ci_fix (#348): Go, the state and
+/// the CI waits --force ran past ("<name>: <clears>"; none when CI is red at
+/// HEAD), or None once it's said why not. A wait stores <a>'s answer, to run
+/// once it clears (#326); without one it refuses, and --force runs anyway,
+/// with a warning.
+fn gated(b: &str, wt: &str, remote: &str, a: &Args) -> Option<(Go, Value, Vec<String>)> {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {
         die(format!("{wt} has uncommitted changes"));
@@ -215,33 +169,78 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         eprint!("{e}");
         die("sd state failed")
     });
-    match gate(&state) {
-        Gate::Runs => {}
-        Gate::Waits { why, msg } => {
-            if !answering {
-                die(msg);
-            }
+    let rules = gates::ci_fix_rules(&Derived::new(&state));
+    let mut forced = vec![];
+    let gate = match judge(&rules) {
+        Gate::Done(why) if answering => die(format!("{why}: the ci-fix agent's question is moot; sd act ack --question drops it")),
+        Gate::Done(why) => Gate::Done(format!("{why}: nothing to fix on {b}")),
+        Gate::Soft(why) if answering => {
             answer_store(b, "ci-fix", a);
-            println!("{}", answer_waits(b, "ci-fix", &why, "CI is red at HEAD", &waits_yours(&state), a));
-            return;
+            let yours: Vec<String> = reported(&rules).iter().filter(|r| r.yours).map(|r| format!("{} ({})", r.name, r.clears)).collect();
+            println!("{}", answer_waits(b, "ci-fix", &why.join("; "), gates::ci_fix_once(&rules), &yours, a));
+            return None;
         }
-        Gate::Moot(msg) if answering => die(format!("{msg}: the ci-fix agent's question is moot; sd act ack --question drops it")),
-        Gate::Moot(msg) | Gate::Hard(msg) => die(msg),
+        Gate::Soft(_) => {
+            let said = |rs: Vec<&Rule>| rs.iter().map(|r| format!("{}: {}", r.name, r.clears)).collect::<Vec<_>>();
+            forced = said(gates::ci_fix_ci_waits(&rules));
+            Gate::Soft(said(reported(&rules)))
+        }
+        g => g,
+    };
+    enforce(gate, a.force, &format!("fixing CI on {b} until {}", gates::ci_fix_once(&rules))).map(|go| (go, state, forced))
+}
+
+/// The agent calls CI flaky: recorded against <red>, the SHA of CI's red at
+/// HEAD, or not at all with none (forced past a CI wait).
+fn flaky(b: &str, wt: &str, red: Option<&str>, summary: &str, (before, agent_head): (&str, &str), autofixed: Option<String>) {
+    if !status(wt).is_empty() {
+        die(format!("the agent says flaky but edited files; they are left uncommitted in {wt}"));
     }
-    let sha = t(&state, "ci.sha");
-    let failing = sj(at(&state, "ci.failing"), ", ");
+    if let Some(sha) = red {
+        record(b, sha, "flaky");
+        println!("{b}: the agent calls {}'s red flaky, not the change's: {summary}", short(sha));
+    } else {
+        println!("{b}: the agent calls CI flaky, not the change's: {summary}");
+        println!("not recorded: there's no red at HEAD to record it against");
+    }
+    if agent_head != before {
+        println!("the agent committed anyway; kept, unpushed: look (git log {before}..{b}), then sd act push");
+    } else if let Some(c) = autofixed {
+        println!("autofix's commit {c} is kept, unpushed: sd act push");
+    } else {
+        println!("nothing committed; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks");
+    }
+}
+
+/// The prompt's line on what CI reports failing on <sha>.
+fn failing_line(sha: &str, failing: &str) -> String {
+    let on = if sha.is_empty() { String::new() } else { format!(" on {}", short(sha)) };
+    if failing.is_empty() {
+        format!("No failing checks are reported{on} yet.")
+    } else {
+        format!("Failing checks{on}: {failing}")
+    }
+}
+
+fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, forced: &[String]) {
+    let answering = !a.answer.is_empty();
+    let sha = t(state, "ci.sha");
+    let failing = sj(at(state, "ci.failing"), ", ");
     let last = git_out(".", &["config", "--get", &format!("branch.{b}.sd-ci-fix")]).unwrap_or_default();
-    if !a.force && judged_flaky(&last, &sha) {
-        die(format!(
-            "ci-fix already judged {}'s red flaky and changed nothing; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks. --force hands it over again",
-            short(&sha)
-        ));
+    if judged_flaky(&last, &sha) {
+        if !a.force {
+            die(format!(
+                "ci-fix already judged {}'s red flaky and changed nothing; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks. --force hands it over again",
+                short(&sha)
+            ));
+        }
+        eprintln!("sd act: warning: ci-fix already judged {}'s red flaky; running anyway", short(&sha));
     }
     question_gate(b, "ci-fix", a.force, answering);
     going_on("ci-fix", a);
     let s = step_session(b, "ci-fix", &a.harness, a.force, answering);
     // With no base from sd state, the trusted one guidance_base finds (maybe none).
-    let mut base = t(&state, "sync.old_base");
+    let mut base = t(state, "sync.old_base");
     if base.is_empty() {
         base = guidance_base(b);
     }
@@ -261,12 +260,14 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         if commit.is_some() {
             print!("{vout}");
             if verified.is_ok() {
-                record(b, &sha, "autofix");
+                if let Some(red) = red_at_head(&sha, forced) {
+                    record(b, red, "autofix");
+                }
                 if a.no_publish {
                     println!("autofix fixed what verify saw; not pushed (--no-publish): sd act push");
                     return;
                 }
-                publish(b, wt, remote, &state, &format!("autofix's commit is kept in {wt}, not pushed"));
+                publish(b, wt, remote, state, a.force, &format!("autofix's commit is kept in {wt}, not pushed"));
                 println!("autofix fixed what verify saw; CI reruns on the push");
                 return;
             }
@@ -275,13 +276,17 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         if !status(wt).is_empty() {
             die(format!("verify ({verify}) changed files in {wt} (a formatter?); commit them, then sd act ci-fix"));
         }
-        let logs = ci_logs(&sha);
+        let logs = if sha.is_empty() { String::new() } else { ci_logs(&sha) };
         let mut p = step_guidance("ciFixPrompt", b, &base, &lib_dir().join("prompts/ci-fix.md")).unwrap_or_else(|e| {
             eprintln!("{e}");
             die("can't read the ci-fix guidance")
         });
         p += &format!("\n\nTask: {}", if task.is_empty() { "(none recorded)" } else { &task });
-        p += &format!("\n\nFailing checks on {}: {failing}", short(&sha));
+        p += &format!("\n\n{}", failing_line(&sha, &failing));
+        if !forced.is_empty() {
+            p += "\n\nsd act ci-fix was forced past its gate, so CI may not be red at HEAD:";
+            p += &forced.iter().map(|w| format!("\n- {w}")).collect::<String>();
+        }
         if !logs.is_empty() {
             p += &format!("\n\n{}", logs.trim_end_matches('\n'));
         }
@@ -332,19 +337,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     match outcome.as_str() {
         "fixed" => {}
         "flaky" => {
-            if !status(wt).is_empty() {
-                die(format!("the agent says flaky but edited files; they are left uncommitted in {wt}"));
-            }
-            record(b, &sha, "flaky");
-            println!("{b}: the agent calls {}'s red flaky, not the change's: {summary}", short(&sha));
-            if agent_head != before {
-                println!("the agent committed anyway; kept, unpushed: look (git log {before}..{b}), then sd act push");
-            } else if let Some(c) = autofixed {
-                println!("autofix's commit {c} is kept, unpushed: sd act push");
-            } else {
-                println!("nothing committed; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks");
-            }
-            return;
+            return flaky(b, wt, red_at_head(&sha, forced), &summary, (&before, &agent_head), autofixed);
         }
         "needs-input" => {
             question_ask(b, wt, "ci-fix", &summary);
@@ -358,7 +351,10 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     }
     let msg = match at(&result, "commit_message").as_str() {
         Some(m) if !blank(m) => m.to_string(),
-        _ => format!("Fix CI: {}", at(&state, "ci.failing").get(0).map(text).unwrap_or_default()),
+        _ => match at(state, "ci.failing").get(0).map(text) {
+            Some(check) if !check.is_empty() => format!("Fix CI: {check}"),
+            _ => "Fix CI".into(),
+        },
     };
     commit_edits(b, "ci-fix", wt, &msg);
     println!("{b}: {summary}");
@@ -367,19 +363,25 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
     if let Err(cmd) = verify_autofix(wt, b, "ci-fix") {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}, nothing pushed"));
     }
-    record(b, &sha, "fixed");
+    if let Some(red) = red_at_head(&sha, forced) {
+        record(b, red, "fixed");
+    }
     if a.no_publish {
         println!("not pushed (--no-publish): sd act push when ready");
         return;
     }
-    publish(b, wt, remote, &state, &format!("the fix is committed in {wt}, not pushed"));
+    publish(b, wt, remote, state, a.force, &format!("the fix is committed in {wt}, not pushed"));
     println!("CI reruns on the push");
 }
 
 pub fn ci_fix(b: &str, remote: &str, a: &Args) {
     let stored = with_stored_answer(b, "ci-fix", a);
     let a = stored.as_ref().unwrap_or(a);
-    in_worktree(b, "ci-fix", |wt| ci_fix_run(b, wt, remote, a));
+    in_worktree(b, "ci-fix", |wt| {
+        if let Some((go, state, forced)) = gated(b, wt, remote, a) {
+            ci_fix_run(go, b, wt, remote, a, &state, &forced);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -395,32 +397,6 @@ mod tests {
         assert!(!judged_flaky("abc123 autofix", "abc123"));
         assert!(!judged_flaky("", "abc123"));
         assert!(!judged_flaky("abc123", "abc123"));
-    }
-
-    fn st(edits: Value) -> Value {
-        let mut s = json!({"branch": "feat", "pr": {"number": 7, "state": "OPEN"},
-                           "ci": {"sha": "abcdef12", "for_head": true, "verdict": "red"}, "push": {"ahead": 0}});
-        for (k, v) in edits.as_object().unwrap() {
-            let (a, b) = k.split_once('.').unwrap();
-            s[a][b] = v.clone();
-        }
-        s
-    }
-
-    #[test]
-    fn gate_runs_on_red_at_head_waits_while_ci_may_yet_be_and_is_moot_once_it_passed_there() {
-        assert_eq!(gate(&st(json!({}))), Gate::Runs);
-        let why = |g: Gate| match g {
-            Gate::Waits { why, .. } => why,
-            g => panic!("{g:?}"),
-        };
-        assert_eq!(why(gate(&st(json!({"ci.verdict": "pending"})))), "CI is pending");
-        assert_eq!(why(gate(&st(json!({"ci.verdict": "inconclusive"})))), "CI was cancelled");
-        assert_eq!(why(gate(&st(json!({"ci.for_head": false})))), "CI's red is for abcdef1, not HEAD");
-        assert_eq!(why(gate(&st(json!({"push.ahead": 2})))), "2 unpushed commit(s)");
-        assert_eq!(why(gate(&st(json!({"ci.verdict": "green", "push.ahead": 1})))), "CI is green, but not on HEAD");
-        assert_eq!(gate(&st(json!({"ci.verdict": "green"}))), Gate::Moot("CI is green on feat; nothing to fix".into()));
-        assert_eq!(gate(&st(json!({"pr.state": "MERGED"}))), Gate::Hard("PR #7 is merged; nothing to fix".into()));
     }
 
     #[test]
