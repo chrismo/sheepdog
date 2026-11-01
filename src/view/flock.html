@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sheepdog flock</title>
+<style>
+:root {
+  --bg: #eef1f3; --surface: #ffffff; --ink: #17212a; --muted: #5a6670; --line: #d3dade;
+  --you: #a87414; --agent: #b0532b; --run: #4c7d36; --wait: #3d6fa8; --red: #c2412d; --done: #7d8a93;
+  --f-body: "Atkinson Hyperlegible", "Avenir Next", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
+    --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
+  --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.4; }
+.wrap {
+  max-width: 1200px; margin: 0 auto; display: grid; gap: 22px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+}
+h1 { font-size: clamp(1.7rem, 4.5vw, 2.4rem); letter-spacing: -0.02em; margin: 0; line-height: 1.1; }
+h2 { font-size: 1rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+h2 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gc); }
+h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font-weight: 400; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.eyebrow.stale { color: var(--red); }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.sum { display: inline-flex; gap: 8px; align-items: baseline; border: 1.5px solid var(--sc); border-radius: 999px; padding: 4px 12px; font-size: 0.88rem; }
+.sum b { font-size: 1.15rem; color: var(--sc); font-variant-numeric: tabular-nums; }
+.group { display: grid; gap: 10px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 12px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--cc); border-radius: 8px;
+  padding: 12px 12px 10px; display: grid; gap: 8px; align-content: start; min-width: 0;
+}
+.card .b { font-family: var(--f-mono); font-weight: 600; font-size: 0.86rem; overflow-wrap: anywhere; }
+.card .meta { font-size: 0.76rem; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+.card .meta a { color: var(--muted); }
+.now { font-size: 0.82rem; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, var(--cc) 12%, transparent); display: grid; gap: 4px; overflow-wrap: anywhere; }
+.now .cmd { display: flex; gap: 6px; align-items: center; }
+.now code { font-family: var(--f-mono); font-size: 0.74rem; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
+.copy { font: inherit; font-size: 0.7rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 3px; padding: 1px 6px; cursor: pointer; }
+.copy:focus-visible { outline: 2px solid var(--wait); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; }
+.step { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; min-height: 22px; position: relative; font-size: 0.8rem; }
+.step::before { content: ""; position: absolute; left: 8px; top: -6px; height: 12px; width: 2px; background: var(--line); }
+.step:first-child::before { display: none; }
+.step.done::before, .step.done + .step::before { background: var(--done); }
+.mk { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); justify-self: center; position: relative; z-index: 1; display: grid; place-items: center; }
+.step .lab { color: var(--muted); }
+.step .st { font-size: 0.72rem; color: var(--muted); text-align: right; font-family: var(--f-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+.step.done .mk { background: var(--done); border-color: var(--done); }
+.step.done .mk::after { content: ""; width: 4px; height: 7px; border: solid var(--surface); border-width: 0 2px 2px 0; transform: translateY(-1px) rotate(45deg); }
+.step.done .lab { color: var(--ink); }
+.step.skip { opacity: 0.4; }
+.step.skip .mk { border-style: dashed; }
+.step.skip .lab { text-decoration: line-through; }
+.step.red .mk { border-color: var(--red); background: var(--red); }
+.step.red .lab, .step.red .st { color: var(--red); font-weight: 700; }
+.step.cur .mk { border-color: var(--sc); border-width: 3px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--sc) 25%, transparent); }
+.step.cur .lab { color: var(--ink); font-weight: 700; }
+.step.cur .st { color: var(--sc); font-weight: 600; }
+@media (prefers-reduced-motion: no-preference) {
+  .step.cur.moving .mk { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--sc) 8%, transparent); } }
+}
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); align-items: center; }
+.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; border: 2px solid var(--lc); }
+.empty { color: var(--muted); }
+footer { font-size: 0.78rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="display:grid; gap:10px">
+    <div class="eyebrow" id="eyebrow">loading…</div>
+    <h1>Your PRs</h1>
+    <div class="summary" id="summary"></div>
+    <div class="legend">
+      <span><i style="--lc:var(--you)"></i>you</span>
+      <span><i style="--lc:var(--agent)"></i>agent</span>
+      <span><i style="--lc:var(--run)"></i>sheepdog</span>
+      <span><i style="--lc:var(--wait)"></i>waiting</span>
+      <span><i style="--lc:var(--done); background:var(--done)"></i>done</span>
+      <span><i style="--lc:var(--line); border-style:dashed"></i>not set up</span>
+    </div>
+  </header>
+  <div id="groups" style="display:grid; gap:26px"></div>
+  <footer id="foot"></footer>
+</div>
+<script>
+const POLL_MS = 30000;
+const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
+const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
+const SHORT = { ready: "ready", draft: "mark ready", "parent-wait": "after parent", "review-decide": "decide", review: "queued", "ci-wait": "running", "ci-red": "fix", "review-fix": "fix", bot: "address" };
+const GROUPS = [["you", "Needs you"], ["agent", "Agent next"], ["run", "sheepdog next"], ["wait", "Waiting"]];
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const color = who => `var(${WHO[who] || "--wait"})`;
+const group = b => (WHO[b.lead.who] ? b.lead.who : "wait");
+
+function card(b) {
+  const L = b.lead;
+  const rows = b.stages.map(s => {
+    const cur = s.status === "cur";
+    const moving = cur && s.who !== "you";
+    const text = cur ? SHORT[s.text] || s.text : s.text;
+    return `<li class="step ${s.status}${moving ? " moving" : ""}" style="--sc:${cur ? color(s.who) : "var(--line)"}">` +
+      `<span class="mk"></span><span class="lab">${NAME[s.stage] || esc(s.stage)}</span><span class="st">${esc(text)}</span></li>`;
+  }).join("");
+  const pr = b.pr ? `<a href="${esc(b.pr.url)}" target="_blank" rel="noopener">#${esc(b.pr.number)}</a>${b.pr.draft ? " draft" : ""}` : "no PR";
+  const usd = typeof b.usd === "number" ? `<span>$${b.usd.toFixed(2)}</span>` : "";
+  const cmd = L.cmd ? `<span class="cmd"><code>${esc(L.cmd)}</code><button class="copy" type="button" data-cmd="${esc(L.cmd)}">copy</button></span>` : "";
+  return `<article class="card" style="--cc:${color(L.who)}">
+    <div><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span><span>${pr}</span>${usd}</div></div>
+    <div class="now"><span>${esc(L.say)}</span>${cmd}</div>
+    <ol class="steps">${rows}</ol>
+  </article>`;
+}
+
+function render(f) {
+  const bs = f.branches, counts = {};
+  bs.forEach(b => (counts[group(b)] = (counts[group(b)] || 0) + 1));
+  const repos = [...new Set(bs.map(b => b.repo))].join(", ");
+  const eb = document.getElementById("eyebrow");
+  eb.classList.remove("stale");
+  eb.textContent = `${bs.length} branch${bs.length === 1 ? "" : "es"}${repos ? " · " + repos : ""}`;
+  document.getElementById("summary").innerHTML = GROUPS.filter(([w]) => counts[w]).map(([w, name]) =>
+    `<span class="sum" style="--sc:${color(w)}"><b>${counts[w]}</b>${name.toLowerCase()}</span>`).join("");
+  document.getElementById("groups").innerHTML = bs.length ? GROUPS.map(([w, name]) => {
+    const list = bs.filter(b => group(b) === w);
+    if (!list.length) return "";
+    return `<section class="group"><h2 style="--gc:${color(w)}"><span class="dot"></span>${name}<span class="n">${list.length}</span></h2>` +
+      `<div class="cards">${list.map(card).join("")}</div></section>`;
+  }).join("") : `<p class="empty">No cached branches yet: enroll one (sd act enroll), and let sd watch make a pass.</p>`;
+  const now = new Date().toLocaleTimeString();
+  document.getElementById("foot").textContent =
+    `sd watch's last pass: ${f.at || "none yet"}. Read at ${now}, again every ${POLL_MS / 1000}s. The lit stages are each branch's NEXT steps.`;
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/flock", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    render(await r.json());
+  } catch (e) {
+    const eb = document.getElementById("eyebrow");
+    eb.classList.add("stale");
+    eb.textContent = `can't reach sd view (${e.message}): showing the last read`;
+  }
+}
+
+document.addEventListener("click", async e => {
+  const b = e.target.closest(".copy");
+  if (!b) return;
+  try { await navigator.clipboard.writeText(b.dataset.cmd); b.textContent = "copied"; }
+  catch {
+    const r = document.createRange(); r.selectNodeContents(b.previousElementSibling);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = "selected";
+  }
+  setTimeout(() => (b.textContent = "copy"), 1400);
+});
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>

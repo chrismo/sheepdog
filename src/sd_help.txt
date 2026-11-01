@@ -9,5 +9,6 @@ Verbs:
   config        harness and settings
   harness       probe: check the installed harnesses after an upgrade
   review-local  the default local reviewer (sd act review runs it)
+  view          the Flock page: every branch sd watch tracks, live in the browser
 
 sd <verb> --help for each verb's own usage.
