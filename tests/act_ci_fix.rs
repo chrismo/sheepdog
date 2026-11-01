@@ -743,6 +743,18 @@ fn flaky_forced_past_a_ci_wait_isnt_recorded_so_a_later_red_at_head_still_runs_3
     }
 }
 
+#[test]
+fn a_fix_forced_past_a_ci_wait_leaves_the_record_of_a_red_at_head_alone_348() {
+    for edit in [r#".ci.verdict = "pending" | .ci.failing = []"#, r#".ci.verdict = "pending" | .ci.failing = [] | .ci.sha = null"#] {
+        let sd = sd();
+        sd.git(&["config", "branch.feat.sd-ci-fix", "r0 flaky"]);
+        sd.state(&[edit]);
+        let r = sd.run(&["ci-fix", "--force"]);
+        assert_eq!(r.status, 0, "{edit}: {}", r.output);
+        assert_eq!(sd.recorded().as_deref(), Some("r0 flaky"), "{edit}");
+    }
+}
+
 // @test "fixed but changed nothing: fails"
 #[test]
 fn fixed_but_changed_nothing_fails() {

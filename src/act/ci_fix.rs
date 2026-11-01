@@ -41,6 +41,12 @@ fn record(b: &str, sha: &str, how: &str) {
     must(&["config", &format!("branch.{b}.sd-ci-fix"), &format!("{sha} {how}")]);
 }
 
+/// <sha>, CI's red, when it is red at HEAD: not when forced past a CI wait,
+/// where a record would overwrite the one for a real red at HEAD.
+fn red_at_head<'a>(sha: &'a str, forced: &[String]) -> Option<&'a str> {
+    forced.is_empty().then_some(sha).filter(|s| !s.is_empty())
+}
+
 /// The record says the agent already called <sha>'s red flaky.
 fn judged_flaky(last: &str, sha: &str) -> bool {
     last.split_once(' ') == Some((sha, "flaky"))
@@ -254,7 +260,9 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
         if commit.is_some() {
             print!("{vout}");
             if verified.is_ok() {
-                record(b, &sha, "autofix");
+                if let Some(red) = red_at_head(&sha, forced) {
+                    record(b, red, "autofix");
+                }
                 if a.no_publish {
                     println!("autofix fixed what verify saw; not pushed (--no-publish): sd act push");
                     return;
@@ -329,8 +337,7 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
     match outcome.as_str() {
         "fixed" => {}
         "flaky" => {
-            let red = forced.is_empty().then_some(sha.as_str()).filter(|s| !s.is_empty());
-            return flaky(b, wt, red, &summary, (&before, &agent_head), autofixed);
+            return flaky(b, wt, red_at_head(&sha, forced), &summary, (&before, &agent_head), autofixed);
         }
         "needs-input" => {
             question_ask(b, wt, "ci-fix", &summary);
@@ -356,7 +363,9 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
     if let Err(cmd) = verify_autofix(wt, b, "ci-fix") {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}, nothing pushed"));
     }
-    record(b, &sha, "fixed");
+    if let Some(red) = red_at_head(&sha, forced) {
+        record(b, red, "fixed");
+    }
     if a.no_publish {
         println!("not pushed (--no-publish): sd act push when ready");
         return;
