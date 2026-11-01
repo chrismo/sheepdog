@@ -625,9 +625,11 @@ fn tally_of(h: &str, text: &str) -> Value {
 
 const HELP: &str = include_str!("harness_help.txt");
 
-/// Unnamed, a step on a detached HEAD runs with no running marker (#341).
-fn unmarked(branch: &str, release: bool) -> Option<String> {
-    (release && branch.is_empty()).then(|| {
+/// Unnamed, a step on a detached HEAD would run with no running marker (#341):
+/// run_step falls back to the current branch, so only `current` empty too
+/// refuses.
+fn unmarked(branch: &str, current: impl FnOnce() -> String) -> Option<String> {
+    (branch.is_empty() && current().is_empty()).then(|| {
         "sd harness: HARNESS_BRANCH must name the step's branch, which its running marker is for (#170): \
          HARNESS_BRANCH=<branch> sd harness run ..."
             .to_string()
@@ -670,7 +672,7 @@ pub fn run(argv: &[String]) -> ExitCode {
             };
             let env = |k: &str| std::env::var(k).unwrap_or_default();
             let (name, branch, parent) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"), env("HARNESS_PARENT"));
-            if let Some(why) = unmarked(&branch, !cfg!(debug_assertions)) {
+            if let Some(why) = unmarked(&branch, || git_out(".", &["branch", "--show-current"]).unwrap_or_default()) {
                 eprintln!("{why}");
                 return ExitCode::from(1);
             }
@@ -717,10 +719,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn run_refuses_no_harness_branch_outside_a_debug_build_341() {
-        assert_eq!(unmarked("", false), None);
-        assert_eq!(unmarked("feat", true), None);
-        let why = unmarked("", true).unwrap();
+    fn run_refuses_no_harness_branch_only_on_a_detached_head_341() {
+        assert_eq!(unmarked("", || "feat".into()), None);
+        assert_eq!(unmarked("feat", || unreachable!()), None);
+        let why = unmarked("", String::new).unwrap();
         assert!(why.starts_with("sd harness: HARNESS_BRANCH must name the step's branch"), "{why}");
         assert!(why.contains("HARNESS_BRANCH=<branch> sd harness run"), "{why}");
     }

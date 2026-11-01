@@ -495,9 +495,18 @@ fn harness_run_harness_branch_names_the_branch_when_the_worktree_is_detached_res
     let r = sd.step(&[("HARNESS_BRANCH", "feat")], &["claude", "sid1", "resume", "30", "do it", "{}"]);
     assert_eq!(r.status, 0);
     assert_eq!(sd.usage_last(&["branch"]), "feat");
-    sd.step(&[], &["claude", "sid1", "resume", "30", "do it", "{}"]);
-    assert_eq!(sd.usage_count(), 2);
-    assert_eq!(sd.usage_last(&["branch"]), "null");
+}
+
+// Unnamed and detached, a step would run with no running marker (#341, C13).
+#[test]
+fn harness_run_refuses_a_detached_worktree_without_harness_branch_341() {
+    let sd = sd();
+    sd.git(&["switch", "-q", "--detach"]);
+    let r = sd.step(&[], &["claude", "sid1", "resume", "30", "do it", "{}"]);
+    assert_eq!(r.status, 1);
+    assert_has(&r.stderr, &["HARNESS_BRANCH=<branch> sd harness run"]);
+    assert!(!sd.fx_exists("args"));
+    assert_eq!(sd.usage_count(), 0);
 }
 
 // ── a stray agent commit or push: logged, never refused (#346) ─────────────
@@ -603,14 +612,8 @@ fn a_resolve_steps_detached_head_that_moves_is_a_commit_and_harness_branch_names
     assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "true|true");
 }
 
-#[test]
-fn outside_a_branch_a_push_cant_be_told_so_its_null_346() {
-    let sd = pushed();
-    sd.git(&["switch", "-q", "--detach"]);
-    let r = sd.step(&[], &STEP);
-    assert_eq!(r.status, 0, "{}", r.stderr);
-    assert_eq!(sd.usage_last(&["branch", "stray_commit", "stray_push"]), "null|false|null");
-}
+// outside_a_branch_a_push_cant_be_told_so_its_null_346 is in
+// tests/review_local.rs: sd harness run refuses a detached HEAD unnamed (#341).
 
 // @test "harness_run: a failed step is logged with its status, and pi's record has no cost without a transcript"
 #[test]
