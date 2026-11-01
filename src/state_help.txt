@@ -154,7 +154,9 @@ none. A stored PR that merged stays the branch's PR, even once a newer one
 is open from the same branch: the branch is done (#122). Only a local
 branch stores a number, so a parent that isn't one, or a fresh clone, gets
 discovery's pick (an open PR first); git config --unset branch.<b>.sd-pr
-makes sd state look again. A draft adds two REST calls, for its base
+makes sd state look again. A followed branch's number (sd-mode
+reviewer), as the branch or as a parent, is its record: never discovered,
+never unset (#339). A draft adds two REST calls, for its base
 branch's required checks. A gh failure is
 recorded in .errors and the git facts are still reported.
 

@@ -41,7 +41,8 @@ reasoning. These are the rules agents build by:
 
 Step labels in comments and test headers are the design's atomic actions:
 
-- **Observe** (`sd state`, read-only): **O1** PR lookup (number, base, head SHA,
+- **Observe** (`sd state`, read-only, except that it may cache identity it
+  discovered, never a decision: the PR number in `branch.<b>.sd-pr`, #339): **O1** PR lookup (number, base, head SHA,
   draft, mergeable; native-stack membership, #17) · **O2** parent state (from
   config; open / merged / closed) · **O3** sync vs parent (behind? would a
   restack conflict?) · **O4** local vs remote (unpushed? remote moved? whose
