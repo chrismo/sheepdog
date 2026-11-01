@@ -232,6 +232,11 @@ fn uncommitted_changes_are_refused() {
     let r = sd.run(&["review"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["uncommitted"]);
+    // a Hard rule: --force doesn't lift it (#348)
+    let r = sd.run(&["review", "--force"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["uncommitted"]);
+    assert!(!sd.fx_exists("reviewer.env"));
 }
 
 // @test "a branch checked out nowhere is refused"
@@ -241,6 +246,9 @@ fn a_branch_checked_out_nowhere_is_refused() {
     sd.git(&["branch", "parked"]);
     let r = sd.run(&["review", "parked"]);
     assert_ne!(r.status, 0);
+    // a Hard rule: --force doesn't lift it (#348)
+    assert_ne!(sd.run(&["review", "--force", "parked"]).status, 0);
+    assert!(!sd.fx_exists("reviewer.env"));
 }
 
 // @test "the default reviewer is libexec/sd-review-local"
