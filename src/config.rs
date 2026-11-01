@@ -53,8 +53,10 @@ Layers (top wins; sd config files prints the paths):
             botTimeout 3600 (seconds to wait on the review bot), interval
             300, vacuumAfter 604800, rateLimitFloor 250 (GraphQL points
             under which sd watch stops a pass), autoRun false (sd watch
-            runs none of a branch's steps), agentSteps 2 (agent steps sd
-            watch runs at once; 0 runs none), replyPrefix "🤖 ";
+            runs none of a branch's steps), autoForget false (sd watch
+            leaves a merged branch's forget --remove to chrismo),
+            agentSteps 2 (agent steps sd watch runs at once; 0 runs none),
+            replyPrefix "🤖 ";
             protectedPaths none (unset: .sheepdog/protected-paths in the
             base commit, else the CI config dirs, sd act --help); the other
             settings empty
@@ -75,11 +77,11 @@ Notes:
   - files are typed: an unknown key or a bad value is an error naming the
     file and path; keys are case-sensitive; a number may be quoted
     ("1800"); forkLimit, reviewRounds, interval, rateLimitFloor and
-    agentSteps are whole numbers; autoRun and useApiKey are true or false;
-    get prints a value as written; remote is global or repo file
-    only; interval, notify, vacuumAfter, rateLimitFloor and agentSteps are
-    global-file only; a repo file takes everything else a branch file
-    does
+    agentSteps are whole numbers; autoRun, autoForget and useApiKey are
+    true or false; get prints a value as written; remote is global or
+    repo file only; interval, notify, vacuumAfter, rateLimitFloor and
+    agentSteps are global-file only; a repo file takes everything else a
+    branch file does
   - a profile holds what a branch file may; profiles are defined in the
     global or repo file only; a pick of a profile no file defines is an
     error on every read, naming the file that picks it. set refuses to
@@ -107,7 +109,7 @@ fn defaults() -> Value {
         "settings": {
             "remote": "origin", "stepTimeout": 1800, "stepBudget": 5, "branchBudget": 25,
             "forkLimit": 100000, "reviewRounds": 3, "botTimeout": 3600, "interval": 300,
-            "vacuumAfter": 604800, "rateLimitFloor": 250, "autoRun": false, "agentSteps": 2, "replyPrefix": "🤖 ",
+            "vacuumAfter": 604800, "rateLimitFloor": 250, "autoRun": false, "autoForget": false, "agentSteps": 2, "replyPrefix": "🤖 ",
             "verify": "", "autofix": "", "localReview": "", "botCommand": "", "notify": "",
             "reviewPrompt": "", "implementPrompt": "", "reviewFixPrompt": "", "describePrompt": "",
             "addressPrompt": "", "resolvePrompt": "", "ciFixPrompt": "",
@@ -174,7 +176,7 @@ const SETTINGS: &[(&str, Ty)] = &[
     ("stepTimeout", Ty::Num), ("stepBudget", Ty::Num), ("branchBudget", Ty::Num),
     ("forkLimit", Ty::Whole), ("reviewRounds", Ty::Whole), ("replyPrefix", Ty::Str),
     ("verify", Ty::Str), ("autofix", Ty::Str), ("localReview", Ty::Str), ("botCommand", Ty::Str),
-    ("botTimeout", Ty::Num), ("autoRun", Ty::Bool),
+    ("botTimeout", Ty::Num), ("autoRun", Ty::Bool), ("autoForget", Ty::Bool),
     ("reviewPrompt", Ty::Str), ("implementPrompt", Ty::Str), ("reviewFixPrompt", Ty::Str),
     ("describePrompt", Ty::Str), ("addressPrompt", Ty::Str), ("resolvePrompt", Ty::Str),
     ("ciFixPrompt", Ty::Str),
