@@ -814,6 +814,7 @@ fn every_verb_clears_a_stale_lock_first() {
 #[test]
 fn a_stale_lock_is_cleared_and_the_step_runs() {
     let sd = sd();
+    nothing_ahead(&sd);
     sd.dead_lock();
     sd.fx("result.json", r#"{"outcome": "done", "summary": "did it", "commit_message": "add c"}"#);
     sd.fake("claude", IMPLEMENTER);
