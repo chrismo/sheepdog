@@ -21,12 +21,21 @@ pub fn token() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// The Host names sd view answers to; a write's Origin is one of them.
+pub fn hosts(port: u16) -> [String; 2] {
+    [format!("127.0.0.1:{port}"), format!("localhost:{port}")]
+}
+
+fn same(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// A browser sends Origin on every POST: a missing one isn't our page.
 pub fn refusal(req: &Request, port: u16, token: &str) -> Option<&'static str> {
-    let ours = [format!("http://127.0.0.1:{port}"), format!("http://localhost:{port}")];
-    if !req.origin.as_ref().is_some_and(|o| ours.contains(o)) {
+    let ours = |o: &String| o.strip_prefix("http://").is_some_and(|h| hosts(port).iter().any(|x| x == h));
+    if !req.origin.as_ref().is_some_and(ours) {
         Some("writes come from sd view's own page only\n")
-    } else if req.token.as_deref() != Some(token) {
+    } else if !req.token.as_deref().is_some_and(|t| same(t, token)) {
         Some("a write needs this run's token\n")
     } else {
         None
@@ -54,10 +63,10 @@ mod tests {
         let t = "abc";
         assert_eq!(refusal(&post(Some("http://127.0.0.1:9"), Some(t)), 9, t), None);
         assert_eq!(refusal(&post(Some("http://localhost:9"), Some(t)), 9, t), None);
-        for r in [post(None, Some(t)), post(Some("http://localhost:8"), Some(t)), post(Some("http://evil:9"), Some(t))] {
+        for r in [post(None, Some(t)), post(Some("http://localhost:8"), Some(t)), post(Some("http://evil:9"), Some(t)), post(Some("https://localhost:9"), Some(t))] {
             assert_eq!(refusal(&r, 9, t), Some("writes come from sd view's own page only\n"));
         }
-        for r in [post(Some("http://localhost:9"), None), post(Some("http://localhost:9"), Some("abd"))] {
+        for r in [post(Some("http://localhost:9"), None), post(Some("http://localhost:9"), Some("abd")), post(Some("http://localhost:9"), Some("ab")), post(Some("http://localhost:9"), Some("abcd"))] {
             assert_eq!(refusal(&r, 9, t), Some("a write needs this run's token\n"));
         }
     }

@@ -105,7 +105,7 @@ fn act(req: &Request, port: u16, token: &str) -> (&'static str, &'static str, St
 }
 
 fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
-    let ours = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+    let ours = guard::hosts(port);
     if !ours.contains(&req.host) {
         return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")));
     }
