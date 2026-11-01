@@ -374,432 +374,545 @@ fn last_review(s: &Value) -> Option<Value> {
         .cloned()
 }
 
+/// What every step of the author's reads: the record, and the gates and
+/// text worked out once for all of them.
+struct Cx<'a> {
+    d: &'a Derived,
+    s: &'a Value,
+    remote: &'a str,
+    hold: Option<Value>,
+    /// The question's first line, when one stands.
+    asked: String,
+    last_review: Option<Value>,
+    implement: Gate,
+    fixes: bool,
+    addr: Gate,
+    addr_why: String,
+    ci_fix: Gate,
+    ci_once: &'static str,
+    /// Why ci-fix waits, while its own question stands.
+    ci_waits: String,
+}
+
+impl Cx<'_> {
+    fn new<'a>(d: &'a Derived, s: &'a Value, remote: &'a str) -> Cx<'a> {
+        let asked = if d.asking.is_empty() {
+            String::new()
+        } else {
+            val::t(s, "question.text")
+                .split('\n')
+                .find(|l| l.chars().any(|c| !matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' ')))
+                .unwrap_or("")
+                .to_string()
+        };
+        let implement = crate::act::gates::implement(d);
+        let fixes = crate::act::gates::implement_fixes(d) && implement.runs();
+        let ci_rules = crate::act::gates::ci_fix_rules(d);
+        let (ci_fix, ci_once) = (crate::act::judge(&ci_rules), crate::act::gates::ci_fix_once(&ci_rules));
+        let ci_waits = if let (Gate::Soft(why), "ci-fix") = (&ci_fix, d.asking.as_str()) { why.join("; ") } else { String::new() };
+        Cx {
+            d,
+            s,
+            remote,
+            hold: hold_step(d, s),
+            asked,
+            last_review: last_review(s),
+            implement,
+            fixes,
+            addr: crate::act::gates::address(d),
+            addr_why: refusal(crate::act::address_said(crate::act::gates::address(d), s)),
+            ci_fix,
+            ci_once,
+            ci_waits,
+        }
+    }
+
+    fn g(&self, p: &str) -> &Value {
+        at(self.s, p)
+    }
+
+    fn t(&self, p: &str) -> String {
+        val::t(self.s, p)
+    }
+
+    fn one(&self, k: &str, a: &str, b: &str) -> String {
+        if val::n(self.s, k) == 1.0 { a } else { b }.to_string()
+    }
+
+    fn address(&self) -> Option<Value> {
+        agent(&self.hold, def!("bot"), format!("address {}", plural(self.g("threads.owed_bot"), "bot item")), "sd act address")
+    }
+}
+
+/// The author's steps, in the order NEXT lists them: what blocks everything,
+/// restack, agent fixes, one push, then review and wait (the header above).
+const AUTHOR: &[fn(&Cx) -> Option<Value>] = &[
+    merged, closed, errors, stale, gh_wait, attached, foreign, human, question, undone, ship_parent, conflict, behind, dirty,
+    ci_red, ci_blocked, bot, read, take, reset_dirty, nothing, verify_red, foreign_authors, ci_config, push, bot_refused,
+    open_pr, draft, review, bot_trigger, ci_rerun, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed, retarget,
+    review_wait, parent_wait, end,
+];
+
 /// The steps for <d>, first is next. Which steps, and whose, come from <d>
 /// alone; <s> is the record it was derived from, which some say and cmd
 /// text still reads.
 pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
-    let g = |p: &str| at(s, p);
-    let n = |p: &str| val::n(s, p);
-    let nul = |p: &str| g(p).is_null();
-    let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
-    let t = |p: &str| val::t(s, p);
-    let asking = d.asking.as_str();
-    let asked = if asking.is_empty() {
-        String::new()
-    } else {
-        t("question.text").split('\n').find(|l| l.chars().any(|c| !matches!(c, '\t' | '\n' | '\x0c' | '\r' | ' '))).unwrap_or("").to_string()
-    };
-    let last_review = last_review(s);
-    let hold = &hold_step(d, s);
-    let implement = crate::act::gates::implement(d);
-    let fixes = crate::act::gates::implement_fixes(d) && implement.runs();
-    let addr = crate::act::gates::address(d);
-    let addr_why = refusal(crate::act::address_said(crate::act::gates::address(d), s));
-    let ci_rules = crate::act::gates::ci_fix_rules(d);
-    let (ci_fix, ci_once) = (crate::act::judge(&ci_rules), crate::act::gates::ci_fix_once(&ci_rules));
-    let ci_waits = if let (crate::act::Gate::Soft(why), "ci-fix") = (&ci_fix, asking) { why.join("; ") } else { String::new() };
-    let address = || agent(hold, def!("bot"), format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
-
-    let branch = t("branch");
-    let target = t("sync.target");
-    let parent = t("parent.name");
-    let one = |k: &str, a: &str, b: &str| if n(k) == 1.0 { a } else { b }.to_string();
-    let open = d.open;
-
+    let cx = Cx::new(d, s, remote);
     let all: Vec<Option<Value>> = if d.own_base {
-        vec![step(def!("default"), "you", format!("on {branch}: start a branch"), cmd("sd act start"))]
+        vec![step(def!("default"), "you", format!("on {}: start a branch", cx.t("branch")), cmd("sd act start"))]
     } else if d.running {
         vec![step(def!("running"), "wait",
-            format!("{} running since {}", t("session.running.step"), t("session.running.since")),
+            format!("{} running since {}", cx.t("session.running.step"), cx.t("session.running.since")),
             None,
         )]
     } else if d.reviewer {
-        let again = match &last_review {
+        let again = match &cx.last_review {
             Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
             None if d.reviewed => "review again: the PR was rewritten since the last review".into(),
             None => "review the PR's change".into(),
         };
-        reviewer(d, s, hold, again)
+        reviewer(d, s, &cx.hold, again)
     } else {
-        vec![
-            if d.merged {
-                step(def!("merged"), "run",
-                    "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
-                    cmd("sd act forget --remove"),
-                )
-            } else {
-                None
-            },
-            if d.closed { step(def!("closed"), "you", "PR closed without merging", None) } else { None },
-            if open && d.errors {
-                step(def!("errors"), "you",
-                    format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
-                    cmd("sd state --json"),
-                )
-            } else {
-                None
-            },
-            if open && d.stale {
-                step(def!("stale"), "run",
-                    "fetch: GitHub is ahead of your remote refs, so the steps below may be wrong",
-                    cmd(format!("git fetch --prune {remote}")),
-                )
-            } else {
-                None
-            },
-            if open && d.lagging {
-                step(def!("gh-wait"), "wait", "GitHub hasn't seen the push yet, so the steps below may be wrong", None)
-            } else {
-                None
-            },
-            if open && yes(d.locked) {
-                step(def!("attached"), "wait",
-                    "attached: the branch's session is open interactively; agent steps wait until it exits",
-                    None,
-                )
-            } else {
-                None
-            },
-            foreign_step(d, s, remote),
-            if open && d.owed_human {
-                step(def!("human"), "you",
-                    format!("reply to {}", plural(g("threads.owed_human"), "human item")),
-                    cmd("sd state --long"),
-                )
-            } else {
-                None
-            },
-            if open && !asking.is_empty() && !d.answer_pending {
-                question_step(d, s, &asked, &addr, &addr_why, (&ci_waits, ci_once))
-            } else {
-                None
-            },
-            if open && d.undone { undone_step(d, s, remote) } else { None },
-            if open && d.parent_unpushed {
-                step(def!("ship-parent"), "run",
-                    format!("ship the parent first: {parent} isn't on {remote} yet"),
-                    cmd(format!("sd act ship {parent}")),
-                )
-            } else {
-                None
-            },
-            conflict_step(d, s, remote, hold),
-            behind_step(d, s, remote),
-            if d.dirty && !d.dropping {
-                step(def!("dirty"), "you",
-                    "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
-                    cmd("git status"),
-                )
-            } else {
-                None
-            },
-            if ci_fix.runs() && asking != "ci-fix" && !d.refused {
-                agent(hold, def!("ci-red"), format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
-            } else if d.resume_ci && ci_fix.runs() {
-                agent(hold, def!("ci-red"), format!("fix CI: {}, going on with your answer to its question", sj(g("ci.failing"), ", ")), "sd act ci-fix")
-            } else {
-                None
-            },
-            if d.has_pr && d.ci_blocked && !d.to_push {
-                step(def!("ci-blocked"), "you",
-                    format!(
-                        "CI blocked: {} didn't start or want approval; an agent can't fix that",
-                        sj(g("ci.blocked"), ", ")
-                    ),
-                    cmd("gh pr checks"),
-                )
-            } else {
-                None
-            },
-            if d.bot && addr.runs() {
-                address()
-            } else if d.resume && addr.runs() {
-                agent(hold, def!("bot"), format!("address {}, going on with your answer to its question", plural(g("threads.owed_bot"), "bot item")), "sd act address")
-            } else {
-                None
-            },
-            // only once nothing else moves without chrismo (#168)
-            if open
-                && d.bot_blocking == 0.0
-                && d.info
-                && !d.to_push
-                && !d.need_review
-                && !d.fixing
-                && !d.bot_due
-                && !d.bot_waiting
-                && !d.restack_due
-                && !d.ci_inconclusive
-                && !(d.stacked && yes(d.parent_merged))
-            {
-                step(def!("read"), "you",
-                    format!("read {} in sd state --long, then ack", plural(g("threads.info"), "bot item")),
-                    cmd("sd act ack"),
-                )
-            } else {
-                None
-            },
-            if open && d.taken {
-                let them = one("push.behind", "it", "them");
-                step(def!("take"), "you",
-                    format!(
-                        "{remote}/{branch} has {} this branch took but didn't make, reset away here: take {them} back (git merge --ff-only {remote}/{branch}), or drop {them} by hand",
-                        plural(g("push.behind"), "commit")
-                    ),
-                    None,
-                )
-            } else {
-                None
-            },
-            if open && d.dropping && yes(d.push_dirty) {
-                step(def!("reset-dirty"), "you",
-                    format!(
-                        "{remote}/{branch} has {} reset away here, and the worktree has uncommitted changes: commit them (then sd act push replaces the remote {}), or remove them (git reset --hard; git clean for untracked files)",
-                        plural(g("push.behind"), "commit"),
-                        one("push.behind", "commit", "commits")
-                    ),
-                    None,
-                )
-            } else {
-                None
-            },
-            if d.empty && yes(d.push_dirty) {
-                step(def!("nothing-dirty"), "you",
-                    format!(
-                        "nothing to ship, and the worktree has uncommitted changes: commit them{}",
-                        if d.tasked { ", or remove them and sd act implement" } else { "" }
-                    ),
-                    None,
-                )
-            } else if d.empty && d.tasked {
-                if implement.runs() && asking != "implement" {
-                    agent(hold, def!("implement"), format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
-                } else {
-                    None
-                }
-            } else if d.empty {
-                step(def!("nothing"), "you", "nothing to ship: commit, or record a task", None)
-            } else {
-                None
-            },
-            if d.verify_red {
-                let sha = t("verify.sha");
-                step(def!("verify-red"), "you",
-                    format!(
-                        "verify red at {} ({}: {}): fix it, then sd act verify",
-                        &sha[..sha.len().min(7)],
-                        t("verify.step"),
-                        t("verify.cmd")
-                    ),
-                    cmd("sd act verify"),
-                )
-            } else {
-                None
-            },
-            foreign_authors_step(d, s, remote),
-            // after what holds the push, which its say points up to
-            if open && d.ci_held {
-                let paths = sj(g("push.held.paths"), ", ");
-                if !push_runs(d) {
-                    step(def!("ci-config"), "you",
-                        format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
-                        None,
-                    )
-                } else {
-                    step(def!("ci-config"), "you",
-                        format!("the agent changed CI config ({paths}): review, then sd act push"),
-                        cmd("sd act push"),
-                    )
-                }
-            } else {
-                None
-            },
-            if push_step(d) {
-                let ahead = if nul("sync.ahead") { g("push.ahead") } else { g("sync.ahead") };
-                step(def!("push"), "run",
-                    if is_null(s, "push.remote_sha") {
-                        format!("push: not on {remote} yet")
-                    } else if val::on(s, "push.diverged") {
-                        format!(
-                            "force-push {} (rewritten); a plain git push is rejected, and pulling would undo the rewrite",
-                            plural(ahead, "commit")
-                        )
-                    } else if n("push.ahead") == 0.0 {
-                        format!("force-push: drop {} the remote has, reset away here", plural(g("push.behind"), "commit"))
-                    } else {
-                        format!("push {}", plural(g("push.ahead"), "commit"))
-                    },
-                    cmd("sd act push"),
-                )
-            } else {
-                None
-            },
-            if d.bot && !addr.runs() {
-                address()
-            } else if d.resume && !addr.runs() {
-                // it runs address, and the rewrite below may offer --force
-                spends(hold, step(def!("answer"), "wait", format!("your answer to the address agent's question waits while {addr_why}"), None))
-            } else {
-                None
-            },
-            if d.pr_null && !d.errors && !d.verify_red && !d.parent_unpushed && !d.ci_held && !d.empty && !d.refused {
-                spends(hold, step(def!("open-pr"), "run", "ship: push, open a draft PR", cmd("sd act ship")))
-            } else {
-                None
-            },
-            if d.has_pr && d.draft_ready && !d.verify_red && !d.need_review && !d.bot_due && !d.bot_waiting {
-                step(def!("draft"), "run",
-                    format!(
-                        "{}: mark the PR ready for review",
-                        if is("ci.verdict", "none") { "reviewed, no CI checks" } else { "CI green and reviewed" }
-                    ),
-                    cmd("gh pr ready"),
-                )
-            } else {
-                None
-            },
-            if open && d.fixing && (asking == "review-fix" || (d.refused && fixes)) {
-                None
-            } else if fixes {
-                agent(hold, def!("review-fix"), format!(
-                        "fix {} (round {}/{})",
-                        plural(g("review.findings.n"), "review finding"),
-                        t("review.findings.round"),
-                        t("review.findings.cap")
-                    ),
-                    "sd act implement",
-                )
-            } else if open && d.fixing {
-                let findings = plural(g("review.findings.n"), "review finding");
-                let what = if yes(d.findings_declined) {
-                    format!("the agent declined {findings}")
-                } else {
-                    format!("{findings} after {} rounds", t("review.findings.round"))
-                };
-                step(def!("review-decide"), "you",
-                    format!(
-                        "{what}: fix {}, or accept HEAD as reviewed (sd state --long lists them)",
-                        one("review.findings.n", "it", "them")
-                    ),
-                    cmd("sd act review --accept"),
-                )
-            } else if d.need_review {
-                review_step(d, hold, &last_review)
-            } else {
-                None
-            },
-            if d.has_pr && !d.to_push && !d.held && !d.foreign && !d.verify_red && d.bot_due {
-                step(def!("bot-trigger"), "run",
-                    format!("trigger the review bot ({})", t("bot.command")),
-                    cmd("sd act trigger"),
-                )
-            } else {
-                None
-            },
-            if d.has_pr && d.ci_inconclusive {
-                step(def!("ci-rerun"), "run", "rerun cancelled CI", cmd("gh pr checks"))
-            } else {
-                None
-            },
-            if d.has_pr && d.bot_waiting && !d.bot_late {
-                step(def!("bot-wait"), "wait", format!("waiting on the review bot ({})", t("bot.command")), None)
-            } else {
-                None
-            },
-            if d.has_pr && d.bot_waiting && d.bot_late {
-                step(def!("bot-silent"), "you",
-                    format!(
-                        "the review bot hasn't answered in {} min: check it, trigger it again, or accept HEAD as reviewed (sd act review --accept)",
-                        minutes(g("review.bot.waited"))
-                    ),
-                    cmd("sd act trigger --force"),
-                )
-            } else {
-                None
-            },
-            if d.has_pr && !d.to_push && !d.held && (d.ci_pending || no(d.ci_for_head)) {
-                let say = if d.ci_pending {
-                    let missing = g("ci.missing");
-                    if len(g("ci.pending")) == 0 && len(missing) > 0 {
-                        let draft = if yes(d.draft) {
-                            format!(
-                                "; if {} on a draft, undraft by hand (gh pr ready)",
-                                if len(missing) == 1 { "it never runs" } else { "they never run" }
-                            )
-                        } else {
-                            String::new()
-                        };
-                        format!(
-                            "waiting on required check{} {} to report{draft}",
-                            if len(missing) == 1 { "" } else { "s" },
-                            sj(missing, ", ")
-                        )
-                    } else {
-                        "CI running".into()
-                    }
-                } else {
-                    "CI hasn't reported on HEAD yet".into()
-                };
-                step(def!("ci-wait"), "wait", say, cmd("gh pr checks --watch"))
-            } else {
-                None
-            },
-            if d.resume_ci && !ci_waits.is_empty() {
-                step(def!("answer"), "wait", format!("your answer to the ci-fix agent's question waits while {ci_waits}"), None)
-            } else {
-                None
-            },
-            if d.has_pr && d.parent_closed {
-                step(def!("parent-closed"), "you",
-                    format!("{parent} (#{}) was closed without merging: decide what this PR targets", t("parent.pr.number")),
-                    None,
-                )
-            } else {
-                None
-            },
-            if d.has_pr && d.stacked && yes(d.parent_merged) {
-                step(def!("retarget"), "run",
-                    format!("{} already merged: point this PR at {}", t("pr.base"), t("sync.default")),
-                    cmd("sd act retarget"),
-                )
-            } else {
-                None
-            },
-            if d.has_pr && d.review_required {
-                let reqs = g("pr.review_requests");
-                step(def!("review-wait"), "wait",
-                    if len(reqs) > 0 {
-                        format!("waiting on review from {}", sj(reqs, ", "))
-                    } else {
-                        "waiting on a required review".into()
-                    },
-                    None,
-                )
-            } else {
-                None
-            },
-            if d.has_pr && d.stacked && !yes(d.parent_merged) {
-                step(def!("parent-wait"), "wait",
-                    format!("waiting on {parent} (#{}) to merge first", t("parent.pr.number")),
-                    None,
-                )
-            } else {
-                None
-            },
-            if d.has_pr && !d.review_required && !d.stacked && !d.parent_closed && !d.gh_behind && !yes(d.draft) && !d.bot_waiting {
-                match d.merge_state.as_str() {
-                    "CLEAN" | "UNSTABLE" | "HAS_HOOKS" => step(def!("ready"), "you", "ready to merge", cmd("gh pr merge")),
-                    "UNKNOWN" => step(def!("merge-wait"), "wait", "GitHub hasn't decided whether it can merge yet", None),
-                    m => step(def!("blocked"), "you",
-                        format!("GitHub says {}: see why", why_blocked(m)),
-                        cmd("gh pr view --web"),
-                    ),
-                }
-            } else {
-                None
-            },
-        ]
+        AUTHOR.iter().map(|f| f(&cx)).collect()
     };
-    finish(d, all, &addr, &addr_why)
+    finish(d, all, &cx.addr, &cx.addr_why)
+}
+
+fn merged(cx: &Cx) -> Option<Value> {
+    if !cx.d.merged {
+        return None;
+    }
+    step(def!("merged"), "run",
+        "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
+        cmd("sd act forget --remove"),
+    )
+}
+
+fn closed(cx: &Cx) -> Option<Value> {
+    if !cx.d.closed {
+        return None;
+    }
+    step(def!("closed"), "you", "PR closed without merging", None)
+}
+
+fn errors(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.errors) {
+        return None;
+    }
+    step(def!("errors"), "you",
+        format!("{}: the steps below may be wrong", plural(&json!(len(cx.g("errors"))), "error")),
+        cmd("sd state --json"),
+    )
+}
+
+fn stale(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.stale) {
+        return None;
+    }
+    step(def!("stale"), "run",
+        "fetch: GitHub is ahead of your remote refs, so the steps below may be wrong",
+        cmd(format!("git fetch --prune {}", cx.remote)),
+    )
+}
+
+fn gh_wait(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.lagging) {
+        return None;
+    }
+    step(def!("gh-wait"), "wait", "GitHub hasn't seen the push yet, so the steps below may be wrong", None)
+}
+
+fn attached(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && yes(cx.d.locked)) {
+        return None;
+    }
+    step(def!("attached"), "wait",
+        "attached: the branch's session is open interactively; agent steps wait until it exits",
+        None,
+    )
+}
+
+fn foreign(cx: &Cx) -> Option<Value> {
+    foreign_step(cx.d, cx.s, cx.remote)
+}
+
+fn human(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.owed_human) {
+        return None;
+    }
+    step(def!("human"), "you", format!("reply to {}", plural(cx.g("threads.owed_human"), "human item")), cmd("sd state --long"))
+}
+
+fn question(cx: &Cx) -> Option<Value> {
+    if !cx.d.open || cx.d.asking.is_empty() || cx.d.answer_pending {
+        return None;
+    }
+    question_step(cx.d, cx.s, &cx.asked, &cx.addr, &cx.addr_why, (&cx.ci_waits, cx.ci_once))
+}
+
+fn undone(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.undone) {
+        return None;
+    }
+    undone_step(cx.d, cx.s, cx.remote)
+}
+
+fn ship_parent(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.parent_unpushed) {
+        return None;
+    }
+    let parent = cx.t("parent.name");
+    step(def!("ship-parent"), "run",
+        format!("ship the parent first: {parent} isn't on {} yet", cx.remote),
+        cmd(format!("sd act ship {parent}")),
+    )
+}
+
+fn conflict(cx: &Cx) -> Option<Value> {
+    conflict_step(cx.d, cx.s, cx.remote, &cx.hold)
+}
+
+fn behind(cx: &Cx) -> Option<Value> {
+    behind_step(cx.d, cx.s, cx.remote)
+}
+
+fn dirty(cx: &Cx) -> Option<Value> {
+    if !cx.d.dirty || cx.d.dropping {
+        return None;
+    }
+    step(def!("dirty"), "you",
+        "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
+        cmd("git status"),
+    )
+}
+
+fn ci_red(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    let failing = sj(cx.g("ci.failing"), ", ");
+    if cx.ci_fix.runs() && d.asking != "ci-fix" && !d.refused {
+        agent(&cx.hold, def!("ci-red"), format!("fix CI: {failing}"), "sd act ci-fix")
+    } else if d.resume_ci && cx.ci_fix.runs() {
+        agent(&cx.hold, def!("ci-red"), format!("fix CI: {failing}, going on with your answer to its question"), "sd act ci-fix")
+    } else {
+        None
+    }
+}
+
+fn ci_blocked(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !(d.has_pr && d.ci_blocked && !d.to_push) {
+        return None;
+    }
+    step(def!("ci-blocked"), "you",
+        format!("CI blocked: {} didn't start or want approval; an agent can't fix that", sj(cx.g("ci.blocked"), ", ")),
+        cmd("gh pr checks"),
+    )
+}
+
+/// address, while its gate lets it.
+fn bot(cx: &Cx) -> Option<Value> {
+    if !cx.addr.runs() {
+        None
+    } else if cx.d.bot {
+        cx.address()
+    } else if cx.d.resume {
+        let say = format!("address {}, going on with your answer to its question", plural(cx.g("threads.owed_bot"), "bot item"));
+        agent(&cx.hold, def!("bot"), say, "sd act address")
+    } else {
+        None
+    }
+}
+
+/// Info bot items, only once nothing else moves without chrismo (#168).
+fn read(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    let quiet = d.bot_blocking == 0.0
+        && !d.to_push
+        && !d.need_review
+        && !d.fixing
+        && !d.bot_due
+        && !d.bot_waiting
+        && !d.restack_due
+        && !d.ci_inconclusive
+        && !(d.stacked && yes(d.parent_merged));
+    if !(d.open && d.info && quiet) {
+        return None;
+    }
+    step(def!("read"), "you",
+        format!("read {} in sd state --long, then ack", plural(cx.g("threads.info"), "bot item")),
+        cmd("sd act ack"),
+    )
+}
+
+fn take(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.taken) {
+        return None;
+    }
+    let (remote, branch) = (cx.remote, cx.t("branch"));
+    let them = cx.one("push.behind", "it", "them");
+    step(def!("take"), "you",
+        format!(
+            "{remote}/{branch} has {} this branch took but didn't make, reset away here: take {them} back (git merge --ff-only {remote}/{branch}), or drop {them} by hand",
+            plural(cx.g("push.behind"), "commit")
+        ),
+        None,
+    )
+}
+
+fn reset_dirty(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.dropping && yes(cx.d.push_dirty)) {
+        return None;
+    }
+    step(def!("reset-dirty"), "you",
+        format!(
+            "{}/{} has {} reset away here, and the worktree has uncommitted changes: commit them (then sd act push replaces the remote {}), or remove them (git reset --hard; git clean for untracked files)",
+            cx.remote,
+            cx.t("branch"),
+            plural(cx.g("push.behind"), "commit"),
+            cx.one("push.behind", "commit", "commits")
+        ),
+        None,
+    )
+}
+
+/// Nothing ahead of the target: implement the task, or chrismo's.
+fn nothing(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !d.empty {
+        None
+    } else if yes(d.push_dirty) {
+        step(def!("nothing-dirty"), "you",
+            format!(
+                "nothing to ship, and the worktree has uncommitted changes: commit them{}",
+                if d.tasked { ", or remove them and sd act implement" } else { "" }
+            ),
+            None,
+        )
+    } else if d.tasked {
+        if cx.implement.runs() && d.asking != "implement" {
+            agent(&cx.hold, def!("implement"), format!("implement the task: nothing ahead of {} yet", cx.t("sync.target")), "sd act implement")
+        } else {
+            None
+        }
+    } else {
+        step(def!("nothing"), "you", "nothing to ship: commit, or record a task", None)
+    }
+}
+
+fn verify_red(cx: &Cx) -> Option<Value> {
+    if !cx.d.verify_red {
+        return None;
+    }
+    let sha = cx.t("verify.sha");
+    step(def!("verify-red"), "you",
+        format!("verify red at {} ({}: {}): fix it, then sd act verify", &sha[..sha.len().min(7)], cx.t("verify.step"), cx.t("verify.cmd")),
+        cmd("sd act verify"),
+    )
+}
+
+fn foreign_authors(cx: &Cx) -> Option<Value> {
+    foreign_authors_step(cx.d, cx.s, cx.remote)
+}
+
+/// After what holds the push, which its say points up to.
+fn ci_config(cx: &Cx) -> Option<Value> {
+    if !(cx.d.open && cx.d.ci_held) {
+        return None;
+    }
+    let paths = sj(cx.g("push.held.paths"), ", ");
+    if !push_runs(cx.d) {
+        step(def!("ci-config"), "you", format!("the agent changed CI config ({paths}): review it; push once the steps above are done"), None)
+    } else {
+        step(def!("ci-config"), "you", format!("the agent changed CI config ({paths}): review, then sd act push"), cmd("sd act push"))
+    }
+}
+
+fn push(cx: &Cx) -> Option<Value> {
+    if !push_step(cx.d) {
+        return None;
+    }
+    let (s, remote) = (cx.s, cx.remote);
+    let ahead = if cx.g("sync.ahead").is_null() { cx.g("push.ahead") } else { cx.g("sync.ahead") };
+    let say = if is_null(s, "push.remote_sha") {
+        format!("push: not on {remote} yet")
+    } else if val::on(s, "push.diverged") {
+        format!("force-push {} (rewritten); a plain git push is rejected, and pulling would undo the rewrite", plural(ahead, "commit"))
+    } else if val::n(s, "push.ahead") == 0.0 {
+        format!("force-push: drop {} the remote has, reset away here", plural(cx.g("push.behind"), "commit"))
+    } else {
+        format!("push {}", plural(cx.g("push.ahead"), "commit"))
+    };
+    step(def!("push"), "run", say, cmd("sd act push"))
+}
+
+/// address, behind the push, while its gate refuses it: finish says why
+/// when it's first.
+fn bot_refused(cx: &Cx) -> Option<Value> {
+    if cx.addr.runs() {
+        None
+    } else if cx.d.bot {
+        cx.address()
+    } else if cx.d.resume {
+        // it runs address, and finish's rewrite may offer --force
+        spends(&cx.hold, step(def!("answer"), "wait", format!("your answer to the address agent's question waits while {}", cx.addr_why), None))
+    } else {
+        None
+    }
+}
+
+fn open_pr(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !d.pr_null || d.errors || d.verify_red || d.parent_unpushed || d.ci_held || d.empty || d.refused {
+        return None;
+    }
+    spends(&cx.hold, step(def!("open-pr"), "run", "ship: push, open a draft PR", cmd("sd act ship")))
+}
+
+fn draft(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !(d.has_pr && d.draft_ready && !d.verify_red && !d.need_review && !d.bot_due && !d.bot_waiting) {
+        return None;
+    }
+    let why = if cx.g("ci.verdict").as_str() == Some("none") { "reviewed, no CI checks" } else { "CI green and reviewed" };
+    step(def!("draft"), "run", format!("{why}: mark the PR ready for review"), cmd("gh pr ready"))
+}
+
+/// Review findings to fix, or the branch's own review.
+fn review(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    let findings = || plural(cx.g("review.findings.n"), "review finding");
+    if d.open && d.fixing && (d.asking == "review-fix" || (d.refused && cx.fixes)) {
+        None
+    } else if cx.fixes {
+        let say = format!("fix {} (round {}/{})", findings(), cx.t("review.findings.round"), cx.t("review.findings.cap"));
+        agent(&cx.hold, def!("review-fix"), say, "sd act implement")
+    } else if d.open && d.fixing {
+        let what = if yes(d.findings_declined) {
+            format!("the agent declined {}", findings())
+        } else {
+            format!("{} after {} rounds", findings(), cx.t("review.findings.round"))
+        };
+        step(def!("review-decide"), "you",
+            format!("{what}: fix {}, or accept HEAD as reviewed (sd state --long lists them)", cx.one("review.findings.n", "it", "them")),
+            cmd("sd act review --accept"),
+        )
+    } else if d.need_review {
+        review_step(d, &cx.hold, &cx.last_review)
+    } else {
+        None
+    }
+}
+
+fn bot_trigger(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !(d.has_pr && !d.to_push && !d.held && !d.foreign && !d.verify_red && d.bot_due) {
+        return None;
+    }
+    step(def!("bot-trigger"), "run", format!("trigger the review bot ({})", cx.t("bot.command")), cmd("sd act trigger"))
+}
+
+fn ci_rerun(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.ci_inconclusive) {
+        return None;
+    }
+    step(def!("ci-rerun"), "run", "rerun cancelled CI", cmd("gh pr checks"))
+}
+
+fn bot_wait(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.bot_waiting && !cx.d.bot_late) {
+        return None;
+    }
+    step(def!("bot-wait"), "wait", format!("waiting on the review bot ({})", cx.t("bot.command")), None)
+}
+
+fn bot_silent(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.bot_waiting && cx.d.bot_late) {
+        return None;
+    }
+    step(def!("bot-silent"), "you",
+        format!(
+            "the review bot hasn't answered in {} min: check it, trigger it again, or accept HEAD as reviewed (sd act review --accept)",
+            minutes(cx.g("review.bot.waited"))
+        ),
+        cmd("sd act trigger --force"),
+    )
+}
+
+fn ci_wait(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !(d.has_pr && !d.to_push && !d.held && (d.ci_pending || no(d.ci_for_head))) {
+        return None;
+    }
+    let missing = cx.g("ci.missing");
+    let say = if !d.ci_pending {
+        "CI hasn't reported on HEAD yet".into()
+    } else if len(cx.g("ci.pending")) == 0 && len(missing) > 0 {
+        let draft = if yes(d.draft) {
+            format!("; if {} on a draft, undraft by hand (gh pr ready)", if len(missing) == 1 { "it never runs" } else { "they never run" })
+        } else {
+            String::new()
+        };
+        format!("waiting on required check{} {} to report{draft}", if len(missing) == 1 { "" } else { "s" }, sj(missing, ", "))
+    } else {
+        "CI running".into()
+    };
+    step(def!("ci-wait"), "wait", say, cmd("gh pr checks --watch"))
+}
+
+fn ci_answer(cx: &Cx) -> Option<Value> {
+    if !cx.d.resume_ci || cx.ci_waits.is_empty() {
+        return None;
+    }
+    step(def!("answer"), "wait", format!("your answer to the ci-fix agent's question waits while {}", cx.ci_waits), None)
+}
+
+fn parent_closed(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.parent_closed) {
+        return None;
+    }
+    step(def!("parent-closed"), "you",
+        format!("{} (#{}) was closed without merging: decide what this PR targets", cx.t("parent.name"), cx.t("parent.pr.number")),
+        None,
+    )
+}
+
+fn retarget(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.stacked && yes(cx.d.parent_merged)) {
+        return None;
+    }
+    step(def!("retarget"), "run",
+        format!("{} already merged: point this PR at {}", cx.t("pr.base"), cx.t("sync.default")),
+        cmd("sd act retarget"),
+    )
+}
+
+fn review_wait(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.review_required) {
+        return None;
+    }
+    let reqs = cx.g("pr.review_requests");
+    let say = if len(reqs) > 0 { format!("waiting on review from {}", sj(reqs, ", ")) } else { "waiting on a required review".into() };
+    step(def!("review-wait"), "wait", say, None)
+}
+
+fn parent_wait(cx: &Cx) -> Option<Value> {
+    if !(cx.d.has_pr && cx.d.stacked && !yes(cx.d.parent_merged)) {
+        return None;
+    }
+    step(def!("parent-wait"), "wait", format!("waiting on {} (#{}) to merge first", cx.t("parent.name"), cx.t("parent.pr.number")), None)
+}
+
+/// ready, merge-wait or blocked: the end state, listed only alone (finish).
+fn end(cx: &Cx) -> Option<Value> {
+    let d = cx.d;
+    if !d.has_pr || d.review_required || d.stacked || d.parent_closed || d.gh_behind || yes(d.draft) || d.bot_waiting {
+        return None;
+    }
+    match d.merge_state.as_str() {
+        "CLEAN" | "UNSTABLE" | "HAS_HOOKS" => step(def!("ready"), "you", "ready to merge", cmd("gh pr merge")),
+        "UNKNOWN" => step(def!("merge-wait"), "wait", "GitHub hasn't decided whether it can merge yet", None),
+        m => step(def!("blocked"), "you", format!("GitHub says {}: see why", why_blocked(m)), cmd("gh pr view --web")),
+    }
 }
 
 /// The question step (#167, #326); <asked> is the question's first line, and

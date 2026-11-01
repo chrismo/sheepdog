@@ -3,10 +3,10 @@
 // and verb here, and src/watch_help.txt's "Notified" block is tested
 // against it.
 
-/// Every NEXT key, in the order offer lists the author's steps; a held
-/// agent step's stand-ins and a followed PR's own steps (#250) come last.
-/// Where offer lists a key in two places (bot and answer, as address's gate
-/// lets them), it's here at the first.
+/// Every NEXT key, in next.rs's AUTHOR order; a held agent step's
+/// stand-ins and a followed PR's own steps (#250) come last. bot and
+/// answer, listed in two places as address's gate lets them, are here at
+/// the first.
 pub const STEPS: &[StepDef] = &[
     s("default", YOU, Stuck, None, None),
     s("running", WAIT, Turn, Some("🤖"), None),
