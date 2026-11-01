@@ -24,8 +24,8 @@ pub const LOG: u64 = 120;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {
     Ok,
-    /// GitHub has no such thing: HTTP 404, or a PR number GraphQL can't
-    /// resolve.
+    /// GitHub has no such thing: HTTP 404 from REST, or a PR number GraphQL
+    /// can't resolve.
     Gone,
     /// GitHub refused for the rate limit, primary or secondary.
     RateLimited,
@@ -84,11 +84,13 @@ fn run(prog: &str, dir: Option<&str>, repo: Option<&str>, args: &[&str], secs: u
         c.env("GH_REPO", r);
     }
     let o = proc::timeout(secs, c, false);
+    // GraphQL answers a missing PR in its body; its 404 is the endpoint.
+    let rest = args.get(1) != Some(&"graphql");
     let class = match &o.stderr {
         _ if o.ok => Class::Ok,
         _ if o.timed_out => Class::Failed,
         e if rate_limited(e) => Class::RateLimited,
-        e if e.contains("HTTP 404") || e.contains("Could not resolve to a PullRequest") => Class::Gone,
+        e if (rest && e.contains("HTTP 404")) || e.contains("Could not resolve to a PullRequest") => Class::Gone,
         _ => Class::Failed,
     };
     Call { class, stdout: o.stdout, stderr: o.stderr }
@@ -209,6 +211,14 @@ mod tests {
             let c = fake_call(&format!("echo '{msg}' >&2; exit 1"), 5);
             assert_eq!(c.class, Class::Gone, "{msg}");
         }
+    }
+
+    #[test]
+    fn a_graphql_404_is_the_endpoint_failed_not_gone_336() {
+        let (dir, prog) = fake("echo 'gh: Not Found (HTTP 404)' >&2; exit 1");
+        let c = run(&prog, None, None, &["api", "graphql", "-f", "query=q"], 5);
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(c.class, Class::Failed);
     }
 
     #[test]

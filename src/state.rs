@@ -203,7 +203,7 @@ impl Gh<'_> {
     /// One GraphQL call into resp, its rateLimit added to rl_*. A failure is
     /// recorded in errors, unless it's Gone (a number GitHub can't resolve:
     /// the caller re-discovers); RateLimited sets rl_limited and comes back
-    /// Failed. A 404 here is the endpoint, not the PR: Failed.
+    /// Failed.
     fn call(&mut self, label: &str, fields: &[String]) -> Class {
         let mut args: Vec<&str> = vec!["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}"];
         args.extend(fields.iter().map(String::as_str));
@@ -211,7 +211,7 @@ impl Gh<'_> {
         if !o.ok() {
             self.resp = Value::Null;
             match o.class {
-                Class::Gone if !o.stderr.contains("HTTP 404") => return Class::Gone,
+                Class::Gone => return Class::Gone,
                 Class::RateLimited => self.rl_limited = true,
                 _ => {}
             }
