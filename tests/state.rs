@@ -4556,6 +4556,20 @@ fn reviewer_mode_a_stacked_prs_stale_parent_isnt_stale() {
 }
 
 #[test]
+fn a_followed_prs_number_is_never_rediscovered_even_as_a_local_parent_339() {
+    let sd = sd();
+    sd.following(&[]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("a.txt", "a");
+    sd.git(&["config", "branch.feat.sd-parent", "review/7"]);
+    sd.pr_fixture("feat", &[".number = 8", r#".baseRefName = "review/7""#]);
+    let r = sd.state(&[]);
+    assert_eq!(sd.calls(), "feat #8 #7 ");
+    assert_eq!(r.field(".parent.pr.number"), "7", "{}", r.errors());
+    assert_eq!(sd.git(&["config", "branch.review/7.sd-pr"]), "7");
+}
+
+#[test]
 fn an_authors_branch_has_no_mode_and_no_github_review() {
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);

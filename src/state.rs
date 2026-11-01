@@ -1,6 +1,10 @@
 // sd state: where a branch's PR stands (src/state_help.txt). sd act and sd
 // watch read its --json as JSON, not as bytes (src/json.rs, #379); NEXT is
 // src/next.rs.
+//
+// Its one git config write is a cache (#339): lookup_pr's branch.<b>.sd-pr,
+// an authored branch's discovered PR number. A followed branch's is its
+// record, only read.
 
 use crate::git::{
     commits_not_ours, count, git, git_ok, git_out, is_ancestor, made_here, main_worktree, patch_id, rev, show_ref, stacked_on,
@@ -252,11 +256,15 @@ impl Gh<'_> {
     }
 
     /// The branch's PR (null for none), resp holding the last answer;
-    /// commits also fetches its commits. By the number in branch.<b>.sd-pr,
-    /// unless GitHub has no such PR, its head is another branch, or it was
-    /// closed unmerged: then discovery picks one and stores its number (unset
-    /// for none), for a local branch only. Err when gh failed.
+    /// commits also fetches its commits. A followed branch's is followed_pr.
+    /// Otherwise by the number in branch.<b>.sd-pr, a cache (#339), unless
+    /// GitHub has no such PR, its head is another branch, or it was closed
+    /// unmerged: then discovery picks one and stores its number (unset for
+    /// none), for a local branch only. Err when gh failed.
     fn lookup_pr(&mut self, b: &str, commits: bool) -> Result<Value, ()> {
+        if git_out(self.dir, &["config", "--get", &format!("branch.{b}.sd-mode")]).as_deref() == Some("reviewer") {
+            return self.followed_pr(b, commits);
+        }
         let n = git_out(self.dir, &["config", "--get", &format!("branch.{b}.sd-pr")]).unwrap_or_default();
         let is_local = show_ref(self.dir, &format!("refs/heads/{b}"));
         let mut fetched = String::new();
@@ -309,13 +317,13 @@ impl Gh<'_> {
 
     /// A followed PR (#250): by its stored number alone, whatever its head is
     /// called; never discovered, never unset. Err when gh failed.
-    fn followed_pr(&mut self, b: &str) -> Result<Value, ()> {
+    fn followed_pr(&mut self, b: &str, commits: bool) -> Result<Value, ()> {
         let n = git_out(self.dir, &["config", "--get", &format!("branch.{b}.sd-pr")]).unwrap_or_default();
         if n.is_empty() {
             self.errors.push(format!("{b} is followed (reviewer mode) but has no branch.{b}.sd-pr"));
             return Ok(Value::Null);
         }
-        match self.fetch(b, &n, false) {
+        match self.fetch(b, &n, commits) {
             Call::Ok => Ok(self.pr()),
             Call::Gone => {
                 self.errors.push(format!("gh ({b}): GitHub has no PR #{n}"));
@@ -1156,8 +1164,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
 
     // ── O1 PR, O2 parent ──
     let (mut pr, mut viewer, mut default_branch, mut gh_ok) = (Value::Null, String::new(), String::new(), false);
-    let found = if reviewer { gh.followed_pr(branch) } else { gh.lookup_pr(branch, false) };
-    if let Ok(p) = found {
+    if let Ok(p) = gh.lookup_pr(branch, false) {
         gh_ok = true;
         pr = p;
         viewer = str_or(at(&gh.resp, "data.viewer.login"), "").to_string();
