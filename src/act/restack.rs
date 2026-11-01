@@ -6,24 +6,19 @@
 // field reads as null, and an equality holds only between two present values.
 
 use super::commands::verify_run;
+use super::gates::{self, rs};
 use super::hold::hold_after;
+use super::push::seen_authors;
 use super::resolve::{resolve_conflicts, Halt, Rebase};
 use super::bookkeeping::parent_write;
 use super::step::{question_gate, resolve_gave_up};
-use super::{die, no_base_why, plural, state_json, Args};
+use super::{die, enforce, no_base_why, plural, state_json, Args, Gate, Go};
 use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for, Git};
+use crate::next::{yes, Derived};
 use crate::pins::{self, Pin};
 use crate::{proc, running};
 use crate::val::{at, sj, t, text};
 use serde_json::Value;
-
-#[derive(Debug, PartialEq)]
-enum Gate {
-    Hard(String),
-    Done(String),
-    Soft(String),
-    Go,
-}
 
 fn short(s: &str, n: usize) -> &str {
     s.get(..n).unwrap_or(s)
@@ -41,67 +36,58 @@ fn is(s: &Value, p: &str, lit: &str) -> bool {
     at(s, p).as_str() == Some(lit)
 }
 
-/// RESTACK_GATE. A predicted conflict is refused, unless <resolve> hands it
-/// to the agent.
-fn restack_gate(s: &Value, remote: &str, resolve: bool) -> Gate {
-    let on = |p: &str| crate::val::on(s, p);
-    let nul = |p: &str| at(s, p).is_null();
+/// <name>, one of gates::rs, in <s>'s words.
+fn worded(name: &str, s: &Value, remote: &str) -> String {
     let (b, parent) = (t(s, "branch"), t(s, "parent.name"));
     let onto = format!("{remote}/{}", t(s, "sync.target"));
-    let why = no_base_why(s, remote);
+    let why = || no_base_why(s, remote);
     let (old_base, head) = (t(s, "sync.old_base"), t(s, "head"));
-    let (old_base, head) = (short(&old_base, 12), short(&head, 12));
-
-    if is(s, "parent.pr.state", "CLOSED") && ne(s, "parent.name", "sync.default") {
-        return Gate::Hard(format!(
-            "{parent}'s PR #{} was closed without merging; decide what {b} targets",
-            t(s, "parent.pr.number")
-        ));
-    }
-    if nul("parent.merged") && ne(s, "parent.name", "sync.default") {
-        return Gate::Hard(format!("can't tell whether {parent} merged: {why}"));
-    }
-    let behind = at(s, "sync.up_to_date") == &Value::Bool(false);
-    if nul("sync.up_to_date") || (behind && nul("sync.old_base")) {
-        return Gate::Hard(format!("can't restack {b}: {why}"));
-    }
-    if on("sync.up_to_date") {
-        return Gate::Done(format!("{b} is already on {onto}"));
-    }
-    if on("parent.merged") {
-        let Some(from_parent) = at(s, "sync.replays_parent").as_array() else {
-            return Gate::Hard(format!("can't list {}..{b}", t(s, "sync.old_base")));
-        };
-        if let Some(newest) = from_parent.first().filter(|_| !on("sync.by_tree")) {
-            return Gate::Hard(format!(
+    let (base, head) = (short(&old_base, 12), short(&head, 12));
+    match name {
+        rs::NO_BASE => format!("can't restack {b}: {}", why()),
+        rs::REPLAYS_UNKNOWN => format!("can't list {old_base}..{b}"),
+        rs::WRONG_BASE => {
+            let from_parent = at(s, "sync.replays_parent").as_array().map_or(&[][..], Vec::as_slice);
+            format!(
                 "wrong base: this would replay {} of #{}'s commits onto {onto}; if the stack is linear, rebase past them by hand: \
                  git rebase --onto {onto} {} {b} && git update-ref refs/sheepdog/{b}/base {onto}",
                 from_parent.len(),
                 t(s, "parent.pr.number"),
-                short(&text(newest), 12)
-            ));
+                short(&from_parent.first().map(text).unwrap_or_default(), 12)
+            )
         }
-    }
-    if nul("sync.conflict") {
-        return Gate::Hard(format!("can't tell whether restacking {b} would conflict: {why}"));
-    }
-    if on("sync.by_tree") && on("sync.conflict") {
-        return Gate::Hard(format!(
+        rs::TREE_CONFLICT => format!(
             "restacking {b} onto {onto} by tree would conflict; --resolve can't resolve a tree restack. \
-             By hand: git switch {b} && git reset --hard {onto} && git diff --binary {old_base} {head} | git apply -3, \
+             By hand: git switch {b} && git reset --hard {onto} && git diff --binary {base} {head} | git apply -3, \
              resolve and commit, then git update-ref refs/sheepdog/{b}/base {onto} (the old head stays at {head})"
-        ));
-    }
-    if on("sync.conflict") && !resolve {
-        return Gate::Hard(format!(
-            "restacking {b} onto {onto} would conflict; resolve it by hand: git rebase --onto {onto} {old_base} {b}, \
+        ),
+        rs::ON_TARGET => format!("{b} is already on {onto}"),
+        rs::CLOSED => format!("PR #{} is {}", t(s, "pr.number"), t(s, "pr.state").to_lowercase()),
+        rs::ABANDONED => format!(
+            "{parent}'s PR #{} was closed without merging; decide what {b} targets: git config branch.{b}.sd-parent <branch>",
+            t(s, "parent.pr.number")
+        ),
+        rs::MERGE_UNKNOWN => format!("can't tell whether {parent} merged: {}", why()),
+        rs::CONFLICT_UNKNOWN => format!("can't tell whether restacking {b} would conflict: {}", why()),
+        rs::CONFLICT => format!(
+            "restacking {b} onto {onto} would conflict; resolve it by hand: git rebase --onto {onto} {base} {b}, \
              then git update-ref refs/sheepdog/{b}/base $(git merge-base {onto} {b}); or let the agent: sd act restack --resolve"
-        ));
+        ),
+        rs::ANSWER => format!(
+            "restacking {b} would drop the {} agent's question and your stored answer: let it go on first, or sd act ack --question",
+            t(s, "question.step")
+        ),
+        rs::FOREIGN => format!(
+            "restacking {b} would rewrite commits someone else made, by {}: look at them first (git log --format='%h %ae %ce %s' {base}..{b})",
+            sj(at(s, "sync.foreign_authors"), ", ")
+        ),
+        _ => name.into(),
     }
-    if on("session.locked") {
-        return Gate::Soft(format!("taken over (branch.{b}.sd-lock is set)"));
-    }
-    Gate::Go
+}
+
+/// restack's verdict <g> on <s>, in the record's words; NEXT says them too.
+pub fn said(g: Gate, s: &Value, remote: &str) -> Gate {
+    g.worded(|w| worded(w, s, remote))
 }
 
 /// KEEP_PARENT: why sd-parent stays on a merged parent, else None. Until the
@@ -153,7 +139,10 @@ pub(super) fn state(dir: &str, b: &str) -> Value {
     })
 }
 
-pub fn restack(b: &str, remote: &str, a: &Args) {
+/// The clean worktree <b> is checked out in, and sd state after a fetch,
+/// once restack's gate (--resolve's, with <a>.resolve) lets it run: None
+/// when <b> is on its target already.
+fn gated(b: &str, remote: &str, a: &Args) -> Option<(Go, String, Value)> {
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         die(format!("{b} isn't checked out in any worktree"));
@@ -171,23 +160,21 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
         die(format!("fetch from {remote} failed"));
     }
     let s = state(&wt, b);
-    let old_base = t(&s, "sync.old_base");
-    match restack_gate(&s, remote, a.resolve) {
-        Gate::Hard(why) => die(why),
-        Gate::Done(line) => {
-            println!("{line}");
-            return;
-        }
-        Gate::Soft(why) if !a.force => {
-            eprintln!("sd act: not restacking {b}:\n  - {why}\n(--force to run anyway)");
-            std::process::exit(1)
-        }
-        _ => {}
+    let d = Derived::new(&s);
+    let gate = if a.resolve { gates::restack_resolve(&d) } else { gates::restack(&d) };
+    let go = enforce(said(gate, &s, remote), a.force, &format!("restacking {b}"))?;
+    if !a.force && yes(d.locked) {
+        die(format!("not restacking {b}: taken over (branch.{b}.sd-lock is set; --force to restack anyway)"));
     }
     if a.resolve {
         question_gate(b, "resolve", a.force, false);
     }
+    Some((go, wt, s))
+}
 
+pub fn restack(b: &str, remote: &str, a: &Args) {
+    let Some((_go, wt, s)) = gated(b, remote, a) else { return };
+    let old_base = t(&s, "sync.old_base");
     let target = t(&s, "sync.target");
     let onto = format!("{remote}/{target}");
     let new_base = rev(".", &format!("refs/remotes/{onto}"));
@@ -252,6 +239,10 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
         ));
     }
     must(pins::set(".", b, Pin::Base, &new_base));
+    // only --force gets here past them: chrismo has looked (#356)
+    if Derived::new(&s).restack_foreign {
+        seen_authors(b, &s, "/sync/foreign_commits");
+    }
     let mut how = "sd act push";
     let remote_b = format!("refs/remotes/{remote}/{b}");
     if show_ref(".", &remote_b) && !is_ancestor(".", &remote_b, &new_head) {
@@ -392,90 +383,110 @@ mod tests {
         }
     }
 
+    /// gates::restack (--resolve's with <resolve>) on <s>, in its words.
+    fn gate(s: &Value, remote: &str, resolve: bool) -> Gate {
+        let d = Derived::new(s);
+        said(if resolve { gates::restack_resolve(&d) } else { gates::restack(&d) }, s, remote)
+    }
+
+    fn soft(g: Gate) -> String {
+        match g {
+            Gate::Soft(why) => why.join("; "),
+            other => panic!("not soft: {other:?}"),
+        }
+    }
+
     #[test]
     fn restack_gate_goes_when_behind_with_a_base_and_no_conflict() {
-        assert_eq!(restack_gate(&behind(), "origin", false), Gate::Go);
+        assert_eq!(gate(&behind(), "origin", false), Gate::Go);
     }
 
     #[test]
     fn restack_gate_is_done_when_up_to_date() {
         let s = with(behind(), "sync.up_to_date", json!(true));
-        assert_eq!(restack_gate(&s, "origin", false), Gate::Done("child is already on origin/main".into()));
+        assert_eq!(gate(&s, "origin", false), Gate::Done("child is already on origin/main".into()));
     }
 
     #[test]
     fn restack_gate_refuses_a_parent_closed_without_merging_unless_its_the_default() {
-        let s = with(behind(), "parent.pr.state", json!("CLOSED"));
-        assert_eq!(hard(restack_gate(&s, "origin", false)), "A's PR #1 was closed without merging; decide what child targets");
+        let s = with(with(behind(), "parent.merged", json!(false)), "parent.pr.state", json!("CLOSED"));
+        let want = "A's PR #1 was closed without merging; decide what child targets: git config branch.child.sd-parent <branch>";
+        assert_eq!(soft(gate(&s, "origin", false)), want);
         let s = with(with(s, "parent.name", json!("main")), "sync.up_to_date", json!(true));
-        assert!(matches!(restack_gate(&s, "origin", false), Gate::Done(_)));
+        assert!(matches!(gate(&s, "origin", false), Gate::Done(_)));
     }
 
     #[test]
     fn restack_gate_refuses_an_unknown_merge_with_sd_states_reason() {
         let s = with(with(behind(), "parent.merged", Value::Null), "errors", json!(["gh (A): boom"]));
-        assert_eq!(hard(restack_gate(&s, "origin", false)), "can't tell whether A merged: gh (A): boom");
+        assert_eq!(soft(gate(&s, "origin", false)), "can't tell whether A merged: gh (A): boom");
     }
 
     #[test]
     fn restack_gate_refuses_no_base_with_the_step_for_an_unpushed_parent() {
         let s = with(with(behind(), "sync.old_base", Value::Null), "parent.unpushed", json!(true));
-        assert_eq!(hard(restack_gate(&s, "up", false)), "can't restack child: parent A isn't on up yet: ship it first (sd act ship A)");
+        assert_eq!(hard(gate(&s, "up", false)), "can't restack child: parent A isn't on up yet: ship it first (sd act ship A)");
         let s = with(behind(), "sync.up_to_date", Value::Null);
-        assert_eq!(hard(restack_gate(&s, "origin", false)), "can't restack child: ");
+        assert_eq!(hard(gate(&s, "origin", false)), "can't restack child: ");
     }
 
     #[test]
     fn restack_gate_refuses_replaying_a_merged_parents_commits_newest_first() {
         let s = with(behind(), "sync.replays_parent", json!(["a2a2a2a2a2a2a2a2", "a1a1a1a1a1a1a1a1"]));
         assert_eq!(
-            hard(restack_gate(&s, "origin", false)),
+            hard(gate(&s, "origin", false)),
             "wrong base: this would replay 2 of #1's commits onto origin/main; if the stack is linear, rebase past them by hand: \
              git rebase --onto origin/main a2a2a2a2a2a2 child && git update-ref refs/sheepdog/child/base origin/main"
         );
         // A tree restack leaves the parent's commits out by itself.
         let s = with(s, "sync.by_tree", json!(true));
-        assert_eq!(restack_gate(&s, "origin", false), Gate::Go);
+        assert_eq!(gate(&s, "origin", false), Gate::Go);
     }
 
     #[test]
     fn restack_gate_refuses_a_replay_sd_state_couldnt_list_after_a_merged_parent() {
         let s = with(behind(), "sync.replays_parent", Value::Null);
-        assert_eq!(hard(restack_gate(&s, "origin", false)), "can't list bbbbbbbbbbbbbbbbb..child");
+        assert_eq!(hard(gate(&s, "origin", false)), "can't list bbbbbbbbbbbbbbbbb..child");
         let s = with(with(s, "parent.merged", json!(false)), "parent.pr.state", json!("OPEN"));
-        assert_eq!(restack_gate(&s, "origin", false), Gate::Go);
+        assert_eq!(gate(&s, "origin", false), Gate::Go);
     }
 
     #[test]
     fn restack_gate_refuses_a_conflict_and_says_how_by_hand() {
         let s = with(behind(), "sync.conflict", json!(true));
         assert_eq!(
-            hard(restack_gate(&s, "origin", false)),
+            soft(gate(&s, "origin", false)),
             "restacking child onto origin/main would conflict; resolve it by hand: git rebase --onto origin/main bbbbbbbbbbbb child, \
              then git update-ref refs/sheepdog/child/base $(git merge-base origin/main child); or let the agent: sd act restack --resolve"
         );
         let s = with(s, "sync.by_tree", json!(true));
-        assert!(hard(restack_gate(&s, "origin", false)).starts_with("restacking child onto origin/main by tree would conflict; --resolve can't"));
+        assert!(hard(gate(&s, "origin", false)).starts_with("restacking child onto origin/main by tree would conflict; --resolve can't"));
         let s = with(behind(), "sync.conflict", Value::Null);
-        assert_eq!(hard(restack_gate(&s, "origin", false)), "can't tell whether restacking child would conflict: ");
+        assert_eq!(soft(gate(&s, "origin", false)), "can't tell whether restacking child would conflict: ");
     }
 
     #[test]
     fn restack_gate_with_resolve_hands_a_conflict_to_the_agent_but_not_a_tree_restacks() {
         let s = with(behind(), "sync.conflict", json!(true));
-        assert_eq!(restack_gate(&s, "origin", true), Gate::Go);
+        assert_eq!(gate(&s, "origin", true), Gate::Go);
         let s = with(with(s, "session.locked", json!(true)), "sync.by_tree", json!(true));
-        assert!(hard(restack_gate(&s, "origin", true)).contains("--resolve can't resolve a tree restack"));
+        assert!(hard(gate(&s, "origin", true)).contains("--resolve can't resolve a tree restack"));
         let s = with(behind(), "sync.conflict", Value::Null);
-        assert!(matches!(restack_gate(&s, "origin", true), Gate::Hard(_)));
+        assert!(matches!(gate(&s, "origin", true), Gate::Soft(_)));
     }
 
     #[test]
-    fn restack_gate_is_soft_when_taken_over_and_hard_refusals_come_first() {
-        let s = with(behind(), "session.locked", json!(true));
-        assert_eq!(restack_gate(&s, "origin", false), Gate::Soft("taken over (branch.child.sd-lock is set)".into()));
-        let s = with(s, "sync.conflict", json!(true));
-        assert!(matches!(restack_gate(&s, "origin", false), Gate::Hard(_)));
+    fn restack_gate_names_whose_commits_it_would_rewrite_and_a_stored_answer_it_would_drop() {
+        let s = with(behind(), "sync.foreign_authors", json!(["them@example.com", "x@example.com"]));
+        assert_eq!(
+            soft(gate(&s, "origin", false)),
+            "restacking child would rewrite commits someone else made, by them@example.com, x@example.com: \
+             look at them first (git log --format='%h %ae %ce %s' bbbbbbbbbbbb..child)"
+        );
+        let q = json!({"step": "address", "at_head": true, "answer": "keep it"});
+        let s = with(with(behind(), "question", q), "threads", json!({"owed_bot": 1}));
+        assert_eq!(soft(gate(&s, "origin", false)), "restacking child would drop the address agent's question and your stored answer: let it go on first, or sd act ack --question");
+        assert_eq!(soft(gate(&with(behind(), "pr.state", json!("MERGED")), "origin", false)), "PR #2 is merged");
     }
 
     #[test]

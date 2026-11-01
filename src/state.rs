@@ -740,6 +740,7 @@ struct Facts {
     conflict: Value,
     replays_parent: Value,
     foreign_authors: (Value, Value),
+    restack_authors: (Value, Value),
     undone: i64,
     remote_sha: String,
     ahead: i64,
@@ -997,7 +998,8 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone, "replays_parent": s.replays_parent},
+                 "undone": s.undone, "replays_parent": s.replays_parent,
+                 "foreign_authors": s.restack_authors.0, "foreign_commits": s.restack_authors.1},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1,
@@ -1154,7 +1156,8 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
 /// (#250), without user.email, or when git fails. <viewer> is gh's login,
 /// empty when gh failed: a noreply author is then someone else's, so the
 /// push holds. Not null: unknown doesn't hold it, and a teammate's noreply
-/// address would go through with ours.
+/// address would go through with ours. O3 asks the same of the commits a
+/// restack would rewrite: <removed> is HEAD, past the base and the target.
 fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
     let unknown = (Value::Null, Value::Null);
     if reviewer {
@@ -1638,6 +1641,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
         foreign_authors: foreign_authors(dir, branch, reviewer, &viewer, removes.then_some(remote_sha.as_str()), &target_ref,
             &[&head, &target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
+        restack_authors: foreign_authors(dir, branch, reviewer, &viewer, (up_to_date == false && !old_base.is_empty()).then_some(head.as_str()), &target_ref, &[&old_base, &target_ref]),
         head: head.clone(),
         task: cfg("sd-task"),
         reviewer,

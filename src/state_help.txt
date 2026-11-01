@@ -23,6 +23,11 @@ Reports, for <branch> (default: the current one):
             in old_base..HEAD, newest first: a wrong base, which sd act
             restack refuses unless it goes by tree; [] otherwise, null
             when git can't list them
+            sync.foreign_authors, sync.foreign_commits: as push's below,
+            for the commits a restack would rewrite (old_base..HEAD, past
+            the target) while it's behind: sd act restack refuses them
+            unless --force, which adds them to branch.<b>.sd-authors-seen
+            too, so the push that follows isn't held for them (#356)
   push      local vs remote branch; whether the remote SHA is ours (reflog),
             and for a remote ahead of a reset: whether those commits were
             made here and whether the worktree has uncommitted changes;

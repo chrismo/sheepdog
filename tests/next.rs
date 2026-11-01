@@ -13,7 +13,8 @@ const READY: &str = r#"{"branch": "feat", "head": "h1",
     "pr": {"number": 7, "url": "u", "state": "OPEN", "draft": false, "base": "main", "head_sha": "h1", "mergeable": "MERGEABLE",
            "merge_state": "CLEAN", "review_decision": null, "review_requests": []},
     "parent": {"name": "main", "source": "pr", "merged": false, "pr": null},
-    "sync": {"target": "main", "default": "main", "ahead": 1, "behind": 0, "up_to_date": true, "old_base": "b0b0b0b0b0b0b0b0", "conflict": false},
+    "sync": {"target": "main", "default": "main", "ahead": 1, "behind": 0, "up_to_date": true, "old_base": "b0b0b0b0b0b0b0b0", "conflict": false,
+             "replays_parent": []},
     "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true, "dirty": false},
     "fresh": true, "stale": [],
     "ci": {"sha": "h1", "for_head": true, "verdict": "green", "failing": [], "pending": []},
@@ -403,6 +404,42 @@ fn behind_the_default_branch_with_a_conflict_the_agent_resolves_it() {
 #[test]
 fn parent_merged_retargeted_to_the_default_branch_restack() {
     assert_eq!(keys(&e![r#".parent.name = "base""#, ".parent.merged = true", ".sync.up_to_date = false", ".sync.behind = 2"]), "behind");
+}
+
+// NEXT asks restack's gate (#348): a restack it refuses is chrismo's step,
+// saying why and what clears it, never one sd watch runs.
+#[test]
+fn a_restack_its_gate_refuses_is_chrismos_with_the_reason_348() {
+    // commits someone else made, which it would rewrite (#356): look, then force it
+    let theirs = e![STACKED, r#".sync.foreign_authors = ["them@example.com"]"#];
+    assert_eq!(step("behind", "who", &theirs), "you");
+    assert_eq!(step("behind", "cmd", &theirs), "sd act restack --force");
+    let say = step("behind", "say", &theirs);
+    assert!(say.starts_with("restack onto base (3 behind): sd act restack refuses: restacking feat would rewrite commits someone else made, by them@example.com"), "{say}");
+    // the conflict step too, which --resolve's gate refuses the same
+    let theirs_conflict = e![&theirs, ".sync.conflict = true"];
+    assert_eq!(keys(&theirs_conflict), "conflict");
+    assert_eq!(step("conflict", "who", &theirs_conflict), "you");
+    assert_eq!(step("conflict", "cmd", &theirs_conflict), "sd act restack --resolve --force");
+    // a merged parent's commits it would replay: a wrong base, Hard, so no --force
+    let merged = e![r#".parent = {"name": "base", "source": "config", "merged": true, "pr": {"number": 1, "state": "MERGED"}}"#, ".sync.up_to_date = false", ".sync.behind = 2"];
+    assert_eq!(step("behind", "who", &merged), "run");
+    let wrong = e![&merged, r#".sync.replays_parent = ["a1a1a1a1a1a1a1a1"]"#];
+    assert_eq!(step("behind", "who", &wrong), "you");
+    assert_eq!(step("behind", "cmd", &wrong), "sd act restack");
+    assert!(step("behind", "say", &wrong).contains("wrong base: this would replay 1 of #1's commits onto origin/main"));
+    assert_eq!(step("behind", "who", &e![&merged, ".sync.replays_parent = null"]), "you");
+    // unknowns: whether it would conflict, whether the parent merged
+    assert_eq!(step("behind", "who", &e![STACKED, ".sync.conflict = null"]), "you");
+    assert!(step("behind", "say", &e![STACKED, ".sync.conflict = null"]).contains("can't tell whether restacking feat would conflict"));
+    assert_eq!(step("behind", "who", &e![STACKED, ".parent.merged = null"]), "you");
+    assert_eq!(step("behind", "cmd", &e![STACKED, ".parent.merged = null"]), "sd act restack --force");
+    // GitHub says behind, but the target has nothing new here: no restack to run
+    let gh = e![r#".pr.merge_state = "BEHIND""#];
+    assert_eq!(keys(&gh), "behind");
+    assert_eq!(step("behind", "who", &gh), "wait");
+    assert_eq!(step("behind", "say", &gh), "GitHub says the PR is behind main, but origin/main has nothing feat lacks: wait for GitHub, or fetch");
+    assert_eq!(step("behind", "cmd", &gh), "git fetch --prune origin");
 }
 
 // @test "a conflicting restack is the agent's, instead of a plain restack"

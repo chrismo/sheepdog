@@ -22,6 +22,7 @@ mod ship;
 mod start;
 mod step;
 pub(crate) use address::said as address_said;
+pub(crate) use restack::said as restack_said;
 pub use gate::{enforce, judge, Gate, Go, Level, Rule};
 
 use crate::git::{self, git, git_out};

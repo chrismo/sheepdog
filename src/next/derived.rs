@@ -162,6 +162,17 @@ derived! {
     parent_closed: bool,
     /// The parent merged (parent.merged).
     parent_merged: Option<bool>,
+    /// The parent, not the default branch, closed without merging, PR of
+    /// ours or not.
+    parent_abandoned: bool,
+    /// Whether the parent, not the default branch, merged is unknown.
+    merge_unknown: bool,
+    /// A restack would replay the merged parent's commits
+    /// (sync.replays_parent); None when sd state couldn't list them.
+    replays: Option<bool>,
+    /// A restack would rewrite commits someone other than user.email made
+    /// (sync.foreign_authors, #356); unknown is not foreign, as for push.
+    restack_foreign: bool,
 
     // CI (O5).
     /// CI's verdict on the SHA it read (ci.verdict); none when absent.
@@ -394,6 +405,11 @@ impl Derived {
         self.stacked = off_default && (j.is("parent.pr.state", "OPEN") || j.on("parent.merged"));
         self.parent_closed = off_default && j.is("parent.pr.state", "CLOSED");
         self.parent_merged = j.flag("parent.merged");
+        let off = j.ne("parent.name", "sync.default");
+        self.parent_abandoned = off && j.is("parent.pr.state", "CLOSED");
+        self.merge_unknown = off && j.nul("parent.merged");
+        self.replays = j.g("sync.replays_parent").as_array().map(|r| !r.is_empty());
+        self.restack_foreign = j.len("sync.foreign_authors") > 0;
         let offered = if self.conflict {
             !yes(self.by_tree)
         } else if self.behind_target && self.chase {
@@ -629,6 +645,22 @@ mod tests {
         assert!(fa(json!(["them@example.com"])));
         assert!(!fa(json!([])));
         assert!(!fa(Value::Null));
+    }
+
+    #[test]
+    fn restacks_facts_read_unknown_as_unknown_and_the_default_branch_as_no_parent_348() {
+        let d = |v: Value| Derived::new(&v);
+        let parent = |merged: Value, state: &str| json!({"parent": {"name": "A", "merged": merged, "pr": {"state": state}}, "sync": {"default": "main"}});
+        assert!(d(parent(Value::Null, "OPEN")).merge_unknown);
+        assert!(d(parent(json!(false), "CLOSED")).parent_abandoned);
+        let main = json!({"parent": {"name": "main", "merged": null, "pr": {"state": "CLOSED"}}, "sync": {"default": "main"}});
+        assert!(!d(main.clone()).merge_unknown && !d(main).parent_abandoned);
+        let sync = |v: Value| d(json!({"sync": v}));
+        assert_eq!(sync(json!({"replays_parent": ["a1"]})).replays, Some(true));
+        assert_eq!(sync(json!({"replays_parent": []})).replays, Some(false));
+        assert_eq!(sync(json!({"replays_parent": null})).replays, None);
+        assert!(sync(json!({"foreign_authors": ["them@example.com"]})).restack_foreign);
+        assert!(!sync(json!({"foreign_authors": null})).restack_foreign);
     }
 
     #[test]

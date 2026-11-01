@@ -531,7 +531,7 @@ fn glyph_work_an_agent_will_do_later_is() {
     let sd = sd();
     for a in [
         r#".sync.up_to_date = false | .sync.behind = 2 | .sync.target = "base" | .sync.old_base = "abc""#,
-        r#".sync.up_to_date = false | .parent.merged = true | .sync.old_base = "abc""#,
+        r#".sync.up_to_date = false | .parent.merged = true | .sync.old_base = "abc" | .sync.replays_parent = []"#,
         ".threads.owed_bot = 1",
         ".push.ahead = 1",
         ".pr = null",

@@ -30,6 +30,12 @@ pub const MIGRATED: &[Migrated] = &[
     },
     Migrated { verb: "ci-fix", offered: |steps| steps.iter().any(|s| s["key"] == "ci-red"), gate: ci_fix },
     Migrated { verb: "review", offered: |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gate: review },
+    Migrated { verb: "restack", offered: |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), gate: restack },
+    Migrated {
+        verb: "restack --resolve",
+        offered: |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"),
+        gate: restack_resolve,
+    },
 ];
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
@@ -44,7 +50,7 @@ pub fn push(d: &Derived) -> Gate {
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
         to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
+        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, fixing: _,
         findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
@@ -103,7 +109,7 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
         owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _,
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
-        by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
+        by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
         ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
         need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
         budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _,
@@ -170,7 +176,7 @@ pub fn implement(d: &Derived) -> Gate {
         verify_red: _, foreign: _, foreign_authors: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
         push_dirty: _, parent_unpushed: _, empty: _, chase: _, undone: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
+        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, bot_due: _, bot_late: _,
         bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, stored: _, addr_moot: _, ci_moot: _,
         resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
@@ -208,7 +214,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
         empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _,
         gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
-        parent_closed: _, parent_merged: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
+        parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
         any_cover: _, reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _,
         bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _,
         addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
@@ -323,8 +329,8 @@ fn review_rules(d: &Derived) -> [Rule; 11] {
         merge_state: _, tasked: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _,
         held: _, unpushed: _, to_push: _, ci_held: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
-        by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _,
-        ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
+        by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
+        merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
         findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
         resume_ci: _, dirty: _, refused: _, bot: _, rv_dirty: _, rv_pending: _,
@@ -361,8 +367,8 @@ pub fn accept(d: &Derived) -> Gate {
         merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
         taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
-        by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _,
-        ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
+        by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
+        merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
         fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _,
         over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
         resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _,
@@ -375,6 +381,73 @@ pub fn accept(d: &Derived) -> Gate {
         clears: "sd state's errors say why, or ship the parent first",
         yours: true,
     }])
+}
+
+/// restack's reasons; restack::said puts each in the record's words.
+pub mod rs {
+    pub const NO_BASE: &str = "no base to restack from, or sync with the target unknown";
+    pub const REPLAYS_UNKNOWN: &str = "can't list the commits the restack would replay";
+    pub const WRONG_BASE: &str = "wrong base: the restack would replay the merged parent's commits";
+    pub const TREE_CONFLICT: &str = "the restack by tree would conflict, which --resolve can't resolve";
+    pub const ON_TARGET: &str = "already on the target";
+    pub const CLOSED: &str = "the PR is merged or closed";
+    pub const ABANDONED: &str = "the parent was closed without merging";
+    pub const MERGE_UNKNOWN: &str = "can't tell whether the parent merged";
+    pub const CONFLICT_UNKNOWN: &str = "can't tell whether the restack would conflict";
+    pub const CONFLICT: &str = "the restack would conflict";
+    pub const ANSWER: &str = "the restack would drop the agent's question and your stored answer";
+    pub const FOREIGN: &str = "the restack would rewrite commits someone else made";
+}
+
+/// sd act restack. Its fetch is the verb's: NEXT asks this of sd state as
+/// last observed, the verb of sd state after the fetch. The sd-lock is the
+/// verb's to check, as push's is: NEXT's attached step stands for it.
+pub fn restack(d: &Derived) -> Gate {
+    judge(&restack_rules(d, false))
+}
+
+/// sd act restack --resolve.
+pub fn restack_resolve(d: &Derived) -> Gate {
+    judge(&restack_rules(d, true))
+}
+
+/// restack's rules: Hard only where --force can't help, or would replay a
+/// merged parent's commits.
+pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 12] {
+    let Derived {
+        open, up_to_date, old_base_null, sync_conflict, by_tree, parent_merged, parent_abandoned, merge_unknown, replays,
+        restack_foreign, answer_pending,
+        own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _, lagging: _,
+        locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _,
+        dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
+        ahead_target: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _,
+        gh_restack: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, ci_verdict: _, ci_blocked: _,
+        ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
+        fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _,
+        over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
+        dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
+        rv_submitted: _, rv_local: _,
+    } = d;
+    let behind = no(*up_to_date);
+    let after_merge = behind && yes(*parent_merged);
+    let (conflict, tree) = (behind && yes(*sync_conflict), yes(*by_tree));
+    // only ci-fix's NEXT reads yours (#355)
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
+    [
+        rule(rs::NO_BASE, Level::Hard, up_to_date.is_none() || (behind && *old_base_null), "sd state's errors say why"),
+        rule(rs::REPLAYS_UNKNOWN, Level::Hard, after_merge && replays.is_none(), "sd state's errors say why"),
+        rule(rs::WRONG_BASE, Level::Hard, after_merge && yes(*replays) && !tree, "rebase past them by hand (sd act restack says how)"),
+        rule(rs::TREE_CONFLICT, Level::Hard, conflict && tree, "resolve it by hand (sd act restack says how)"),
+        rule(rs::ON_TARGET, Level::Done, yes(*up_to_date), ""),
+        rule(rs::CLOSED, Level::Soft, !open, "reopen it, or start a new branch"),
+        rule(rs::ABANDONED, Level::Soft, *parent_abandoned, "point branch.<b>.sd-parent at what the branch targets now"),
+        rule(rs::MERGE_UNKNOWN, Level::Soft, *merge_unknown, "sd state's errors say why"),
+        rule(rs::CONFLICT_UNKNOWN, Level::Soft, behind && sync_conflict.is_none(), "sd state's errors say why"),
+        rule(rs::CONFLICT, Level::Soft, !resolve && conflict && !tree, "sd act restack --resolve, or by hand"),
+        rule(rs::ANSWER, Level::Soft, *answer_pending, "the asking step goes on first, or sd act ack --question drops both"),
+        rule(rs::FOREIGN, Level::Soft, *restack_foreign, "look at them, then sd act restack --force"),
+    ]
 }
 
 /// Each verb NEXT's <steps> offer while its gate refuses (runs() false).
@@ -743,6 +816,55 @@ mod tests {
             } else {
                 Ok(())
             }
+        });
+    }
+
+    /// An open PR behind its target, with a base and no conflict.
+    fn behind() -> Derived {
+        Derived { open: true, has_pr: true, up_to_date: Some(false), sync_conflict: Some(false), by_tree: Some(false), ..Derived::default() }
+    }
+
+    #[test]
+    fn restack_goes_behind_with_a_base_and_is_done_on_the_target() {
+        assert_eq!(restack(&behind()), Gate::Go);
+        assert_eq!(restack(&Derived { up_to_date: Some(true), merge_unknown: true, ..behind() }), Gate::Done(rs::ON_TARGET.into()));
+    }
+
+    #[test]
+    fn restack_hard_only_where_force_cant_do_it_or_would_replay_a_merged_parent_348() {
+        assert_eq!(restack(&Derived { up_to_date: None, ..behind() }), Gate::Hard(rs::NO_BASE.into()));
+        assert_eq!(restack(&Derived { old_base_null: true, ..behind() }), Gate::Hard(rs::NO_BASE.into()));
+        let merged = Derived { parent_merged: Some(true), replays: Some(true), ..behind() };
+        assert_eq!(restack(&merged), Gate::Hard(rs::WRONG_BASE.into()));
+        assert_eq!(restack(&Derived { by_tree: Some(true), ..merged.clone() }), Gate::Go);
+        assert_eq!(restack(&Derived { replays: None, ..merged }), Gate::Hard(rs::REPLAYS_UNKNOWN.into()));
+        let tree = Derived { sync_conflict: Some(true), by_tree: Some(true), ..behind() };
+        assert_eq!(restack_resolve(&tree), Gate::Hard(rs::TREE_CONFLICT.into()));
+    }
+
+    #[test]
+    fn restack_everything_else_is_soft_and_resolve_takes_a_conflict_348() {
+        let conflict = Derived { sync_conflict: Some(true), ..behind() };
+        assert_eq!(restack(&conflict), soft(&[rs::CONFLICT]));
+        assert_eq!(restack_resolve(&conflict), Gate::Go);
+        assert_eq!(restack(&Derived { sync_conflict: None, ..behind() }), soft(&[rs::CONFLICT_UNKNOWN]));
+        let d = Derived { open: false, parent_abandoned: true, merge_unknown: true, answer_pending: true, restack_foreign: true, ..behind() };
+        assert_eq!(restack(&d), soft(&[rs::CLOSED, rs::ABANDONED, rs::MERGE_UNKNOWN, rs::ANSWER, rs::FOREIGN]));
+    }
+
+    #[test]
+    fn restack_never_rewrites_someone_elses_commits_unforced_nor_replays_a_merged_parent_on_generated_states() {
+        check("restack over foreign authors or a wrong base", |d| {
+            let replay = no(d.up_to_date) && yes(d.parent_merged) && (d.replays.is_none() || (yes(d.replays) && !yes(d.by_tree)));
+            for g in [restack(d), restack_resolve(d)] {
+                if d.restack_foreign && g.runs() {
+                    return Err("restack runs over someone else's commits".into());
+                }
+                if replay && !matches!(g, Gate::Hard(_)) {
+                    return Err(format!("a replay of the merged parent's commits isn't Hard: {g:?}"));
+                }
+            }
+            Ok(())
         });
     }
 
