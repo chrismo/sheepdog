@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 /// gh runs inside the request: a stalled one mustn't leave the page waiting.
 const GH_SECS: u64 = 20;
+/// The most open issues one gh call lists; a list this long may be cut off.
+const ISSUE_LIMIT: usize = 500;
 
 /// The checkout the binary was built in: lib/'s parent.
 fn root() -> PathBuf {
@@ -72,7 +74,8 @@ fn naming(issues: &[Value], path: &str) -> Vec<Value> {
 }
 
 fn open_issues(root: &Path) -> Result<Vec<Value>, String> {
-    let args = ["issue", "list", "--state", "open", "--limit", "500", "--json", "number,title,body,url"];
+    let limit = ISSUE_LIMIT.to_string();
+    let args = ["issue", "list", "--state", "open", "--limit", &limit, "--json", "number,title,body,url"];
     let out = proc::with_timeout(GH_SECS, "gh", &args, Some(&root.to_string_lossy()));
     match serde_json::from_str::<Value>(&out.stdout) {
         Ok(Value::Array(list)) if out.ok => Ok(list),
@@ -108,7 +111,12 @@ fn build(files: &[(String, String)], ratchet_text: &str, issues: &Result<Vec<Val
     groups.sort_by_key(|g| std::cmp::Reverse(lines(g)));
     // Functions, not lines: one over both caps is listed twice.
     let fns: BTreeSet<_> = over.iter().filter(|(f, _)| files.iter().any(|(p, _)| p == f)).map(|(f, o)| (f, t(o, "fn"))).collect();
-    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.as_ref().ok().map(Vec::len), "error": issues.as_ref().err()})
+    let error = match issues {
+        Err(e) => Some(e.clone()),
+        Ok(l) if l.len() >= ISSUE_LIMIT => Some(format!("gh lists {ISSUE_LIMIT} at most, and gave {}", l.len())),
+        Ok(_) => None,
+    };
+    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.as_ref().ok().map(Vec::len), "error": error})
 }
 
 pub fn map() -> Value {
@@ -201,6 +209,15 @@ mod tests {
         assert_eq!([nums("src/act/a.rs"), nums("src/b.rs"), nums("src/act.rs")], [vec![1, 2], vec![1], vec![]]);
         assert_eq!(file(&m, "src/b.rs")["issues"][0], json!({"number": 1, "title": "split src/b.rs", "url": "u1"}));
         assert_eq!((&m["issues"], &m["error"]), (&json!(2), &Value::Null));
+    }
+
+    #[test]
+    fn a_full_issue_list_says_some_may_be_left_out() {
+        let list = |n: u64| (0..n).map(|i| json!({"number": i, "title": "t", "url": "u", "body": ""})).collect::<Vec<_>>();
+        let m = build(&fixture(), "", &Ok(list(ISSUE_LIMIT as u64)));
+        assert_eq!(m["issues"], ISSUE_LIMIT);
+        assert_eq!(m["error"], format!("gh lists {ISSUE_LIMIT} at most, and gave {ISSUE_LIMIT}"));
+        assert_eq!(build(&fixture(), "", &Ok(list(ISSUE_LIMIT as u64 - 1)))["error"], Value::Null);
     }
 
     #[test]
