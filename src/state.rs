@@ -101,14 +101,14 @@ fn fail(msg: impl std::fmt::Display) -> String {
 
 // ── usage.sup: what the branch has spent (#121) ──────────────────────────────
 
-/// This repo's <branch> spend, usd and unknown (usage::Spend), warning of
-/// lines that aren't records; None when usage.sup can't be read.
-fn branch_spend(dir: &str, b: &str) -> Option<(Value, Value)> {
+/// This repo's <branch> spend, usd, unknown and stray (usage::Spend),
+/// warning of lines that aren't records; None when usage.sup can't be read.
+fn branch_spend(dir: &str, b: &str) -> Option<(Value, Value, Value)> {
     let s = usage::spend(&main_worktree(dir), b)?;
     if s.skipped > 0 {
         eprintln!("sd state: warning: {} line(s) of {} aren't usage records; their cost isn't counted", s.skipped, usage::file());
     }
-    Some((json!(s.usd), Value::Array(s.unknown)))
+    Some((json!(s.usd), Value::Array(s.unknown), Value::Array(s.stray)))
 }
 
 // ── records sd act keeps under refs/sheepdog/<b>/ ────────────────────────────
@@ -788,8 +788,8 @@ struct Facts {
     rl_remaining: Value,
     rl_reset: String,
     rl_limited: bool,
-    /// usd and unknown.
-    spend: (Value, Value),
+    /// usd, unknown and stray.
+    spend: (Value, Value, Value),
     branch_budget: Value,
     errors: Vec<String>,
 }
@@ -1021,7 +1021,7 @@ fn assemble(s: &Facts) -> Value {
         "bot": {"command": jn(&s.bot_command), "timeout": s.bot_timeout},
         "session": {"enrolled": s.enrolled == "true", "harness": jn(&s.harness), "profile": s.profile, "id": jn(&s.session),
                     "locked": !s.lock.is_empty(), "running": s.running},
-        "spend": {"usd": s.spend.0, "unknown": s.spend.1, "budget": s.branch_budget},
+        "spend": {"usd": s.spend.0, "unknown": s.spend.1, "budget": s.branch_budget, "stray": s.spend.2},
         "stored": {"handled": s.handled, "refs": refs},
         "rate_limit": {"cost": s.rl_cost, "remaining": s.rl_remaining, "reset_at": jn(&s.rl_reset), "limited": s.rl_limited},
         "errors": s.errors
@@ -1154,7 +1154,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let mut errors: Vec<String> = Vec::new();
     let spend = branch_spend(dir, branch).unwrap_or_else(|| {
         errors.push(format!("usage: can't read {}", usage::file()));
-        (Value::Null, Value::Null)
+        (Value::Null, Value::Null, Value::Null)
     });
     let ignore_body = compile_all(&raw_json(&ignore_body_text))
         .ok_or_else(|| fail(format!("botIgnoreBody has an invalid regex: {ignore_body_text}")))?;

@@ -297,7 +297,7 @@ fn forget_starts_the_branchs_spend_over_349() {
     assert_has(last, &[&format!(r#",repo:"{}",branch:"feat",reset:true}}"#, sd.git(&["rev-parse", "--show-toplevel"]))]);
     sd.spent("feat", "implement", "0.5");
     let spend = sd.verb_ok("state", &["--json"]);
-    assert_has(&spend, &[r#""spend":{"usd":0.5,"unknown":[],"budget":25}"#]);
+    assert_has(&spend, &[r#""spend":{"usd":0.5,"unknown":[],"budget":25,"stray":[]}"#]);
 }
 
 // @test "forget: a named branch; other branches' pins stay"

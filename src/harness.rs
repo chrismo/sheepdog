@@ -12,7 +12,7 @@ mod probe;
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
-use crate::{config, failed, json, limit, proc, running, time, usage};
+use crate::{config, failed, json, limit, proc, running, stray, time, usage};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
@@ -106,7 +106,8 @@ impl Step<'_> {
 /// use the login, so it keeps the key. settings.stepBudget (USD, read for
 /// the branch) caps a claude step through --max-budget-usd; 0 is no cap. pi
 /// has no such flag: settings.branchBudget (sd state) is its only guard.
-/// Every step appends a record to usage.sup. The harness's stderr (claude
+/// Every step appends a record to usage.sup, with what its agent committed
+/// or pushed itself (crate::stray, #346). The harness's stderr (claude
 /// can put protocol JSON there) shows only when the step fails, and then all
 /// at once: nothing streams while it runs. While it runs, the branch's
 /// running marker says so, for sd state (#170). A step the harness's usage
@@ -174,22 +175,8 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let args = t(s.settings, "args");
     let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
     let mut typed = typed_flags(h, s.settings);
-    let (mut cap, mut cap_note) = (0.0, String::new());
-    if h == "claude" {
-        let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
-            for l in lines {
-                eprintln!("sd config: {l}");
-            }
-            eprintln!("sd config failed");
-            Stop::Failed(1)
-        })?;
-        let (flags, c, note) = step_cap(&budget, &extra).map_err(|e| {
-            eprintln!("{e}");
-            Stop::Failed(1)
-        })?;
-        typed.extend(flags);
-        (cap, cap_note) = (c, note);
-    }
+    let (flags, cap, cap_note) = claude_cap(h, b, &extra)?;
+    typed.extend(flags);
     let c = step_command(s, &typed, &extra).map_err(|e| {
         eprintln!("{e}");
         Stop::Failed(1)
@@ -199,6 +186,7 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let from = if s.mode == "fork" { s.parent } else { minted };
     let before = tally(h, from);
     let spent = usage::session_total(h, from);
+    let seen = stray::Seen::now(b);
     let t0 = Instant::now();
     // No timeout: as long as a u32 of seconds runs, as perl's alarm 0 did.
     // A longer one is cut to that too: a later deadline overflows Instant.
@@ -216,6 +204,8 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         _ => 0,
     };
     let (now, repo, after) = (time::now_utc().0, main_worktree("."), tally(h, &sid));
+    let ms = t0.elapsed().as_millis() as i64;
+    let stray = seen.since(s.label());
     usage::append(&usage::record(&usage::Step {
         time: &now,
         repo: &repo,
@@ -225,13 +215,14 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         session: &sid,
         mode: s.mode,
         status,
-        ms: t0.elapsed().as_millis() as i64,
+        ms,
         cap,
         prev: spent,
         stopped: out.stopped,
         o: &o,
         a: &after,
         b: &before,
+        stray,
     }));
 
     if let Some(l) = limit {
@@ -266,6 +257,25 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         failed::record(b, s.label(), h, &why);
     }
     result.map(|results| Ran { results, session: sid }).map_err(Stop::Failed)
+}
+
+/// A claude step's --max-budget-usd flags, its cap and the note on it
+/// (step_cap); none for pi, which has no such flag.
+fn claude_cap(h: &str, b: &str, extra: &[&str]) -> Result<(Vec<String>, f64, String), Stop> {
+    if h != "claude" {
+        return Ok((Vec::new(), 0.0, String::new()));
+    }
+    let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
+        for l in lines {
+            eprintln!("sd config: {l}");
+        }
+        eprintln!("sd config failed");
+        Stop::Failed(1)
+    })?;
+    step_cap(&budget, extra).map_err(|e| {
+        eprintln!("{e}");
+        Stop::Failed(1)
+    })
 }
 
 /// The step's command: <h>'s own flags, then <typed> and <extra>. pi has no

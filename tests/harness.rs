@@ -8,8 +8,8 @@
 // each test keeps the bats test's title above it. harness_tally's tests are
 // src/harness.rs's unit tests.
 //
-// claude and pi are stubs that put protocol noise on stderr and print
-// $FX/out on stdout, exiting $FX/status.
+// claude and pi are stubs that put protocol noise on stderr, source $FX/do
+// when there is one, and print $FX/out on stdout, exiting $FX/status.
 
 mod common;
 
@@ -31,6 +31,7 @@ for m in "$(git rev-parse --path-format=absolute --git-common-dir)"/sheepdog/*.r
   [ -e "$m" ] && { echo "${m##*/} $(cat "$m")" > "$FX/marker"; kill -0 "$(cut -d' ' -f1 "$m")" && echo alive >> "$FX/marker"; }
 done
 while [ -e "$FX/hold" ]; do sleep 0.1; done
+[ -e "$FX/do" ] && . "$FX/do"
 cat "$FX/out"
 exit "$(cat "$FX/status" 2>/dev/null || echo 0)"
 "#;
@@ -497,6 +498,118 @@ fn harness_run_harness_branch_names_the_branch_when_the_worktree_is_detached_res
     sd.step(&[], &["claude", "sid1", "resume", "30", "do it", "{}"]);
     assert_eq!(sd.usage_count(), 2);
     assert_eq!(sd.usage_last(&["branch"]), "null");
+}
+
+// ── a stray agent commit or push: logged, never refused (#346) ─────────────
+
+/// sd() with a bare origin.git that feat is pushed to: refs/remotes/origin/feat
+/// exists, its reflog one push.
+fn pushed() -> Sd {
+    let sd = sd();
+    sd.git(&["init", "-q", "--bare", &sd.path("origin.git")]);
+    sd.git(&["remote", "add", "origin", &sd.path("origin.git")]);
+    sd.git(&["push", "-q", "origin", "feat"]);
+    sd
+}
+
+#[test]
+fn a_step_whose_agent_neither_commits_nor_pushes_records_no_stray_346() {
+    let sd = pushed();
+    let r = sd.step(&[("HARNESS_STEP", "implement")], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "false|false");
+    assert_lacks(&r.stderr, "itself");
+}
+
+#[test]
+fn an_agent_that_commits_itself_is_logged_and_its_step_still_succeeds_346() {
+    let sd = pushed();
+    let before = sd.git(&["rev-parse", "--short", "HEAD"]);
+    sd.fx("do", "git commit -q --allow-empty -m stray");
+    let r = sd.step(&[("HARNESS_STEP", "implement")], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(r.output, r#"{"ok":true}"#);
+    let after = sd.git(&["rev-parse", "--short", "HEAD"]);
+    assert_has(&r.stderr, &[&format!("sd: implement: the agent committed itself on feat ({before} -> {after})")]);
+    assert_lacks(&r.stderr, "pushed");
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "true|false");
+}
+
+#[test]
+fn an_agent_that_pushes_itself_is_logged_with_the_remote_tracking_ref_346() {
+    let sd = pushed();
+    sd.fx("do", "git commit -q --allow-empty -m stray && git push -q origin HEAD");
+    let r = sd.step(&[("HARNESS_STEP", "address")], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_has(&r.stderr, &["sd: address: the agent committed itself on feat", "sd: address: the agent pushed feat itself (refs/remotes/origin/feat)"]);
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "true|true");
+    // A failed step is checked too, and a push to a branch not yet on the remote.
+    sd.git(&["switch", "-qc", "two"]);
+    sd.fx("do", "git push -q origin two");
+    sd.fx("status", "1");
+    let r = sd.step(&[], &STEP);
+    assert_ne!(r.status, 0);
+    assert_has(&r.stderr, &["sd: agent: the agent pushed two itself (refs/remotes/origin/two)"]);
+    assert_eq!(sd.usage_last(&["branch", "stray_commit", "stray_push"]), "two|false|true");
+}
+
+// A commit's gc --auto can expire reflog entries: a push is still told when
+// the reflog is shorter after the step than before it.
+#[test]
+fn a_push_is_told_though_the_reflog_was_expired_during_the_step_346() {
+    let sd = pushed();
+    sd.fx("do", "git reflog expire --expire=all --all && git commit -q --allow-empty -m stray && git push -q origin HEAD");
+    let r = sd.step(&[], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "true|true");
+}
+
+// With the newest entry gone, a push older than it isn't the step's.
+#[test]
+fn a_push_from_before_the_step_isnt_told_when_the_newest_entry_goes_346() {
+    let sd = sd();
+    sd.git(&["init", "-q", "--bare", &sd.path("origin.git")]);
+    sd.git(&["remote", "add", "origin", &sd.path("origin.git")]);
+    sd.git_with(&[("GIT_COMMITTER_DATE", "@1000000000 +0000")], None, &["push", "-q", "origin", "feat"]);
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "mine"]);
+    sd.git(&["push", "-q", "origin", "feat"]);
+    sd.fx("do", "git reflog delete refs/remotes/origin/feat@{0}");
+    let r = sd.step(&[], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.git(&["reflog", "show", "--format=%gs", "refs/remotes/origin/feat", "--"]), "update by push");
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "false|false");
+}
+
+#[test]
+fn a_fetch_that_moves_the_remote_tracking_ref_during_the_step_isnt_a_push_346() {
+    let sd = pushed();
+    sd.git(&["clone", "-q", "-b", "feat", &sd.path("origin.git"), &sd.path("other")]);
+    sd.git_in("other", &["commit", "-q", "--allow-empty", "-m", "theirs"]);
+    sd.git_in("other", &["push", "-q", "origin", "feat"]);
+    sd.fx("do", "git fetch -q origin");
+    let r = sd.step(&[], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.git(&["rev-parse", "origin/feat"]), sd.git_in("other", &["rev-parse", "HEAD"]));
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "false|false");
+}
+
+#[test]
+fn a_resolve_steps_detached_head_that_moves_is_a_commit_and_harness_branch_names_the_pushed_ref_346() {
+    let sd = pushed();
+    sd.git(&["switch", "-q", "--detach"]);
+    sd.fx("do", "git commit -q --allow-empty -m stray && git push -q origin HEAD:feat");
+    let r = sd.step(&[("HARNESS_STEP", "resolve"), ("HARNESS_BRANCH", "feat")], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "true|true");
+}
+
+#[test]
+fn outside_a_branch_a_push_cant_be_told_so_its_null_346() {
+    let sd = pushed();
+    sd.git(&["switch", "-q", "--detach"]);
+    let r = sd.step(&[], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.usage_last(&["branch", "stray_commit", "stray_push"]), "null|false|null");
 }
 
 // @test "harness_run: a failed step is logged with its status, and pi's record has no cost without a transcript"

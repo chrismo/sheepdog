@@ -13,6 +13,7 @@ pub mod review_local;
 pub mod rules;
 pub mod running;
 pub mod state;
+pub mod stray;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod time;

@@ -8,6 +8,7 @@
 
 use crate::config;
 use crate::json::{sup_float, sup_string};
+use crate::stray::Stray;
 use crate::val::{at, n, on};
 use regex::Regex;
 use serde_json::{json, Value};
@@ -130,12 +131,15 @@ fn total_in(text: &str, session: &str) -> f64 {
 /// signal, and for one killed with no cap. A null cost with a null context
 /// is a step whose transcript has no billed turn (it failed to start), so
 /// it spent nothing. Only the rows after the branch's last reset count
-/// (reset_record). skipped: the lines that aren't whole records.
+/// (reset_record). skipped: the lines that aren't whole records. stray: the
+/// steps whose agent committed or pushed itself (#346), {time, step,
+/// harness, session, commit, push} each.
 #[derive(Debug, Default, PartialEq)]
 pub struct Spend {
     pub usd: f64,
     pub unknown: Vec<Value>,
     pub skipped: usize,
+    pub stray: Vec<Value>,
 }
 
 /// usage.sup's text summed for <repo>'s <b>; None when a line shaped like
@@ -155,7 +159,13 @@ fn spend_in(text: &str, repo: &str, b: &str) -> Option<Spend> {
         if r.get("reset").is_some_and(|v| v == true) {
             out.usd = 0.0;
             out.unknown.clear();
+            out.stray.clear();
             continue;
+        }
+        let did = |k: &str| r.get(k).is_some_and(|v| v == true);
+        if did("stray_commit") || did("stray_push") {
+            out.stray.push(json!({"time": field("time"), "step": field("step"), "harness": field("harness"), "session": field("session"),
+                                  "commit": did("stray_commit"), "push": did("stray_push")}));
         }
         let ran = r.get("context").is_some_and(|c| !c.is_null());
         match r.get("cost_usd").and_then(Value::as_f64) {
@@ -205,6 +215,7 @@ pub struct Step<'a> {
     /// The harness's tally after the step and before it.
     pub a: &'a Value,
     pub b: &'a Value,
+    pub stray: Stray,
 }
 
 /// The step's record, a line of SUP. A claude step with no result (killed
@@ -243,7 +254,8 @@ pub fn record(s: &Step) -> String {
     };
     format!(
         "{{time:{},repo:{},branch:{},step:{},harness:{},session:{},mode:{},status:{},cost_usd:{cost},total_cost_usd:{},\
-         estimated:{unseen},input:{},cache_create:{},cache_read:{},output:{},duration_ms:{},turns:{},context:{}}}",
+         estimated:{unseen},input:{},cache_create:{},cache_read:{},output:{},duration_ms:{},turns:{},context:{},\
+         stray_commit:{},stray_push:{}}}",
         s.time,
         nn(s.repo),
         nn(s.branch),
@@ -260,7 +272,13 @@ pub fn record(s: &Step) -> String {
         int("duration_ms"),
         int("turns"),
         at(a, "context").as_f64().map_or("null".into(), |x| (x as i64).to_string()),
+        sup_bool(s.stray.commit),
+        sup_bool(s.stray.push),
     )
+}
+
+fn sup_bool(b: Option<bool>) -> String {
+    b.map_or("null".into(), |b| b.to_string())
 }
 
 /// Appends <rec> to usage.sup; a step isn't failed for want of its record.
@@ -284,23 +302,23 @@ mod tests {
             ("2026-10-16T20:33:06Z", "/Users/chrismo/modev/sheepdog", "sd-63-bot-wait", "review", "claude", "6ece45cb-0000-4000-8000-000000000000", "new", 0, 61000, 5.0, 0.0,
              json!({"type": "result", "is_error": false, "total_cost_usd": 0.7948558, "duration_ms": 60512, "num_turns": 14, "usage": {"input_tokens": 22, "cache_creation_input_tokens": 41234, "cache_read_input_tokens": 512345, "output_tokens": 4321}}),
              json!({"entries": 14, "context": 61002}), json!({}),
-             r#"{time:2026-10-16T20:33:06Z,repo:"/Users/chrismo/modev/sheepdog",branch:"sd-63-bot-wait",step:"review",harness:"claude",session:"6ece45cb-0000-4000-8000-000000000000",mode:"new",status:0,cost_usd:0.7948558,total_cost_usd:0.7948558,estimated:false,input:22,cache_create:41234,cache_read:512345,output:4321,duration_ms:60512,turns:14,context:61002}"#),
+             r#"{time:2026-10-16T20:33:06Z,repo:"/Users/chrismo/modev/sheepdog",branch:"sd-63-bot-wait",step:"review",harness:"claude",session:"6ece45cb-0000-4000-8000-000000000000",mode:"new",status:0,cost_usd:0.7948558,total_cost_usd:0.7948558,estimated:false,input:22,cache_create:41234,cache_read:512345,output:4321,duration_ms:60512,turns:14,context:61002,stray_commit:null,stray_push:null}"#),
             ("2026-10-16T20:35:00Z", "/Users/chrismo/modev/sheepdog", "sd-63-bot-wait", "implement", "claude", "6ece45cb-0000-4000-8000-000000000000", "resume", 124, 1800000, 2.5, 0.7948558,
              Value::Null, json!({"entries": 40, "context": 150000}), json!({"entries": 14, "context": 61002}),
-             r#"{time:2026-10-16T20:35:00Z,repo:"/Users/chrismo/modev/sheepdog",branch:"sd-63-bot-wait",step:"implement",harness:"claude",session:"6ece45cb-0000-4000-8000-000000000000",mode:"resume",status:124,cost_usd:2.5,total_cost_usd:null,estimated:true,input:null,cache_create:null,cache_read:null,output:null,duration_ms:null,turns:null,context:150000}"#),
+             r#"{time:2026-10-16T20:35:00Z,repo:"/Users/chrismo/modev/sheepdog",branch:"sd-63-bot-wait",step:"implement",harness:"claude",session:"6ece45cb-0000-4000-8000-000000000000",mode:"resume",status:124,cost_usd:2.5,total_cost_usd:null,estimated:true,input:null,cache_create:null,cache_read:null,output:null,duration_ms:null,turns:null,context:150000,stray_commit:null,stray_push:null}"#),
             ("2026-10-16T20:38:00Z", "/Users/chrismo/modev/sheepdog", "sd-63-bot-wait", "describe", "claude", "6ece45cb-0000-4000-8000-000000000000", "resume", 0, 20000, 5.0, 0.7948558,
              json!({"type": "result", "is_error": false, "total_cost_usd": 1.0358558, "duration_ms": 19800, "num_turns": 2, "usage": {"input_tokens": 3, "cache_creation_input_tokens": 28419, "cache_read_input_tokens": 14355, "output_tokens": 558}}),
              json!({"entries": 42, "context": 43335}), json!({"entries": 40, "context": 150000}),
-             r#"{time:2026-10-16T20:38:00Z,repo:"/Users/chrismo/modev/sheepdog",branch:"sd-63-bot-wait",step:"describe",harness:"claude",session:"6ece45cb-0000-4000-8000-000000000000",mode:"resume",status:0,cost_usd:0.241,total_cost_usd:1.0358558,estimated:false,input:3,cache_create:28419,cache_read:14355,output:558,duration_ms:19800,turns:2,context:43335}"#),
+             r#"{time:2026-10-16T20:38:00Z,repo:"/Users/chrismo/modev/sheepdog",branch:"sd-63-bot-wait",step:"describe",harness:"claude",session:"6ece45cb-0000-4000-8000-000000000000",mode:"resume",status:0,cost_usd:0.241,total_cost_usd:1.0358558,estimated:false,input:3,cache_create:28419,cache_read:14355,output:558,duration_ms:19800,turns:2,context:43335,stray_commit:null,stray_push:null}"#),
             ("2026-10-16T20:40:00Z", "/Users/chrismo/modev/sheepdog", "", "", "pi", "22222222-3333-4444-8555-666666666601", "resume", 1, 9000, 0.0, 0.0,
              Value::Null, json!({"cost": 0.75, "input": 300, "cache_create": 10, "cache_read": 900, "output": 50, "turns": 3, "context": 1260}),
              json!({"cost": 0.5, "input": 100, "cache_create": 0, "cache_read": 0, "output": 10, "turns": 1, "context": 110}),
-             r#"{time:2026-10-16T20:40:00Z,repo:"/Users/chrismo/modev/sheepdog",branch:null,step:null,harness:"pi",session:"22222222-3333-4444-8555-666666666601",mode:"resume",status:1,cost_usd:0.25,total_cost_usd:null,estimated:false,input:200,cache_create:10,cache_read:900,output:40,duration_ms:9000,turns:2,context:1260}"#),
+             r#"{time:2026-10-16T20:40:00Z,repo:"/Users/chrismo/modev/sheepdog",branch:null,step:null,harness:"pi",session:"22222222-3333-4444-8555-666666666601",mode:"resume",status:1,cost_usd:0.25,total_cost_usd:null,estimated:false,input:200,cache_create:10,cache_read:900,output:40,duration_ms:9000,turns:2,context:1260,stray_commit:null,stray_push:null}"#),
             ("2026-10-16T20:41:00Z", "/r", "feat", "implement", "pi", "s3", "new", 1, 5, 0.0, 0.0, Value::Null, json!({}), json!({}),
-             r#"{time:2026-10-16T20:41:00Z,repo:"/r",branch:"feat",step:"implement",harness:"pi",session:"s3",mode:"new",status:1,cost_usd:null,total_cost_usd:null,estimated:false,input:null,cache_create:null,cache_read:null,output:null,duration_ms:null,turns:null,context:null}"#),
+             r#"{time:2026-10-16T20:41:00Z,repo:"/r",branch:"feat",step:"implement",harness:"pi",session:"s3",mode:"new",status:1,cost_usd:null,total_cost_usd:null,estimated:false,input:null,cache_create:null,cache_read:null,output:null,duration_ms:null,turns:null,context:null,stray_commit:null,stray_push:null}"#),
         ];
         for (time, repo, branch, step, harness, session, mode, status, ms, cap, prev, o, a, b, want) in &rows {
-            let s = Step { time, repo, branch, step, harness, session, mode, status: *status, ms: *ms, cap: *cap, prev: *prev, stopped: false, o, a, b };
+            let s = Step { time, repo, branch, step, harness, session, mode, status: *status, ms: *ms, cap: *cap, prev: *prev, stopped: false, o, a, b, stray: Stray::default() };
             assert_eq!(record(&s), *want);
             // And sd state reads it back.
             assert!(sup_record(want).is_some());
@@ -312,10 +330,51 @@ mod tests {
         let (a, b) = (json!({"entries": 3, "context": 900}), json!({"entries": 1, "context": 100}));
         let step = |status, stopped| {
             record(&Step { time: "2026-10-23T00:00:00Z", repo: "/r", branch: "feat", step: "implement", harness: "claude", session: "s",
-                           mode: "new", status, ms: 17000, cap: 5.0, prev: 0.0, stopped, o: &Value::Null, a: &a, b: &b })
+                           mode: "new", status, ms: 17000, cap: 5.0, prev: 0.0, stopped, o: &Value::Null, a: &a, b: &b, stray: Stray::default() })
         };
         assert!(step(124, false).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
         assert!(step(143, true).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
+    }
+
+    #[test]
+    fn record_says_what_the_agent_committed_or_pushed_itself_null_where_it_cant_tell_346() {
+        let stray = |commit, push| {
+            let s = Step { time: "2026-10-31T00:00:00Z", repo: "/r", branch: "feat", step: "implement", harness: "pi", session: "s", mode: "new",
+                           status: 0, ms: 5, cap: 0.0, prev: 0.0, stopped: false, o: &Value::Null, a: &Value::Null, b: &Value::Null,
+                           stray: Stray { commit, push } };
+            let r = sup_record(&record(&s)).unwrap();
+            (r["stray_commit"].clone(), r["stray_push"].clone())
+        };
+        assert_eq!(stray(Some(true), Some(false)), (json!(true), json!(false)));
+        assert_eq!(stray(Some(false), None), (json!(false), Value::Null));
+    }
+
+    #[test]
+    fn spend_lists_the_steps_whose_agent_committed_or_pushed_itself_since_the_last_reset_346() {
+        let strayed = |b: &str, step: &str, harness: &str, commit: &str, push: &str| {
+            format!("{{time:2026-10-31T00:00:00Z,repo:\"/r\",branch:\"{b}\",step:\"{step}\",harness:\"{harness}\",session:\"s\",mode:\"new\",status:0,cost_usd:0.5,context:9,stray_commit:{commit},stray_push:{push}}}\n")
+        };
+        let text = [
+            strayed("feat", "implement", "claude", "true", "true"),
+            reset_record("2026-10-31T00:00:00Z", "/r", "feat") + "\n",
+            strayed("feat", "address", "claude", "false", "false"),
+            strayed("feat", "ci-fix", "pi", "true", "false"),
+            strayed("other", "implement", "claude", "true", "true"),
+            row("/r", "feat", "1."),
+            strayed("feat", "resolve", "claude", "false", "true"),
+            strayed("feat", "describe", "claude", "null", "null"),
+        ]
+        .concat();
+        let s = spend_in(&text, "/r", "feat").unwrap();
+        assert_eq!(s.usd, 3.0);
+        let t = "2026-10-31T00:00:00Z";
+        assert_eq!(
+            s.stray,
+            vec![
+                json!({"time": t, "step": "ci-fix", "harness": "pi", "session": "s", "commit": true, "push": false}),
+                json!({"time": t, "step": "resolve", "harness": "claude", "session": "s", "commit": false, "push": true}),
+            ]
+        );
     }
 
     #[test]
@@ -389,7 +448,7 @@ mod tests {
         let reset = |b: &str| reset_record("2026-10-31T00:00:00Z", "/r", b) + "\n";
         let text = [row("/r", "feat", "30."), row("/r", "feat", "null").replace("input:1", "context:9"), row("/r", "other", "2."), reset("feat"), reset("other").replace("/r", "/elsewhere"), row("/r", "feat", "0.5")].concat();
         let s = spend_in(&text, "/r", "feat").unwrap();
-        assert_eq!(s, Spend { usd: 0.5, unknown: vec![], skipped: 0 });
+        assert_eq!(s, Spend { usd: 0.5, unknown: vec![], skipped: 0, stray: vec![] });
         assert_eq!(spend_in(&text, "/r", "other").unwrap().usd, 2.0);
         assert_eq!(reset_record("2026-10-31T00:00:00Z", "/r", "feat"), r#"{time:2026-10-31T00:00:00Z,repo:"/r",branch:"feat",reset:true}"#);
     }
