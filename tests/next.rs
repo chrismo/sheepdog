@@ -14,7 +14,7 @@ const READY: &str = r#"{"branch": "feat", "head": "h1",
            "merge_state": "CLEAN", "review_decision": null, "review_requests": []},
     "parent": {"name": "main", "source": "pr", "merged": false, "pr": null},
     "sync": {"target": "main", "default": "main", "ahead": 1, "behind": 0, "up_to_date": true, "old_base": "b0b0b0b0b0b0b0b0", "conflict": false},
-    "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true},
+    "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true, "dirty": false},
     "fresh": true, "stale": [],
     "ci": {"sha": "h1", "for_head": true, "verdict": "green", "failing": [], "pending": []},
     "review": {"local": {"sha": "h1", "status": "covered"}, "bot": {"sha": null, "status": "none"},
@@ -1368,6 +1368,22 @@ fn never_reviewed_an_open_pr_gets_the_review_step_drafts_too() {
     assert_eq!(keys(&e![UNREVIEWED]), "review");
     assert_eq!(step("review", "cmd", &e![UNREVIEWED]), "sd act review");
     assert_eq!(keys(&e![UNREVIEWED, ".pr.draft = true", r#".pr.merge_state = "DRAFT""#]), "review");
+}
+
+// NEXT asks gates::review (#348): a branch checked out nowhere (push.dirty
+// null) or with no base is a review the verb can't run, so it isn't the
+// agent's; chrismo's step says why, in place of ready. A followed PR's too.
+#[test]
+fn never_reviewed_but_no_worktree_or_no_base_chrismo_clears_it_first_348() {
+    assert_eq!(keys(&e![UNREVIEWED, ".push.dirty = null"]), "review-held");
+    assert_eq!(
+        step("review-held", "say", &e![UNREVIEWED, ".push.dirty = null"]),
+        "review can't run: whether the worktree is clean is unknown: check the branch out in a worktree"
+    );
+    assert_eq!(step("review-held", "who", &e![UNREVIEWED, ".sync.old_base = null"]), "you");
+    assert_eq!(keys(&e![REVIEWING, ".push.dirty = null"]), "review-held");
+    assert_eq!(keys(&e![REVIEWING, ".sync.old_base = null"]), "review-held");
+    assert_eq!(keys(&e![REVIEWING, REVIEWED_LOCALLY, ".push.dirty = null"]), "submit");
 }
 
 // @test "never reviewed with no PR yet: ship first, no review step"

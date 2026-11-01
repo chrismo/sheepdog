@@ -21,7 +21,7 @@ const KEYS: [(&str, &[(&str, &str)]); 7] = [
     ("ci", &[("ci-red", "fix"), ("ci-wait", "running"), ("ci-rerun", "rerun"), ("ci-blocked", "blocked"),
              ("ci-config", "set up CI"), ("verify-red", "verify")]),
     ("review", &[("review", "queued"), ("review-fix", "fix"), ("review-wait", "waiting"), ("review-decide", "decide"),
-                 ("submit", "submit"), ("yours", "yours")]),
+                 ("review-held", "held"), ("submit", "submit"), ("yours", "yours")]),
     ("bot", &[("bot-trigger", "ask"), ("bot-wait", "waiting"), ("bot-silent", "silent")]),
     // "bot" is sd act address on the bot's threads.
     ("threads", &[("bot", "address"), ("answer", "answer"), ("human", "reply"), ("read", "read")]),

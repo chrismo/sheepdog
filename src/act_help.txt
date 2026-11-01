@@ -220,10 +220,16 @@ Verbs:
             verdict; never a gate. Not stored with the record or the pin:
             sd state recomputes them from base..HEAD on every call, so they
             outlive stderr and never go stale. Refuses, at zero tokens, a
-            HEAD the local review already covers (sd state's local ✓: at
-            HEAD, or the same change rebased) (#241). Spends tokens.
+            HEAD a review already covers (sd state's local ✓, or an accept
+            or the bot's: at HEAD, or the same change rebased) (#241), or
+            one its findings or a failed verify stand at, a merged or
+            closed PR, and a stored answer still to run; on a followed PR,
+            wherever its own NEXT offers no review. Refused even with
+            --force: a worktree with uncommitted changes, or none, and no
+            base. NEXT asks the same gate (#348). Spends tokens.
             --accept: pin accepted at HEAD instead, reviewing nothing (HEAD
-            is reviewed enough), record the bot trigger it followed
+            is reviewed enough; it needs only a base, whatever the worktree
+            holds), record the bot trigger it followed
             (branch.<b>.sd-accepted-after), and drop the findings. It
             stands in for the local review, not the bot's: the bot is still
             triggered on HEAD, and only an accept made after that trigger
@@ -351,7 +357,9 @@ failed step did.
   implement       run though the branch is already ahead of its target (or
                   that's unknown), the remote has commits it doesn't, sd
                   state has errors, or the PR is merged or closed
-  review          review again a HEAD the local review already covers
+  review          review again a HEAD a review already covers, or that
+                  findings or a failed verify stand at; on a merged or closed
+                  PR; before a stored answer runs
   attach          take over a lock another attach still holds
   ci-fix          run again on a red the agent already called flaky
   implement, address, ci-fix, restack --resolve   run though the agent's

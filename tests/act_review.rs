@@ -232,6 +232,11 @@ fn uncommitted_changes_are_refused() {
     let r = sd.run(&["review"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["uncommitted"]);
+    // a Hard rule: --force doesn't lift it (#348)
+    let r = sd.run(&["review", "--force"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["uncommitted"]);
+    assert!(!sd.fx_exists("reviewer.env"));
 }
 
 // @test "a branch checked out nowhere is refused"
@@ -241,6 +246,9 @@ fn a_branch_checked_out_nowhere_is_refused() {
     sd.git(&["branch", "parked"]);
     let r = sd.run(&["review", "parked"]);
     assert_ne!(r.status, 0);
+    // a Hard rule: --force doesn't lift it (#348)
+    assert_ne!(sd.run(&["review", "--force", "parked"]).status, 0);
+    assert!(!sd.fx_exists("reviewer.env"));
 }
 
 // @test "the default reviewer is libexec/sd-review-local"
@@ -339,7 +347,8 @@ fn a_clean_review_clears_the_findings_record_so_rounds_start_over() {
     sd.findings(BLOCKING);
     sd.review();
     sd.findings("[]");
-    sd.review();
+    // findings standing at HEAD refuse a review of it unless --force (#348)
+    sd.ok(&["review", "--force"]);
     assert!(!sd.has_findings_ref());
 }
 
@@ -420,10 +429,90 @@ fn a_head_the_local_review_covers_is_refused_at_zero_tokens_unless_force_241() {
     let r = sd.run(&["review"]);
     assert_ne!(r.status, 0);
     let head = sd.rev("HEAD");
-    assert_has(&r.output, &[&format!("local review already covers {}; --force to review again", &head[..7])]);
+    assert_has(&r.output, &["not reviewing feat:", &format!("local review already covers {}", &head[..7]), "(--force to run anyway)"]);
     assert!(!sd.fx_exists("reviewer.env"));
     sd.ok(&["review", "--force"]);
     assert!(sd.fx_exists("reviewer.env"));
+}
+
+// review asks gates::review, as NEXT does (#348): findings standing at HEAD
+// are review-fix's or chrismo's (NEXT offers no review there), so another
+// review of that HEAD is refused at zero tokens unless --force.
+#[test]
+fn findings_standing_at_head_are_refused_at_zero_tokens_unless_force_348() {
+    let sd = sd();
+    sd.findings(BLOCKING);
+    sd.review();
+    fs::remove_file(sd.tmp.join("fx/reviewer.env")).unwrap();
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    let head = sd.rev("HEAD");
+    assert_has(&r.output, &["not reviewing feat:", &format!("1 review finding stands at {}", &head[..7]), "--force"]);
+    assert!(!sd.fx_exists("reviewer.env"));
+    sd.ok(&["review", "--force"]);
+    assert!(sd.fx_exists("reviewer.env"));
+}
+
+// With the findings declined (or the rounds used up) implement won't fix
+// them, so the refusal doesn't send chrismo there (#348).
+#[test]
+fn findings_implement_wont_fix_arent_sent_to_implement_348() {
+    let sd = sd();
+    sd.findings(BLOCKING);
+    sd.review();
+    let r = sd.run(&["review"]);
+    assert_has(&r.output, &["1 review finding stands at", "sd act implement fixes them"]);
+    let rec = sd.findings_rec(r#".findings[0] += {action: "declined", reply: "c is right"}"#);
+    sd.write_findings_ref(&rec);
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["1 review finding stands at", "fix them by hand, or sd act review --accept"]);
+    assert_lacks(&r.output, "sd act implement");
+}
+
+// An accept covers HEAD as the local review does: NEXT offers no review, and
+// the verb refuses one unless --force (#348).
+#[test]
+fn a_head_an_accept_covers_is_refused_unless_force_348() {
+    let sd = sd();
+    sd.ok(&["review", "--accept"]);
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    let head = sd.rev("HEAD");
+    assert_has(&r.output, &[&format!("an accept already covers {}", &head[..7])]);
+    assert!(!sd.fx_exists("reviewer.env"));
+    sd.ok(&["review", "--force"]);
+    assert!(sd.fx_exists("reviewer.env"));
+}
+
+// A verify that failed on HEAD (#325) is refused before verify runs again:
+// NEXT offers no review there (#348).
+#[test]
+fn a_head_verify_failed_on_is_refused_before_verify_runs_again_348() {
+    let sd = sd();
+    sd.set_global("settings.verify", "touch ../verify-ran; false");
+    assert_ne!(sd.run(&["review"]).status, 0);
+    fs::remove_file(sd.tmp.join("verify-ran")).unwrap();
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not reviewing feat:", "verify failed at"]);
+    assert!(!sd.tmp.join("verify-ran").exists());
+    assert_ne!(sd.run(&["review", "--force"]).status, 0);
+    assert!(sd.tmp.join("verify-ran").exists());
+}
+
+// NEXT hands chrismo --accept (review-decide) whatever the worktree holds,
+// and an accept pins HEAD without reading it: uncommitted changes don't
+// refuse it (#348).
+#[test]
+fn accept_goes_on_with_uncommitted_changes_as_next_offers_it_348() {
+    let sd = sd();
+    sd.findings(BLOCKING);
+    sd.review();
+    sd.write("file.txt", "a\nb\nc\nd\n");
+    let r = sd.run(&["review", "--accept"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.pin("accepted"), sd.rev("HEAD"));
 }
 
 #[test]
@@ -504,7 +593,7 @@ fn a_second_review_of_the_same_head_keeps_the_round_its_findings_start_unanswere
     sd.review();
     let rec = sd.findings_rec(r#".findings[0] += {action: "declined", reply: "c is right"}"#);
     sd.write_findings_ref(&rec);
-    sd.review();
+    sd.ok(&["review", "--force"]);
     assert_eq!(sd.findings_rec("[.round, .findings[0].action]"), "[1,null]");
 }
 
