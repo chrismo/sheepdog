@@ -193,7 +193,9 @@ Verbs:
             be pushed: an undone restack, a parent not on the remote.
             --force runs it anyway (past a CI wait, a flaky isn't
             recorded) and pushes past push's own refusals, never an undone
-            restack. CI green at HEAD, or none run there: nothing to fix,
+            restack: forced past one, the agent's fix is committed here and
+            never pushed until the restack is redone (--no-publish says so
+            up front). CI green at HEAD, or none run there: nothing to fix,
             exit 0. Spends tokens
   review    verify, then the local reviewer (settings.localReview, default
             sd review-local) over the branch's own change, base..HEAD.
