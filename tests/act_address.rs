@@ -1450,16 +1450,16 @@ fn verify_leaving_the_tree_dirty_stops_before_the_push() {
 
 // ── pi ───────────────────────────────────────────────────────────────────────
 
-// @test "pi: --harness pi runs pi with its own session id and edit-only tools"
+// @test "pi: --harness pi runs pi with its own session id and edit-only tools, plus codemode (#323)"
 #[test]
-fn pi_harness_pi_runs_pi_with_its_own_session_id_and_edit_only_tools() {
+fn pi_harness_pi_runs_pi_with_its_own_session_id_and_edit_only_tools_plus_codemode_323() {
     let sd = sd();
     let r = sd.run(&["address", "--harness", "pi"]);
     assert_eq!(r.status, 0);
     assert_eq!(sd.git(&["config", "branch.feat.sd-harness"]), "pi");
     assert!(sd.has_word("pi.args", "--session-id"));
     assert!(sd.has_word("pi.args", &sd.git(&["config", "branch.feat.sd-session"])));
-    assert!(sd.has_word("pi.args", "read,edit,write"));
+    assert!(sd.has_word("pi.args", "read,edit,write,codemode"));
     assert_eq!(sd.gh_ops(), "nodes addPullRequestReviewThreadReply resolveReviewThread");
 }
 
