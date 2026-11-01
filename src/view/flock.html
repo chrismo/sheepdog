@@ -222,7 +222,7 @@ function owedHtml(o) {
 function renderDetail(b) {
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
   $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
-    <div class="dhead"><div class="eyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
+    <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
       <div class="meta"><span>${prLink(b)}</span>${usd(b)}</div></div>
     <div class="dgrid">
       <div class="col"><div class="panel flow"><h3>Flow</h3>${flowSvg(b.flow || {})}</div></div>
@@ -233,16 +233,23 @@ function renderDetail(b) {
 const openId = () => { const m = location.hash.match(/^#b=(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
 
 async function loadDetail(id) {
+  const back = `<button class="back" type="button" data-back>← all branches</button>`;
   try {
     const r = await fetch(`/api/branch?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    const b = r.ok ? await r.json() : null;
+    if (openId() !== id) return;
     if (r.status === 404) {
-      $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button><p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`;
-      return;
+      $("detail").innerHTML = `${back}<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`;
+    } else if (!r.ok) {
+      throw new Error(r.status);
+    } else {
+      renderDetail(b);
     }
-    if (!r.ok) throw new Error(r.status);
-    renderDetail(await r.json());
   } catch (e) {
-    if (!$("detail").innerHTML) $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button><p class="none">can't reach sd view (${esc(e.message)})</p>`;
+    if (openId() !== id) return;
+    const eb = $("deyebrow");
+    if (eb) { eb.classList.add("stale"); eb.textContent = `can't reach sd view (${e.message}): showing the last read`; }
+    else $("detail").innerHTML = `${back}<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }
 }
 
