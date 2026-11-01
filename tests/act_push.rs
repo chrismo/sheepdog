@@ -248,6 +248,27 @@ fn rewriting_commits_someone_else_made_on_the_branch_refused_unless_force_356() 
     assert_eq!(sd.run(&["push"]).status, 1);
 }
 
+// Without user.email sd state can't tell whose commits a rewrite removes:
+// unknown is not "nobody else's", so the push is held, unless --force (#395).
+// A fast-forward removes nothing, so it isn't.
+#[test]
+fn without_user_email_a_rewrite_is_held_unless_forced_a_fast_forward_isnt_395() {
+    let sd = sd();
+    sd.commit("mine");
+    sd.git(&["config", "user.email", ""]);
+    sd.ok(&["push"]);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    sd.git(&["-c", "user.email=t@example.com", "commit", "-q", "--amend", "-m", "mine, amended"]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["not pushing feat:", "can't tell who made the commits the push would remove", "set user.email", "--force"]);
+    assert_ne!(sd.remote("feat"), sd.rev("feat"));
+    let r = sd.run(&["push", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    assert_eq!(sd.git_try(&["config", "--get-all", "branch.feat.sd-authors-seen"]), None, "nothing named, nothing looked at");
+}
+
 // Amending or dropping only our own top commit, their commit untouched
 // underneath, rewrites nothing of theirs: not held (#356).
 #[test]

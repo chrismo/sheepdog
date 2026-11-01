@@ -78,8 +78,8 @@ printf 'Done. Here is the result:\n\n```json\n%s\n```\n' "$(cat "$FX/result.json
 /// sd state's JSON: open PR, in sync, one owed bot thread T1.
 const STATE: &str = r#"{
     branch: "feat", pr: {number: 7, url: "https://example/pr/7", state: "OPEN", draft: false},
-    sync: {target: "main", behind: 0, up_to_date: true, conflict: false},
-    push: {remote_sha: "abc", ahead: 0, behind: 0, diverged: false, remote_ours: true},
+    sync: {target: "main", behind: 0, up_to_date: true, conflict: false, foreign_authors: []},
+    push: {remote_sha: "abc", ahead: 0, behind: 0, diverged: false, remote_ours: true, foreign_authors: []},
     fresh: true, ci: {verdict: "green", for_head: true, failing: [], pending: []},
     threads: {owed_bot: 1, owed_human: 0, outdated: 0,
               items: [{id: "T1", type: "thread", kind: "bot", path: "file.txt", line: 3, outdated: false, last: "review-bot"}]},

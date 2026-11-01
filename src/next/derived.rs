@@ -102,8 +102,10 @@ derived! {
     /// The remote has commits this copy never had.
     foreign: bool,
     /// The push would remove commits someone other than user.email made
-    /// from the remote (push.foreign_authors, #356); unknown is not foreign.
-    foreign_authors: bool,
+    /// from the remote (push.foreign_authors, #356); None when sd state
+    /// couldn't tell (no user.email, or git failed), which push's gate
+    /// refuses (#395).
+    foreign_authors: Option<bool>,
     /// The remote branch has commits this copy doesn't (push.behind).
     behind_remote: bool,
     /// Our remote has commits reset away here.
@@ -171,8 +173,8 @@ derived! {
     /// (sync.replays_parent); None when sd state couldn't list them.
     replays: Option<bool>,
     /// A restack would rewrite commits someone other than user.email made
-    /// (sync.foreign_authors, #356); unknown is not foreign, as for push.
-    restack_foreign: bool,
+    /// (sync.foreign_authors, #356); None when unknown, as for push.
+    restack_foreign: Option<bool>,
 
     // CI (O5).
     /// CI's verdict on the SHA it read (ci.verdict); none when absent.
@@ -371,7 +373,7 @@ impl Derived {
 
     fn push(&mut self, j: &J) {
         self.foreign = j.off("push.remote_ours") && j.n("push.theirs") > 0.0;
-        self.foreign_authors = j.len("push.foreign_authors") > 0;
+        self.foreign_authors = j.g("push.foreign_authors").as_array().map(|a| !a.is_empty());
         self.behind_remote = j.n("push.behind") > 0.0;
         self.reset_away = j.on("push.remote_ours") && j.n("push.behind") > 0.0 && j.n("push.ahead") == 0.0;
         self.push_dirty = j.flag("push.dirty");
@@ -409,7 +411,7 @@ impl Derived {
         self.parent_abandoned = off && j.is("parent.pr.state", "CLOSED");
         self.merge_unknown = off && j.nul("parent.merged");
         self.replays = j.g("sync.replays_parent").as_array().map(|r| !r.is_empty());
-        self.restack_foreign = j.len("sync.foreign_authors") > 0;
+        self.restack_foreign = j.g("sync.foreign_authors").as_array().map(|a| !a.is_empty());
         let offered = if self.conflict {
             !yes(self.by_tree)
         } else if self.behind_target && self.chase {
@@ -642,9 +644,9 @@ mod tests {
     #[test]
     fn foreign_authors_is_anyone_named_in_push_foreign_authors_unknown_is_none_356() {
         let fa = |v: Value| Derived::new(&json!({"push": {"foreign_authors": v}})).foreign_authors;
-        assert!(fa(json!(["them@example.com"])));
-        assert!(!fa(json!([])));
-        assert!(!fa(Value::Null));
+        assert_eq!(fa(json!(["them@example.com"])), Some(true));
+        assert_eq!(fa(json!([])), Some(false));
+        assert_eq!(fa(Value::Null), None, "unknown is not foreign, nor not (#395)");
     }
 
     #[test]
@@ -659,8 +661,9 @@ mod tests {
         assert_eq!(sync(json!({"replays_parent": ["a1"]})).replays, Some(true));
         assert_eq!(sync(json!({"replays_parent": []})).replays, Some(false));
         assert_eq!(sync(json!({"replays_parent": null})).replays, None);
-        assert!(sync(json!({"foreign_authors": ["them@example.com"]})).restack_foreign);
-        assert!(!sync(json!({"foreign_authors": null})).restack_foreign);
+        assert_eq!(sync(json!({"foreign_authors": ["them@example.com"]})).restack_foreign, Some(true));
+        assert_eq!(sync(json!({"foreign_authors": []})).restack_foreign, Some(false));
+        assert_eq!(sync(json!({"foreign_authors": null})).restack_foreign, None);
     }
 
     #[test]

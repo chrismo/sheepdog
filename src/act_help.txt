@@ -155,10 +155,12 @@ Verbs:
             tree restack that would conflict, or the merged parent's
             commits in what it would replay (or those unlisted). Refuses,
             unless --force, a closed PR or parent, the parent's merge or a
-            conflict unknown, a stored answer it would drop, and commits
-            someone else made that it would rewrite (sd state's
-            sync.foreign_authors, #356): forced past those, it records
-            them as looked at, so the push after isn't held for them
+            conflict unknown, a stored answer it would drop, an undone
+            restack (redo it by hand, as NEXT says, #395), and commits
+            someone else made that it would rewrite, or ones it can't
+            tell who made (sd state's sync.foreign_authors, #356, #395):
+            forced past those, it records them as looked at, so the push
+            after isn't held for them
   retarget  after the parent merged: point the PR at the default branch
             (gh pr edit --base; GitHub usually did it already when the
             parent's branch was deleted) and rewrite sd-parent to it
@@ -171,7 +173,8 @@ Verbs:
             --ff-only), or when the worktree has uncommitted or untracked
             changes (a soft or mixed reset: commit or remove them first).
             Refuses, unless --force, to remove commits someone else made
-            from the remote (sd state's push.foreign_authors, #356).
+            from the remote, or ones it can't tell who made (no
+            user.email: sd state's push.foreign_authors, #356, #395).
             Releases a CI config hold: chrismo pushing is the approval.
             Refuses the default branch (#159)
   verify   run settings.verify in the branch's worktree, zero tokens. Pass:

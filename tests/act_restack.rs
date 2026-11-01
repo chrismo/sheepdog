@@ -370,6 +370,45 @@ fn someone_elses_commit_whose_patch_is_on_the_target_doesnt_hold_the_restack_356
     assert_has(&r.output, &["came out different"]);
 }
 
+// A restack, then git's advice after a rejected plain push (pull --rebase
+// onto the old remote head) replays main's commit as a copy (#47). NEXT
+// offers no restack then, only its restack-undone step: a hand-run sd act
+// restack is the only way in (#395).
+fn undone(sd: &Sd) {
+    sd.upstream("main", "b", "B", "upstream");
+    sd.ok(&["restack"]);
+    sd.git(&["pull", "-q", "--rebase", "origin", "feat"]);
+    let state = sd.verb_ok("state", &["--json"]);
+    assert_eq!(jq(&["-c", ".sync.undone"], &state), "1", "{state}");
+}
+
+// Refused unless --force, naming NEXT's redo-by-hand step (#395). Soft: a
+// restack rewrites only the local branch, and push's Hard rule keeps the
+// copies off the remote. Forced, it runs as it did before the rule: the
+// copy makes the change come out different, so it rolls back.
+#[test]
+fn an_undone_restack_is_refused_unless_forced_with_nexts_redo_by_hand_395() {
+    let sd = sd();
+    undone(&sd);
+    let (before, pin) = (sd.rev("HEAD"), sd.base_pin());
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    let state = sd.verb_ok("state", &["--json"]);
+    let redo = jq(&["-r", r#"[.next[] | select(.key == "restack-undone") | .cmd][0]"#], &state);
+    assert!(redo.starts_with("git rebase --onto origin/main "), "{state}");
+    assert_has(&r.output, &["not restacking feat:", "feat's restack was undone: 1 of main's commits is a copy on it", &redo, "--force"]);
+    assert_eq!((sd.rev("HEAD"), sd.base_pin()), (before.clone(), pin.clone()));
+    let r = sd.run(&["restack", "--force"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["feat's change came out different on origin/main", "rolled back"]);
+    assert_eq!((sd.rev("HEAD"), sd.base_pin()), (before, pin));
+    // the way out it names redoes it
+    sd.git(&["rebase", "-q", "--onto", "origin/main", redo.split(' ').nth(4).unwrap()]);
+    let state = sd.verb_ok("state", &["--json"]);
+    assert_eq!(jq(&["-c", "[.sync.undone, .sync.up_to_date]"], &state), "[0,true]", "{state}");
+    assert_eq!(sd.git(&["log", "--format=%s", "origin/main..feat"]), "feat");
+}
+
 // ── retarget ─────────────────────────────────────────────────────────────────
 
 // @test "retarget: parent merged, PR still on it: base edited to main, sd-parent rewritten"

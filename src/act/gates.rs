@@ -66,12 +66,16 @@ pub fn push(d: &Derived) -> Gate {
         rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
         rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
         rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
-        rule(FOREIGN_AUTHORS, Level::Soft, *foreign_authors, "look at them, then sd act push --force"),
+        rule(FOREIGN_AUTHORS, Level::Soft, yes(*foreign_authors), "look at them, then sd act push --force"),
+        rule(AUTHORS_UNKNOWN, Level::Soft, foreign_authors.is_none(), "git config user.email <yours>, or look at them, then sd act push --force"),
     ])
 }
 
 pub const FOREIGN_AUTHORS: &str =
     "the push would remove commits someone else made from the remote (sd state --json: push.foreign_authors): look at them first";
+
+pub const AUTHORS_UNKNOWN: &str = "can't tell who made the commits the push would remove from the remote \
+     (sd state --json: push.foreign_authors is null: no user.email, or git failed): set user.email, or look at them first";
 
 /// address's reasons; address::said puts each in the record's words.
 pub mod addr {
@@ -397,6 +401,8 @@ pub mod rs {
     pub const CONFLICT: &str = "the restack would conflict";
     pub const ANSWER: &str = "the restack would drop the agent's question and your stored answer";
     pub const FOREIGN: &str = "the restack would rewrite commits someone else made";
+    pub const FOREIGN_UNKNOWN: &str = "can't tell who made the commits the restack would rewrite";
+    pub const UNDONE: &str = "the restack was undone: some of the target's commits are copies here";
 }
 
 /// sd act restack. Its fetch is the verb's: NEXT asks this of sd state as
@@ -413,15 +419,15 @@ pub fn restack_resolve(d: &Derived) -> Gate {
 
 /// restack's rules: Hard only where --force can't help, or would replay a
 /// merged parent's commits.
-pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 12] {
+pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 14] {
     let Derived {
         open, up_to_date, old_base_null, sync_conflict, by_tree, parent_merged, parent_abandoned, merge_unknown, replays,
-        restack_foreign, answer_pending,
+        restack_foreign, answer_pending, undone,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _, lagging: _,
         locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _,
         dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
-        ahead_target: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _,
+        ahead_target: _, chase: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, ci_verdict: _, ci_blocked: _,
         ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
         fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _,
@@ -441,12 +447,15 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 12] {
         rule(rs::TREE_CONFLICT, Level::Hard, conflict && tree, "resolve it by hand (sd act restack says how)"),
         rule(rs::ON_TARGET, Level::Done, yes(*up_to_date), ""),
         rule(rs::CLOSED, Level::Soft, !open, "reopen it, or start a new branch"),
+        // Soft: it rewrites only the local branch; push's Hard rule keeps the copies off the remote
+        rule(rs::UNDONE, Level::Soft, *undone, "redo it by hand, as sd state's NEXT says (restack-undone)"),
         rule(rs::ABANDONED, Level::Soft, *parent_abandoned, "point branch.<b>.sd-parent at what the branch targets now"),
         rule(rs::MERGE_UNKNOWN, Level::Soft, *merge_unknown, "sd state's errors say why"),
         rule(rs::CONFLICT_UNKNOWN, Level::Soft, behind && sync_conflict.is_none(), "sd state's errors say why"),
         rule(rs::CONFLICT, Level::Soft, !resolve && conflict && !tree, "sd act restack --resolve, or by hand"),
         rule(rs::ANSWER, Level::Soft, *answer_pending, "the asking step goes on first, or sd act ack --question drops both"),
-        rule(rs::FOREIGN, Level::Soft, *restack_foreign, "look at them, then sd act restack --force"),
+        rule(rs::FOREIGN, Level::Soft, yes(*restack_foreign), "look at them, then sd act restack --force"),
+        rule(rs::FOREIGN_UNKNOWN, Level::Soft, restack_foreign.is_none(), "git config user.email <yours>, or look at them, then sd act restack --force"),
     ]
 }
 
@@ -468,30 +477,40 @@ mod tests {
     use crate::next::derived_arb::check;
     use serde_json::json;
 
+    /// An open PR whose push removes nothing someone else made.
+    fn pushable() -> Derived {
+        Derived { open: true, foreign_authors: Some(false), ..Derived::default() }
+    }
+
     #[test]
     fn push_goes_on_an_open_pr_or_none_whatever_the_remote_says() {
-        let open = Derived { open: true, ..Derived::default() };
-        assert_eq!(push(&open), Gate::Go);
-        assert_eq!(push(&Derived { foreign: true, to_push: false, ..open }), Gate::Go);
+        assert_eq!(push(&pushable()), Gate::Go);
+        assert_eq!(push(&Derived { foreign: true, to_push: false, ..pushable() }), Gate::Go);
     }
 
     #[test]
     fn push_refuses_a_red_verify_an_unpushed_parent_and_a_closed_pr_unless_forced() {
-        let d = Derived { open: true, parent_unpushed: true, verify_red: true, ..Derived::default() };
+        let d = Derived { parent_unpushed: true, verify_red: true, ..pushable() };
         assert_eq!(push(&d), Gate::Soft(vec!["verify is red at HEAD".into(), "the parent branch isn't on the remote yet".into()]));
         assert!(matches!(push(&Derived::default()), Gate::Soft(_)));
     }
 
     #[test]
     fn push_refuses_to_remove_commits_someone_else_made_from_the_remote_unless_forced_356() {
-        let diverged = Derived { open: true, unpushed: true, behind_remote: true, foreign_authors: true, ..Derived::default() };
+        let diverged = Derived { unpushed: true, behind_remote: true, foreign_authors: Some(true), ..pushable() };
         assert_eq!(push(&diverged), Gate::Soft(vec![FOREIGN_AUTHORS.into()]));
-        assert_eq!(push(&Derived { foreign_authors: false, ..diverged }), Gate::Go);
+        assert_eq!(push(&Derived { foreign_authors: Some(false), ..diverged }), Gate::Go);
     }
 
     #[test]
     fn push_never_removes_someone_elses_commits_unforced_on_generated_states() {
-        check("push over foreign authors", |d| if d.foreign_authors && push(d).runs() { Err("push runs".into()) } else { Ok(()) });
+        check("push over foreign authors", |d| if d.foreign_authors != Some(false) && push(d).runs() { Err("push runs".into()) } else { Ok(()) });
+    }
+
+    #[test]
+    fn push_refuses_when_who_made_the_commits_it_removes_is_unknown_unless_forced_395() {
+        let d = Derived { foreign_authors: None, ..pushable() };
+        assert_eq!(push(&d), Gate::Soft(vec![AUTHORS_UNKNOWN.into()]));
     }
 
     #[test]
@@ -713,7 +732,7 @@ mod tests {
 
     /// An open PR with CI red at HEAD and nothing to push.
     fn red() -> Derived {
-        Derived { has_pr: true, open: true, ci_verdict: "red".into(), ci_for_head: Some(true), ..Derived::default() }
+        Derived { has_pr: true, ci_verdict: "red".into(), ci_for_head: Some(true), ..pushable() }
     }
 
     /// The names and whether each is chrismo's, of what ci-fix's gate reports.
@@ -821,7 +840,8 @@ mod tests {
 
     /// An open PR behind its target, with a base and no conflict.
     fn behind() -> Derived {
-        Derived { open: true, has_pr: true, up_to_date: Some(false), sync_conflict: Some(false), by_tree: Some(false), ..Derived::default() }
+        let known = Derived { restack_foreign: Some(false), ..Derived::default() };
+        Derived { open: true, has_pr: true, up_to_date: Some(false), sync_conflict: Some(false), by_tree: Some(false), ..known }
     }
 
     #[test]
@@ -848,8 +868,21 @@ mod tests {
         assert_eq!(restack(&conflict), soft(&[rs::CONFLICT]));
         assert_eq!(restack_resolve(&conflict), Gate::Go);
         assert_eq!(restack(&Derived { sync_conflict: None, ..behind() }), soft(&[rs::CONFLICT_UNKNOWN]));
-        let d = Derived { open: false, parent_abandoned: true, merge_unknown: true, answer_pending: true, restack_foreign: true, ..behind() };
+        let d = Derived { open: false, parent_abandoned: true, merge_unknown: true, answer_pending: true, restack_foreign: Some(true), ..behind() };
         assert_eq!(restack(&d), soft(&[rs::CLOSED, rs::ABANDONED, rs::MERGE_UNKNOWN, rs::ANSWER, rs::FOREIGN]));
+    }
+
+    #[test]
+    fn restack_refuses_when_who_made_the_commits_it_rewrites_is_unknown_unless_forced_395() {
+        let d = Derived { restack_foreign: None, ..behind() };
+        assert_eq!(restack(&d), soft(&[rs::FOREIGN_UNKNOWN]));
+        assert_eq!(restack_resolve(&Derived { sync_conflict: Some(true), ..d }), soft(&[rs::FOREIGN_UNKNOWN]));
+    }
+
+    #[test]
+    fn restack_refuses_an_undone_restack_unless_forced_395() {
+        assert_eq!(restack(&Derived { undone: true, ..behind() }), soft(&[rs::UNDONE]));
+        assert_eq!(restack_resolve(&Derived { undone: true, sync_conflict: Some(true), ..behind() }), soft(&[rs::UNDONE]));
     }
 
     #[test]
@@ -857,8 +890,11 @@ mod tests {
         check("restack over foreign authors or a wrong base", |d| {
             let replay = no(d.up_to_date) && yes(d.parent_merged) && (d.replays.is_none() || (yes(d.replays) && !yes(d.by_tree)));
             for g in [restack(d), restack_resolve(d)] {
-                if d.restack_foreign && g.runs() {
-                    return Err("restack runs over someone else's commits".into());
+                if d.restack_foreign != Some(false) && g.runs() {
+                    return Err("restack runs over someone else's commits, or ones it can't tell".into());
+                }
+                if d.undone && g.runs() {
+                    return Err("restack runs on an undone restack".into());
                 }
                 if replay && !matches!(g, Gate::Hard(_)) {
                     return Err(format!("a replay of the merged parent's commits isn't Hard: {g:?}"));
