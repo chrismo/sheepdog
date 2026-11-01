@@ -168,22 +168,8 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let args = t(s.settings, "args");
     let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
     let mut typed = typed_flags(h, s.settings);
-    let (mut cap, mut cap_note) = (0.0, String::new());
-    if h == "claude" {
-        let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
-            for l in lines {
-                eprintln!("sd config: {l}");
-            }
-            eprintln!("sd config failed");
-            Stop::Failed(1)
-        })?;
-        let (flags, c, note) = step_cap(&budget, &extra).map_err(|e| {
-            eprintln!("{e}");
-            Stop::Failed(1)
-        })?;
-        typed.extend(flags);
-        (cap, cap_note) = (c, note);
-    }
+    let (flags, cap, cap_note) = claude_cap(h, b, &extra)?;
+    typed.extend(flags);
     let c = step_command(s, &typed, &extra).map_err(|e| {
         eprintln!("{e}");
         Stop::Failed(1)
@@ -214,8 +200,22 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let ms = t0.elapsed().as_millis() as i64;
     let stray = seen.since(s.label());
     usage::append(&usage::record(&usage::Step {
-        time: &now, repo: &repo, branch: b, step: s.name, harness: h, session: &sid, mode: s.mode, status, ms, cap,
-        prev: spent, stopped: out.stopped, o: &o, a: &after, b: &before, stray,
+        time: &now,
+        repo: &repo,
+        branch: b,
+        step: s.name,
+        harness: h,
+        session: &sid,
+        mode: s.mode,
+        status,
+        ms,
+        cap,
+        prev: spent,
+        stopped: out.stopped,
+        o: &o,
+        a: &after,
+        b: &before,
+        stray,
     }));
 
     if let Some(l) = limit {
@@ -250,6 +250,25 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         failed::record(b, s.label(), h, &why);
     }
     result.map(|results| Ran { results, session: sid }).map_err(Stop::Failed)
+}
+
+/// A claude step's --max-budget-usd flags, its cap and the note on it
+/// (step_cap); none for pi, which has no such flag.
+fn claude_cap(h: &str, b: &str, extra: &[&str]) -> Result<(Vec<String>, f64, String), Stop> {
+    if h != "claude" {
+        return Ok((Vec::new(), 0.0, String::new()));
+    }
+    let budget = config::get_text("settings.stepBudget", b, false).map_err(|lines| {
+        for l in lines {
+            eprintln!("sd config: {l}");
+        }
+        eprintln!("sd config failed");
+        Stop::Failed(1)
+    })?;
+    step_cap(&budget, extra).map_err(|e| {
+        eprintln!("{e}");
+        Stop::Failed(1)
+    })
 }
 
 /// The step's command: <h>'s own flags, then <typed> and <extra>. pi has no
