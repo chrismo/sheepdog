@@ -29,8 +29,14 @@ impl Drop for Server {
 impl Server {
     /// <method> <path> with Host <host>: the status code, headers and body.
     fn ask(&self, method: &str, path: &str, host: &str) -> (u16, String, String) {
+        self.send(method, path, &[("Host", host)])
+    }
+
+    /// <method> <path> with <headers>: the status code, headers and body.
+    fn send(&self, method: &str, path: &str, headers: &[(&str, &str)]) -> (u16, String, String) {
         let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
-        write!(s, "{method} {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").unwrap();
+        let hs: String = headers.iter().map(|(k, v)| format!("{k}: {v}\r\n")).collect();
+        write!(s, "{method} {path} HTTP/1.1\r\n{hs}Content-Length: 2\r\nConnection: close\r\n\r\n{{}}").unwrap();
         let mut resp = String::new();
         s.read_to_string(&mut resp).unwrap();
         let (head, body) = resp.split_once("\r\n\r\n").unwrap_or((&resp, ""));
@@ -344,4 +350,74 @@ fn a_gh_answer_with_no_pr_in_it_says_so() {
     let s = serve(&sd);
     let (_, t) = timeline(&s, &format!("{}/a", sheepdog::watch::repo_key("/src/sheepdog")));
     assert_eq!(t["error"], "gh: no PR in its answer");
+}
+
+/// The per-run token the page carries in its sd-token meta tag.
+fn page_token(s: &Server) -> String {
+    let (_, _, body) = s.get("/");
+    let re = regex::Regex::new(r#"<meta name="sd-token" content="([0-9a-f]{32})">"#).unwrap();
+    re.captures(&body).unwrap_or_else(|| panic!("no sd-token meta in the page"))[1].to_string()
+}
+
+/// A write to the guarded route, from <origin> with <token> (either left out when None).
+fn write(s: &Server, method: &str, origin: Option<&str>, token: Option<&str>) -> (u16, String) {
+    let host = format!("127.0.0.1:{}", s.port);
+    let mut hs = vec![("Host", host.as_str())];
+    hs.extend(origin.map(|o| ("Origin", o)));
+    hs.extend(token.map(|t| ("X-Sd-Token", t)));
+    let (code, _, body) = s.send(method, "/api/act", &hs);
+    (code, body)
+}
+
+// Any page open in the browser can POST to 127.0.0.1 (#396): a write needs
+// the token only our page carries, from our own origin, by POST.
+#[test]
+fn a_write_needs_the_page_s_token() {
+    let sd = sd();
+    let s = serve(&sd);
+    let token = page_token(&s);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    assert_eq!(write(&s, "POST", Some(&ours), None).0, 403);
+    assert_eq!(write(&s, "POST", Some(&ours), Some(&"0".repeat(32))).0, 403);
+    assert_eq!(write(&s, "POST", Some(&ours), Some("")).0, 403);
+    let (code, body) = write(&s, "POST", Some(&ours), Some(&token));
+    assert_ne!(code, 403, "{body}");
+}
+
+#[test]
+fn each_run_has_its_own_token() {
+    let sd = sd();
+    assert_ne!(page_token(&serve(&sd)), page_token(&serve(&sd)));
+}
+
+#[test]
+fn a_write_from_another_origin_is_refused() {
+    let sd = sd();
+    let s = serve(&sd);
+    let token = page_token(&s);
+    for origin in [Some("http://evil.example".to_string()), Some(format!("http://127.0.0.1:{}", s.port + 1)),
+                   Some(format!("https://127.0.0.1:{}", s.port)), Some("null".into()), None] {
+        assert_eq!(write(&s, "POST", origin.as_deref(), Some(&token)).0, 403, "{origin:?}");
+    }
+    assert_ne!(write(&s, "POST", Some(&format!("http://localhost:{}", s.port)), Some(&token)).0, 403);
+}
+
+#[test]
+fn a_get_never_writes() {
+    let sd = sd();
+    let s = serve(&sd);
+    let token = page_token(&s);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    let (code, body) = write(&s, "GET", Some(&ours), Some(&token));
+    assert_eq!(code, 405, "{body}");
+}
+
+#[test]
+fn a_guarded_write_reaches_the_action() {
+    let sd = sd();
+    let s = serve(&sd);
+    let token = page_token(&s);
+    let (code, body) = write(&s, "POST", Some(&format!("http://127.0.0.1:{}", s.port)), Some(&token));
+    assert_eq!(code, 501, "{body}");
+    assert_has(&body, &["no action yet"]);
 }
