@@ -755,6 +755,18 @@ fn a_fix_forced_past_a_ci_wait_leaves_the_record_of_a_red_at_head_alone_348() {
     }
 }
 
+// With no CI commit there are no logs to fetch: gh api .../commits//status
+// would 404 (#348).
+#[test]
+fn forced_with_no_ci_sha_asks_gh_for_no_logs_348() {
+    let sd = sd();
+    sd.state(&[r#".ci.verdict = "pending" | .ci.failing = [] | .ci.sha = null"#]);
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert!(sd.ran("claude.args"));
+    assert_lacks(&sd.fx("gh.calls"), "commits/");
+}
+
 // @test "fixed but changed nothing: fails"
 #[test]
 fn fixed_but_changed_nothing_fails() {

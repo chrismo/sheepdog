@@ -276,7 +276,7 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
         if !status(wt).is_empty() {
             die(format!("verify ({verify}) changed files in {wt} (a formatter?); commit them, then sd act ci-fix"));
         }
-        let logs = ci_logs(&sha);
+        let logs = if sha.is_empty() { String::new() } else { ci_logs(&sha) };
         let mut p = step_guidance("ciFixPrompt", b, &base, &lib_dir().join("prompts/ci-fix.md")).unwrap_or_else(|e| {
             eprintln!("{e}");
             die("can't read the ci-fix guidance")
