@@ -1152,7 +1152,9 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
 /// nothing: neither counts. A patch-id outlives a restack. Both [] when the
 /// push removes nothing (<removed> None), null for a followed PR
 /// (#250), without user.email, or when git fails. <viewer> is gh's login,
-/// empty when gh failed.
+/// empty when gh failed: a noreply author is then someone else's, so the
+/// push holds. Not null: unknown doesn't hold it, and a teammate's noreply
+/// address would go through with ours.
 fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
     let unknown = (Value::Null, Value::Null);
     if reviewer {

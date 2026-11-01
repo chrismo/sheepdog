@@ -36,7 +36,10 @@ Reports, for <branch> (default: the current one):
             patch is on the target (squash-merged alone). GitHub's
             noreply@github.com committer (a web edit, Update branch, a
             suggestion) counts as its author: ours when that's user.email
-            or the viewer's users.noreply.github.com address, never named. sd act push refuses them unless --force (#356).
+            or the viewer's users.noreply.github.com address, never named.
+            Without the viewer (gh failed), a noreply address counts as
+            someone else's: the push holds rather than guess. sd act push
+            refuses them unless --force (#356).
             [] when there are none, null when user.email is unset, git
             can't list them, or the branch is a followed PR
             push.foreign_commits: those commits' ids, each its patch-id (or
