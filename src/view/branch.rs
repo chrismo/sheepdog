@@ -70,7 +70,10 @@ fn flow(s: &Value, usage: &str, repo_dir: &str, branch: &str) -> Value {
 }
 
 fn owed(s: &Value) -> Value {
-    let findings = if on(s, "review.findings.at_head") { at(s, "review.findings.items").clone() } else { json!([]) };
+    let findings: Vec<&Value> = match at(s, "review.findings.items").as_array() {
+        Some(items) if on(s, "review.findings.at_head") => items.iter().filter(|x| t(x, "action") != "declined").collect(),
+        _ => vec![],
+    };
     let failing = if at(s, "ci.for_head") == &Value::Bool(false) { json!([]) } else { at(s, "ci.failing").clone() };
     json!({"findings": findings, "failing": failing, "question": at(s, "question"),
            "threads": at(s, "threads.items")})
@@ -134,5 +137,12 @@ mod tests {
                        "ci": {"for_head": false, "failing": ["t"]}});
         assert_eq!(owed(&s)["findings"], json!([]));
         assert_eq!(owed(&s)["failing"], json!([]));
+    }
+
+    #[test]
+    fn a_declined_finding_isn_t_owed() {
+        let s = json!({"review": {"findings": {"at_head": true, "items": [
+            {"body": "a", "action": "declined"}, {"body": "b", "severity": "nit"}]}}});
+        assert_eq!(owed(&s)["findings"], json!([{"body": "b", "severity": "nit"}]));
     }
 }

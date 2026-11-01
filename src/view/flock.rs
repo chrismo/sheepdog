@@ -20,7 +20,7 @@ const KEYS: [(&str, &[(&str, &str)]); 7] = [
                ("take", "take back")]),
     ("ci", &[("ci-red", "fix"), ("ci-wait", "running"), ("ci-rerun", "rerun"), ("ci-blocked", "blocked"),
              ("ci-config", "set up CI"), ("verify-red", "verify")]),
-    ("review", &[("review", "review"), ("review-fix", "fix"), ("review-wait", "waiting"), ("review-decide", "decide"),
+    ("review", &[("review", "queued"), ("review-fix", "fix"), ("review-wait", "waiting"), ("review-decide", "decide"),
                  ("submit", "submit"), ("yours", "yours")]),
     ("bot", &[("bot-trigger", "ask"), ("bot-wait", "waiting"), ("bot-silent", "silent")]),
     // "bot" is sd act address on the bot's threads.
@@ -305,7 +305,7 @@ mod tests {
         let got = stages(&s);
         assert_eq!((t(&got[2], "status"), t(&got[2], "who")), ("cur".into(), "wait".into()));
         assert_eq!((t(&got[3], "status"), t(&got[3], "text"), t(&got[3], "who")),
-                   ("cur".into(), "review".into(), "agent".into()));
+                   ("cur".into(), "queued".into(), "agent".into()));
         assert_eq!(got.iter().filter(|x| t(x, "status") == "cur").count(), 2);
     }
 

@@ -253,7 +253,7 @@ function route() {
   if (id) { $("detail").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
-async function poll() {
+async function poll(detail) {
   try {
     const r = await fetch("/api/flock", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
@@ -264,7 +264,7 @@ async function poll() {
     eb.textContent = `can't reach sd view (${e.message}): showing the last read`;
   }
   const id = openId();
-  if (id) loadDetail(id);
+  if (detail && id) loadDetail(id);
 }
 
 const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
@@ -290,8 +290,8 @@ document.addEventListener("keydown", e => {
 });
 window.addEventListener("hashchange", route);
 route();
-poll();
-setInterval(poll, POLL_MS);
+poll(false);
+setInterval(() => poll(true), POLL_MS);
 </script>
 </body>
 </html>
