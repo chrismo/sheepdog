@@ -140,9 +140,7 @@ fn serve(stream: TcpStream, port: u16, state: &Path) {
         body.len()
     );
     // Closing with request bytes unread (a POST's body) resets the
-    // connection, which can lose the response: drain them first, past the
-    // head's 16 KiB cap too, up to a bound.
+    // connection, which can lose the response: drain them first.
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let _ = std::io::copy(&mut r, &mut std::io::sink());
-    let _ = std::io::copy(&mut (&stream).take(1 << 20), &mut std::io::sink());
 }

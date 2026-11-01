@@ -34,8 +34,17 @@ fn lookup(key: &str) -> Option<(&'static str, &'static str)> {
     KEYS.iter().find_map(|(stage, ks)| ks.iter().find(|(k, _)| *k == key).map(|(_, label)| (*stage, *label)))
 }
 
-pub(super) fn key_stage(key: &str) -> Option<&'static str> {
+fn key_stage(key: &str) -> Option<&'static str> {
     lookup(key).map(|(stage, _)| stage)
+}
+
+/// The stage a NEXT step in <s> lights: answer (chrismo's answer, waiting)
+/// belongs to the stage of the step that asked, ci-fix or address.
+pub(super) fn step_stage(key: &str, s: &Value) -> Option<&'static str> {
+    match (key, t(s, "question.step").as_str()) {
+        ("answer", "ci-fix") => Some("ci"),
+        _ => key_stage(key),
+    }
 }
 
 fn label(key: &str) -> String {
@@ -117,7 +126,7 @@ pub fn stages(s: &Value) -> Vec<Value> {
     STAGES
         .iter()
         .map(|&stage| {
-            let lit = next.iter().find(|x| key_stage(&t(x, "key")) == Some(stage));
+            let lit = next.iter().find(|x| step_stage(&t(x, "key"), s) == Some(stage));
             let (status, text) = base(s, stage);
             match lit.map(|x| (t(x, "key"), at(x, "who"))) {
                 Some((k, _)) if k == "merged" => json!({"stage": stage, "status": "done", "text": k, "who": null}),
@@ -339,6 +348,12 @@ mod tests {
         assert_eq!(one(s, "threads"), "todo:1 owed");
         let s = with(with(open(), "threads.blocking", json!(0)), "threads.info", json!(2));
         assert_eq!(one(s, "threads"), "done:");
+    }
+
+    #[test]
+    fn a_waiting_answer_lights_its_question_s_stage() {
+        let s = with(with(open(), "question", json!({"step": "ci-fix"})), "next", json!([{"key": "answer", "who": "wait"}]));
+        assert_eq!(one(s, "ci"), "cur:answer");
     }
 
     #[test]

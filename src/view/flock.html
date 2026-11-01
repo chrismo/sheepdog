@@ -214,6 +214,7 @@ function owedHtml(o) {
   if (o.failing?.length) parts.push(["Failing checks", o.failing.map(n => `<li style="--lc:var(--red)">${esc(n)}</li>`)]);
   if (o.findings?.length) parts.push(["Review findings", o.findings.map(f =>
     `<li style="--lc:${f.severity === "nit" ? "var(--line)" : "var(--red)"}"><span class="where">${esc(f.severity)} · ${esc(f.file)}${f.line ? ":" + esc(f.line) : ""}</span><span>${esc(f.body)}</span></li>`)]);
+  if (o.threads === null) parts.push(["Threads owed a reply", [`<li><span class="none">couldn't read them: GitHub didn't answer at the last pass</span></li>`]]);
   if (o.threads?.length) parts.push(["Threads owed a reply", o.threads.map(t =>
     `<li style="--lc:${t.mark === "!" ? "var(--you)" : "var(--line)"}"><span class="where">${t.mark === "!" ? "blocking" : "info"} · ${esc(t.author)}${t.path ? " · " + esc(t.path) + (t.line ? ":" + esc(t.line) : "") : ""}${t.url ? ` · <a href="${esc(t.url)}" target="_blank" rel="noopener">open</a>` : ""}</span><span>${esc(t.excerpt)}</span></li>`)]);
   if (!parts.length) return `<div class="panel"><h3>What's owed</h3><p class="none">Nothing: no question, failing checks, findings or threads.</p></div>`;

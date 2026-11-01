@@ -13,11 +13,11 @@ use std::path::Path;
 /// loops back to push.
 pub const NODES: [&str; 8] = ["implement", "push", "ci", "review", "threads", "merge", "cifix", "fix"];
 
-fn key_node(key: &str) -> Option<&'static str> {
-    match key {
-        "ci-red" => Some("cifix"),
-        "review-fix" => Some("fix"),
-        k => match flock::key_stage(k)? {
+fn key_node(key: &str, s: &Value) -> Option<&'static str> {
+    match (key, t(s, "question.step").as_str()) {
+        ("ci-red", _) | ("answer", "ci-fix") => Some("cifix"),
+        ("review-fix", _) => Some("fix"),
+        (k, _) => match flock::step_stage(k, s)? {
             "build" => Some("implement"),
             "bot" => Some("threads"),
             s => Some(s),
@@ -64,7 +64,7 @@ fn flow(s: &Value, usage: &str, repo_dir: &str, branch: &str) -> Value {
     let nodes: Map<String, Value> = NODES
         .iter()
         .map(|&k| {
-            let who = next.iter().find(|x| key_node(&t(x, "key")) == Some(k)).map_or(Value::Null, |x| at(x, "who").clone());
+            let who = next.iter().find(|x| key_node(&t(x, "key"), s) == Some(k)).map_or(Value::Null, |x| at(x, "who").clone());
             (k.to_string(), json!({"count": n[k], "who": who}))
         })
         .collect();
@@ -78,8 +78,9 @@ fn owed(s: &Value) -> Value {
     };
     let failing = if at(s, "ci.for_head") == &Value::Bool(false) { json!([]) } else { at(s, "ci.failing").clone() };
     let question = if at(s, "question.answer").is_null() { at(s, "question") } else { &Value::Null };
-    json!({"findings": findings, "failing": failing, "question": question,
-           "threads": at(s, "threads.items")})
+    // null when gh couldn't be read: unknown, not none.
+    let threads = if at(s, "threads.blocking").is_null() { &Value::Null } else { at(s, "threads.items") };
+    json!({"findings": findings, "failing": failing, "question": question, "threads": threads})
 }
 
 pub fn detail(state: &Path, id: &str) -> Option<Value> {
@@ -138,8 +139,8 @@ mod tests {
     fn bot_and_thread_steps_light_the_threads_node_and_address_counts_there() {
         let s = json!({"next": [{"key": "bot", "who": "agent"}]});
         assert_eq!(t(&flow(&s, "", "r-0", "b"), "threads.who"), "agent");
-        for k in ["bot-trigger", "bot-wait", "bot-silent", "answer", "human", "read"] {
-            assert_eq!(key_node(k), Some("threads"), "{k}");
+        for k in ["bot-trigger", "bot-wait", "bot-silent", "human", "read"] {
+            assert_eq!(key_node(k, &Value::Null), Some("threads"), "{k}");
         }
         assert_eq!(count_of(&[rec("/src/r", "b", "address")], "threads"), 1);
     }
@@ -150,6 +151,19 @@ mod tests {
                        "ci": {"for_head": false, "failing": ["t"]}});
         assert_eq!(owed(&s)["findings"], json!([]));
         assert_eq!(owed(&s)["failing"], json!([]));
+    }
+
+    #[test]
+    fn a_waiting_answer_lights_its_question_s_step() {
+        let s = |step: &str| json!({"question": {"step": step}, "next": [{"key": "answer", "who": "wait"}]});
+        assert_eq!(t(&flow(&s("ci-fix"), "", "r-0", "b"), "cifix.who"), "wait");
+        assert_eq!(t(&flow(&s("address"), "", "r-0", "b"), "threads.who"), "wait");
+    }
+
+    #[test]
+    fn threads_gh_couldnt_read_are_null_not_none() {
+        let s = json!({"threads": {"blocking": null, "items": []}});
+        assert_eq!(owed(&s)["threads"], Value::Null);
     }
 
     #[test]
