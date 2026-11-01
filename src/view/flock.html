@@ -36,6 +36,9 @@ h2 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--gc); 
 h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .eyebrow { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .eyebrow.stale { color: var(--red); }
+.nav { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.nav a { font-size: 0.88rem; color: var(--muted); text-decoration: none; }
+.nav a:hover { color: var(--ink); }
 .summary { display: flex; flex-wrap: wrap; gap: 8px; }
 .sum { display: inline-flex; gap: 8px; align-items: baseline; border: 1.5px solid var(--sc); border-radius: 999px; padding: 4px 12px; font-size: 0.88rem; }
 .sum b { font-size: 1.15rem; color: var(--sc); font-variant-numeric: tabular-nums; }
@@ -115,7 +118,7 @@ footer { font-size: 0.78rem; color: var(--muted); }
 <body>
 <div class="wrap">
   <header id="top">
-    <div class="eyebrow" id="eyebrow">loading…</div>
+    <div class="nav"><span class="eyebrow" id="eyebrow">loading…</span><a href="/map">Map →</a></div>
     <h1>Your PRs</h1>
     <div class="summary" id="summary"></div>
     <div class="legend">

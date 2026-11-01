@@ -1,5 +1,6 @@
 // sd view [--port <n>] [--no-open] (src/view_help.txt, #375, #376): GET / is
-// the Flock page, GET /api/flock its data from the watcher's cache. std's
+// the Flock page, GET /api/flock its data from the watcher's cache; GET /map
+// the Map page (#378), GET /api/map its data from sheepdog's own source. std's
 // TcpListener, a thread per connection: a browser's idle preconnect socket
 // mustn't hold up the page.
 //
@@ -11,6 +12,7 @@
 mod branch;
 mod flock;
 mod guard;
+mod map;
 mod timeline;
 
 use crate::config::state_dir;
@@ -23,6 +25,7 @@ use std::time::Duration;
 
 const HELP: &str = include_str!("view_help.txt");
 const PAGE: &str = include_str!("view/flock.html");
+const MAP_PAGE: &str = include_str!("view/map.html");
 const PORT: u16 = 7377;
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -119,6 +122,8 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
     match route {
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.replace("__SD_TOKEN__", token)),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
+        "/map" => ("200 OK", "text/html; charset=utf-8", MAP_PAGE.into()),
+        "/api/map" => ("200 OK", "application/json", map::map().to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();
             let found = match route {

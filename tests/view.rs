@@ -422,3 +422,63 @@ fn a_guarded_write_reaches_the_action() {
     assert_eq!(code, 501, "{body}");
     assert_has(&body, &["no action yet"]);
 }
+
+// The Map (#378) reads the checkout the binary was built in: here, this one.
+fn this_repo(path: &str) -> String {
+    fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
+}
+
+fn map(s: &Server) -> Value {
+    let (code, head, body) = s.get("/api/map");
+    assert_eq!(code, 200, "{head}\n{body}");
+    assert_has(&head.to_lowercase(), &["content-type: application/json"]);
+    serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"))
+}
+
+fn map_file<'a>(m: &'a Value, path: &str) -> &'a Value {
+    m["groups"].as_array().unwrap().iter().flat_map(|g| g["files"].as_array().unwrap()).find(|f| f["path"] == path)
+        .unwrap_or_else(|| panic!("no {path} in {m}"))
+}
+
+#[test]
+fn api_map_serves_sheepdog_s_source_sized_with_its_ratchet_and_issues() {
+    let sd = sd();
+    let issues = r#"[{"number":378,"title":"sd view map","url":"https://github.com/o/r/issues/378","body":"see src/view.rs"}]"#;
+    sd.fake("gh", &format!("#!/usr/bin/env bash\necho \"$*\" >> {}\necho '{issues}'\n", sd.path("gh.log")));
+    let m = map(&serve(&sd));
+    let view = map_file(&m, "src/view.rs");
+    assert_eq!(view["lines"], this_repo("src/view.rs").lines().count());
+    assert_eq!(view["issues"], json!([{ "number": 378, "title": "sd view map", "url": "https://github.com/o/r/issues/378" }]));
+    assert_eq!(map_file(&m, "src/view/map.rs")["issues"], json!([]));
+    let ratchet = this_repo("tests/lint-ratchet.txt");
+    let listed: Vec<Vec<&str>> = ratchet.lines().map(|l| l.split('#').next().unwrap().split_whitespace().collect()).filter(|w: &Vec<&str>| w.len() == 4).collect();
+    assert!(!listed.is_empty());
+    for w in &listed {
+        let over = &map_file(&m, w[0])["over"];
+        assert!(over.as_array().unwrap().contains(&json!({ "fn": w[1], "lint": w[2], "score": w[3].parse::<u64>().unwrap() })), "{w:?} in {over}");
+    }
+    assert_eq!((&m["ratchet"], &m["issues"], &m["error"]), (&json!(listed.len()), &json!(1), &Value::Null));
+    let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
+    assert_has(&log, &["issue list", "--state open"]);
+}
+
+#[test]
+fn the_map_without_github_still_has_its_files() {
+    let sd = sd();
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'gh: rate limit exceeded' >&2\nexit 1\n");
+    let m = map(&serve(&sd));
+    assert_eq!(map_file(&m, "src/view.rs")["issues"], json!([]));
+    assert_eq!(m["issues"], Value::Null);
+    assert_has(m["error"].as_str().unwrap(), &["rate limit exceeded"]);
+}
+
+#[test]
+fn the_map_page_and_the_flock_link_to_each_other() {
+    let sd = sd();
+    let s = serve(&sd);
+    let (code, head, body) = s.get("/map");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: text/html"]);
+    assert_has(&body, &["<title>", "href=\"/\"", "/api/map"]);
+    assert_has(&s.get("/").2, &["href=\"/map\""]);
+}

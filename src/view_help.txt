@@ -12,5 +12,11 @@ Usage: sd view [--port <n>] [--no-open]
   stays until the watcher drops its cache: after it's unenrolled, or once
   its merge is notified.
 
+  The Map (/map, linked from the Flock) is sheepdog's own code: each file
+  under src/ sized by its lines, the share of it in functions over clippy's
+  cap (tests/lint-ratchet.txt), and the open issues that name it (one gh
+  issue list). It reads the checkout sd was built from, whatever repo sd
+  view runs in.
+
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser
