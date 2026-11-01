@@ -9,8 +9,9 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::Path;
 
-/// Implement → push → CI → review → merge, and the two loops back to push.
-pub const NODES: [&str; 7] = ["implement", "push", "ci", "review", "merge", "cifix", "fix"];
+/// Implement → push → CI → review → bot & threads → merge, and the two
+/// loops back to push.
+pub const NODES: [&str; 8] = ["implement", "push", "ci", "review", "threads", "merge", "cifix", "fix"];
 
 fn key_node(key: &str) -> Option<&'static str> {
     match key {
@@ -18,8 +19,8 @@ fn key_node(key: &str) -> Option<&'static str> {
         "review-fix" => Some("fix"),
         k => match flock::key_stage(k)? {
             "build" => Some("implement"),
-            s @ ("push" | "ci" | "review" | "merge") => Some(s),
-            _ => None,
+            "bot" => Some("threads"),
+            s => Some(s),
         },
     }
 }
@@ -48,6 +49,7 @@ fn counts(usage: &str, repo_dir: &str, branch: &str) -> Map<String, Value> {
                 "review"
             }
             "ci-fix" => "cifix",
+            "address" => "threads",
             _ => continue,
         };
         n[node] = json!(n[node].as_u64().unwrap_or(0) + 1);
@@ -129,6 +131,16 @@ mod tests {
                                 {"key": "bot", "who": "agent"}]});
         let f = flow(&s, "", "r-0", "b");
         assert_eq!((t(&f, "cifix.who"), t(&f, "fix.who"), t(&f, "ci.who")), ("agent".into(), "agent".into(), String::new()));
+    }
+
+    #[test]
+    fn bot_and_thread_steps_light_the_threads_node_and_address_counts_there() {
+        let s = json!({"next": [{"key": "bot", "who": "agent"}]});
+        assert_eq!(t(&flow(&s, "", "r-0", "b"), "threads.who"), "agent");
+        for k in ["bot-trigger", "bot-wait", "bot-silent", "answer", "human", "read"] {
+            assert_eq!(key_node(k), Some("threads"), "{k}");
+        }
+        assert_eq!(count_of(&[rec("/src/r", "b", "address")], "threads"), 1);
     }
 
     #[test]

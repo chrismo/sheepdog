@@ -178,7 +178,8 @@ const FLOW = {
   push: { x: 16, y: 96, w: 170, name: "Commit & push", sub: "sheepdog", role: "run" },
   ci: { x: 16, y: 176, w: 170, name: "CI", sub: "tests on the PR", role: "wait" },
   review: { x: 16, y: 256, w: 170, name: "Local review", sub: "agent reviews", role: "agent" },
-  merge: { x: 16, y: 336, w: 170, name: "Merge", sub: "you", role: "you" },
+  threads: { x: 16, y: 336, w: 170, name: "Bot & threads", sub: "bot review, replies", role: "agent" },
+  merge: { x: 16, y: 416, w: 170, name: "Merge", sub: "you", role: "you" },
   cifix: { x: 212, y: 176, w: 128, name: "ci-fix", sub: "when CI is red", role: "agent" },
   fix: { x: 212, y: 256, w: 128, name: "Fix findings", sub: "when review finds", role: "agent" },
 };
@@ -188,7 +189,7 @@ const arrow = (d, c = "var(--muted)") => `<path d="${d}" fill="none" stroke="${c
 function flowSvg(flow) {
   const N = FLOW;
   let s = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>`;
-  for (const [a, b] of [["implement", "push"], ["push", "ci"], ["ci", "review"], ["review", "merge"]]) s += arrow(`M101,${N[a].y + NH} L101,${N[b].y - 3}`);
+  for (const [a, b] of [["implement", "push"], ["push", "ci"], ["ci", "review"], ["review", "threads"], ["threads", "merge"]]) s += arrow(`M101,${N[a].y + NH} L101,${N[b].y - 3}`);
   s += arrow(`M186,${N.ci.y + 23} L${N.cifix.x - 3},${N.ci.y + 23}`, "var(--red)");
   s += arrow(`M186,${N.review.y + 23} L${N.fix.x - 3},${N.review.y + 23}`);
   s += arrow(`M276,${N.cifix.y} L276,128 L189,128`);
@@ -204,7 +205,7 @@ function flowSvg(flow) {
       `<text x="${n.x + 14}" y="${n.y + 20}" font-size="14" font-weight="700" fill="var(--ink)">${n.name}</text>` +
       `<text x="${n.x + 14}" y="${n.y + 36}" font-size="10.5" fill="var(--muted)">${n.sub}</text>${badge}</g>`;
   }
-  return `<svg viewBox="0 0 360 392" role="img" aria-label="The PR's flow; lit nodes are where it is now">${s}</svg>`;
+  return `<svg viewBox="0 0 360 472" role="img" aria-label="The PR's flow; lit nodes are where it is now">${s}</svg>`;
 }
 
 function owedHtml(o) {
@@ -219,7 +220,11 @@ function owedHtml(o) {
   return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
 }
 
+let shown = "";
 function renderDetail(b) {
+  const key = JSON.stringify(b);
+  if (key === shown && $("detail").innerHTML) return;
+  shown = key;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
   $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
@@ -248,6 +253,7 @@ async function loadDetail(id) {
   } catch (e) {
     if (openId() !== id) return;
     const eb = $("deyebrow");
+    shown = "";
     if (eb) { eb.classList.add("stale"); eb.textContent = `can't reach sd view (${e.message}): showing the last read`; }
     else $("detail").innerHTML = `${back}<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }
@@ -257,7 +263,7 @@ function route() {
   const id = openId();
   document.body.classList.toggle("drill", !!id);
   $("detail").hidden = !id;
-  if (id) { $("detail").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
+  if (id) { $("detail").innerHTML = ""; shown = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
 async function poll(detail) {

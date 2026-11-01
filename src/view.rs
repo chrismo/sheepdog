@@ -100,7 +100,7 @@ fn respond(method: &str, path: &str, host: &str, port: u16, state: &Path) -> (&'
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.into()),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
         // Only an id the cache listing has: it never becomes a path.
-        "/api/branch" => match query.strip_prefix("id=").and_then(|id| branch::detail(state, &unescape(id))) {
+        "/api/branch" => match query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(|id| branch::detail(state, &unescape(id))) {
             Some(b) => ("200 OK", "application/json", b.to_string()),
             None => ("404 Not Found", "text/plain", "no such branch in the watcher's cache\n".into()),
         },

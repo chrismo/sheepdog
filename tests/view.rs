@@ -259,4 +259,5 @@ fn an_id_that_isnt_a_cached_branch_is_not_found() {
         assert_eq!(branch(&s, &id).0, 404, "{id}");
     }
     assert_eq!(s.get("/api/branch").0, 404);
+    assert_eq!(s.get(&format!("/api/branch?_=1&id={dir}%2Fa&x=2")).0, 200);
 }
