@@ -230,7 +230,7 @@ function renderDetail(b) {
   const key = JSON.stringify(b);
   if (key === shown && $("dmain").innerHTML) return;
   shown = key;
-  const k = JSON.stringify([b.pr, b.stages]);
+  const k = JSON.stringify([b.pr, b.stages, b.usd]);
   if ($("tl").open && k !== tlKey) loadTimeline(openId());
   tlKey = k;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
@@ -311,10 +311,10 @@ async function loadTimeline(id) {
   if (!body.innerHTML) body.innerHTML = `<p class="none">asking GitHub…</p>`;
   try {
     const r = await fetch(`/api/timeline?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    if (openId() !== id) return;
     if (r.status === 404) { body.innerHTML = `<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`; return; }
     if (!r.ok) throw new Error(r.status);
     const t = await r.json();
-    if (openId() !== id) return;
     const ev = tlEvents(t);
     const cut = t.github?.total ? `<p class="none">The last ${t.github.commits.length} of ${t.github.total} commits: the earlier ones aren't drawn.</p>` : "";
     const note = cut + (t.error ? `<p class="none">GitHub didn't answer, so this is the agent's steps only (${esc(t.error)})</p>` : t.github ? "" : `<p class="none">No PR yet: the agent's steps only.</p>`);

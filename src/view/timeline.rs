@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 /// gh runs inside the request: a stalled one mustn't leave the page waiting.
 const GH_SECS: u64 = 20;
 
+/// Checks past 50 on a commit aren't drawn, and nothing says so.
 const QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){
   createdAt mergedAt mergedBy{login} commits(last:100){totalCount nodes{commit{oid committedDate messageHeadline
   statusCheckRollup{contexts(first:50){nodes{__typename
