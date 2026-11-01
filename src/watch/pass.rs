@@ -99,7 +99,8 @@ fn end(pid: i32, sig: i32) {
 }
 
 /// End the launched step holding <l>, <b>'s lease: TERM to its process
-/// group, KILL if it's still there KILL_AFTER later; then release the lease.
+/// group, KILL if it's still there KILL_AFTER later; then release the lease,
+/// or the one the step rewrote under the same pid before it ended.
 fn stop(repo: &str, b: &str, l: &running::Lease) {
     let pid: i32 = l.pid.parse().unwrap_or(0);
     end(pid, libc::SIGTERM);
@@ -110,7 +111,8 @@ fn stop(repo: &str, b: &str, l: &running::Lease) {
     if running::lease(repo, b).is_some_and(|l| l.live) {
         end(pid, libc::SIGKILL);
     }
-    running::release(l);
+    let rewritten = running::lease(repo, b).filter(|now| now.pid == l.pid);
+    running::release(rewritten.as_ref().unwrap_or(l));
 }
 
 /// How long a launched step's lease outlasts its own timeout, so the lease

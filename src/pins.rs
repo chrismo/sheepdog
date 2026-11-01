@@ -151,7 +151,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    // @test "pin_write records the pin and the base it was taken against"
+    // @test "review records the pin and the base it was taken against"
     #[test]
     fn review_records_the_pin_and_the_base_it_was_taken_against() {
         let r = Repo::new();
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(r.git(&["rev-parse", "refs/sheepdog/feat/local-base"]), r.git(&["rev-parse", "main"]));
     }
 
-    // @test "pin_write overwrites both refs, so a stale base never outlives its pin"
+    // @test "review overwrites both refs, so a stale base never outlives its pin"
     #[test]
     fn review_overwrites_both_refs_so_a_stale_base_never_outlives_its_pin() {
         let r = Repo::new();
@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(r.git(&["rev-parse", "refs/sheepdog/feat/bot-base"]), r.git(&["rev-parse", "HEAD~1"]));
     }
 
-    // @test "pin_write refuses a pin kind it doesn't know"
+    // @test "review refuses a pin that isn't a review pin"
     #[test]
     fn review_refuses_a_pin_that_isnt_a_review_pin() {
         let r = Repo::new();
@@ -204,8 +204,8 @@ mod tests {
     /// The lines in <text> where a git call writes something only this
     /// module may: update-ref that doesn't move a branch alone (no
     /// refs/heads/, or a refs/sheepdog or --stdin beside it), hash-object
-    /// -w. A call's args run to its `]`, so one split over lines is read
-    /// whole.
+    /// -w. A call's args run to its first `]`, so one split over lines is
+    /// read whole, and an index inside the call (`&args[0]`) cuts it short.
     fn writes(text: &str) -> Vec<usize> {
         let calls = text.match_indices("\"update-ref\"").chain(text.match_indices("\"hash-object\""));
         let mut at: Vec<usize> = calls

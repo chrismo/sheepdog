@@ -3247,6 +3247,19 @@ fn reconcile_a_launched_step_past_its_deadline_gets_term_then_kill_and_is_counte
     assert_has(&sd.failure("feat"), &[r#""count":2"#]);
 }
 
+// ship runs implement, then describe: one pid, a marker written twice (#342).
+#[test]
+fn reconcile_a_step_past_its_deadline_that_rewrote_its_marker_is_ended_and_its_marker_released_342() {
+    let sd = sd();
+    sd.quiet("feat");
+    let m = sd.marker("feat");
+    let nested = orphan(&format!(r#"trap "perl -pi -e 's/ push / describe /' '{}'" TERM; while :; do sleep 0.1; done"#, m.display()));
+    sd.lease("feat", nested, -5);
+    sd.pass();
+    assert!(ends(nested));
+    assert!(!m.exists(), "{}", fs::read_to_string(&m).unwrap_or_default());
+}
+
 /// <b>'s PR is <state>, with a step running on it.
 fn running_on(sd: &Sd, b: &str, state: &str) {
     sd.ps_fixture(b, &[&format!(r#".pr.state = "{state}" | .session.running = {{step: "push", pid: 1, since: "2026-10-23T00:00:00Z"}}"#)]);
