@@ -225,12 +225,14 @@ function owedHtml(o) {
   return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
 }
 
-let shown = "";
+let shown = "", tlKey = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
   if (key === shown && $("dmain").innerHTML) return;
   shown = key;
-  if ($("tl").open) loadTimeline(openId());
+  const k = JSON.stringify([b.pr, b.stages]);
+  if ($("tl").open && k !== tlKey) loadTimeline(openId());
+  tlKey = k;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
@@ -249,17 +251,20 @@ const ciColor = r => r === "SUCCESS" ? "var(--run)" : /FAIL|ERROR|TIMED|CANCEL|A
 
 function tlEvents(t) {
   const ev = (t.agent || []).map(a => {
-    const end = ms(a.end), bad = a.status !== 0;
-    return { lane: 0, s: end - (a.ms || 0), e: end, label: a.step, c: bad ? "var(--red)" : "var(--agent)",
-      tip: `${a.step}${bad ? (a.status === 75 ? " (usage limit)" : ` (exit ${a.status})`) : ""} · ${a.ms ? span(a.ms) : "?"}${typeof a.usd === "number" ? ` · $${a.usd.toFixed(2)}` : ""}` };
+    const end = ms(a.end), bad = a.status !== 0, step = a.step || "agent";
+    return { lane: 0, s: end - (a.ms || 0), e: end, label: step, c: bad ? "var(--red)" : "var(--agent)",
+      tip: `${step}${bad ? (a.status === 75 ? " (usage limit)" : ` (exit ${a.status})`) : ""} · ${a.ms ? span(a.ms) : "?"}${typeof a.usd === "number" ? ` · $${a.usd.toFixed(2)}` : ""}` };
   });
   const g = t.github;
   if (g) {
     for (const c of g.commits) {
       ev.push({ lane: 1, s: ms(c.at), e: ms(c.at), label: c.sha.slice(0, 7), c: "var(--run)", tip: `commit ${c.sha.slice(0, 7)}: ${c.title}` });
       for (const k of c.ci) {
-        const e = k.end ? ms(k.end) : Date.now();
-        ev.push({ lane: 2, s: k.start ? ms(k.start) : ms(c.at), e, label: "", c: ciColor(k.result), tip: `${k.name}: ${k.result || "running"} on ${c.sha.slice(0, 7)}` });
+        // An open check is a point, and an RWX status (no start) spans from its commit only when that's
+        // under GAP: committedDate isn't the push, and a bar mustn't bridge a wait that should fold.
+        const at = ms(c.at), e = k.end ? ms(k.end) : ms(k.start) || at;
+        const s = k.start ? ms(k.start) : e - at <= GAP ? at : e;
+        ev.push({ lane: 2, s, e, label: "", c: ciColor(k.result), tip: `${k.name}: ${k.result || "running"} on ${c.sha.slice(0, 7)}` });
       }
     }
     if (g.opened) ev.push({ lane: 3, s: ms(g.opened), e: ms(g.opened), label: "opened", c: "var(--you)", tip: "PR opened" });

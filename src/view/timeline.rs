@@ -6,6 +6,9 @@ use crate::proc;
 use crate::val::{at, t};
 use serde_json::{json, Value};
 
+/// gh runs inside the request: a stalled one mustn't leave the page waiting.
+const GH_SECS: u64 = 20;
+
 const QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){
   createdAt mergedAt mergedBy{login} commits(last:100){nodes{commit{oid committedDate messageHeadline
   statusCheckRollup{contexts(first:50){nodes{__typename
@@ -55,7 +58,7 @@ fn pr_ref(url: &str) -> Option<(&str, &str, &str, &str)> {
 fn github(url: &str) -> (Value, Value) {
     let Some((host, owner, repo, n)) = pr_ref(url) else { return (Value::Null, Value::Null) };
     let (q, o, r, num) = (format!("query={QUERY}"), format!("owner={owner}"), format!("repo={repo}"), format!("number={n}"));
-    let out = proc::run("gh", &["api", "graphql", "--hostname", host, "-f", &q, "-F", &o, "-F", &r, "-F", &num], None, None);
+    let out = proc::with_timeout(GH_SECS, "gh", &["api", "graphql", "--hostname", host, "-f", &q, "-F", &o, "-F", &r, "-F", &num], None);
     let pr = serde_json::from_str::<Value>(&out.stdout).ok().map(|v| at(&v, "data.repository.pullRequest").clone());
     match pr {
         Some(pr) if out.ok && pr.is_object() => (history(&pr), Value::Null),
