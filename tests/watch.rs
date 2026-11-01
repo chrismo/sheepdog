@@ -64,8 +64,8 @@ printf '%s|%s\n' "$1" "$2" >> "$PS_FIXTURES/notified"
 const READY: &str = r#"{
     branch: $b, pr: {number: 7, state: "OPEN", draft: false, merge_state: "CLEAN", review_decision: null, review_requests: []},
     parent: {name: "main", merged: false},
-    sync: {target: "main", default: "main", behind: 0, up_to_date: true, conflict: false},
-    push: {remote_sha: "abc", ahead: 0, behind: 0, diverged: false, remote_ours: true},
+    sync: {target: "main", default: "main", behind: 0, up_to_date: true, conflict: false, foreign_authors: []},
+    push: {remote_sha: "abc", ahead: 0, behind: 0, diverged: false, remote_ours: true, foreign_authors: []},
     fresh: true, stale: [],
     ci: {verdict: "green", failing: [], pending: [], for_head: true},
     review: {local: {status: "covered"}, bot: {status: "none"}, accepted: {status: "none"}},
