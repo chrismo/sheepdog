@@ -243,7 +243,7 @@ function renderDetail(b) {
     </div>`;
 }
 
-const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["you", "You", "--you"]];
+const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["pr", "PR", "--done"]];
 const GAP = 20 * 60e3, FOLD = 30, LX = 58, LW = 74;
 const ms = t => Date.parse(t);
 const span = m => m >= 36e5 ? `${Math.floor(m / 36e5)}h ${Math.round(m % 36e5 / 6e4)}m` : `${Math.round(m / 6e4)}m`;
@@ -251,7 +251,7 @@ const ciColor = r => r === "SUCCESS" ? "var(--run)" : /FAIL|ERROR|TIMED|CANCEL|A
 
 function tlEvents(t) {
   const ev = (t.agent || []).map(a => {
-    const end = ms(a.end), bad = a.status !== 0, step = a.step || "agent";
+    const end = ms(a.end), bad = typeof a.status === "number" && a.status !== 0, step = a.step || "agent";
     return { lane: 0, s: end - (a.ms || 0), e: end, label: step, c: bad ? "var(--red)" : "var(--agent)",
       tip: `${step}${bad ? (a.status === 75 ? " (usage limit)" : ` (exit ${a.status})`) : ""} · ${a.ms ? span(a.ms) : "?"}${typeof a.usd === "number" ? ` · $${a.usd.toFixed(2)}` : ""}` };
   });
@@ -267,8 +267,8 @@ function tlEvents(t) {
         ev.push({ lane: 2, s, e, label: "", c: ciColor(k.result), tip: `${k.name}: ${k.result || "running"} on ${c.sha.slice(0, 7)}` });
       }
     }
-    if (g.opened) ev.push({ lane: 3, s: ms(g.opened), e: ms(g.opened), label: "opened", c: "var(--you)", tip: "PR opened" });
-    if (g.merged) ev.push({ lane: 3, s: ms(g.merged.at), e: ms(g.merged.at), label: "merged", c: "var(--you)", tip: `merged by ${g.merged.by || "?"}` });
+    if (g.opened) ev.push({ lane: 3, s: ms(g.opened), e: ms(g.opened), label: "opened", c: "var(--done)", tip: "PR opened" });
+    if (g.merged) ev.push({ lane: 3, s: ms(g.merged.at), e: ms(g.merged.at), label: "merged", c: "var(--done)", tip: `merged by ${g.merged.by || "?"}` });
   }
   return ev.filter(x => !isNaN(x.s) && !isNaN(x.e));
 }
@@ -315,7 +315,8 @@ async function loadTimeline(id) {
     const t = await r.json();
     if (openId() !== id) return;
     const ev = tlEvents(t);
-    const note = t.error ? `<p class="none">GitHub didn't answer, so this is the agent's steps only (${esc(t.error)})</p>` : t.github ? "" : `<p class="none">No PR yet: the agent's steps only.</p>`;
+    const cut = t.github?.total ? `<p class="none">The last ${t.github.commits.length} of ${t.github.total} commits: the earlier ones aren't drawn.</p>` : "";
+    const note = cut + (t.error ? `<p class="none">GitHub didn't answer, so this is the agent's steps only (${esc(t.error)})</p>` : t.github ? "" : `<p class="none">No PR yet: the agent's steps only.</p>`);
     body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
   } catch (e) {
     if (openId() === id) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;

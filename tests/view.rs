@@ -312,7 +312,8 @@ fn a_branch_s_timeline_has_its_agent_steps_and_its_pr_s_history() {
     ]));
     assert_eq!(t["error"], Value::Null);
     let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
-    assert_has(&log, &["api graphql", "owner=o", "repo=r", "number=7"]);
+    // -F would send an all-digit repo name as a number.
+    assert_has(&log, &["api graphql", "-f owner=o", "-f repo=r", "-F number=7"]);
 }
 
 #[test]
@@ -326,10 +327,10 @@ fn a_timeline_without_github_still_has_its_agent_steps() {
     fs::write(sd.tmp.join("state/usage.sup"), [rec("a"), rec("b")].join("\n") + "\n").unwrap();
     sd.fake("gh", "#!/usr/bin/env bash\necho 'gh: rate limit exceeded' >&2\nexit 1\n");
     let s = serve(&sd);
-    let ids: Vec<String> = s.flock()["branches"].as_array().unwrap().iter().map(|b| b["id"].as_str().unwrap().to_string()).collect();
-    let (_, no_pr) = timeline(&s, &ids[0]);
+    let id = |b: &str| format!("{}/{b}", sheepdog::watch::repo_key("/src/sheepdog"));
+    let (_, no_pr) = timeline(&s, &id("a"));
     assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"]), (1, &Value::Null, &Value::Null));
-    let (_, gh_down) = timeline(&s, &ids[1]);
+    let (_, gh_down) = timeline(&s, &id("b"));
     assert_eq!((gh_down["agent"].as_array().unwrap().len(), &gh_down["github"]), (1, &Value::Null));
     assert_has(gh_down["error"].as_str().unwrap(), &["rate limit exceeded"]);
     assert_eq!(timeline(&s, "nope/x").0, 404);

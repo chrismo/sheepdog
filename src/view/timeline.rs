@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 const GH_SECS: u64 = 20;
 
 const QUERY: &str = "query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){
-  createdAt mergedAt mergedBy{login} commits(last:100){nodes{commit{oid committedDate messageHeadline
+  createdAt mergedAt mergedBy{login} commits(last:100){totalCount nodes{commit{oid committedDate messageHeadline
   statusCheckRollup{contexts(first:50){nodes{__typename
     ...on StatusContext{context state createdAt} ...on CheckRun{name conclusion status startedAt completedAt}}}}}}}}}}";
 
@@ -43,7 +43,9 @@ fn history(pr: &Value) -> Value {
         })
         .collect();
     let merged = if pr["mergedAt"].is_null() { Value::Null } else { json!({"at": pr["mergedAt"], "by": at(pr, "mergedBy.login")}) };
-    json!({"opened": pr["createdAt"], "merged": merged, "commits": commits})
+    // null unless the list was cut to the last 100.
+    let total = at(pr, "commits.totalCount").as_u64().filter(|&n| n > commits.len() as u64);
+    json!({"opened": pr["createdAt"], "merged": merged, "commits": commits, "total": total})
 }
 
 fn pr_ref(url: &str) -> Option<(&str, &str, &str, &str)> {
@@ -58,7 +60,7 @@ fn pr_ref(url: &str) -> Option<(&str, &str, &str, &str)> {
 fn github(url: &str) -> (Value, Value) {
     let Some((host, owner, repo, n)) = pr_ref(url) else { return (Value::Null, Value::Null) };
     let (q, o, r, num) = (format!("query={QUERY}"), format!("owner={owner}"), format!("repo={repo}"), format!("number={n}"));
-    let out = proc::with_timeout(GH_SECS, "gh", &["api", "graphql", "--hostname", host, "-f", &q, "-F", &o, "-F", &r, "-F", &num], None);
+    let out = proc::with_timeout(GH_SECS, "gh", &["api", "graphql", "--hostname", host, "-f", &q, "-f", &o, "-f", &r, "-F", &num], None);
     let pr = serde_json::from_str::<Value>(&out.stdout).ok().map(|v| at(&v, "data.repository.pullRequest").clone());
     match pr {
         Some(pr) if out.ok && pr.is_object() => (history(&pr), Value::Null),
@@ -82,6 +84,13 @@ mod tests {
         assert_eq!(pr_ref("https://github.com/o/r/pull/7"), Some(("github.com", "o", "r", "7")));
         assert_eq!(pr_ref("https://ghe.example/o/r/issues/7"), None);
         assert_eq!(pr_ref(""), None);
+    }
+
+    #[test]
+    fn a_history_cut_to_the_last_100_commits_says_how_many_there_were() {
+        let pr = |total: u64| json!({"commits": {"totalCount": total, "nodes": [{"commit": {"oid": "a"}}]}});
+        assert_eq!(history(&pr(140))["total"], 140);
+        assert_eq!(history(&pr(1))["total"], Value::Null);
     }
 
     #[test]
