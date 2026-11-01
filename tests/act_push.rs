@@ -224,6 +224,10 @@ fn commits_someone_else_made_on_the_branch_refused_unless_force_356() {
     assert_ne!(sd.remote("feat"), sd.rev("feat"));
     assert_eq!(sd.run(&["push", "--force"]).status, 0);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    // forced past them is looked at: the next push of ours isn't held
+    sd.commit("more");
+    sd.ok(&["push"]);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
 }
 
 // @test "a pushed commit reset away locally: the remote head is ours, so it's force-pushed with a lease (#86)"

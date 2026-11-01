@@ -2121,6 +2121,27 @@ fn sync_foreign_authors_names_who_else_made_the_branchs_commits_after_a_pull_356
     assert_eq!(r.field_c(".sync.foreign_authors"), r#"["bot@example.com","Them@Example.com"]"#, "newest first");
 }
 
+// Commits up to the head sd act push --force recorded (sd-authors-seen) were
+// looked at; only what's past it counts (#356).
+#[test]
+fn sync_foreign_authors_leaves_out_what_was_forced_past_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    assert_eq!(sd.state(&[]).field(".sync.authors_seen"), "null");
+    sd.write("y.txt", "y\n");
+    sd.git(&["add", "y.txt"]);
+    sd.git(&["-c", "user.email=them@example.com", "commit", "-qm", "theirs"]);
+    let seen = sd.git(&["rev-parse", "HEAD"]);
+    sd.git(&["config", "branch.feat.sd-authors-seen", &seen]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c(".sync.foreign_authors"), "[]");
+    assert_eq!(r.field(".sync.authors_seen"), seen);
+    sd.write("z.txt", "z\n");
+    sd.git(&["add", "z.txt"]);
+    sd.git(&["-c", "user.email=new@example.com", "commit", "-qm", "theirs again"]);
+    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), r#"["new@example.com"]"#);
+}
+
 // Commits on the target, merged in, aren't the branch's own (#356).
 #[test]
 fn sync_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {

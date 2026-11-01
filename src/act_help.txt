@@ -393,7 +393,8 @@ replies didn't post), .sd-lock ("<pid>@<host> <time>" while attached),
 .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
 .sd-accepted-after (the .sd-bot-triggered that review --accept followed),
-.sd-held (the CI config hold: the commit, then the paths, one per line);
+.sd-held (the CI config hold: the commit, then the paths, one per line),
+.sd-authors-seen (the head push --force last took others' commits past);
 sheepdog.repo (global) lists the enrolled repos.
 
 <branch> defaults to the current one. A verb prints what it did, not what to

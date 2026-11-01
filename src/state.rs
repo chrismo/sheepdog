@@ -739,7 +739,7 @@ struct Facts {
     by_tree: bool,
     conflict: Value,
     replays_parent: Value,
-    foreign_authors: Value,
+    foreign_authors: (Value, Value),
     undone: i64,
     remote_sha: String,
     ahead: i64,
@@ -997,7 +997,7 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone, "replays_parent": s.replays_parent, "foreign_authors": s.foreign_authors},
+                 "undone": s.undone, "replays_parent": s.replays_parent, "foreign_authors": s.foreign_authors.0, "authors_seen": s.foreign_authors.1},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "held": s.held},
@@ -1142,10 +1142,18 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
     }
 }
 
+/// O4: authors() past <not> and past the head chrismo last pushed past them
+/// (branch.<b>.sd-authors-seen, which sd act push --force records), and that
+/// head, null when there's none (#356).
+fn foreign_authors(dir: &str, branch: &str, head: &str, reviewer: bool, not: &[&str]) -> (Value, Value) {
+    let seen = git_out(dir, &["config", "--get", &format!("branch.{branch}.sd-authors-seen")]).map_or(String::new(), |s| rev(dir, &s));
+    (authors(dir, head, reviewer, &[not, &[seen.as_str()]].concat()), nn(&seen))
+}
+
 /// O4: the author and committer emails on <head> past <not> other than
 /// user.email, case aside, newest first (#356). null for a followed PR
 /// (#250), with no target (<not>'s first) or user.email, or when git fails.
-fn foreign_authors(dir: &str, head: &str, reviewer: bool, not: &[&str]) -> Value {
+fn authors(dir: &str, head: &str, reviewer: bool, not: &[&str]) -> Value {
     if reviewer || not.first().is_none_or(|t| t.is_empty()) {
         return Value::Null;
     }
@@ -1559,7 +1567,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let facts = Facts {
         branch: branch.into(),
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
-        foreign_authors: foreign_authors(dir, &head, reviewer, &[&target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
+        foreign_authors: foreign_authors(dir, branch, &head, reviewer, &[&target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         head: head.clone(),
         task: cfg("sd-task"),
         reviewer,

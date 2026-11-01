@@ -180,19 +180,34 @@ fn foreign_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
 }
 
 /// Commits someone else made on the branch, when they're all that holds a
-/// push (#356): chrismo looks, then forces it.
+/// push (#356): chrismo looks, then forces it. Not while attached: --force
+/// would push past the sd-lock too.
 fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
-    if !(d.foreign_authors && d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: false, ..d.clone() })) {
+    let holds = d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: false, ..d.clone() });
+    if !(d.foreign_authors && holds && !yes(d.locked)) {
         return None;
     }
-    let (branch, target) = (val::t(s, "branch"), val::t(s, "sync.target"));
-    step("foreign-authors", "you",
-        format!(
-            "commits on {branch} by {}: look (git log --format='%h %ae %ce %s' {remote}/{target}..{branch}), then push them",
-            sj(at(s, "sync.foreign_authors"), ", ")
-        ),
-        cmd("sd act push --force"),
-    )
+    let step_say = format!(
+        "commits on {} by {}: look (git log --format='%h %ae %ce %s' {}), then push them",
+        val::t(s, "branch"),
+        sj(at(s, "sync.foreign_authors"), ", "),
+        authors_range(s, remote)
+    );
+    step("foreign-authors", "you", step_say, cmd("sd act push --force"))
+}
+
+/// The range sync.foreign_authors is read from: the branch past its target,
+/// base, the default branch and the head last forced past them.
+fn authors_range(s: &Value, remote: &str) -> String {
+    let (target, default) = (val::t(s, "sync.target"), val::t(s, "sync.default"));
+    let short = |p: &str| val::t(s, p).chars().take(7).collect::<String>();
+    let mut not = vec![format!("{remote}/{target}"), short("sync.old_base")];
+    if !default.is_empty() && default != target {
+        not.push(format!("{remote}/{default}"));
+    }
+    not.push(short("sync.authors_seen"));
+    not.retain(|p| !p.is_empty());
+    format!("{} --not {}", val::t(s, "branch"), not.join(" "))
 }
 
 /// The steps for an sd state record, first is next.
