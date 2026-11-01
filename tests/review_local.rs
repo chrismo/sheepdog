@@ -169,6 +169,23 @@ fn the_prompt_carries_the_diff_between_base_and_head_and_the_task() {
     assert_eq!(chomp(&sd.fx_read("claude.cwd")), sd.path("repo"));
 }
 
+// SHEEPDOG_DECISIONS (#343) goes in under its own heading, after the task
+// and before the commits; with none, there's no heading.
+#[test]
+fn the_prompt_carries_the_decisions_on_record_after_the_task_343() {
+    let mut sd = sd();
+    sd.ok(&[]);
+    assert!(!grep(&sd.fx_read("claude.prompt"), "Decisions on record"));
+    sd.set_env("SHEEPDOG_DECISIONS", "- [1234567] declined, file.txt:3: three?\n  why: three is right");
+    sd.ok(&[]);
+    let prompt = sd.fx_read("claude.prompt");
+    let (task, on_record) = (prompt.find("add a third line").unwrap(), prompt.find("Decisions on record").unwrap());
+    assert!(task < on_record && on_record < prompt.find("Commits (").unwrap(), "{prompt}");
+    assert!(has_line(&prompt, "- [1234567] declined, file.txt:3: three?"));
+    assert!(has_line(&prompt, "  why: three is right"));
+    assert!(grep(&prompt, "Don't raise again"));
+}
+
 // @test "a fresh session each run, read-only tools, a schema"
 #[test]
 fn a_fresh_session_each_run_read_only_tools_a_schema() {

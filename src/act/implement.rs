@@ -15,7 +15,7 @@ use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::next::Derived;
 use crate::val::{at, sj, t, text};
-use crate::json;
+use crate::{decisions, json};
 use serde_json::{Map, Value};
 
 // The implement step's prompt: guidance (settings.implementPrompt, else
@@ -43,6 +43,8 @@ outcome "done", "needs-input" (anything you marked ask: your edits are left
 uncommitted for the owner) or "gave-up" (you can't make sense of them; say why
 in summary). What you decline goes to the next review round, or to the owner
 when you decline them all."#;
+
+const DECIDED: &str = "A finding one of these settles you may decline, citing it, unless the change since that commit reopens it.";
 
 const IMPLEMENT_SCHEMA: &str = r#"{"type": "object", "required": ["outcome", "commit_message", "summary"],
  "properties": {"outcome": {"enum": ["done", "needs-input", "gave-up"]},
@@ -172,6 +174,26 @@ fn answered_record(rec: &Value, fs: &[Map<String, Value>]) -> String {
     json::to_string(&Value::Object(rec)) + "\n"
 }
 
+/// The fix round's answers <fs> to the findings record <rec>, recorded in
+/// it; each decline also goes on the decisions record at <head>, the HEAD
+/// the round judged (#343).
+fn record_answers(b: &str, rec: &Value, fs: &[Map<String, Value>], head: &str) {
+    let blob = answered_record(rec, fs);
+    let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(blob.as_bytes()));
+    let findings_ref = format!("refs/sheepdog/{b}/findings");
+    if !obj.ok || !git(".", &["update-ref", "-m", "review findings answered", &findings_ref, &strip_nl(obj.stdout)]).ok {
+        die("couldn't record the agent's answers to the findings");
+    }
+    decisions::append(b, &declines(fs, head));
+}
+
+/// The decisions the round's answers <fs> make at <head>: its declines.
+fn declines(fs: &[Map<String, Value>], head: &str) -> Vec<Value> {
+    let declined = |f: &&Map<String, Value>| is_open(f) && f.get("action").and_then(Value::as_str) == Some("declined");
+    let decision = |f: &Map<String, Value>| decisions::of_finding("declined", head, &Value::Object(f.clone()), &field(f, "reply", ""));
+    fs.iter().filter(declined).map(decision).collect()
+}
+
 /// The agent's commit message, else for a fix round its own, else the task's
 /// first line.
 fn commit_message(result: &Value, fixing: bool, task: &str) -> String {
@@ -251,7 +273,8 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let (mut prompt, schema) = if fixing {
         let g = guidance("reviewFixPrompt", "review-fix.md", "review-fix");
         let task = if task.is_empty() { "(none recorded)" } else { &task };
-        let p = format!("{g}\n\n{REVIEW_FIX_CONTRACT}\n\nFindings:\n{list}\n\nThe task this branch was made for, for context:\n{task}");
+        let decided = decisions::section(&decisions::on_record(b), DECIDED);
+        let p = format!("{g}\n\n{REVIEW_FIX_CONTRACT}\n\nFindings:\n{list}{decided}\n\nThe task this branch was made for, for context:\n{task}");
         (p, REVIEW_FIX_SCHEMA)
     } else {
         let g = guidance("implementPrompt", "implement.md", "implement");
@@ -287,7 +310,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         die(format!("the {h} implement step failed or returned no usable result (session {sid})"))
     };
     step_store(b, &s, &ran);
-    question_answered(b, answering);
+    question_answered(b, &a.answer);
     hold_since(b, &gbase, &before);
     let agent_head = rev(".", &head);
 
@@ -322,11 +345,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         give_up(b, wt, qstep, &format!("said done but changed nothing: {summary}"), format!("the agent says done but changed nothing (session {sid})"));
     }
     if let Some(r) = &fix {
-        let rec = answered_record(r, &answers);
-        let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(rec.as_bytes()));
-        if !obj.ok || !git(".", &["update-ref", "-m", "review findings answered", &findings_ref, &strip_nl(obj.stdout)]).ok {
-            die("couldn't record the agent's answers to the findings");
-        }
+        record_answers(b, r, &answers, &before);
     }
     if !changed {
         println!("{b}: the agent declined the review findings: {summary}");

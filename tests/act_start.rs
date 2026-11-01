@@ -1085,6 +1085,46 @@ fn implement_fixed_one_declined_one_commits_records_each_answer_and_the_next_rev
     assert_eq!(sd.state(r#"[.review.findings.at_head, any(.next[]; .key == "review")]"#), "[false,true]");
 }
 
+// A decline is a decision: it goes on the decisions record at the HEAD the
+// round judged, with its reason, so later rounds see it (#343). A fix isn't.
+#[test]
+fn implement_a_fix_rounds_decline_goes_on_the_decisions_record_343() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.two_findings();
+    let before = sd.sha("HEAD");
+    sd.answers(&[
+        r#"{"id": "1", "action": "declined", "reply": "a is lowercase on purpose"}"#,
+        r#"{"id": "2", "action": "fixed", "reply": "B now"}"#,
+    ]);
+    sd.ok(&["implement"]);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat-x/decisions"]);
+    assert_eq!(
+        jq(&["-c", "[.kind, .head, .about, .finding, .text]"], &rec),
+        format!(r#"["declined","{before}","file.txt:1","a should be A","a is lowercase on purpose"]"#)
+    );
+}
+
+// The fix round's prompt carries the decisions on record (#343), after the
+// findings.
+#[test]
+fn implement_a_fix_rounds_prompt_carries_the_decisions_on_record_343() {
+    let mut sd = sd();
+    sd.started(TASK);
+    sd.findings_at("HEAD", "1");
+    sd.ok(&["implement", "--force"]);
+    assert_lacks(&sd.prompt(), "Decisions on record");
+    sd.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    let line = r#"{"kind": "answered", "head": "1234567890", "about": "implement", "finding": "A or a?", "text": "a"}"#;
+    let blob = sd.git_with(&[], Some(&format!("{line}\n")), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat-x/decisions", &blob]);
+    sd.findings_at("HEAD", "1");
+    sd.ok(&["implement"]);
+    let p = sd.prompt();
+    assert!(p.find("b should be B").unwrap() < p.find("Decisions on record").unwrap(), "{p}");
+    assert_has(&p, &["- [1234567] chrismo answered the implement step's question: A or a?\n  answer: a"]);
+}
+
 // @test "implement: a finding the agent marks ask goes to chrismo: nonzero, edits uncommitted, nothing recorded"
 #[test]
 fn implement_a_finding_the_agent_marks_ask_goes_to_chrismo_nonzero_edits_uncommitted_nothing_recorded() {

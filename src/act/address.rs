@@ -15,7 +15,7 @@ use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::next::{round_key, yes, Derived};
 use crate::state::unbot;
-use crate::{proc, running};
+use crate::{decisions, proc, running};
 use crate::val::{at, sj, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -319,9 +319,33 @@ fn pr_comment(prefix: &str, plan: &[Map<String, Value>]) -> Option<String> {
     (!parts.is_empty()).then(|| format!("{prefix}Addressed review feedback:\n\n{}", parts.join("\n\n")))
 }
 
+/// The decision on record (#343) an item answered on the PR at <head> is:
+/// what the bot said first, and the reply.
+fn decision(it: &Map<String, Value>, head: &str) -> Value {
+    let said = it.get("conversation").and_then(|c| c.get(0)).map_or(String::new(), |c| t(c, "body"));
+    decisions::entry(&format!("bot-{}", field(it, "action")), head, &place(it), &said, &field(it, "reply"))
+}
+
+/// post, and each item it answered on the PR goes on the decisions record,
+/// before exiting when marking items handled failed.
+fn post_and_record(b: &str, pr_url: &str, plan: &[Map<String, Value>]) -> bool {
+    let mut answered = vec![];
+    let ok = post(b, pr_url, plan, &mut answered);
+    let head = rev(".", &format!("refs/heads/{b}"));
+    decisions::append(b, &answered.iter().map(|it| decision(it, &head)).collect::<Vec<_>>());
+    ok.unwrap_or_else(|code| std::process::exit(code))
+}
+
 /// The replies posted and threads resolved (all but pushback), then the PR
-/// comment, whose items go in branch.<b>.sd-handled. False when any failed.
-fn post(b: &str, pr_url: &str, plan: &[Map<String, Value>]) -> bool {
+/// comment, whose items go in branch.<b>.sd-handled; each item answered
+/// goes in <answered>. False when any failed; Err(<git's exit code>) when
+/// writing sd-handled failed.
+fn post<'p>(
+    b: &str,
+    pr_url: &str,
+    plan: &'p [Map<String, Value>],
+    answered: &mut Vec<&'p Map<String, Value>>,
+) -> Result<bool, i32> {
     let prefix = cfg("settings.replyPrefix", b).trim_end_matches('\n').to_string();
     let mut ok = true;
     for it in plan.iter().filter(|it| !is_ask(it) && field(it, "type") == "thread") {
@@ -334,13 +358,14 @@ fn post(b: &str, pr_url: &str, plan: &[Map<String, Value>]) -> bool {
             ok = false;
             continue;
         }
+        answered.push(it);
         let q = "mutation($thread: ID!) { resolveReviewThread(input: {threadId: $thread}) { thread { id } } }";
         if field(it, "action") != "pushback" && gql(&[("query", q), ("thread", &id)]).is_none() {
             eprintln!("sd act: resolving {at} failed");
             ok = false;
         }
     }
-    let Some(body) = pr_comment(&prefix, plan) else { return ok };
+    let Some(body) = pr_comment(&prefix, plan) else { return Ok(ok) };
     // By URL, not {owner}/{repo}: gh's default repo may be a fork.
     let q = "query($url: URI!) { resource(url: $url) { ... on PullRequest { id } } }";
     let pr_id = gql(&[("url", pr_url), ("query", q)])
@@ -351,17 +376,19 @@ fn post(b: &str, pr_url: &str, plan: &[Map<String, Value>]) -> bool {
     let posted = pr_id.is_some_and(|id| gql(&[("query", q), ("subject", &id), ("body", &body)]).is_some());
     if !posted {
         eprintln!("sd act: posting the PR comment failed");
-        return false;
+        return Ok(false);
     }
+    let in_it: Vec<_> = plan.iter().filter(|it| in_comment(it)).collect();
+    answered.extend(&in_it);
     let handled = format!("branch.{b}.sd-handled");
-    for it in plan.iter().filter(|it| in_comment(it)) {
+    for it in in_it {
         let o = git(".", &["config", "--add", &handled, &field(it, "id")]);
         if !o.ok {
             eprint!("{}", o.stderr);
-            std::process::exit(o.code);
+            return Err(o.code);
         }
     }
-    ok
+    Ok(ok)
 }
 
 /// The commit message the agent gave, else a default.
@@ -460,7 +487,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         die(format!("the {h} step failed or returned no usable result (session {sid})"))
     };
     step_store(b, &sess, &ran);
-    question_answered(b, answering);
+    question_answered(b, &a.answer);
     hold_since(b, &gbase, &before);
     let agent_head = rev(".", &head);
 
@@ -518,7 +545,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         eprintln!("sd act: {e}");
         die("not pushed, so nothing posted");
     }
-    let posted = post(b, &t(&s, "pr.url"), &plan);
+    let posted = post_and_record(b, &t(&s, "pr.url"), &plan);
     unposted(b, if posted { &[] } else { &owed[..ids.len()] });
     posted
 }

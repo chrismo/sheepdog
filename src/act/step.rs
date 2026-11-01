@@ -7,7 +7,7 @@ use super::start::start_default;
 use super::{attached_check, cfg, die, lock_recheck, or_die, repo_remote};
 use crate::git::{git, git_input, git_out, main_worktree, oid, rev, show_ref, strip_nl, worktree_for, worktree_mark};
 use crate::val::{at, on, t};
-use crate::{config, harness, json, next, rules, running, state, usage};
+use crate::{config, decisions, harness, json, next, rules, running, state, usage};
 use serde_json::{json, Value};
 
 /// <run> in <b>'s worktree, given its path, marked running as <step> for
@@ -294,13 +294,20 @@ pub fn answer_prompt(answer: &str, items: &str) -> String {
     p
 }
 
-/// Once the answer reached the agent, its question is done, and a stored
-/// answer with it; a new one it asks is recorded anew.
-pub fn question_answered(b: &str, answering: bool) {
-    if answering {
-        must(&["update-ref", "-d", &format!("refs/sheepdog/{b}/question")]);
-        answer_drop(b);
+/// Once chrismo's <answer> ("" for none) reached the agent, its question is
+/// done, and a stored answer with it; a new one it asks is recorded anew.
+/// The question and answer go on the decisions record (#343).
+pub fn question_answered(b: &str, answer: &str) {
+    if answer.is_empty() {
+        return;
     }
+    let q = format!("refs/sheepdog/{b}/question");
+    let asked = git(".", &["cat-file", "blob", &q]);
+    if let Some(rec) = config::one_value(&asked.stdout).filter(|_| asked.ok) {
+        decisions::append(b, &[decisions::entry("answered", &t(&rec, "head"), &t(&rec, "step"), &t(&rec, "text"), answer)]);
+    }
+    must(&["update-ref", "-d", &q]);
+    answer_drop(b);
 }
 
 // ── chrismo's answer, waiting on its step's gate (#326) ──────────────────────

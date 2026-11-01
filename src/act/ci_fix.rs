@@ -323,7 +323,7 @@ fn ci_fix_run(b: &str, wt: &str, remote: &str, a: &Args) {
         die(format!("the {h} ci-fix step failed or returned no usable result (session {sid})"))
     };
     step_store(b, &s, &ran);
-    question_answered(b, answering);
+    question_answered(b, &a.answer);
     hold_since(b, &base, &before);
     let agent_head = rev(".", &head);
 

@@ -34,6 +34,8 @@ done
 op=$(grep -oE 'addPullRequestReviewThreadReply|resolveReviewThread|addComment|nodes\(ids|resource\(url' <<<"$q" | head -1)
 jq -nc --arg op "${op%%(*}" '{op: $op, args: $ARGS.positional}' --args "${fields[@]}" >> "$FX/gh.log"
 [[ ${GH_FAIL_OP:-} == "${op%%(*}" ]] && { echo "gh: boom" >&2; exit 1; }
+# GH_LOCK_CONFIG=1: the PR comment posts, then git config can't be written.
+[[ -n ${GH_LOCK_CONFIG:-} && $op == addComment ]] && touch "$(git rev-parse --git-common-dir)/config.lock"
 case $op in
   'nodes(ids') # like GitHub: only the asked-for ids, in order
     jq --args '.data.nodes as $n | .data.nodes = [$ARGS.positional[] | ltrimstr("ids[]=") as $id | ($n[] | select(.id == $id))]' \
@@ -1063,6 +1065,100 @@ fn review_bodies_and_pr_comments_one_pr_comment_then_marked_handled() {
     assert_has(&comment, &["(https://example/pr/7#pullrequestreview-1)"]);
     assert_lacks(&comment, "Changelog");
     assert_eq!(sd.git(&["config", "--get-all", "branch.feat.sd-handled"]), "R1");
+}
+
+/// The decisions record (#343), each line through jq -c <filter>.
+fn decisions(sd: &Sd, filter: &str) -> String {
+    jq(&["-c", filter], &sd.git(&["cat-file", "blob", "refs/sheepdog/feat/decisions"]))
+}
+
+// Each bot item answered on the PR is a decision on record (#343), at the
+// HEAD pushed: what the bot said and the reply. An ask isn't answered, and
+// a reply that didn't post isn't on record.
+#[test]
+fn bot_feedback_answered_on_the_pr_goes_on_the_decisions_record_343() {
+    let sd = sd();
+    sd.state(&[r#".threads.owed_bot = 3 | .threads.items = [
+    {id: "R1", type: "review", kind: "bot", path: null, line: null, outdated: null, last: "review-bot"},
+    {id: "C1", type: "comment", kind: "bot", path: null, line: null, outdated: null, last: "review-bot"},
+    {id: "T1", type: "thread", kind: "bot", path: "file.txt", line: 3, outdated: false, last: "review-bot"}]"#]);
+    sd.result(
+        r#"{outcome: "done", commit_message: "Address review", summary: "",
+            items: [{id: "R1", action: "fixed", reply: "Added the line."},
+                    {id: "C1", action: "ask", reply: "Changelog?"},
+                    {id: "T1", action: "pushback", reply: "Lowercase is the convention."}]}"#,
+    );
+    sd.ok(&["address"]);
+    let head = sd.rev("HEAD");
+    assert_eq!(
+        decisions(&sd, "[.kind, .head, .about, .finding, .text]"),
+        format!(
+            "[\"bot-pushback\",\"{head}\",\"file.txt:3\",\"`three` should be `THREE`.\",\"Lowercase is the convention.\"]\n\
+             [\"bot-fixed\",\"{head}\",\"review body\",\"<!-- bot-marker -->\\n\\nSummary: add a trailing line.\",\"Added the line.\"]"
+        )
+    );
+}
+
+#[test]
+fn a_bot_reply_that_didnt_post_isnt_on_the_decisions_record_343() {
+    let sd = sd();
+    let r = sd.run_env(&[("GH_FAIL_OP", "addPullRequestReviewThreadReply")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/decisions"]).is_none());
+}
+
+// A reply that posted is on record even when resolving its thread fails.
+#[test]
+fn a_bot_reply_that_posted_is_on_the_decisions_record_when_resolving_fails_343() {
+    let sd = sd();
+    sd.state(&[r#".threads.owed_bot = 1 | .threads.items = [
+    {id: "T1", type: "thread", kind: "bot", path: "file.txt", line: 3, outdated: false, last: "review-bot"}]"#]);
+    sd.result(
+        r#"{outcome: "done", commit_message: "Address review", summary: "",
+            items: [{id: "T1", action: "fixed", reply: "Done."}]}"#,
+    );
+    let r = sd.run_env(&[("GH_FAIL_OP", "resolveReviewThread")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["resolving file.txt:3 failed"]);
+    assert_eq!(decisions(&sd, "[.kind, .about, .text]"), "[\"bot-fixed\",\"file.txt:3\",\"Done.\"]");
+}
+
+// What posted is on record even when marking the PR comment's items handled
+// fails after it.
+#[test]
+fn replies_posted_stay_on_the_decisions_record_when_marking_handled_fails_343() {
+    let sd = sd();
+    sd.state(&[r#".threads.owed_bot = 2 | .threads.items = [
+    {id: "R1", type: "review", kind: "bot", path: null, line: null, outdated: null, last: "review-bot"},
+    {id: "T1", type: "thread", kind: "bot", path: "file.txt", line: 3, outdated: false, last: "review-bot"}]"#]);
+    sd.result(
+        r#"{outcome: "done", commit_message: "Address review", summary: "",
+            items: [{id: "R1", action: "fixed", reply: "Added the line."},
+                    {id: "T1", action: "pushback", reply: "Lowercase is the convention."}]}"#,
+    );
+    let r = sd.run_env(&[("GH_LOCK_CONFIG", "1")], &["address"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(decisions(&sd, "[.kind, .about]"), "[\"bot-pushback\",\"file.txt:3\"]\n[\"bot-fixed\",\"review body\"]");
+}
+
+// chrismo's answer is a decision on record (#343): the question it answered,
+// at the HEAD it was asked on, and the step that asked.
+#[test]
+fn sd_act_answer_puts_the_question_and_its_answer_on_the_decisions_record_343() {
+    let sd = sd();
+    sd.two_owed();
+    sd.agent_edits_nothing();
+    sd.result(ASKS);
+    sd.run(&["address"]);
+    let (asked, at) = (sd.question(".text"), sd.question(".head"));
+    sd.result(
+        r#"{outcome: "done", commit_message: null, summary: "Named it bar.",
+            items: [{id: "T1", action: "pushback", reply: "Lowercase is the convention."},
+                    {id: "T2", action: "pushback", reply: "bar, as chrismo says."}]}"#,
+    );
+    sd.ok(&["answer", "call it bar"]);
+    let answered = decisions(&sd, r#"select(.kind == "answered") | [.kind, .head, .about, .finding, .text]"#);
+    assert_eq!(answered, jq(&["-nc", "--arg", "q", &asked, "--arg", "h", &at, r#"["answered", $h, "address", $q, "call it bar"]"#], ""));
 }
 
 // @test "the PR comment links to what it answers instead of quoting it"
