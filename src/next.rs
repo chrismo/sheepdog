@@ -260,10 +260,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let addr_why = refusal(crate::act::address_said(crate::act::gates::address(d), s));
     let ci_rules = crate::act::gates::ci_fix_rules(d);
     let (ci_fix, ci_once) = (crate::act::judge(&ci_rules), crate::act::gates::ci_fix_once(&ci_rules));
-    let ci_waits = match (&ci_fix, asking) {
-        (crate::act::Gate::Soft(why), "ci-fix") => why.join("; "),
-        _ => String::new(),
-    };
+    let ci_waits = if let (crate::act::Gate::Soft(why), "ci-fix") = (&ci_fix, asking) { why.join("; ") } else { String::new() };
     let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
 
     let branch = t("branch");
