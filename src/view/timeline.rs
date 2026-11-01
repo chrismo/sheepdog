@@ -64,6 +64,7 @@ fn github(url: &str) -> (Value, Value) {
     let pr = serde_json::from_str::<Value>(&out.stdout).ok().map(|v| at(&v, "data.repository.pullRequest").clone());
     match pr {
         Some(pr) if out.ok && pr.is_object() => (history(&pr), Value::Null),
+        _ if out.stderr.trim().is_empty() => (Value::Null, json!("gh: no PR in its answer")),
         _ => (Value::Null, json!(format!("gh: {}", out.stderr.trim()))),
     }
 }

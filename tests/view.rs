@@ -335,3 +335,13 @@ fn a_timeline_without_github_still_has_its_agent_steps() {
     assert_has(gh_down["error"].as_str().unwrap(), &["rate limit exceeded"]);
     assert_eq!(timeline(&s, "nope/x").0, 404);
 }
+
+#[test]
+fn a_gh_answer_with_no_pr_in_it_says_so() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "a", state("a", json!([])));
+    sd.fake("gh", "#!/usr/bin/env bash\necho '{\"data\":{\"repository\":{\"pullRequest\":null}}}'\n");
+    let s = serve(&sd);
+    let (_, t) = timeline(&s, &format!("{}/a", sheepdog::watch::repo_key("/src/sheepdog")));
+    assert_eq!(t["error"], "gh: no PR in its answer");
+}

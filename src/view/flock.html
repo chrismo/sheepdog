@@ -263,7 +263,7 @@ function tlEvents(t) {
         // An open check is a point, and an RWX status (no start) spans from its commit only when that's
         // under GAP: committedDate isn't the push, and a bar mustn't bridge a wait that should fold.
         const at = ms(c.at), e = k.end ? ms(k.end) : ms(k.start) || at;
-        const s = k.start ? ms(k.start) : e - at <= GAP ? at : e;
+        const s = k.start ? ms(k.start) : e - at <= GAP ? Math.min(at, e) : e;
         ev.push({ lane: 2, s, e, label: "", c: ciColor(k.result), tip: `${k.name}: ${k.result || "running"} on ${c.sha.slice(0, 7)}` });
       }
     }
@@ -311,6 +311,7 @@ async function loadTimeline(id) {
   if (!body.innerHTML) body.innerHTML = `<p class="none">asking GitHub…</p>`;
   try {
     const r = await fetch(`/api/timeline?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    if (r.status === 404) { body.innerHTML = `<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`; return; }
     if (!r.ok) throw new Error(r.status);
     const t = await r.json();
     if (openId() !== id) return;
