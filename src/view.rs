@@ -4,14 +4,17 @@
 // mustn't hold up the page.
 //
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
-// rebind its name to 127.0.0.1. Read-only: before anything writes, add a
-// per-run token in the page and an Origin check (#376).
+// rebind its name to 127.0.0.1. Writes go to POST /api/act behind the guard
+// (view/guard.rs, #396): this run's token, which the page carries, and our
+// own Origin.
 
 mod branch;
 mod flock;
+mod guard;
 mod timeline;
 
 use crate::config::state_dir;
+use guard::Request;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
@@ -51,12 +54,12 @@ pub fn run(argv: &[String]) -> ExitCode {
         let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
         let _ = Command::new(opener).arg(&url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
-    let state = state_dir();
+    let (state, token) = (state_dir(), guard::token());
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let state = state.clone();
-                std::thread::spawn(move || serve(stream, port, Path::new(&state)));
+                let (state, token) = (state.clone(), token.clone());
+                std::thread::spawn(move || serve(stream, port, &token, Path::new(&state)));
             }
             Err(e) => {
                 eprintln!("sd view: {e}");
@@ -67,38 +70,54 @@ pub fn run(argv: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// The request line and Host header, or None for a request we can't read.
-fn read_request(r: &mut impl BufRead) -> Option<(String, String, String)> {
+/// The request line and the headers we read, or None for a request we can't read.
+fn read_request(r: &mut impl BufRead) -> Option<Request> {
     let mut line = String::new();
     r.read_line(&mut line).ok()?;
     let mut parts = line.split_whitespace();
-    let (method, path) = (parts.next()?.to_string(), parts.next()?.to_string());
-    let mut host = String::new();
+    let mut req = Request { method: parts.next()?.into(), path: parts.next()?.into(), ..Default::default() };
     loop {
         let mut h = String::new();
         if r.read_line(&mut h).ok()? == 0 || h.trim().is_empty() {
             break;
         }
-        if let Some((k, v)) = h.split_once(':') {
-            if k.eq_ignore_ascii_case("host") {
-                host = v.trim().to_string();
-            }
+        let Some((k, v)) = h.split_once(':') else { continue };
+        let v = v.trim().to_string();
+        match k.to_ascii_lowercase().as_str() {
+            "host" => req.host = v,
+            "origin" => req.origin = Some(v),
+            "x-sd-token" => req.token = Some(v),
+            _ => {}
         }
     }
-    Some((method, path, host))
+    Some(req)
 }
 
-fn respond(method: &str, path: &str, host: &str, port: u16, state: &Path) -> (&'static str, &'static str, String) {
+/// Slice 2 of #396 runs NEXT's step here, behind the guard.
+fn act(req: &Request, port: u16, token: &str) -> (&'static str, &'static str, String) {
+    if req.method != "POST" {
+        return ("405 Method Not Allowed", "text/plain", "a write is a POST\n".into());
+    }
+    if let Some(why) = guard::refusal(req, port, token) {
+        return ("403 Forbidden", "text/plain", why.into());
+    }
+    ("501 Not Implemented", "text/plain", "no action yet (#396)\n".into())
+}
+
+fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
     let ours = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
-    if !ours.iter().any(|h| h == host) {
+    if !ours.contains(&req.host) {
         return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")));
     }
-    if method != "GET" {
+    let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
+    if route == "/api/act" {
+        return act(req, port, token);
+    }
+    if req.method != "GET" {
         return ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into());
     }
-    let (route, query) = path.split_once('?').unwrap_or((path, ""));
     match route {
-        "/" => ("200 OK", "text/html; charset=utf-8", PAGE.into()),
+        "/" => ("200 OK", "text/html; charset=utf-8", PAGE.replace("__SD_TOKEN__", token)),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();
@@ -135,11 +154,11 @@ fn unescape(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn serve(stream: TcpStream, port: u16, state: &Path) {
+fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut r = BufReader::new((&stream).take(16 * 1024));
-    let Some((method, path, host)) = read_request(&mut r) else { return };
-    let (status, ctype, body) = respond(&method, &path, &host, port, state);
+    let Some(req) = read_request(&mut r) else { return };
+    let (status, ctype, body) = respond(&req, port, token, state);
     let mut w = &stream;
     let _ = write!(
         w,
