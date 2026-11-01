@@ -179,34 +179,19 @@ fn foreign_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     )
 }
 
-/// Commits someone else made on the branch, when the push would rewrite
-/// them and they're all that holds it (#356): chrismo looks, then forces it.
+/// Commits someone else made that the push would remove from the remote,
+/// when they're all that holds it (#356): chrismo looks, then forces it.
 /// Not while attached: --force would push past the sd-lock too.
 fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     let holds = d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: false, ..d.clone() });
     if !(d.foreign_authors && holds && !yes(d.locked)) {
         return None;
     }
-    let step_say = format!(
-        "the push rewrites commits on {} by {}: look (git log --format='%h %ae %ce %s' {}), then force it",
-        val::t(s, "branch"),
-        sj(at(s, "sync.foreign_authors"), ", "),
-        authors_range(s, remote)
-    );
-    step("foreign-authors", "you", step_say, cmd("sd act push --force"))
-}
-
-/// The range sync.foreign_authors is read from: the branch past its target,
-/// base and the default branch. It shows the commits already forced past too.
-fn authors_range(s: &Value, remote: &str) -> String {
-    let (target, default) = (val::t(s, "sync.target"), val::t(s, "sync.default"));
-    let short = |p: &str| val::t(s, p).chars().take(7).collect::<String>();
-    let mut not = vec![format!("{remote}/{target}"), short("sync.old_base")];
-    if !default.is_empty() && default != target {
-        not.push(format!("{remote}/{default}"));
-    }
-    not.retain(|p| !p.is_empty());
-    format!("{} --not {}", val::t(s, "branch"), not.join(" "))
+    let (branch, by) = (val::t(s, "branch"), sj(at(s, "push.foreign_authors"), ", "));
+    step("foreign-authors", "you",
+        format!("the push removes commits from {remote}/{branch} by {by}: look (git log --format='%h %ae %ce %s' {branch}..{remote}/{branch}), then force it"),
+        cmd("sd act push --force"),
+    )
 }
 
 /// The steps for an sd state record, first is next.

@@ -101,8 +101,8 @@ derived! {
     // Local vs remote (O4).
     /// The remote has commits this copy never had.
     foreign: bool,
-    /// Someone other than user.email made some of the branch's own commits
-    /// (sync.foreign_authors, #356); unknown is not foreign.
+    /// The push would remove commits someone other than user.email made
+    /// from the remote (push.foreign_authors, #356); unknown is not foreign.
     foreign_authors: bool,
     /// The remote branch has commits this copy doesn't (push.behind).
     behind_remote: bool,
@@ -360,7 +360,7 @@ impl Derived {
 
     fn push(&mut self, j: &J) {
         self.foreign = j.off("push.remote_ours") && j.n("push.theirs") > 0.0;
-        self.foreign_authors = j.len("sync.foreign_authors") > 0;
+        self.foreign_authors = j.len("push.foreign_authors") > 0;
         self.behind_remote = j.n("push.behind") > 0.0;
         self.reset_away = j.on("push.remote_ours") && j.n("push.behind") > 0.0 && j.n("push.ahead") == 0.0;
         self.push_dirty = j.flag("push.dirty");
@@ -624,8 +624,8 @@ mod tests {
     }
 
     #[test]
-    fn foreign_authors_is_anyone_named_in_sync_foreign_authors_unknown_is_none_356() {
-        let fa = |v: Value| Derived::new(&json!({"sync": {"foreign_authors": v}})).foreign_authors;
+    fn foreign_authors_is_anyone_named_in_push_foreign_authors_unknown_is_none_356() {
+        let fa = |v: Value| Derived::new(&json!({"push": {"foreign_authors": v}})).foreign_authors;
         assert!(fa(json!(["them@example.com"])));
         assert!(!fa(json!([])));
         assert!(!fa(Value::Null));

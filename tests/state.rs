@@ -2098,13 +2098,34 @@ fn push_theirs_is_null_when_the_remote_head_is_ours() {
     assert_eq!(r.field(".push.theirs"), "null");
 }
 
-// A commit someone else pushed, pulled here: the reflog has the remote head
-// now, so remote_ours can't tell; the author can (#356).
+// push.foreign_authors: who else made the commits a push would remove from
+// the remote (on it, not in HEAD), ours by user.email (#356).
+impl Sd {
+    /// <file> committed with user.email <email>, authored as <author> when given.
+    fn commit_by(&self, file: &str, email: &str, author: Option<&str>) {
+        self.write(file, &format!("{file}\n"));
+        self.git(&["add", file]);
+        let by = format!("user.email={email}");
+        let mut args = vec!["-c", &by, "commit", "-qm", file];
+        let author = author.map(|a| format!("--author={a}"));
+        args.extend(author.as_deref());
+        self.git(&args);
+    }
+
+    /// What's here pushed as is, then the last <n> commits rewritten into one of ours.
+    fn pushed_then_rewritten(&self, n: usize) {
+        self.git(&["push", "-q", "--force", "origin", "feat"]);
+        self.git(&["reset", "-q", "--soft", &format!("HEAD~{n}")]);
+        self.git(&["commit", "-q", "--allow-empty", "-m", "rewritten"]);
+    }
+}
+
+// Someone else's commit pulled here: the reflog has the remote head, so
+// remote_ours can't tell; the author can (#356).
 #[test]
-fn sync_foreign_authors_names_who_else_made_the_branchs_commits_after_a_pull_356() {
+fn push_foreign_authors_names_who_else_made_the_commits_a_rewrite_removes_356() {
     let sd = sd();
     sd.feat_pushed();
-    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), "[]");
     sd.git_in("other", &["fetch", "-q"]);
     sd.git_in("other", &["switch", "-q", "feat"]);
     fs::write(sd.tmp.join("other/x.txt"), "x\n").unwrap();
@@ -2112,61 +2133,75 @@ fn sync_foreign_authors_names_who_else_made_the_branchs_commits_after_a_pull_356
     sd.git_in("other", &["-c", "user.email=Them@Example.com", "commit", "-qm", "theirs"]);
     sd.git_in("other", &["push", "-q", "origin", "feat"]);
     sd.git(&["pull", "-q", "--ff-only"]);
-    sd.write("y.txt", "y\n");
-    sd.git(&["add", "y.txt"]);
     // ours to author, someone else's to commit (a cherry-pick, say)
-    sd.git(&["-c", "user.email=bot@example.com", "commit", "-qm", "picked", "--author=Tester <t@example.com>"]);
+    sd.commit_by("y.txt", "bot@example.com", Some("Tester <t@example.com>"));
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), "[]", "a fast-forward removes nothing");
+    sd.pushed_then_rewritten(2);
     let r = sd.state(&[]);
     assert_eq!(r.field(".push.remote_ours"), "true");
-    assert_eq!(r.field_c(".sync.foreign_authors"), r#"["bot@example.com","Them@Example.com"]"#, "newest first");
+    assert_eq!(r.field_c(".push.foreign_authors"), r#"["bot@example.com","Them@Example.com"]"#, "newest first");
 }
 
-// sync.foreign_commits are the ids sd act push --force records in
+// Amending or dropping only our own top commit removes nothing of theirs (#356).
+#[test]
+fn push_foreign_authors_leaves_out_their_commits_a_rewrite_keeps_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.commit_by("x.txt", "them@example.com", None);
+    sd.commit_by("y.txt", "t@example.com", None);
+    sd.pushed_then_rewritten(1);
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), "[]", "amended");
+    sd.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".push.behind"), "1");
+    assert_eq!(r.field_c(".push.foreign_authors"), "[]", "dropped");
+}
+
+// push.foreign_commits are the ids sd act push --force records in
 // sd-authors-seen: the patch-id, else (no diff) the SHA. A recorded one was
 // looked at and doesn't count (#356).
 #[test]
-fn sync_foreign_authors_leaves_out_what_was_forced_past_356() {
+fn push_foreign_authors_leaves_out_what_was_forced_past_356() {
     let sd = sd();
     sd.feat_pushed();
-    assert_eq!(sd.state(&[]).field_c(".sync.foreign_commits"), "[]");
-    sd.write("y.txt", "y\n");
-    sd.git(&["add", "y.txt"]);
-    sd.git(&["-c", "user.email=them@example.com", "commit", "-qm", "theirs"]);
+    sd.commit_by("y.txt", "them@example.com", None);
     let sha = sd.git(&["rev-parse", "HEAD"]);
+    sd.pushed_then_rewritten(1);
     let r = sd.state(&[]);
-    let id = r.field(".sync.foreign_commits[0]");
-    assert_eq!(r.field(".sync.foreign_commits | length"), "1");
+    let id = r.field(".push.foreign_commits[0]");
+    assert_eq!(r.field(".push.foreign_commits | length"), "1");
     assert_ne!(id, sha, "a patch-id, which a restack keeps");
     sd.git(&["config", "--add", "branch.feat.sd-authors-seen", &id]);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".sync.foreign_authors"), "[]");
-    assert_eq!(r.field_c(".sync.foreign_commits"), "[]");
+    assert_eq!(r.field_c(".push.foreign_authors"), "[]");
+    assert_eq!(r.field_c(".push.foreign_commits"), "[]");
     sd.git(&["-c", "user.email=new@example.com", "commit", "-q", "--allow-empty", "-m", "theirs again"]);
+    let sha = sd.git(&["rev-parse", "HEAD"]);
+    sd.pushed_then_rewritten(1);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".sync.foreign_authors"), r#"["new@example.com"]"#);
-    assert_eq!(r.field(".sync.foreign_commits[0]"), sd.git(&["rev-parse", "HEAD"]), "no diff: its SHA");
+    assert_eq!(r.field_c(".push.foreign_authors"), r#"["new@example.com"]"#);
+    assert_eq!(r.field(".push.foreign_commits[0]"), sha, "no diff: its SHA");
 }
 
 // GitHub records chrismo's own web actions (an edit, Update branch, a
 // suggestion) as authored by user.email, committed by noreply@github.com:
 // ours. Someone else's web edit still counts, by its author (#356).
 #[test]
-fn sync_foreign_authors_counts_githubs_committer_on_our_own_web_edits_as_ours_356() {
+fn push_foreign_authors_counts_githubs_committer_on_our_own_web_edits_as_ours_356() {
     let sd = sd();
     sd.feat_pushed();
-    sd.write("y.txt", "y\n");
-    sd.git(&["add", "y.txt"]);
-    sd.git(&["-c", "user.email=noreply@github.com", "commit", "-qm", "our web edit", "--author=Tester <t@example.com>"]);
-    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), "[]");
-    sd.write("z.txt", "z\n");
-    sd.git(&["add", "z.txt"]);
-    sd.git(&["-c", "user.email=noreply@github.com", "commit", "-qm", "their web edit", "--author=Them <them@example.com>"]);
-    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), r#"["them@example.com"]"#);
+    sd.commit_by("y.txt", "noreply@github.com", Some("Tester <t@example.com>"));
+    sd.pushed_then_rewritten(1);
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), "[]");
+    sd.commit_by("z.txt", "noreply@github.com", Some("Them <them@example.com>"));
+    sd.pushed_then_rewritten(1);
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), r#"["them@example.com"]"#);
 }
 
-// Commits on the target, merged in, aren't the branch's own (#356).
+// Commits on the target, merged in, aren't the branch's own: dropping the
+// merge removes nothing of theirs (#356).
 #[test]
-fn sync_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {
+fn push_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {
     let sd = sd();
     sd.feat_pushed();
     fs::write(sd.tmp.join("other/m.txt"), "m\n").unwrap();
@@ -2175,18 +2210,22 @@ fn sync_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {
     sd.git_in("other", &["push", "-q", "origin", "main"]);
     sd.git(&["fetch", "-q"]);
     sd.git(&["merge", "-q", "--no-edit", "origin/main"]);
-    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), "[]");
+    sd.git(&["push", "-q", "origin", "feat"]);
+    sd.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".push.behind"), "2");
+    assert_eq!(r.field_c(".push.foreign_authors"), "[]");
 }
 
 // Without user.email nothing is known to be ours: unknown, not everyone (#356).
 #[test]
-fn sync_foreign_authors_is_null_without_user_email_356() {
+fn push_foreign_authors_is_null_without_user_email_356() {
     let sd = sd();
     sd.feat_pushed();
     sd.git(&["config", "user.email", ""]);
     let r = sd.state(&[]);
-    assert_eq!(r.field(".sync | has(\"foreign_authors\")"), "true");
-    assert_eq!(r.field(".sync.foreign_authors"), "null");
+    assert_eq!(r.field(".push | has(\"foreign_authors\")"), "true");
+    assert_eq!(r.field(".push.foreign_authors"), "null");
 }
 
 // ── freshness: GitHub's SHAs vs the local remote-tracking refs ──────────────

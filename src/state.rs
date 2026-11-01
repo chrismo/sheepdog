@@ -997,9 +997,10 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone, "replays_parent": s.replays_parent, "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1},
+                 "undone": s.undone, "replays_parent": s.replays_parent},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
+                 "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1,
                  "held": s.held},
         "fresh": if s.gh_ok && s.parent_ok { json!(s.stale.is_empty()) } else { Value::Null },
         "stale": s.stale,
@@ -1142,20 +1143,22 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
     }
 }
 
-/// O4: the author and committer emails on <head> past <not> that aren't
-/// ours (others_on), newest first (#356), and those commits' ids: each
-/// one's patch-id, or its SHA when it has none (a merge, an empty commit).
-/// A commit whose id is in branch.<b>.sd-authors-seen (sd act push --force
-/// records them) was looked at and doesn't count; a patch-id outlives a
-/// restack. Both null for a followed PR (#250), with no target (<not>'s
-/// first) or user.email, or when git fails.
-fn foreign_authors(dir: &str, branch: &str, head: &str, reviewer: bool, not: &[&str]) -> (Value, Value) {
+/// O4: the author and committer emails that aren't ours (others_on) on the
+/// commits a push would remove from the remote, <removed> past <not>, newest
+/// first (#356), and those commits' ids: each one's patch-id, or its SHA
+/// when it has none (a merge, an empty commit). A commit whose id is in
+/// branch.<b>.sd-authors-seen (sd act push --force records them) was looked
+/// at and doesn't count; a patch-id outlives a restack. Both [] when the
+/// push removes nothing (<removed> None), null for a followed PR
+/// (#250), without user.email, or when git fails.
+fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str>, not: &[&str]) -> (Value, Value) {
     let unknown = (Value::Null, Value::Null);
-    if reviewer || not.first().is_none_or(|t| t.is_empty()) {
+    if reviewer {
         return unknown;
     }
     let Some(me) = git_out(dir, &["config", "user.email"]).filter(|m| !m.is_empty()) else { return unknown };
-    let mut range = vec![head, "--not"];
+    let Some(removed) = removed else { return (json!([]), json!([])) };
+    let mut range = vec![removed, "--not"];
     range.extend(not.iter().copied().filter(|r| !r.is_empty()));
     let range = |args: &[&'static str]| -> Vec<&str> { args.iter().copied().chain(range.iter().copied()).collect() };
     let Some(log) = git_out(dir, &range(&["log", "--format=%H%x09%ae%x09%ce"])) else { return unknown };
@@ -1468,6 +1471,8 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     if remote_ours == true && ahead == 0 && push_behind > 0 {
         remote_made = json!(made_here(dir, &format!("{head}..{remote_sha}")));
     }
+    // what push_branch would replace: diverged, or a drop of commits made here
+    let removes = remote_ours == true && push_behind > 0 && (ahead > 0 || remote_made == true);
     let dirty = worktree_dirty(dir, branch);
     // An agent step's commit that changed CI config (sd act's branch.<b>.sd-held:
     // the commit, then the paths): held until sd act push, or until the commit
@@ -1611,7 +1616,8 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let facts = Facts {
         branch: branch.into(),
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
-        foreign_authors: foreign_authors(dir, branch, &head, reviewer, &[&target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
+        foreign_authors: foreign_authors(dir, branch, reviewer, removes.then_some(remote_sha.as_str()),
+            &[&head, &target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         head: head.clone(),
         task: cfg("sd-task"),
         reviewer,

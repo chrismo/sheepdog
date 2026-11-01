@@ -23,25 +23,25 @@ Reports, for <branch> (default: the current one):
             in old_base..HEAD, newest first: a wrong base, which sd act
             restack refuses unless it goes by tree; [] otherwise, null
             when git can't list them
-            sync.foreign_authors: the author and committer emails on
-            HEAD's own commits (past the target, the base and the default
-            branch) other than user.email, newest first, leaving out those
-            already looked at. GitHub's noreply@github.com committer (a web
-            edit, Update branch, a suggestion) counts as its author: ours
-            when that's user.email, never named. While there are any, sd
-            act push refuses a rewrite (a diverged push, or a drop of
-            commits reset away) unless --force; a fast-forward goes
-            (#356). [] when there are none, null when user.email is unset,
-            git can't list them, or the branch is a followed PR
-            sync.foreign_commits: those commits' ids, each its patch-id (or
-            its SHA with no diff); sd act push --force adds them to
-            branch.<b>.sd-authors-seen, the looked-at ones, and a patch-id
-            outlives a restack
   push      local vs remote branch; whether the remote SHA is ours (reflog),
             and for a remote ahead of a reset: whether those commits were
             made here and whether the worktree has uncommitted changes;
             held: an agent step's unpushed change to CI config (sd act's
             hold), {sha, paths}, else null
+            push.foreign_authors: the author and committer emails other
+            than user.email on the commits sd act push would remove from
+            the remote (diverged, or dropping commits reset away; past
+            HEAD, the target, the base and the default branch), newest
+            first, leaving out those already looked at. GitHub's
+            noreply@github.com committer (a web edit, Update branch, a
+            suggestion) counts as its author: ours when that's user.email,
+            never named. sd act push refuses them unless --force (#356).
+            [] when there are none, null when user.email is unset, git
+            can't list them, or the branch is a followed PR
+            push.foreign_commits: those commits' ids, each its patch-id (or
+            its SHA with no diff); sd act push --force adds them to
+            branch.<b>.sd-authors-seen, the looked-at ones, and a patch-id
+            outlives a restack
   ci        checks on the PR head commit. Only each check's latest run counts
             (by app, workflow, event and name): a rerun or a new run on the
             same SHA, say from an edited title, supersedes the old one

@@ -22,7 +22,8 @@ pub fn push(b: &str, remote: &str, force: bool) {
     let d = Derived::new(&s);
     if let Some(go) = enforce(gates::push(&d), force, &format!("pushing {b}")) {
         publish(go, b, remote);
-        if d.foreign_authors && gates::rewrites(&d) {
+        // judged before push_branch's fetch: still what --force was told of
+        if d.foreign_authors {
             seen_authors(b, &s);
         }
     }
@@ -43,11 +44,11 @@ fn publish(_: Go, b: &str, remote: &str) {
 }
 
 /// Forced past commits someone else made: chrismo has looked at them, so
-/// sd state stops counting them, restacked or not (sync.foreign_commits'
+/// sd state stops counting them, restacked or not (push.foreign_commits'
 /// patch-ids, #356).
 fn seen_authors(b: &str, s: &serde_json::Value) {
     let key = format!("branch.{b}.sd-authors-seen");
-    for id in s.pointer("/sync/foreign_commits").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
+    for id in s.pointer("/push/foreign_commits").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
         let o = git(".", &["config", "--add", &key, id]);
         if !o.ok {
             eprint!("{}", o.stderr);

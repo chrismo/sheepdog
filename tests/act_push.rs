@@ -231,7 +231,7 @@ fn rewriting_commits_someone_else_made_on_the_branch_refused_unless_force_356() 
     restack("main moves");
     let r = sd.run(&["push"]);
     assert_eq!(r.status, 1);
-    assert_has(&r.output, &["not pushing feat:", "would rewrite commits someone else made", "sync.foreign_authors", "--force"]);
+    assert_has(&r.output, &["not pushing feat:", "would remove commits someone else made", "push.foreign_authors", "--force"]);
     assert_ne!(sd.remote("feat"), sd.rev("feat"));
     assert_eq!(sd.run(&["push", "--force"]).status, 0);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
@@ -246,6 +246,26 @@ fn rewriting_commits_someone_else_made_on_the_branch_refused_unless_force_356() 
     sd.ok(&["push"]);
     restack("main moves a third time");
     assert_eq!(sd.run(&["push"]).status, 1);
+}
+
+// Amending or dropping only our own top commit, their commit untouched
+// underneath, rewrites nothing of theirs: not held (#356).
+#[test]
+fn amending_or_dropping_our_own_commit_over_someone_elses_isnt_held_356() {
+    let sd = sd();
+    sd.upstream("theirs");
+    sd.git(&["pull", "-q", "--ff-only", "origin", "feat"]);
+    sd.commit("mine");
+    sd.ok(&["push"]);
+    sd.git(&["commit", "-q", "--amend", "-m", "mine, amended"]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert!(r.output.starts_with("force-pushed feat to origin (rewritten;"), "{}", r.output);
+    sd.git(&["reset", "-q", "--hard", "HEAD~1"]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert!(r.output.starts_with("force-pushed feat to origin (dropped 1 commit;"), "{}", r.output);
+    assert_eq!(sd.git_try(&["config", "--get-all", "branch.feat.sd-authors-seen"]), None);
 }
 
 // @test "a pushed commit reset away locally: the remote head is ours, so it's force-pushed with a lease (#86)"
@@ -418,10 +438,12 @@ fn a_restack_past_a_colleagues_squash_merged_commit_drops_it_from_the_branch_pus
     sd.git(&["fetch", "-q", "origin"]);
     sd.git(&["rebase", "-q", "origin/main"]);
     assert_eq!(sd.git(&["log", "--format=%s", "origin/main..feat"]), "mine\nfeat");
-    let r = sd.run(&["push"]);
+    // the push removes their commit from the remote (#356)
+    assert_has(&sd.run(&["push"]).output, &["would remove commits someone else made"]);
+    let r = sd.run(&["push", "--force"]);
     assert_eq!(r.status, 0);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
-    assert!(r.output.starts_with("force-pushed feat to origin (rewritten;"), "{}", r.output);
+    assert_has(&r.output, &["force-pushed feat to origin (rewritten;"]);
 }
 
 // @test "taken, reset away, then a new commit: the rewrite path leases over the taken commit, as before #86 (only a pure drop checks who made it)"
@@ -434,10 +456,12 @@ fn taken_reset_away_then_a_new_commit_the_rewrite_path_leases_over_the_taken_com
     sd.git(&["merge", "-q", "--ff-only", "origin/feat"]);
     sd.git(&["reset", "-q", "--hard", "HEAD~1"]);
     sd.commit("mine");
-    let r = sd.run(&["push"]);
+    // the push removes their commit from the remote (#356)
+    assert_has(&sd.run(&["push"]).output, &["would remove commits someone else made"]);
+    let r = sd.run(&["push", "--force"]);
     assert_eq!(r.status, 0);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
-    assert!(r.output.starts_with("force-pushed feat to origin (rewritten;"), "{}", r.output);
+    assert_has(&r.output, &["force-pushed feat to origin (rewritten;"]);
 }
 
 // @test "the remote is only ahead: refused, says how to take its commits"

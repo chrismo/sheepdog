@@ -38,10 +38,9 @@ pub const MIGRATED: &[Migrated] = &[
 pub fn push(d: &Derived) -> Gate {
     let Derived {
         open, verify_red, undone, parent_unpushed, foreign_authors,
-        unpushed: _, behind_remote: _, dropping: _,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
-        merge_state: _, tasked: _, foreign: _, reset_away: _, taken: _, held: _,
+        merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
         to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
         ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
@@ -60,18 +59,12 @@ pub fn push(d: &Derived) -> Gate {
         rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
         rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
         rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
-        rule(FOREIGN_AUTHORS, Level::Soft, *foreign_authors && rewrites(d), "look at them, then sd act push --force"),
+        rule(FOREIGN_AUTHORS, Level::Soft, *foreign_authors, "look at them, then sd act push --force"),
     ])
 }
 
-/// Whether sd act push replaces what's on the remote: a diverged push or a
-/// drop of commits reset away here.
-pub fn rewrites(d: &Derived) -> bool {
-    (d.unpushed && d.behind_remote) || d.dropping
-}
-
 pub const FOREIGN_AUTHORS: &str =
-    "the push would rewrite commits someone else made on the branch (sd state --json: sync.foreign_authors): look at them first";
+    "the push would remove commits someone else made from the remote (sd state --json: push.foreign_authors): look at them first";
 
 /// address's reasons; address::said puts each in the record's words.
 pub mod addr {
@@ -308,26 +301,15 @@ mod tests {
     }
 
     #[test]
-    fn push_refuses_to_rewrite_commits_someone_else_made_on_the_branch_unless_forced_356() {
-        let theirs = Derived { open: true, foreign_authors: true, ..Derived::default() };
-        let diverged = Derived { unpushed: true, behind_remote: true, ..theirs.clone() };
+    fn push_refuses_to_remove_commits_someone_else_made_from_the_remote_unless_forced_356() {
+        let diverged = Derived { open: true, unpushed: true, behind_remote: true, foreign_authors: true, ..Derived::default() };
         assert_eq!(push(&diverged), Gate::Soft(vec![FOREIGN_AUTHORS.into()]));
-        let dropping = Derived { behind_remote: true, reset_away: true, dropping: true, ..theirs.clone() };
-        assert_eq!(push(&dropping), Gate::Soft(vec![FOREIGN_AUTHORS.into()]));
-        assert_eq!(push(&Derived { unpushed: true, ..theirs }), Gate::Go);
         assert_eq!(push(&Derived { foreign_authors: false, ..diverged }), Gate::Go);
     }
 
     #[test]
-    fn push_never_rewrites_someone_elses_commits_unforced_and_holds_no_fast_forward_on_generated_states() {
-        check("push over foreign authors", |d| match (d.foreign_authors && rewrites(d), push(d).runs()) {
-            (true, true) => Err("push runs over their commits".into()),
-            _ => Ok(()),
-        });
-        check("a fast-forward held for foreign authors", |d| {
-            let held = push(d) != push(&Derived { foreign_authors: false, ..d.clone() });
-            if held && !rewrites(d) { Err("a push that rewrites nothing is held".into()) } else { Ok(()) }
-        });
+    fn push_never_removes_someone_elses_commits_unforced_on_generated_states() {
+        check("push over foreign authors", |d| if d.foreign_authors && push(d).runs() { Err("push runs".into()) } else { Ok(()) });
     }
 
     #[test]

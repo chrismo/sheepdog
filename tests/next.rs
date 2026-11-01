@@ -979,29 +979,22 @@ fn ci_config_held_with_verify_red_at_head_no_sd_act_push_offered_348() {
     assert_eq!(step("ci-config", "cmd", &e![".push.ahead = 1", held, &red(false)]), "sd act push");
 }
 
-// sd act push refuses to rewrite commits someone else made on the branch
+// sd act push refuses to remove commits someone else made from the remote
 // (#356), so NEXT offers chrismo the look and the forced push in its place.
 #[test]
 fn rewriting_commits_someone_else_made_holds_the_push_chrismo_looks_then_forces_it_356() {
-    let them = r#".sync.foreign_authors = ["them@example.com", "bot@example.com"]"#;
+    let them = r#".push.foreign_authors = ["them@example.com", "bot@example.com"]"#;
     let diverged = [".push.ahead = 1", ".push.behind = 1", ".push.diverged = true"];
     let st = e![&diverged[..], them];
     assert_eq!(keys(&st), "foreign-authors");
     assert_eq!(step("foreign-authors", "who", &st), "you");
     assert_eq!(
         step("foreign-authors", "say", &st),
-        "the push rewrites commits on feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' feat --not origin/main b0b0b0b), then force it"
-    );
-    // the same range the fact is: past the default branch too
-    assert_eq!(
-        step("foreign-authors", "say", &e![&diverged[..], them, ".sync.target = \"p\""]),
-        "the push rewrites commits on feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' feat --not origin/p b0b0b0b origin/main), then force it"
+        "the push removes commits from origin/feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' feat..origin/feat), then force it"
     );
     assert_eq!(step("foreign-authors", "cmd", &st), "sd act push --force");
     // a drop of commits reset away here is a rewrite too
     assert_eq!(keys(&e![".push.behind = 1", ".push.remote_made = true", them]), "foreign-authors");
-    // a fast-forward on top of their commits rewrites nothing
-    assert_eq!(keys(&e![".push.ahead = 1", them]), "push");
     // attached: --force would push past the sd-lock too
     assert_eq!(keys(&e![&diverged[..], them, ".session.locked = true"]), "attached");
     // nothing to push: nothing held
@@ -1010,7 +1003,9 @@ fn rewriting_commits_someone_else_made_holds_the_push_chrismo_looks_then_forces_
     assert_eq!(keys(&e![&diverged[..], them, &red(true)]), "verify-red");
     let held = r#".push.held = {"sha": "h2", "paths": [".rwx/tests.yml"]}"#;
     assert_eq!(keys(&e![&diverged[..], them, held]), "foreign-authors ci-config");
-    assert_eq!(keys(&e![&diverged[..], ".sync.foreign_authors = []"]), "push");
+    // amended or dropped, only ours
+    assert_eq!(keys(&e![&diverged[..], ".push.foreign_authors = []"]), "push");
+    assert_eq!(keys(&e![".push.behind = 1", ".push.remote_made = true", ".push.foreign_authors = []"]), "push");
 }
 
 // @test "a restack undone from outside sheepdog: redo it by hand, then sd act push (#47)"
