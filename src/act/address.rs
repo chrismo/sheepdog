@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn yours_leaves_out_the_push_reason_only_when_next_offers_the_push() {
         let rec = |held: bool| {
-            let mut s = json!({"branch": "feat", "pr": {"state": "OPEN"}, "sync": {"ahead": 1}, "push": {"remote_sha": "abc", "ahead": 1}});
+            let mut s = json!({"branch": "feat", "pr": {"state": "OPEN"}, "sync": {"ahead": 1}, "push": {"remote_sha": "abc", "ahead": 1, "foreign_authors": []}});
             if held {
                 s["push"]["held"] = json!({"paths": [".rwx/tests.yml"]});
             }

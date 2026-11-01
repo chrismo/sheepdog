@@ -2276,15 +2276,20 @@ fn push_foreign_authors_counts_commits_squashed_together_on_the_target_356() {
     assert_eq!(r.field_c(".push.foreign_authors"), r#"["them@example.com"]"#);
 }
 
-// Without user.email nothing is known to be ours: unknown, not everyone (#356).
+// Without user.email nothing is known to be ours: unknown, not everyone
+// (#356). A push that removes nothing removes nothing of anyone's, so that
+// one is known (#395): sd act push holds only on unknown.
 #[test]
-fn push_foreign_authors_is_null_without_user_email_356() {
+fn push_foreign_authors_is_null_without_user_email_when_the_push_removes_commits_356_395() {
     let sd = sd();
     sd.feat_pushed();
+    sd.pushed_then_rewritten(1);
     sd.git(&["config", "user.email", ""]);
     let r = sd.state(&[]);
     assert_eq!(r.field(".push | has(\"foreign_authors\")"), "true");
     assert_eq!(r.field(".push.foreign_authors"), "null");
+    sd.git(&["reset", "-q", "--hard", "origin/feat"]);
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), "[]", "nothing to push removes nothing");
 }
 
 // ── freshness: GitHub's SHAs vs the local remote-tracking refs ──────────────

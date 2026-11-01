@@ -1152,19 +1152,19 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
 /// branch.<b>.sd-authors-seen (sd act push --force records them) was looked
 /// at, and one whose patch-id is on <target> (squash-merged alone) loses
 /// nothing: neither counts. A patch-id outlives a restack. Both [] when the
-/// push removes nothing (<removed> None), null for a followed PR
-/// (#250), without user.email, or when git fails. <viewer> is gh's login,
-/// empty when gh failed: a noreply author is then someone else's, so the
-/// push holds. Not null: unknown doesn't hold it, and a teammate's noreply
-/// address would go through with ours. O3 asks the same of the commits a
-/// restack would rewrite: <removed> is HEAD, past the base and the target.
+/// push removes nothing (<removed> None), whoever we are; else null for a
+/// followed PR (#250), without user.email, or when git fails, which holds
+/// the push or the restack (#395). <viewer> is gh's login, empty when gh
+/// failed: a noreply author is then someone else's, so the push holds,
+/// naming who. O3 asks the same of the commits a restack would rewrite:
+/// <removed> is HEAD, past the base and the target.
 fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
     let unknown = (Value::Null, Value::Null);
+    let Some(removed) = removed else { return (json!([]), json!([])) };
     if reviewer {
         return unknown;
     }
     let Some(me) = git_out(dir, &["config", "user.email"]).filter(|m| !m.is_empty()) else { return unknown };
-    let Some(removed) = removed else { return (json!([]), json!([])) };
     let mut range = vec![removed, "--not"];
     range.extend(not.iter().copied().filter(|r| !r.is_empty()));
     let range = |args: &[&'static str]| -> Vec<&str> { args.iter().copied().chain(range.iter().copied()).collect() };

@@ -184,17 +184,59 @@ fn foreign_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
 }
 
 /// Commits someone else made that the push would remove from the remote,
-/// when they're all that holds it (#356): chrismo looks, then forces it.
-/// Not while attached: --force would push past the sd-lock too.
+/// or ones it can't tell who made (#395), when that's all that holds it
+/// (#356): chrismo looks, then forces it. Not while attached: --force would
+/// push past the sd-lock too.
 fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
-    let holds = d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: false, ..d.clone() });
-    if !(d.foreign_authors && holds && !yes(d.locked)) {
+    let holds = d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: Some(false), ..d.clone() });
+    if !holds || yes(d.locked) {
         return None;
     }
-    let (branch, by) = (val::t(s, "branch"), sj(at(s, "push.foreign_authors"), ", "));
-    step("foreign-authors", "you",
-        format!("the push removes commits from {remote}/{branch} by {by}: look (git log --format='%h %ae %ce %s' {branch}..{remote}/{branch}), then force it"),
-        cmd("sd act push --force"),
+    let branch = val::t(s, "branch");
+    let look = format!("git log --format='%h %ae %ce %s' {branch}..{remote}/{branch}");
+    let say = if yes(d.foreign_authors) {
+        format!("the push removes commits from {remote}/{branch} by {}: look ({look}), then force it", sj(at(s, "push.foreign_authors"), ", "))
+    } else {
+        format!("can't tell who made the commits the push removes from {remote}/{branch} (no user.email, or git failed): set user.email, or look ({look}), then force it")
+    };
+    step("foreign-authors", "you", say, cmd("sd act push --force"))
+}
+
+/// How to redo by hand a restack that was undone, as one command: NEXT's
+/// restack-undone step, and sd act restack's refusal (#395). None with no
+/// base to redo it from.
+pub(crate) fn redo_restack(d: &Derived, s: &Value, remote: &str) -> Option<String> {
+    if d.no_base {
+        return None;
+    }
+    let (target, ob) = (val::t(s, "sync.target"), val::t(s, "sync.old_base"));
+    Some(if d.old_base_null {
+        format!("git rebase {remote}/{target} && sd act push")
+    } else {
+        format!("git rebase --onto {remote}/{target} {} && sd act push", &ob[..ob.len().min(12)])
+    })
+}
+
+/// The restack was undone (#47): chrismo redoes it by hand, before any push.
+fn undone_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
+    let t = |p: &str| val::t(s, p);
+    let (target, branch) = (t("sync.target"), t("branch"));
+    let redo = redo_restack(d, s, remote);
+    let pin = if redo.is_none() {
+        format!(
+            "; no base to redo it from on {target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {} at>), then sd act restack",
+            t("parent.name")
+        )
+    } else {
+        String::new()
+    };
+    let copies = if val::n(s, "sync.undone") == 1.0 { "is a copy" } else { "are copies" };
+    step("restack-undone", "you",
+        format!(
+            "the restack was undone ({} of {target}'s commits {copies} on {branch}; a plain git push after a restack?): redo it, and don't sd act push before that, which would publish the copies{pin}",
+            t("sync.undone")
+        ),
+        redo,
     )
 }
 
@@ -338,12 +380,6 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let nul = |p: &str| g(p).is_null();
     let is = |p: &str, lit: &str| g(p).as_str() == Some(lit);
     let t = |p: &str| val::t(s, p);
-    let restack = if d.old_base_null {
-        format!("git rebase {remote}/{}", t("sync.target"))
-    } else {
-        let ob = t("sync.old_base");
-        format!("git rebase --onto {remote}/{} {}", t("sync.target"), &ob[..ob.len().min(12)])
-    };
     let asking = d.asking.as_str();
     let asked = if asking.is_empty() {
         String::new()
@@ -435,25 +471,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if open && d.undone {
-                let pin = if d.no_base {
-                    format!(
-                        "; no base to redo it from on {target}: pin one by hand (git update-ref refs/sheepdog/{branch}/base <the commit {branch} left {parent} at>), then sd act restack"
-                    )
-                } else {
-                    String::new()
-                };
-                step("restack-undone", "you",
-                    format!(
-                        "the restack was undone ({} of {target}'s commits {} on {branch}; a plain git push after a restack?): redo it, and don't sd act push before that, which would publish the copies{pin}",
-                        t("sync.undone"),
-                        one("sync.undone", "is a copy", "are copies")
-                    ),
-                    if d.no_base { None } else { cmd(format!("{restack} && sd act push")) },
-                )
-            } else {
-                None
-            },
+            if open && d.undone { undone_step(d, s, remote) } else { None },
             if open && d.parent_unpushed {
                 step("ship-parent", "run",
                     format!("ship the parent first: {parent} isn't on {remote} yet"),

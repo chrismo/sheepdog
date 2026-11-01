@@ -14,8 +14,8 @@ const READY: &str = r#"{"branch": "feat", "head": "h1",
            "merge_state": "CLEAN", "review_decision": null, "review_requests": []},
     "parent": {"name": "main", "source": "pr", "merged": false, "pr": null},
     "sync": {"target": "main", "default": "main", "ahead": 1, "behind": 0, "up_to_date": true, "old_base": "b0b0b0b0b0b0b0b0", "conflict": false,
-             "replays_parent": []},
-    "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true, "dirty": false},
+             "replays_parent": [], "foreign_authors": []},
+    "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true, "dirty": false, "foreign_authors": []},
     "fresh": true, "stale": [],
     "ci": {"sha": "h1", "for_head": true, "verdict": "green", "failing": [], "pending": []},
     "review": {"local": {"sha": "h1", "status": "covered"}, "bot": {"sha": null, "status": "none"},
@@ -30,7 +30,7 @@ const STACKED: &[&str] = &[r#".parent.name = "base""#, r#".sync.target = "base""
 const FRESH: &[&str] = &[
     ".pr = null",
     ".sync.ahead = 0",
-    r#".push = {"remote_sha": null, "ahead": 0, "behind": 0, "diverged": false, "remote_ours": null}"#,
+    r#".push = {"remote_sha": null, "ahead": 0, "behind": 0, "diverged": false, "remote_ours": null, "foreign_authors": []}"#,
 ];
 
 const UNREVIEWED: &str = r#".review.local = {sha: null, status: "none"}"#;
@@ -198,7 +198,7 @@ fn the_parent_merged_but_the_pr_still_targets_it_retarget_points_it_at_the_defau
 // @test "a parent that exists only here: ship it first; no push or open-pr until then (#105)"
 #[test]
 fn a_parent_that_exists_only_here_ship_it_first_no_push_or_open_pr_until_then_105() {
-    let st = e![".pr = null", r#".push = {"remote_sha": null, "ahead": 2, "behind": 0, "diverged": false, "remote_ours": null}"#, r#".parent = {"name": "p", "source": "config", "merged": false, "local": true, "on_remote": false, "unpushed": true, "pr": null}"#, r#".sync = {"target": "p", "default": "main", "behind": null, "up_to_date": null, "conflict": null, "old_base": null}"#];
+    let st = e![".pr = null", r#".push = {"remote_sha": null, "ahead": 2, "behind": 0, "diverged": false, "remote_ours": null, "foreign_authors": []}"#, r#".parent = {"name": "p", "source": "config", "merged": false, "local": true, "on_remote": false, "unpushed": true, "pr": null}"#, r#".sync = {"target": "p", "default": "main", "behind": null, "up_to_date": null, "conflict": null, "old_base": null, "foreign_authors": []}"#];
     assert_eq!(keys(&e![&st]), "ship-parent");
     assert_eq!(step("ship-parent", "who", &e![&st]), "run");
     assert_eq!(step("ship-parent", "say", &e![&st]), "ship the parent first: p isn't on origin yet");
@@ -861,11 +861,11 @@ fn past_settings_branchbudget_one_you_step_in_place_of_the_agent_steps_run_steps
 // @test "past settings.branchBudget: open-pr is chrismo's too, since ship may describe (#121)"
 #[test]
 fn past_settings_branchbudget_open_pr_is_chrismo_s_too_since_ship_may_describe_121() {
-    let nopr = e![".pr = null", r#".push = {"remote_sha": null, "ahead": 2, "behind": 0, "diverged": false, "remote_ours": null}"#];
+    let nopr = e![".pr = null", r#".push = {"remote_sha": null, "ahead": 2, "behind": 0, "diverged": false, "remote_ours": null, "foreign_authors": []}"#];
     assert_eq!(keys(&e![&nopr]), "push open-pr");
     assert_eq!(keys(&e![r#".spend = {"usd": 30, "budget": 25}"#, &nopr]), "push budget");
     // the parent's ship spends on the parent, against its own budget
-    assert_eq!(keys(&e![r#".spend = {"usd": 30, "budget": 25}"#, &nopr, r#".parent = {"name": "p", "source": "config", "merged": false, "local": true, "on_remote": false, "unpushed": true, "pr": null}"#, r#".sync = {"target": "p", "default": "main", "behind": null, "up_to_date": null, "conflict": null, "old_base": null}"#]), "ship-parent");
+    assert_eq!(keys(&e![r#".spend = {"usd": 30, "budget": 25}"#, &nopr, r#".parent = {"name": "p", "source": "config", "merged": false, "local": true, "on_remote": false, "unpushed": true, "pr": null}"#, r#".sync = {"target": "p", "default": "main", "behind": null, "up_to_date": null, "conflict": null, "old_base": null, "foreign_authors": []}"#]), "ship-parent");
 }
 
 /// sd state's verify field: a failed verify recorded against a commit (#325).
@@ -885,7 +885,7 @@ fn verify_red_at_head_chrismo_s_step_in_place_of_push_and_ship_325() {
     );
     assert_eq!(step("verify-red", "cmd", &e![&red(true)]), "sd act verify");
     // no PR yet: no push, no ship
-    assert_eq!(keys(&e![".pr = null", r#".push = {"remote_sha": null, "ahead": 1, "behind": 0}"#, &red(true)]), "verify-red");
+    assert_eq!(keys(&e![".pr = null", r#".push = {"remote_sha": null, "ahead": 1, "behind": 0, "foreign_authors": []}"#, &red(true)]), "verify-red");
     // a pushed draft isn't marked ready
     let draft = &e![".pr.draft = true", r#".ci.required = []"#];
     assert_eq!(keys(&e![draft, &red(false)]), "draft");
@@ -989,7 +989,7 @@ fn an_agent_s_commit_changed_ci_config_chrismo_reviews_then_pushes_no_push_step_
     assert_eq!(step("ci-config", "say", &e![".push.ahead = 1", held]), "the agent changed CI config (.github/workflows/test.yml, .rwx/tests.yml): review, then sd act push");
     assert_eq!(step("ci-config", "cmd", &e![".push.ahead = 1", held]), "sd act push");
     assert_eq!(keys(&e![".push.ahead = 1", r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#, held]), "ci-config");
-    assert_eq!(keys(&e![".pr = null", r#".push = {"remote_sha": null, "ahead": 1, "behind": 0}"#, held]), "ci-config"); // ship would refuse
+    assert_eq!(keys(&e![".pr = null", r#".push = {"remote_sha": null, "ahead": 1, "behind": 0, "foreign_authors": []}"#, held]), "ci-config"); // ship would refuse
     assert_eq!(keys(&e![".push.ahead = 1", ".push.held = null"]), "push");
 }
 
@@ -1043,6 +1043,24 @@ fn rewriting_commits_someone_else_made_holds_the_push_chrismo_looks_then_forces_
     // amended or dropped, only ours
     assert_eq!(keys(&e![&diverged[..], ".push.foreign_authors = []"]), "push");
     assert_eq!(keys(&e![".push.behind = 1", ".push.remote_made = true", ".push.foreign_authors = []"]), "push");
+}
+
+// sd state couldn't tell who made them (no user.email, or git failed):
+// unknown is not false, so the push and the restack are held the same (#395).
+#[test]
+fn commits_whose_authors_are_unknown_hold_the_push_and_the_restack_chrismo_sets_user_email_or_forces_them_395() {
+    let diverged = e![".push.ahead = 1", ".push.behind = 1", ".push.diverged = true", ".push.foreign_authors = null"];
+    assert_eq!(keys(&diverged), "foreign-authors");
+    assert_eq!(step("foreign-authors", "who", &diverged), "you");
+    assert_eq!(
+        step("foreign-authors", "say", &diverged),
+        "can't tell who made the commits the push removes from origin/feat (no user.email, or git failed): set user.email, or look (git log --format='%h %ae %ce %s' feat..origin/feat), then force it"
+    );
+    assert_eq!(step("foreign-authors", "cmd", &diverged), "sd act push --force");
+    let restack = e![STACKED, ".sync.foreign_authors = null"];
+    assert_eq!(step("behind", "who", &restack), "you");
+    assert_eq!(step("behind", "cmd", &restack), "sd act restack --force");
+    assert!(step("behind", "say", &restack).contains("sd act restack refuses: can't tell who made the commits restacking feat would rewrite"));
 }
 
 // @test "a restack undone from outside sheepdog: redo it by hand, then sd act push (#47)"

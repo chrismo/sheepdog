@@ -77,6 +77,20 @@ fn worded(name: &str, s: &Value, remote: &str) -> String {
             "restacking {b} would drop the {} agent's question and your stored answer: let it go on first, or sd act ack --question",
             t(s, "question.step")
         ),
+        rs::UNDONE => {
+            let copies = if crate::val::n(s, "sync.undone") == 1.0 { "is a copy" } else { "are copies" };
+            let redo = crate::next::redo_restack(&Derived::new(s), s, remote).map_or(String::new(), |c| format!(": {c}"));
+            format!(
+                "{b}'s restack was undone: {} of {}'s commits {copies} on it (a plain git push after a restack?): \
+                 redo it by hand, as sd state's NEXT says{redo}",
+                t(s, "sync.undone"),
+                t(s, "sync.target")
+            )
+        }
+        rs::FOREIGN_UNKNOWN => format!(
+            "can't tell who made the commits restacking {b} would rewrite (sd state --json: sync.foreign_authors is null: \
+             no user.email, or git failed): set user.email, or look at them first (git log --format='%h %ae %ce %s' {base}..{b})"
+        ),
         rs::FOREIGN => format!(
             "restacking {b} would rewrite commits someone else made, by {}: look at them first (git log --format='%h %ae %ce %s' {base}..{b})",
             sj(at(s, "sync.foreign_authors"), ", ")
@@ -240,7 +254,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     }
     must(pins::set(".", b, Pin::Base, &new_base));
     // only --force gets here past them: chrismo has looked (#356)
-    if Derived::new(&s).restack_foreign {
+    if yes(Derived::new(&s).restack_foreign) {
         seen_authors(b, &s, "/sync/foreign_commits");
     }
     let mut how = "sd act push";
@@ -360,7 +374,7 @@ mod tests {
             "branch": "child", "head": "ccccccccccccccccc", "errors": [],
             "parent": {"name": "A", "merged": true, "pr": {"number": 1, "state": "MERGED", "commits": ["a1a1a1a1a1a1a1a1", "a2a2a2a2a2a2a2a2"]}},
             "sync": {"target": "main", "default": "main", "up_to_date": false, "old_base": "bbbbbbbbbbbbbbbbb", "by_tree": false, "conflict": false,
-                     "replays_parent": []},
+                     "replays_parent": [], "foreign_authors": []},
             "pr": {"number": 2, "state": "OPEN", "base": "A"},
             "session": {"locked": false},
         })
@@ -487,6 +501,22 @@ mod tests {
         let s = with(with(behind(), "question", q), "threads", json!({"owed_bot": 1}));
         assert_eq!(soft(gate(&s, "origin", false)), "restacking child would drop the address agent's question and your stored answer: let it go on first, or sd act ack --question");
         assert_eq!(soft(gate(&with(behind(), "pr.state", json!("MERGED")), "origin", false)), "PR #2 is merged");
+    }
+
+    #[test]
+    fn restack_gate_names_an_undone_restack_with_next_s_redo_and_unknown_authors_395() {
+        let s = with(behind(), "sync.undone", json!(2));
+        assert_eq!(
+            soft(gate(&s, "origin", false)),
+            "child's restack was undone: 2 of main's commits are copies on it (a plain git push after a restack?): \
+             redo it by hand, as sd state's NEXT says: git rebase --onto origin/main bbbbbbbbbbbb && sd act push"
+        );
+        let s = with(behind(), "sync.foreign_authors", Value::Null);
+        assert_eq!(
+            soft(gate(&s, "origin", false)),
+            "can't tell who made the commits restacking child would rewrite (sd state --json: sync.foreign_authors is null: \
+             no user.email, or git failed): set user.email, or look at them first (git log --format='%h %ae %ce %s' bbbbbbbbbbbb..child)"
+        );
     }
 
     #[test]

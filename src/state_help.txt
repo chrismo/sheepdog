@@ -45,8 +45,9 @@ Reports, for <branch> (default: the current one):
             Without the viewer (gh failed), a noreply address counts as
             someone else's: the push holds rather than guess. sd act push
             refuses them unless --force (#356).
-            [] when there are none, null when user.email is unset, git
-            can't list them, or the branch is a followed PR
+            [] when there are none or the push removes nothing; else null
+            when user.email is unset, git can't list them, or the branch
+            is a followed PR, which sd act push refuses too (#395)
             push.foreign_commits: those commits' ids, each its patch-id (or
             its SHA with no diff); sd act push --force adds them to
             branch.<b>.sd-authors-seen, the looked-at ones, and a patch-id

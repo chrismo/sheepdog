@@ -2,7 +2,7 @@
 
 use super::{die, enforce, gates, plural, state_json, Go};
 use crate::git::{self, commits_not_ours, count, git, git_ok, git_out, made_here, remote_default, rev, strip_nl, worktree_for};
-use crate::next::Derived;
+use crate::next::{yes, Derived};
 
 pub fn push(b: &str, remote: &str, force: bool) {
     if !git::branch_exists(b) {
@@ -23,7 +23,7 @@ pub fn push(b: &str, remote: &str, force: bool) {
     if let Some(go) = enforce(gates::push(&d), force, &format!("pushing {b}")) {
         publish(go, b, remote);
         // judged before push_branch's fetch: still what --force was told of
-        if d.foreign_authors {
+        if yes(d.foreign_authors) {
             seen_authors(b, &s, "/push/foreign_commits");
         }
     }
