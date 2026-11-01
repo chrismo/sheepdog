@@ -14,6 +14,7 @@ use crate::json;
 use crate::proc;
 use crate::act::bookkeeping;
 use crate::{failed, gh, harness, limit, pins, running, time};
+use crate::next::steps::{self, Notify};
 use crate::val::{at, on, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -23,20 +24,6 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-/// The NEXT steps that are ❌: chrismo's to deal with.
-const RED: [&str; 22] = [
-    "ci-red", "ci-blocked", "conflict", "human", "foreign", "foreign-authors", "parent-closed", "review-decide",
-    "review-held", "question", "restack-undone", "bot-silent", "budget", "failed", "ci-config", "nothing", "default", "dirty", "read",
-    "submit", "yours", "verify-red",
-];
-
-/// chrismo's steps (who "you") that don't notify when first in NEXT (#326).
-/// Notify when the branch is stuck until chrismo acts; stay quiet for end
-/// states (closed, ready: their glyph shows them) and when sd isn't sure yet
-/// (errors, stale, gh-wait). So bot or answer, handed to chrismo when
-/// address's gate refuses, is never a silent stall.
-const QUIET_YOURS: [&str; 5] = ["closed", "ready", "errors", "stale", "gh-wait"];
 
 /// What sd state's next steps mean to the pass. carry: sd state is unsure,
 /// so what was notified, what failed and the stale clock carry over. hold:
@@ -53,24 +40,30 @@ struct Class {
     note: Option<&'static str>,
 }
 
-/// The steps a pass runs, by NEXT key, with the step each is: the run steps
-/// (#267), and the agent steps (#269), whose step is the running marker's.
-/// Not stale (the pass has just fetched), merged (forget --remove deletes the
-/// worktree), draft, ci-rerun, or ship-parent and open-pr, which may spend
-/// tokens describing.
-const DISPATCH: [(&str, &str); 11] = [
-    ("fetch", "fetch"),
-    ("behind", "restack"),
-    ("push", "push"),
-    ("retarget", "retarget"),
-    ("bot-trigger", "trigger"),
-    ("implement", "implement"),
-    ("review-fix", "implement"),
-    ("review", "review"),
-    ("bot", "address"),
-    ("ci-red", "ci-fix"),
-    ("conflict", "resolve"),
-];
+/// A key not in STEPS notifies when it's first and chrismo's.
+fn notified(key: &str) -> Notify {
+    steps::find(key).map_or(Notify::Turn, |d| d.notify)
+}
+
+fn stuck(key: &str) -> bool {
+    notified(key) == Notify::Stuck
+}
+
+/// Whether <key> stays quiet first in NEXT though chrismo's: end states,
+/// whose glyph shows them, and sd state unsure (#326).
+fn quiet(key: &str) -> bool {
+    matches!(notified(key), Notify::Acts | Notify::Unsure | Notify::Never)
+}
+
+fn unsure(key: &str) -> bool {
+    notified(key) == Notify::Unsure
+}
+
+/// The run steps (#267), and the agent steps (#269), whose step is the
+/// running marker's.
+fn dispatch_step(key: &str) -> Option<&'static str> {
+    steps::find(key)?.verb
+}
 
 const AGENT_STEPS: [&str; 5] = ["implement", "review", "address", "ci-fix", "resolve"];
 
@@ -161,19 +154,20 @@ fn classify(s: &Value) -> Class {
     let k: Vec<&str> = next.iter().map(|x| at(x, "key").as_str().unwrap_or("")).collect();
     let notifies = |i: usize, x: &Value| {
         let key = at(x, "key").as_str().unwrap_or("");
-        RED.contains(&key) || (i == 0 && at(x, "who") == "you" && !QUIET_YOURS.contains(&key))
+        stuck(key) || (i == 0 && at(x, "who") == "you" && !quiet(key))
     };
     let red: Vec<Value> = next.iter().enumerate().filter(|(i, x)| notifies(*i, x)).map(|(_, x)| reason(x)).collect();
     let waiting = !next.iter().any(|x| at(x, "who").as_str().is_some_and(|w| w != "wait"));
-    let unsure = k.contains(&"errors") || k.contains(&"stale") || k.contains(&"gh-wait");
-    let (glyph, reasons, note) = match k.as_slice() {
-        [] => ("⚠️", vec![], Some("sd state gave no next steps")),
-        ["running"] => ("🤖", vec![], None),
-        ["merged"] => ("🏁", vec![reason(&next[0])], None),
-        ["closed"] => ("🚫", vec![], None),
+    let unsure = k.iter().any(|k| unsure(k));
+    let alone = match k.as_slice() {
+        [one] => steps::find(one).and_then(|d| Some((d.glyph?, d.notify == Notify::Acts))),
+        _ => None,
+    };
+    let (glyph, reasons, note) = match (k.as_slice(), alone) {
+        ([], _) => ("⚠️", vec![], Some("sd state gave no next steps")),
+        (_, Some((g, acts))) => (g, if acts { vec![reason(&next[0])] } else { vec![] }, None),
         _ if !red.is_empty() => ("❌", red, None),
         _ if unsure => ("⚠️", vec![], None),
-        ["ready"] => ("✅", vec![reason(&next[0])], None),
         _ if waiting => ("⏳", vec![], None),
         _ => ("🔧", vec![], None),
     };
@@ -674,7 +668,7 @@ impl Watch {
     fn dispatch(&self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
         let first = at(s, "next").get(0)?;
         let key = at(first, "key").as_str()?;
-        let step = DISPATCH.iter().find(|(k, _)| *k == key)?.1;
+        let step = dispatch_step(key)?;
         let agent = AGENT_STEPS.contains(&step);
         if at(first, "who").as_str() != Some(if agent { "agent" } else { "run" }) {
             return None;
@@ -1188,6 +1182,45 @@ mod tests {
         classify(&json!({"next": steps}))
     }
 
+    const KEYS: [&str; 54] = [
+        "answer", "attached", "author-wait", "behind", "blocked", "bot", "bot-silent", "bot-trigger", "bot-wait", "budget",
+        "ci-blocked", "ci-config", "ci-red", "ci-rerun", "ci-wait", "closed", "conflict", "default", "dirty", "draft", "errors",
+        "failed", "fetch", "foreign", "foreign-authors", "gh-wait", "human", "implement", "merge-wait", "merged", "nothing",
+        "nothing-dirty", "open-pr", "parent-closed", "parent-wait", "push", "question", "read", "ready", "reset-dirty",
+        "restack-undone", "retarget", "review", "review-decide", "review-fix", "review-held", "review-wait", "running",
+        "ship-parent", "stale", "submit", "take", "verify-red", "yours",
+    ];
+
+    /// The policy as it stood before the STEPS table (#335): moving it
+    /// there changes none of it.
+    #[test]
+    fn notify_and_dispatch_by_key_are_as_before_the_steps_table_335() {
+        let stuck_keys = [
+            "ci-red", "ci-blocked", "conflict", "human", "foreign", "foreign-authors", "parent-closed", "review-decide",
+            "review-held", "question", "restack-undone", "bot-silent", "budget", "failed", "ci-config", "nothing", "default",
+            "dirty", "read", "submit", "yours", "verify-red",
+        ];
+        let runs = [
+            ("fetch", "fetch"), ("behind", "restack"), ("push", "push"), ("retarget", "retarget"), ("bot-trigger", "trigger"),
+            ("implement", "implement"), ("review-fix", "implement"), ("review", "review"), ("bot", "address"),
+            ("ci-red", "ci-fix"), ("conflict", "resolve"),
+        ];
+        for k in KEYS {
+            assert_eq!(stuck(k), stuck_keys.contains(&k), "stuck {k}");
+            assert_eq!(unsure(k), ["errors", "stale", "gh-wait"].contains(&k), "unsure {k}");
+            // merged is quiet now too, an end state: NEXT gives it only to run
+            // (src/next.rs's who test), so first-and-chrismo's never held it
+            if k != "merged" {
+                assert_eq!(quiet(k), ["closed", "ready", "errors", "stale", "gh-wait"].contains(&k), "quiet {k}");
+            }
+            assert_eq!(dispatch_step(k), runs.iter().find(|(r, _)| *r == k).map(|(_, s)| *s), "dispatch {k}");
+        }
+        assert!(stuck_keys.iter().chain(runs.iter().map(|(k, _)| k)).all(|k| KEYS.contains(k)));
+        let mut table: Vec<&str> = steps::STEPS.iter().map(|d| d.key).collect();
+        table.sort_unstable();
+        assert_eq!(table, KEYS, "the table names every key, and only those");
+    }
+
     fn glyph(steps: &[Value]) -> &'static str {
         of(steps).glyph
     }
@@ -1229,11 +1262,11 @@ mod tests {
         assert_eq!(c.reasons, vec![json!({"key": "human", "msg": "say human"}), json!({"key": "ci-red", "msg": "say ci-red"})]);
         // errors alongside: unsure, so it carries, but still ❌.
         assert!(c.carry);
-        for k in RED {
+        for k in KEYS.into_iter().filter(|k| stuck(k)) {
             assert_eq!(glyph(&[step(k, "you")]), "❌", "{k}");
         }
-        assert!(RED.contains(&"failed"));
-        assert!(RED.contains(&"verify-red"), "a failed verify is chrismo's until #325's part 2 hands it to the agent");
+        assert!(stuck("failed"));
+        assert!(stuck("verify-red"), "a failed verify is chrismo's until #325's part 2 hands it to the agent");
     }
 
     #[test]

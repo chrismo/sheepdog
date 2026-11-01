@@ -88,12 +88,14 @@
 // equality holds only between two present values.
 
 mod derived;
+pub mod steps;
 pub use derived::{round_key, Derived};
 #[cfg(test)]
 pub(crate) use derived::arb as derived_arb;
 pub(crate) use derived::{no, yes};
 
 use crate::act::Gate;
+use steps::{def, StepDef};
 use crate::val::{self, at, sj, text};
 use serde_json::{json, Value};
 
@@ -108,8 +110,9 @@ fn plural(k: &Value, w: &str) -> String {
     format!("{} {w}{}", text(k), if one { "" } else { "s" })
 }
 
-fn step(key: &str, who: &str, say: impl Into<String>, cmd: Option<String>) -> Option<Value> {
-    Some(json!({"key": key, "who": who, "say": say.into(), "cmd": cmd}))
+/// A step of <def>'s key; def! checks the key against STEPS (#335).
+fn step(def: &StepDef, who: &str, say: impl Into<String>, cmd: Option<String>) -> Option<Value> {
+    Some(json!({"key": def.key, "who": who, "say": say.into(), "cmd": cmd}))
 }
 
 fn spends(hold: &Option<Value>, s: Option<Value>) -> Option<Value> {
@@ -120,8 +123,8 @@ fn spends(hold: &Option<Value>, s: Option<Value>) -> Option<Value> {
     }
 }
 
-fn agent(hold: &Option<Value>, key: &str, say: impl Into<String>, cmd: &str) -> Option<Value> {
-    spends(hold, step(key, "agent", say, Some(cmd.into())))
+fn agent(hold: &Option<Value>, def: &StepDef, say: impl Into<String>, cmd: &str) -> Option<Value> {
+    spends(hold, step(def, "agent", say, Some(cmd.into())))
 }
 
 pub const FAIL_LIMIT: f64 = 3.0;
@@ -177,7 +180,7 @@ fn foreign_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
         return None;
     }
     let branch = val::t(s, "branch");
-    step("foreign", "you",
+    step(def!("foreign"), "you",
         format!("{remote}/{branch} has {} this copy has never had", plural(at(s, "push.theirs"), "commit")),
         cmd(format!("git log HEAD..{remote}/{branch}")),
     )
@@ -199,7 +202,7 @@ fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     } else {
         format!("can't tell who made the commits the push removes from {remote}/{branch} (no user.email, or git failed): set user.email, or look ({look}), then force it")
     };
-    step("foreign-authors", "you", say, cmd("sd act push --force"))
+    step(def!("foreign-authors"), "you", say, cmd("sd act push --force"))
 }
 
 /// How to redo by hand a restack that was undone, as one command: NEXT's
@@ -231,7 +234,7 @@ fn undone_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
         String::new()
     };
     let copies = if val::n(s, "sync.undone") == 1.0 { "is a copy" } else { "are copies" };
-    step("restack-undone", "you",
+    step(def!("restack-undone"), "you",
         format!(
             "the restack was undone ({} of {target}'s commits {copies} on {branch}; a plain git push after a restack?): redo it, and don't sd act push before that, which would publish the copies{pin}",
             t("sync.undone")
@@ -242,7 +245,7 @@ fn undone_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
 
 /// A restack its gate <g> refuses, as chrismo's <key> step: <say>, then
 /// sd act <verb>'s reasons. Hard says how by hand; Soft is forced past.
-fn refused_restack(key: &str, say: String, verb: &str, g: Gate, s: &Value, remote: &str) -> Option<Value> {
+fn refused_restack(key: &StepDef, say: String, verb: &str, g: Gate, s: &Value, remote: &str) -> Option<Value> {
     let (why, then) = match crate::act::restack_said(g, s, remote) {
         Gate::Soft(why) => (why.join("; "), format!("{verb} --force")),
         Gate::Hard(why) | Gate::Done(why) => (why, verb.to_string()),
@@ -259,7 +262,7 @@ fn conflict_step(d: &Derived, s: &Value, remote: &str, hold: &Option<Value>) -> 
     }
     let target = val::t(s, "sync.target");
     if yes(d.by_tree) {
-        return step("conflict", "you",
+        return step(def!("conflict"), "you",
             format!("restack onto {target} by tree conflicts, which --resolve can't do: resolve it by hand (sd act restack says how)"),
             cmd("sd act restack"),
         );
@@ -269,8 +272,8 @@ fn conflict_step(d: &Derived, s: &Value, remote: &str, hold: &Option<Value>) -> 
     }
     let say = format!("restack onto {target} conflicts");
     match crate::act::gates::restack_resolve(d) {
-        Gate::Go | Gate::Warn(_) => agent(hold, "conflict", format!("{say}: resolve it"), "sd act restack --resolve"),
-        g => refused_restack("conflict", say, "sd act restack --resolve", g, s, remote),
+        Gate::Go | Gate::Warn(_) => agent(hold, def!("conflict"), format!("{say}: resolve it"), "sd act restack --resolve"),
+        g => refused_restack(def!("conflict"), say, "sd act restack --resolve", g, s, remote),
     }
 }
 
@@ -281,7 +284,7 @@ fn behind_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     let target = t("sync.target");
     let say = if d.open && !d.undone && !d.parent_closed && d.chase_behind {
         if d.old_base_null {
-            return step("behind", "you",
+            return step(def!("behind"), "you",
                 format!("restack onto {target} ({} behind): no base to restack from; see sd state's errors", t("sync.behind")),
                 cmd("sd state --json"),
             );
@@ -298,12 +301,12 @@ fn behind_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
         return None;
     };
     match crate::act::gates::restack(d) {
-        Gate::Go | Gate::Warn(_) => step("behind", "run", say, cmd("sd act restack")),
-        Gate::Done(_) => step("behind", "wait",
+        Gate::Go | Gate::Warn(_) => step(def!("behind"), "run", say, cmd("sd act restack")),
+        Gate::Done(_) => step(def!("behind"), "wait",
             format!("GitHub says the PR is behind {}, but {remote}/{target} has nothing {} lacks: wait for GitHub, or fetch", t("sync.default"), t("branch")),
             cmd(format!("git fetch --prune {remote}")),
         ),
-        g => refused_restack("behind", say, "sd act restack", g, s, remote),
+        g => refused_restack(def!("behind"), say, "sd act restack", g, s, remote),
     }
 }
 
@@ -346,9 +349,9 @@ fn unread_say(unknown: &Value) -> String {
 fn hold_step(d: &Derived, s: &Value) -> Option<Value> {
     let t = |p: &str| val::t(s, p);
     if let Some(say) = budget_say(d, s) {
-        step("budget", "you", say, cmd("sd act attach"))
+        step(def!("budget"), "you", say, cmd("sd act attach"))
     } else if d.failed_out {
-        step("failed", "you",
+        step(def!("failed"), "you",
             format!(
                 "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it",
                 t("failed.count"), t("failed.harness"), t("failed.step"), t("failed.at"), t("failed.error")
@@ -395,7 +398,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let ci_rules = crate::act::gates::ci_fix_rules(d);
     let (ci_fix, ci_once) = (crate::act::judge(&ci_rules), crate::act::gates::ci_fix_once(&ci_rules));
     let ci_waits = if let (crate::act::Gate::Soft(why), "ci-fix") = (&ci_fix, asking) { why.join("; ") } else { String::new() };
-    let address = || agent(hold, "bot", format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
+    let address = || agent(hold, def!("bot"), format!("address {}", plural(g("threads.owed_bot"), "bot item")), "sd act address");
 
     let branch = t("branch");
     let target = t("sync.target");
@@ -404,9 +407,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     let open = d.open;
 
     let all: Vec<Option<Value>> = if d.own_base {
-        vec![step("default", "you", format!("on {branch}: start a branch"), cmd("sd act start"))]
+        vec![step(def!("default"), "you", format!("on {branch}: start a branch"), cmd("sd act start"))]
     } else if d.running {
-        vec![step("running", "wait",
+        vec![step(def!("running"), "wait",
             format!("{} running since {}", t("session.running.step"), t("session.running.since")),
             None,
         )]
@@ -420,16 +423,16 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     } else {
         vec![
             if d.merged {
-                step("merged", "run",
+                step(def!("merged"), "run",
                     "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
                     cmd("sd act forget --remove"),
                 )
             } else {
                 None
             },
-            if d.closed { step("closed", "you", "PR closed without merging", None) } else { None },
+            if d.closed { step(def!("closed"), "you", "PR closed without merging", None) } else { None },
             if open && d.errors {
-                step("errors", "you",
+                step(def!("errors"), "you",
                     format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
                     cmd("sd state --json"),
                 )
@@ -437,7 +440,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if open && d.stale {
-                step("stale", "run",
+                step(def!("stale"), "run",
                     "fetch: GitHub is ahead of your remote refs, so the steps below may be wrong",
                     cmd(format!("git fetch --prune {remote}")),
                 )
@@ -445,12 +448,12 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if open && d.lagging {
-                step("gh-wait", "wait", "GitHub hasn't seen the push yet, so the steps below may be wrong", None)
+                step(def!("gh-wait"), "wait", "GitHub hasn't seen the push yet, so the steps below may be wrong", None)
             } else {
                 None
             },
             if open && yes(d.locked) {
-                step("attached", "wait",
+                step(def!("attached"), "wait",
                     "attached: the branch's session is open interactively; agent steps wait until it exits",
                     None,
                 )
@@ -459,7 +462,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             foreign_step(d, s, remote),
             if open && d.owed_human {
-                step("human", "you",
+                step(def!("human"), "you",
                     format!("reply to {}", plural(g("threads.owed_human"), "human item")),
                     cmd("sd state --long"),
                 )
@@ -473,7 +476,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             if open && d.undone { undone_step(d, s, remote) } else { None },
             if open && d.parent_unpushed {
-                step("ship-parent", "run",
+                step(def!("ship-parent"), "run",
                     format!("ship the parent first: {parent} isn't on {remote} yet"),
                     cmd(format!("sd act ship {parent}")),
                 )
@@ -483,7 +486,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             conflict_step(d, s, remote, hold),
             behind_step(d, s, remote),
             if d.dirty && !d.dropping {
-                step("dirty", "you",
+                step(def!("dirty"), "you",
                     "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
                     cmd("git status"),
                 )
@@ -491,14 +494,14 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if ci_fix.runs() && asking != "ci-fix" && !d.refused {
-                agent(hold, "ci-red", format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
+                agent(hold, def!("ci-red"), format!("fix CI: {}", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else if d.resume_ci && ci_fix.runs() {
-                agent(hold, "ci-red", format!("fix CI: {}, going on with your answer to its question", sj(g("ci.failing"), ", ")), "sd act ci-fix")
+                agent(hold, def!("ci-red"), format!("fix CI: {}, going on with your answer to its question", sj(g("ci.failing"), ", ")), "sd act ci-fix")
             } else {
                 None
             },
             if d.has_pr && d.ci_blocked && !d.to_push {
-                step("ci-blocked", "you",
+                step(def!("ci-blocked"), "you",
                     format!(
                         "CI blocked: {} didn't start or want approval; an agent can't fix that",
                         sj(g("ci.blocked"), ", ")
@@ -511,7 +514,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             if d.bot && addr.runs() {
                 address()
             } else if d.resume && addr.runs() {
-                agent(hold, "bot", format!("address {}, going on with your answer to its question", plural(g("threads.owed_bot"), "bot item")), "sd act address")
+                agent(hold, def!("bot"), format!("address {}, going on with your answer to its question", plural(g("threads.owed_bot"), "bot item")), "sd act address")
             } else {
                 None
             },
@@ -528,7 +531,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 && !d.ci_inconclusive
                 && !(d.stacked && yes(d.parent_merged))
             {
-                step("read", "you",
+                step(def!("read"), "you",
                     format!("read {} in sd state --long, then ack", plural(g("threads.info"), "bot item")),
                     cmd("sd act ack"),
                 )
@@ -537,7 +540,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             if open && d.taken {
                 let them = one("push.behind", "it", "them");
-                step("take", "you",
+                step(def!("take"), "you",
                     format!(
                         "{remote}/{branch} has {} this branch took but didn't make, reset away here: take {them} back (git merge --ff-only {remote}/{branch}), or drop {them} by hand",
                         plural(g("push.behind"), "commit")
@@ -548,7 +551,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if open && d.dropping && yes(d.push_dirty) {
-                step("reset-dirty", "you",
+                step(def!("reset-dirty"), "you",
                     format!(
                         "{remote}/{branch} has {} reset away here, and the worktree has uncommitted changes: commit them (then sd act push replaces the remote {}), or remove them (git reset --hard; git clean for untracked files)",
                         plural(g("push.behind"), "commit"),
@@ -560,7 +563,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if d.empty && yes(d.push_dirty) {
-                step("nothing-dirty", "you",
+                step(def!("nothing-dirty"), "you",
                     format!(
                         "nothing to ship, and the worktree has uncommitted changes: commit them{}",
                         if d.tasked { ", or remove them and sd act implement" } else { "" }
@@ -569,18 +572,18 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 )
             } else if d.empty && d.tasked {
                 if implement.runs() && asking != "implement" {
-                    agent(hold, "implement", format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
+                    agent(hold, def!("implement"), format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
                 } else {
                     None
                 }
             } else if d.empty {
-                step("nothing", "you", "nothing to ship: commit, or record a task", None)
+                step(def!("nothing"), "you", "nothing to ship: commit, or record a task", None)
             } else {
                 None
             },
             if d.verify_red {
                 let sha = t("verify.sha");
-                step("verify-red", "you",
+                step(def!("verify-red"), "you",
                     format!(
                         "verify red at {} ({}: {}): fix it, then sd act verify",
                         &sha[..sha.len().min(7)],
@@ -597,12 +600,12 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             if open && d.ci_held {
                 let paths = sj(g("push.held.paths"), ", ");
                 if !push_runs(d) {
-                    step("ci-config", "you",
+                    step(def!("ci-config"), "you",
                         format!("the agent changed CI config ({paths}): review it; push once the steps above are done"),
                         None,
                     )
                 } else {
-                    step("ci-config", "you",
+                    step(def!("ci-config"), "you",
                         format!("the agent changed CI config ({paths}): review, then sd act push"),
                         cmd("sd act push"),
                     )
@@ -612,7 +615,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             if push_step(d) {
                 let ahead = if nul("sync.ahead") { g("push.ahead") } else { g("sync.ahead") };
-                step("push", "run",
+                step(def!("push"), "run",
                     if is_null(s, "push.remote_sha") {
                         format!("push: not on {remote} yet")
                     } else if val::on(s, "push.diverged") {
@@ -634,17 +637,17 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 address()
             } else if d.resume && !addr.runs() {
                 // it runs address, and the rewrite below may offer --force
-                spends(hold, step("answer", "wait", format!("your answer to the address agent's question waits while {addr_why}"), None))
+                spends(hold, step(def!("answer"), "wait", format!("your answer to the address agent's question waits while {addr_why}"), None))
             } else {
                 None
             },
             if d.pr_null && !d.errors && !d.verify_red && !d.parent_unpushed && !d.ci_held && !d.empty && !d.refused {
-                spends(hold, step("open-pr", "run", "ship: push, open a draft PR", cmd("sd act ship")))
+                spends(hold, step(def!("open-pr"), "run", "ship: push, open a draft PR", cmd("sd act ship")))
             } else {
                 None
             },
             if d.has_pr && d.draft_ready && !d.verify_red && !d.need_review && !d.bot_due && !d.bot_waiting {
-                step("draft", "run",
+                step(def!("draft"), "run",
                     format!(
                         "{}: mark the PR ready for review",
                         if is("ci.verdict", "none") { "reviewed, no CI checks" } else { "CI green and reviewed" }
@@ -657,7 +660,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             if open && d.fixing && (asking == "review-fix" || (d.refused && fixes)) {
                 None
             } else if fixes {
-                agent(hold, "review-fix", format!(
+                agent(hold, def!("review-fix"), format!(
                         "fix {} (round {}/{})",
                         plural(g("review.findings.n"), "review finding"),
                         t("review.findings.round"),
@@ -672,7 +675,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 } else {
                     format!("{findings} after {} rounds", t("review.findings.round"))
                 };
-                step("review-decide", "you",
+                step(def!("review-decide"), "you",
                     format!(
                         "{what}: fix {}, or accept HEAD as reviewed (sd state --long lists them)",
                         one("review.findings.n", "it", "them")
@@ -685,7 +688,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if d.has_pr && !d.to_push && !d.held && !d.foreign && !d.verify_red && d.bot_due {
-                step("bot-trigger", "run",
+                step(def!("bot-trigger"), "run",
                     format!("trigger the review bot ({})", t("bot.command")),
                     cmd("sd act trigger"),
                 )
@@ -693,17 +696,17 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if d.has_pr && d.ci_inconclusive {
-                step("ci-rerun", "run", "rerun cancelled CI", cmd("gh pr checks"))
+                step(def!("ci-rerun"), "run", "rerun cancelled CI", cmd("gh pr checks"))
             } else {
                 None
             },
             if d.has_pr && d.bot_waiting && !d.bot_late {
-                step("bot-wait", "wait", format!("waiting on the review bot ({})", t("bot.command")), None)
+                step(def!("bot-wait"), "wait", format!("waiting on the review bot ({})", t("bot.command")), None)
             } else {
                 None
             },
             if d.has_pr && d.bot_waiting && d.bot_late {
-                step("bot-silent", "you",
+                step(def!("bot-silent"), "you",
                     format!(
                         "the review bot hasn't answered in {} min: check it, trigger it again, or accept HEAD as reviewed (sd act review --accept)",
                         minutes(g("review.bot.waited"))
@@ -736,17 +739,17 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 } else {
                     "CI hasn't reported on HEAD yet".into()
                 };
-                step("ci-wait", "wait", say, cmd("gh pr checks --watch"))
+                step(def!("ci-wait"), "wait", say, cmd("gh pr checks --watch"))
             } else {
                 None
             },
             if d.resume_ci && !ci_waits.is_empty() {
-                step("answer", "wait", format!("your answer to the ci-fix agent's question waits while {ci_waits}"), None)
+                step(def!("answer"), "wait", format!("your answer to the ci-fix agent's question waits while {ci_waits}"), None)
             } else {
                 None
             },
             if d.has_pr && d.parent_closed {
-                step("parent-closed", "you",
+                step(def!("parent-closed"), "you",
                     format!("{parent} (#{}) was closed without merging: decide what this PR targets", t("parent.pr.number")),
                     None,
                 )
@@ -754,7 +757,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if d.has_pr && d.stacked && yes(d.parent_merged) {
-                step("retarget", "run",
+                step(def!("retarget"), "run",
                     format!("{} already merged: point this PR at {}", t("pr.base"), t("sync.default")),
                     cmd("sd act retarget"),
                 )
@@ -763,7 +766,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             if d.has_pr && d.review_required {
                 let reqs = g("pr.review_requests");
-                step("review-wait", "wait",
+                step(def!("review-wait"), "wait",
                     if len(reqs) > 0 {
                         format!("waiting on review from {}", sj(reqs, ", "))
                     } else {
@@ -775,7 +778,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                 None
             },
             if d.has_pr && d.stacked && !yes(d.parent_merged) {
-                step("parent-wait", "wait",
+                step(def!("parent-wait"), "wait",
                     format!("waiting on {parent} (#{}) to merge first", t("parent.pr.number")),
                     None,
                 )
@@ -784,9 +787,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             },
             if d.has_pr && !d.review_required && !d.stacked && !d.parent_closed && !d.gh_behind && !yes(d.draft) && !d.bot_waiting {
                 match d.merge_state.as_str() {
-                    "CLEAN" | "UNSTABLE" | "HAS_HOOKS" => step("ready", "you", "ready to merge", cmd("gh pr merge")),
-                    "UNKNOWN" => step("merge-wait", "wait", "GitHub hasn't decided whether it can merge yet", None),
-                    m => step("blocked", "you",
+                    "CLEAN" | "UNSTABLE" | "HAS_HOOKS" => step(def!("ready"), "you", "ready to merge", cmd("gh pr merge")),
+                    "UNKNOWN" => step(def!("merge-wait"), "wait", "GitHub hasn't decided whether it can merge yet", None),
+                    m => step(def!("blocked"), "you",
                         format!("GitHub says {}: see why", why_blocked(m)),
                         cmd("gh pr view --web"),
                     ),
@@ -824,7 +827,7 @@ fn question_step(d: &Derived, s: &Value, asked: &str, addr: &Gate, addr_why: &st
     } else {
         (format!("the agent asks ({asking}): {asked}; answer it with sd act answer; or answer in its session (sd act attach), then sd act ack --question"), cmd(answer))
     };
-    step("question", "you", say, then)
+    step(def!("question"), "you", say, then)
 }
 
 /// The steps as listed: the first budget or failed step stands in for every
@@ -934,7 +937,7 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
     let current = d.rv_current;
     vec![
         if d.merged {
-            step("merged", "run",
+            step(def!("merged"), "run",
                 "merged: drop the branch's pins and enrollment, remove its worktree and delete it",
                 cmd("sd act forget --remove"),
             )
@@ -942,12 +945,12 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
             None
         },
         if d.closed {
-            step("closed", "you", "PR closed without merging: forget the branch, and remove its worktree", cmd("sd act forget"))
+            step(def!("closed"), "you", "PR closed without merging: forget the branch, and remove its worktree", cmd("sd act forget"))
         } else {
             None
         },
         if !d.merged && !d.closed && d.errors {
-            step("errors", "you",
+            step(def!("errors"), "you",
                 format!("{}: the steps below may be wrong", plural(&json!(len(g("errors"))), "error")),
                 cmd("sd state --json"),
             )
@@ -955,7 +958,7 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
             None
         },
         if d.rv_yours {
-            step("yours", "you",
+            step(def!("yours"), "you",
                 format!(
                     "{} has {} the PR doesn't: move {} to a branch of your own; review and fetch wait",
                     val::t(s, "branch"),
@@ -968,7 +971,7 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
             None
         },
         if d.rv_dirty {
-            step("dirty", "you",
+            step(def!("dirty"), "you",
                 "the worktree has uncommitted changes, which review and fetch refuse: discard them (git reset --hard; git clean for untracked files)",
                 cmd("git status"),
             )
@@ -977,12 +980,12 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
         },
         if d.rv_fetch {
             let say = if pushed { "the author pushed: take it" } else { "fetch: GitHub is ahead of your remote refs" };
-            step("fetch", "run", say, cmd("sd act fetch"))
+            step(def!("fetch"), "run", say, cmd("sd act fetch"))
         } else {
             None
         },
         if crate::act::gates::review(d).runs() {
-            agent(hold, "review", again, "sd act review")
+            agent(hold, def!("review"), again, "sd act review")
         } else {
             review_held(d)
         },
@@ -994,12 +997,12 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
             } else {
                 "the reviewer found nothing at HEAD: approve or comment on GitHub".to_string()
             };
-            step("submit", "you", say, cmd(format!("gh pr view {} --web", text(g("pr.number")))))
+            step(def!("submit"), "you", say, cmd(format!("gh pr view {} --web", text(g("pr.number")))))
         } else {
             None
         },
         if current && d.rv_submitted {
-            step("author-wait", "wait",
+            step(def!("author-wait"), "wait",
                 format!("you reviewed HEAD ({}): waiting on the author", val::t(s, "review.github.state").to_lowercase().replace('_', " ")),
                 None,
             )
@@ -1019,13 +1022,13 @@ fn review_step(d: &Derived, hold: &Option<Value>, last_review: &Option<Value>) -
         None if d.reviewed => "review again: the branch was rewritten since the last review".into(),
         None => "review the branch's change".into(),
     };
-    agent(hold, "review", say, "sd act review")
+    agent(hold, def!("review"), say, "sd act review")
 }
 
 /// chrismo's step when only a Hard rule of review's gate holds it back.
 fn review_held(d: &Derived) -> Option<Value> {
     let (why, clears) = crate::act::gates::review_held(d)?;
-    step("review-held", "you", format!("review can't run: {why}: {clears}"), None)
+    step(def!("review-held"), "you", format!("review can't run: {why}: {clears}"), None)
 }
 
 fn minutes(w: &Value) -> String {

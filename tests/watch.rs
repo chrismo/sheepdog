@@ -1127,21 +1127,6 @@ fn gone_a_pr_still_open_is_not() {
 
 // ── notification policy (#52) ────────────────────────────────────────────────
 
-// @test "policy: every NEXT step (src/next.rs) is in --help, notified or not, exactly once"
-#[test]
-fn policy_every_next_step_src_next_rs_is_in_help_notified_or_not_exactly_once() {
-    let sd = sd();
-    let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/next.rs")).unwrap();
-    let mut steps: Vec<&str> =
-        Regex::new(r#"(?:step\(|agent\(hold, )"([a-z-]+)""#).unwrap().captures_iter(&src).map(|c| c.get(1).unwrap().as_str()).collect();
-    steps.sort();
-    steps.dedup();
-    let mut listed = [sd.policy("n"), sd.policy("q")].concat();
-    listed.sort();
-    assert!(!sd.policy("n").is_empty());
-    assert_eq!(steps, listed);
-}
-
 // @test "policy: a notified step notifies once on entering it, not on later passes"
 #[test]
 fn policy_a_notified_step_notifies_once_on_entering_it_not_on_later_passes() {
@@ -1158,20 +1143,11 @@ fn policy_a_notified_step_notifies_once_on_entering_it_not_on_later_passes() {
     }
 }
 
-/// <key>'s who as src/next.rs makes its step: "you" if any of them is
-/// chrismo's, else the first one's (an agent step's is "agent").
+/// <key>'s who as NEXT gives its step (src/next/steps.rs): "you" if it
+/// can be chrismo's, else the first.
 fn who_in_next(key: &str) -> String {
-    let src = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/next.rs")).unwrap();
-    let whos: Vec<String> = Regex::new(r#"step\("([a-z-]+)", "([a-z]+)"|agent\(hold, "([a-z-]+)""#)
-        .unwrap()
-        .captures_iter(&src)
-        .filter_map(|c| match (c.get(1), c.get(2), c.get(3)) {
-            (Some(k), Some(w), _) if k.as_str() == key => Some(w.as_str().to_string()),
-            (_, _, Some(k)) if k.as_str() == key => Some("agent".to_string()),
-            _ => None,
-        })
-        .collect();
-    if whos.iter().any(|w| w == "you") { "you".into() } else { whos.first().cloned().unwrap_or_else(|| panic!("no step {key}")) }
+    let def = sheepdog::next::steps::find(key).unwrap_or_else(|| panic!("no step {key}"));
+    if def.who.contains(&"you") { "you" } else { def.who[0] }.to_string()
 }
 
 // @test "policy: a step that isn't notified never is"

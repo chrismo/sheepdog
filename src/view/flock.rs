@@ -368,18 +368,12 @@ mod tests {
 
     /// The keys src/next.rs gives its steps.
     fn next_keys() -> Vec<String> {
-        let re = regex::Regex::new(r#"\b(?:step|agent)\((?:hold, *)?"([a-z-]+)""#).unwrap();
-        let src = [include_str!("../next.rs"), include_str!("../next/derived.rs")].concat();
-        let mut keys: Vec<String> = re.captures_iter(&src).map(|c| c[1].to_string()).collect();
-        keys.sort();
-        keys.dedup();
-        keys
+        crate::next::steps::STEPS.iter().map(|d| d.key.to_string()).collect()
     }
 
     #[test]
     fn every_key_next_gives_has_a_stage_or_is_a_guard() {
         let keys = next_keys();
-        assert!(keys.len() > 40, "{keys:?}");
         for k in &keys {
             assert!(key_stage(k).is_some() != GUARDS.contains(&k.as_str()), "{k}: a stage, or a guard, not both");
         }
