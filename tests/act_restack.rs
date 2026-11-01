@@ -370,6 +370,32 @@ fn someone_elses_commit_whose_patch_is_on_the_target_doesnt_hold_the_restack_356
     assert_has(&r.output, &["came out different"]);
 }
 
+// A restack, then git's advice after a rejected plain push (pull --rebase
+// onto the old remote head) replays main's commit as a copy (#47). NEXT
+// offers no restack then, only its restack-undone step: a hand-run sd act
+// restack is the only way in (#395).
+fn undone(sd: &Sd) {
+    sd.upstream("main", "b", "B", "upstream");
+    sd.ok(&["restack"]);
+    sd.git(&["pull", "-q", "--rebase", "origin", "feat"]);
+    let state = sd.verb_ok("state", &["--json"]);
+    assert_eq!(jq(&["-c", ".sync.undone"], &state), "1", "{state}");
+}
+
+// Today no rule refuses it: the rebase runs from the merge-base, replays the
+// copy, and the patch-id check rolls it back (#395).
+#[test]
+fn an_undone_restack_isnt_refused_the_rebase_comes_out_different_and_rolls_back_395() {
+    let sd = sd();
+    undone(&sd);
+    let (before, pin) = (sd.rev("HEAD"), sd.base_pin());
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["feat's change came out different on origin/main", "rolled back"]);
+    assert_lacks(&r.output, "not restacking");
+    assert_eq!((sd.rev("HEAD"), sd.base_pin()), (before, pin));
+}
+
 // ── retarget ─────────────────────────────────────────────────────────────────
 
 // @test "retarget: parent merged, PR still on it: base edited to main, sd-parent rewritten"
