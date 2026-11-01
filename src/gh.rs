@@ -249,12 +249,18 @@ mod tests {
     }
 
     /// The write forms sheepdog uses: a GraphQL mutation, gh pr create or
-    /// edit, an api call with a method.
+    /// edit, an api call with a method, a REST api call with fields (gh POSTs
+    /// them). By the line: a call split over lines can slip past.
+    fn writes(l: &str) -> bool {
+        let rest_fields = l.contains("\"api\"") && !l.contains("graphql") && (l.contains("\"-f\"") || l.contains("\"-F\""));
+        rest_fields || l.contains("mutation") || ["\"create\"", "\"edit\"", "\"-X\"", "\"--method\""].iter().any(|w| l.contains(w))
+    }
+
     #[test]
     fn github_writes_live_in_gh_rs() {
-        let writes = outside("src/gh.rs", |l| {
-            l.contains("mutation") || ["\"create\"", "\"edit\"", "\"-X\"", "\"--method\""].iter().any(|w| l.contains(w))
-        });
+        assert!(writes(r#"call(&["api", &path, "-f", &body], WRITE)"#));
+        assert!(!writes(r#"vec!["api", "graphql", "-F", "owner={owner}"]"#));
+        let writes = outside("src/gh.rs", writes);
         assert!(writes.is_empty(), "a GitHub write outside gh.rs; make it a named function there:\n{}", writes.join("\n"));
     }
 }

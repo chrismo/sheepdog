@@ -636,6 +636,19 @@ fn gh_failing_git_facts_still_reported_error_recorded_exit_0() {
     assert_has(&r.field(".errors[0]"), &["could not resolve host"]);
 }
 
+/// GraphQL answers a missing PR in its body; a 404 is the endpoint (#336).
+#[test]
+fn gh_failing_a_graphql_404_is_an_error_not_a_missing_pr() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("a.txt", "a");
+    sd.git(&["config", "branch.feat.sd-pr", "7"]);
+    let r = sd.state_env(&[("GH_FAKE_FAIL", "gh: Not Found (HTTP 404)")], &[]);
+    assert_eq!(r.field(".pr"), "null");
+    assert_has(&r.field(".errors[0]"), &["HTTP 404"]);
+    assert_eq!(sd.git(&["config", "branch.feat.sd-pr"]), "7");
+}
+
 // @test "a numeric branch name is sent to gh as a string"
 #[test]
 fn a_numeric_branch_name_is_sent_to_gh_as_a_string() {
