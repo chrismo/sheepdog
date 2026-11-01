@@ -553,6 +553,33 @@ fn an_agent_that_pushes_itself_is_logged_with_the_remote_tracking_ref_346() {
     assert_eq!(sd.usage_last(&["branch", "stray_commit", "stray_push"]), "two|false|true");
 }
 
+// A commit's gc --auto can expire reflog entries: a push is still told when
+// the reflog is shorter after the step than before it.
+#[test]
+fn a_push_is_told_though_the_reflog_was_expired_during_the_step_346() {
+    let sd = pushed();
+    sd.fx("do", "git reflog expire --expire=all --all && git commit -q --allow-empty -m stray && git push -q origin HEAD");
+    let r = sd.step(&[], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "true|true");
+}
+
+// With the newest entry gone, a push older than it isn't the step's.
+#[test]
+fn a_push_from_before_the_step_isnt_told_when_the_newest_entry_goes_346() {
+    let sd = sd();
+    sd.git(&["init", "-q", "--bare", &sd.path("origin.git")]);
+    sd.git(&["remote", "add", "origin", &sd.path("origin.git")]);
+    sd.git_with(&[("GIT_COMMITTER_DATE", "@1000000000 +0000")], None, &["push", "-q", "origin", "feat"]);
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "mine"]);
+    sd.git(&["push", "-q", "origin", "feat"]);
+    sd.fx("do", "git reflog delete refs/remotes/origin/feat@{0}");
+    let r = sd.step(&[], &STEP);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(sd.git(&["reflog", "show", "--format=%gs", "refs/remotes/origin/feat", "--"]), "update by push");
+    assert_eq!(sd.usage_last(&["stray_commit", "stray_push"]), "false|false");
+}
+
 #[test]
 fn a_fetch_that_moves_the_remote_tracking_ref_during_the_step_isnt_a_push_346() {
     let sd = pushed();

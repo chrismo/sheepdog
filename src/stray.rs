@@ -21,14 +21,16 @@ pub struct Stray {
 pub struct Seen {
     head: String,
     branch: String,
-    /// Each remote-tracking ref for the branch, by its reflog's length.
-    logged: Vec<(usize, String)>,
+    /// Each remote-tracking ref for the branch, by its reflog's newest entry
+    /// (None for none). Not by its length: a commit's gc --auto can expire
+    /// entries during the step.
+    logged: Vec<(Option<String>, String)>,
 }
 
 impl Seen {
     /// Before the step, for <b>'s ("" for none).
     pub fn now(b: &str) -> Seen {
-        let logged = tracking(b).into_iter().map(|r| (reflog(&r).len(), r)).collect();
+        let logged = tracking(b).into_iter().map(|r| (reflog(&r).into_iter().next(), r)).collect();
         Seen { head: rev(".", "HEAD"), branch: b.to_string(), logged }
     }
 
@@ -47,12 +49,24 @@ impl Seen {
         Stray { commit, push: (!self.branch.is_empty()).then_some(!pushed.is_empty()) }
     }
 
-    /// <r>'s reflog gained an "update by push" since now().
+    /// <r>'s reflog gained an "update by push" since now(): an entry above
+    /// the newest it had then, none older than that one. Were that one
+    /// expired, the time alone tells.
     fn pushed(&self, r: &str) -> bool {
-        let had = self.logged.iter().find(|(_, l)| l == r).map_or(0, |(n, _)| *n);
-        let log = reflog(r);
-        log[..log.len().saturating_sub(had)].iter().any(|m| m.starts_with("update by push"))
+        let had = self.logged.iter().find(|(_, l)| l == r).and_then(|(e, _)| e.as_deref());
+        let floor = had.map_or(i64::MIN, stamp);
+        reflog(r)
+            .iter()
+            .take_while(|e| Some(e.as_str()) != had)
+            .filter(|e| stamp(e) >= floor)
+            .any(|e| e.splitn(3, '\t').nth(2).is_some_and(|m| m.starts_with("update by push")))
     }
+}
+
+/// A reflog entry's time, from its selector (ref@{<unix time>}).
+fn stamp(e: &str) -> i64 {
+    let gd = e.split('\t').next().unwrap_or_default();
+    gd.rsplit_once("@{").and_then(|(_, t)| t.trim_end_matches('}').parse().ok()).unwrap_or(i64::MIN)
 }
 
 /// refs/remotes/<remote>/<b> for every configured remote; none without a branch.
@@ -63,9 +77,14 @@ fn tracking(b: &str) -> Vec<String> {
     git(".", &["remote"]).stdout.lines().map(|r| format!("refs/remotes/{r}/{b}")).collect()
 }
 
-/// <r>'s reflog messages, newest first.
+/// <r>'s reflog entries, newest first: selector with its time, SHA and
+/// message, tab-separated.
 fn reflog(r: &str) -> Vec<String> {
-    git(".", &["reflog", "show", "--format=%gs", r, "--"]).stdout.lines().map(str::to_string).collect()
+    git(".", &["reflog", "show", "--date=unix", "--format=%gd%x09%H%x09%gs", r, "--"])
+        .stdout
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 fn short(sha: &str) -> &str {
