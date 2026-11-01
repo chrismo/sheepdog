@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, jq, running_marker, spawn, Holder, Sd, GH_FAILS};
+use common::{assert_has, assert_lacks, assert_match, jq, lock_by, running_marker, spawn, Holder, Sd, GH_FAILS};
 use std::fs;
 use std::process::Stdio;
 use std::time::Duration;
@@ -667,4 +667,24 @@ fn verify_and_a_custom_reviewer_run_under_reviews_running_marker_removed_after_2
         assert_eq!(line.split_whitespace().nth(1), Some("review"), "{}: {line}", saw.display());
     }
     assert!(!sd.tmp.join("repo/.git/sheepdog/feat.running").exists());
+}
+
+// review --accept runs no agent and writes no worktree, so sd act's
+// declaration (#341) gives it no running marker: it pins while another
+// step holds the branch. It is refused while attached, as review is.
+#[test]
+fn accept_runs_while_another_step_holds_the_marker_and_is_refused_while_attached_341() {
+    let sd = sd();
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "address", holder.pid());
+    sd.ok(&["review", "--accept"]);
+    assert_eq!(sd.pin("accepted"), sd.rev("HEAD"));
+    assert!(marker.exists());
+    sd.git(&["update-ref", "-d", "refs/sheepdog/feat/accepted"]);
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    let r = sd.run(&["review", "--accept"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["attached", "--force"]);
+    assert_eq!(sd.pin("accepted"), "");
 }

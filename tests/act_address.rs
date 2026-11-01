@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, dead_pid, jq, lock_by, Holder, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, dead_pid, jq, lock_by, running_marker, Holder, Sd};
 use std::fs;
 use std::time::Instant;
 
@@ -1810,4 +1810,34 @@ fn settings_addressprompt_replaces_the_guidance_the_actions_and_boundaries_stay(
     assert_has(&args, &["pushback:"]);
     assert_has(&args, &["Do not commit, push, or run gh"]);
     assert_has(&args, &["should be `THREE`"]);
+}
+
+// The interlocks sd act's declaration gives address (#341): while another
+// step holds the branch's running marker, refused before anything runs;
+// while attached, refused before the agent runs, unless --force.
+#[test]
+fn address_refused_while_another_step_holds_the_marker_341() {
+    let sd = sd();
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "implement", holder.pid());
+    let before = sd.remote_feat();
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("implement is running on feat (pid {}", holder.pid()), "not starting another agent step"]);
+    assert!(!sd.ran("claude.args"));
+    assert_eq!(sd.remote_feat(), before);
+    assert!(marker.exists());
+}
+
+#[test]
+fn address_refused_while_attached_before_the_agent_runs_341() {
+    let sd = sd();
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    let before = sd.remote_feat();
+    let r = sd.run(&["address"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["--force"]);
+    assert!(!sd.ran("claude.args"));
+    assert_eq!(sd.remote_feat(), before);
 }

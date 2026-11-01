@@ -1501,3 +1501,21 @@ fn restack_the_steps_own_child_restacks_under_its_marker_and_a_dead_holders_mark
     assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
 }
+
+// The interlocks sd act's declaration gives restack --resolve (#341): while
+// attached, refused before the rebase starts or the agent runs, unless --force.
+#[test]
+fn resolve_refused_while_attached_before_the_rebase_or_the_agent_341() {
+    let sd = agent_sd();
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    let before = sd.rev("feat");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["--force"]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert!(!sd.rebase_in_progress());
+    assert_eq!(sd.rev("feat"), before);
+}
