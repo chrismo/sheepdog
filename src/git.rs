@@ -133,30 +133,8 @@ pub fn patch_id(dir: &str, a: &str, b: &str) -> String {
     p.stdout.split(' ').next().unwrap_or("").trim_end_matches('\n').to_string()
 }
 
-/// A followed PR's head as last fetched (#250).
-pub fn pr_head_ref(b: &str) -> String {
-    format!("refs/sheepdog/{b}/pr-head")
-}
-
 pub fn show_ref(dir: &str, r: &str) -> bool {
     git_ok(dir, &["show-ref", "-q", "--verify", r])
-}
-
-/// A review pin and the base it was taken against. sd state compares
-/// base..pin with the branch's current base..HEAD, so a restack (which moves
-/// the base) doesn't make a reviewed change look changed (#66). Kinds: local,
-/// bot, accepted (#66 Re-review policy).
-pub fn pin_write(dir: &str, b: &str, kind: &str, sha: &str, base: &str) -> Result<(), String> {
-    if !["local", "bot", "accepted"].contains(&kind) {
-        return Err(format!("unknown pin: {kind} (local, bot, accepted)"));
-    }
-    for (suffix, msg, to) in [("", "", sha), ("-base", " base", base)] {
-        let o = git(dir, &["update-ref", "-m", &format!("pin {kind}{msg}"), &format!("refs/sheepdog/{b}/{kind}{suffix}"), to]);
-        if !o.ok {
-            return Err(strip_nl(o.stderr));
-        }
-    }
-    Ok(())
 }
 
 /// One entry of git worktree list --porcelain. branch is the branch checked
@@ -421,8 +399,7 @@ pub fn stacked_unclear(b: &str, names: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::Repo;
-    use std::path::PathBuf;
+    use crate::test_support::{production_lines, Repo};
 
     impl Repo {
         fn sha(&self, r: &str) -> String {
@@ -453,34 +430,6 @@ mod tests {
                 Err(e) => e,
             }
         }
-    }
-
-    // @test "pin_write records the pin and the base it was taken against"
-    #[test]
-    fn pin_write_records_the_pin_and_the_base_it_was_taken_against() {
-        let r = Repo::new();
-        pin_write(&r.dir, "feat", "local", "HEAD", "main").unwrap();
-        assert_eq!(r.sha("refs/sheepdog/feat/local"), r.sha("HEAD"));
-        assert_eq!(r.sha("refs/sheepdog/feat/local-base"), r.sha("main"));
-    }
-
-    // @test "pin_write overwrites both refs, so a stale base never outlives its pin"
-    #[test]
-    fn pin_write_overwrites_both_refs_so_a_stale_base_never_outlives_its_pin() {
-        let r = Repo::new();
-        pin_write(&r.dir, "feat", "bot", "HEAD", "main").unwrap();
-        r.c("feat", "two");
-        pin_write(&r.dir, "feat", "bot", "HEAD", "HEAD~1").unwrap();
-        assert_eq!(r.sha("refs/sheepdog/feat/bot"), r.sha("HEAD"));
-        assert_eq!(r.sha("refs/sheepdog/feat/bot-base"), r.sha("HEAD~1"));
-    }
-
-    // @test "pin_write refuses a pin kind it doesn't know"
-    #[test]
-    fn pin_write_refuses_a_pin_kind_it_doesnt_know() {
-        let r = Repo::new();
-        assert_eq!(pin_write(&r.dir, "feat", "nope", "HEAD", "main"), Err("unknown pin: nope (local, bot, accepted)".into()));
-        assert!(!show_ref(&r.dir, "refs/sheepdog/feat/nope"));
     }
 
     // stacked_on's tests were lib/sheepdog.bats's, title for title.
@@ -895,29 +844,6 @@ mod tests {
         assert!(Regex::new("^[0-9a-f]{40}$").unwrap().is_match(&m), "{m}");
         fs::write(&q, "b").unwrap();
         assert_ne!(worktree_mark(&r.dir).unwrap(), m);
-    }
-
-    /// (file, line number, line) for each line of src/ outside a #[cfg(test)] module.
-    fn production_lines(dir: &Path, out: &mut Vec<(PathBuf, usize, String)>) {
-        for e in fs::read_dir(dir).unwrap() {
-            let p = e.unwrap().path();
-            if p.is_dir() {
-                production_lines(&p, out);
-                continue;
-            }
-            if p.extension().is_none_or(|x| x != "rs") {
-                continue;
-            }
-            let text = fs::read_to_string(&p).unwrap();
-            let mut lines = text.lines().enumerate().peekable();
-            while let Some((i, l)) = lines.next() {
-                if l == "#[cfg(test)]" && lines.peek().is_some_and(|(_, m)| m.contains("mod ") && m.ends_with('{')) {
-                    lines.by_ref().find(|(_, l)| *l == "}");
-                    continue;
-                }
-                out.push((p.clone(), i + 1, l.to_string()));
-            }
-        }
     }
 
     /// Test modules may run their own.

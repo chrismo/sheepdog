@@ -2,7 +2,8 @@
 // for a branch and a repo.
 
 use super::{die, no_base_why, state_json};
-use crate::git::{self, git, git_input, git_ok, git_out, is_ancestor, main_worktree, rev, stacked_on, stacked_unclear, worktree_for};
+use crate::git::{self, git, git_ok, git_out, is_ancestor, main_worktree, rev, stacked_on, stacked_unclear, worktree_for};
+use crate::pins::{self, Pin};
 use crate::proc::Out;
 use crate::{running, time, usage};
 use crate::val::{at, sj, t};
@@ -30,9 +31,13 @@ fn unset(args: &[&str]) {
 }
 
 /// A lineage write: Err with git's error, which enroll reports and goes on.
-fn write(args: &[&str]) -> Result<(), String> {
-    let o = git(".", args);
+fn write(o: Out) -> Result<(), String> {
     if o.ok { Ok(()) } else { Err(o.stderr.trim_end().to_string()) }
+}
+
+/// branch.<b>.sd-parent's one writer.
+pub fn parent_write(b: &str, parent: &str) -> Out {
+    git(".", &["config", &format!("branch.{b}.sd-parent"), parent])
 }
 
 fn short(sha: &str) -> &str {
@@ -105,26 +110,38 @@ pub fn record_lineage(b: &str, state: &Value, remote: &str) -> Result<(), String
         },
         Lineage::None => return Ok(()),
     };
-    write(&["config", &format!("branch.{b}.sd-parent"), &parent])?;
+    write(parent_write(b, &parent))?;
     println!("parent: {parent}");
     if old_base.is_empty() {
         let why = no_base_why(state, remote);
         let why = if why.is_empty() { why } else { format!(": {why}") };
         eprintln!("sd act: warning: no usable base for {b}{why}");
     } else {
-        write(&["update-ref", &format!("refs/sheepdog/{b}/base"), &old_base])?;
+        write(pins::set(".", b, Pin::Base, &old_base))?;
         println!("base pinned at {}", short(&old_base));
     }
     Ok(())
 }
 
 pub fn unenroll(b: &str) {
-    unset(&["config", "--unset", &format!("branch.{b}.sheepdog")]);
-    if !git::branch_exists(b) {
-        for f in [crate::config::branch_config_file(".", b), crate::config::describe_file(".", b)].into_iter().flatten() {
+    if let Err(e) = unenroll_in(".", b) {
+        eprint!("{e}");
+        std::process::exit(1);
+    }
+}
+
+/// unenroll, in the repo at <dir>. Never enrolled is fine.
+pub fn unenroll_in(dir: &str, b: &str) -> Result<(), String> {
+    let o = git(dir, &["config", "--unset", &format!("branch.{b}.sheepdog")]);
+    if !o.ok && o.code != 5 {
+        return Err(o.stderr);
+    }
+    if !git::branch_in(dir, b) {
+        for f in [crate::config::branch_config_file(dir, b), crate::config::describe_file(dir, b)].into_iter().flatten() {
             let _ = std::fs::remove_file(f);
         }
     }
+    Ok(())
 }
 
 /// Die unless forget --remove may take <b> and its worktree: the PR merged
@@ -202,8 +219,7 @@ pub fn forget(b: &str, remove: bool) {
     }
     unenroll(b);
     usage::append(&usage::reset_record(&time::now_utc().0, &main_worktree("."), b));
-    let pins = must(git(".", &["for-each-ref", "--format=delete %(refname)", &format!("refs/sheepdog/{b}/")])).stdout;
-    must(git_input(".", &["update-ref", "--stdin"], Some(pins.as_bytes())));
+    must(pins::delete_all(".", b));
     if let Some(f) = crate::config::describe_file(".", b) {
         let _ = std::fs::remove_file(f);
     }

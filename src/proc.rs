@@ -22,6 +22,18 @@ pub struct Out {
     pub stopped: bool,
 }
 
+impl Out {
+    /// A write that must land: on failure, sd ends with the command's error
+    /// and exit status, as set -e had it.
+    pub fn or_exit(self) -> Out {
+        if !self.ok {
+            eprint!("{}", self.stderr);
+            std::process::exit(self.code);
+        }
+        self
+    }
+}
+
 fn not_found(prog: &str) -> Out {
     Out { code: 127, stderr: format!("{prog}: not found\n"), ..Out::default() }
 }

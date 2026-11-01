@@ -8,9 +8,11 @@
 use super::commands::verify_run;
 use super::hold::hold_after;
 use super::resolve::{resolve_conflicts, Halt, Rebase};
+use super::bookkeeping::parent_write;
 use super::step::{question_gate, resolve_gave_up};
 use super::{die, no_base_why, plural, state_json, Args};
 use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for, Git};
+use crate::pins::{self, Pin};
 use crate::{proc, running};
 use crate::val::{at, sj, t, text};
 use serde_json::Value;
@@ -131,7 +133,7 @@ pub(super) fn parent_to_default(b: &str, s: &Value) {
     if git_out(".", &["config", "--get", &key]).unwrap_or_default().is_empty() {
         return;
     }
-    must(git(".", &["config", &key, &default]));
+    must(parent_write(b, &default));
     println!("sd-parent of {b} is now {default}");
 }
 
@@ -249,7 +251,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
             short(&new_head, 12)
         ));
     }
-    must(git(".", &["update-ref", "-m", "sd act restack", &format!("refs/sheepdog/{b}/base"), &new_base]));
+    must(pins::set(".", b, Pin::Base, &new_base));
     let mut how = "sd act push";
     let remote_b = format!("refs/remotes/{remote}/{b}");
     if show_ref(".", &remote_b) && !is_ancestor(".", &remote_b, &new_head) {

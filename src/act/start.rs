@@ -16,8 +16,9 @@
 // included, so a repo set up for new_wt needs nothing more. Placement differs
 // (#85): beside the main worktree, not beside the current one.
 
-use super::bookkeeping::enroll_mark;
+use super::bookkeeping::{enroll_mark, parent_write};
 use super::{die, or_die, Args};
+use crate::pins::{self, Pin};
 use crate::config::set_branch_profile;
 use crate::git::{common_dir, git, git_ok, git_out, is_ancestor, main_worktree, rev, show_ref, worktree_for, Git};
 use crate::proc::{self, executable, on_stderr};
@@ -175,7 +176,7 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
     }
     // A branch that was there already: base at its tip when nothing pinned one
     // and it has no commits of its own past where it would start (#252).
-    if base.is_empty() && !show_ref(".", &format!("refs/sheepdog/{b}/base")) {
+    if base.is_empty() && pins::oid(".", b, Pin::Base).is_empty() {
         if let Ok(from) = &from {
             let tip = rev(".", &format!("refs/heads/{b}"));
             if !tip.is_empty() && is_ancestor(".", &tip, from) {
@@ -195,7 +196,7 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
         set(&["config", &format!("branch.{b}.sd-task"), &a.task]);
     }
     if !a.parent.is_empty() {
-        set(&["config", &format!("branch.{b}.sd-parent"), &a.parent]);
+        parent_write(b, &a.parent).or_exit();
     }
     // Before the first step, which may fail (#242); a branch with a session
     // keeps its session's harness.
@@ -208,7 +209,7 @@ pub fn start(b: &str, remote: &str, a: &Args) -> i32 {
         or_die(set_branch_profile(b, &a.profiles, false));
     }
     if !base.is_empty() {
-        set(&["update-ref", "-m", "sd act start", &format!("refs/sheepdog/{b}/base"), &base]);
+        pins::set(".", b, Pin::Base, &base).or_exit();
     }
     enroll_mark(b);
     eprintln!("enrolled {b}");

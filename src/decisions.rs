@@ -5,14 +5,11 @@
 // local reviewer and the review-fix round read it so a settled finding isn't
 // raised again (#240); they get these facts, never the authoring session (#79).
 
-use crate::git::{git, git_input, oid, strip_nl};
+use crate::git::git;
+use crate::pins::{self, Pin};
 use crate::val::{at, t, text};
 use crate::{json, time};
 use serde_json::{json, Value};
-
-fn name(b: &str) -> String {
-    format!("refs/sheepdog/{b}/decisions")
-}
 
 /// One decision of <kind> (declined, accepted, answered, bot-<action>) made
 /// at <head>: <about> is where (file:line, or the step that asked),
@@ -47,16 +44,11 @@ pub fn append(b: &str, entries: &[Value]) {
     if entries.is_empty() {
         return;
     }
-    let (r, now) = (name(b), time::now_utc().0);
+    let now = time::now_utc().0;
     for _ in 0..3 {
-        let old = oid(".", &r);
+        let old = pins::oid(".", b, Pin::Decisions);
         let prev = if old.is_empty() { String::new() } else { git(".", &["cat-file", "blob", &old]).stdout };
-        let blob = appended(&prev, entries, &now);
-        let obj = git_input(".", &["hash-object", "-w", "--stdin"], Some(blob.as_bytes()));
-        if !obj.ok {
-            break;
-        }
-        if git(".", &["update-ref", "-m", "sd: decisions", &r, &strip_nl(obj.stdout), &old]).ok {
+        if pins::store(".", b, Pin::Decisions, &appended(&prev, entries, &now), Some(&old)).ok {
             return;
         }
     }
@@ -106,12 +98,7 @@ fn listed(blob: &str) -> String {
 
 /// <b>'s decisions on record, as the prompts list them; "" for none.
 pub fn on_record(b: &str) -> String {
-    let o = git(".", &["cat-file", "blob", &name(b)]);
-    if o.ok {
-        listed(&o.stdout)
-    } else {
-        String::new()
-    }
+    pins::read(".", b, Pin::Decisions).map_or_else(String::new, |blob| listed(&blob))
 }
 
 /// <listed> decisions under the prompts' heading, then <ask>, led by a

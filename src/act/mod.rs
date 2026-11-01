@@ -3,7 +3,7 @@
 mod address;
 mod answer;
 mod attach;
-mod bookkeeping;
+pub(crate) mod bookkeeping;
 mod ci_fix;
 mod commands;
 mod describe;

@@ -104,8 +104,9 @@ Not notified:
 A notification that fails is tried once more, on the next pass that still
 shows its step, then given up on.
 
-Stale enrollments: a pass unenrolls a branch (git config only; never the
-branch, its pins, a worktree or a PR) with no local branch at once, and one
+Stale enrollments: a pass unenrolls a branch (its sheepdog config, and its
+branch-config and describe files once the branch is gone; never the branch,
+its pins, a worktree or a PR) with no local branch at once, and one
 merged, closed or checked out nowhere once it has been so for
 settings.vacuumAfter seconds (default 7 days; 0 turns off these three). A
 pass whose sd state reported errors or stale data neither starts, resets nor

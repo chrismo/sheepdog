@@ -3,7 +3,8 @@
 
 use super::{cfg, die, no_base_why, state_json};
 use crate::config::one_value;
-use crate::git::{self, git, rev, strip_nl};
+use crate::git::{git, rev, strip_nl};
+use crate::pins::{self, Pin};
 use crate::proc;
 use crate::time;
 use crate::val::{at, n, on, sj, t, text};
@@ -67,15 +68,13 @@ pub fn ack(b: &str, ids: &[String], question: bool) {
         if !ids.is_empty() {
             die("--question takes no --id");
         }
-        let r = format!("refs/sheepdog/{b}/question");
-        let q = git(".", &["cat-file", "blob", &r]);
-        if !q.ok {
+        let Some(q) = pins::read(".", b, Pin::Question) else {
             println!("no question to ack on {b}");
             return;
-        }
-        git_or_exit(&["update-ref", "-d", &r]);
+        };
+        pins::delete(".", b, Pin::Question).or_exit();
         super::step::answer_drop(b);
-        let step = match one_value(&q.stdout) {
+        let step = match one_value(&q) {
             Some(v) if !at(&v, "step").is_null() => t(&v, "step"),
             _ => "?".into(),
         };
@@ -199,7 +198,7 @@ pub fn trigger(b: &str, remote: &str, force: bool) {
         when = time::now_utc().0;
         eprintln!("sd act: warning: GitHub's answer had no created_at; the trigger time is this machine's local clock");
     }
-    git::pin_write(".", b, "bot", &head, &base).unwrap_or_else(|e| die(e));
+    pins::review(".", b, Pin::Bot, &head, &base).unwrap_or_else(|e| die(e));
     git_or_exit(&["config", &format!("branch.{b}.sd-bot-triggered"), &when]);
     println!("triggered the review bot on PR #{number} with \"{command}\"; bot pinned at {}, waiting for its reply", &head[..7]);
 }

@@ -59,6 +59,9 @@ fn state_at(f: &str) -> Value {
 
 /// A marker as it stands. live: its pid is still the process that wrote it.
 pub struct Lease {
+    /// The marker's file, and its text as read: release compares it.
+    pub file: String,
+    pub text: String,
     pub pid: String,
     pub step: String,
     pub since: String,
@@ -120,7 +123,7 @@ fn lease_at(f: &str) -> Option<Lease> {
         && Command::new("kill").args(["-0", pid]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
         && proc_start(pid) == start;
     let deadline = lines.find_map(|l| l.strip_prefix("deadline ")).and_then(time::epoch_ns);
-    Some(Lease { pid: pid.into(), step: step.into(), since: since.into(), deadline, live })
+    Some(Lease { file: f.into(), text: text.clone(), pid: pid.into(), step: step.into(), since: since.into(), deadline, live })
 }
 
 /// Fails, saying so, while another live process's step holds <b>'s marker,
@@ -150,11 +153,17 @@ fn held() -> MutexGuard<'static, Vec<(String, String)>> {
     HELD.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Removes <marker> unless another step has written its own there since.
-fn release(marker: &str, line: &str) {
-    if fs::read_to_string(marker).is_ok_and(|l| l == line) {
+/// Removes <marker> unless another step, even one of the same pid, has
+/// written its own there since <text>.
+fn release_at(marker: &str, text: &str) {
+    if fs::read_to_string(marker).is_ok_and(|now| now == text) {
         let _ = fs::remove_file(marker);
     }
+}
+
+/// Remove the marker <l> was read from if <l> still holds it.
+pub fn release(l: &Lease) {
+    release_at(&l.file, &l.text);
 }
 
 extern "C" {
@@ -166,7 +175,7 @@ extern "C" {
 /// a signal it got during the step, not as an ordinary failure (#177).
 extern "C" fn at_exit() {
     for (marker, line) in held().drain(..) {
-        release(&marker, &line);
+        release_at(&marker, &line);
     }
     proc::die_of_caught();
 }
@@ -259,7 +268,7 @@ struct Hold {
 impl Drop for Hold {
     fn drop(&mut self) {
         held().retain(|(m, l)| !(*m == self.marker && *l == self.line));
-        release(&self.marker, &self.line);
+        release_at(&self.marker, &self.line);
     }
 }
 
@@ -301,6 +310,19 @@ mod tests {
         assert!(unwound.is_err());
         assert!(!f.exists());
         assert!(!held().iter().any(|(m, _)| m == path(&f)));
+    }
+
+    #[test]
+    fn release_takes_the_marker_a_lease_read_and_leaves_one_rewritten_since_by_the_same_pid_342() {
+        let f = marker("released");
+        let me = std::process::id().to_string();
+        fs::write(&f, format!("{me} implement 2026-10-31T00:00:00Z x\ndeadline 2026-10-31T00:05:00Z\n")).unwrap();
+        let read = lease_at(path(&f)).unwrap();
+        fs::write(&f, format!("{me} describe 2026-10-31T00:01:00Z x\ndeadline 2026-10-31T00:06:00Z\n")).unwrap();
+        release(&read);
+        assert!(f.exists(), "a marker written since the lease was read stays");
+        release(&lease_at(path(&f)).unwrap());
+        assert!(!f.exists());
     }
 
     #[test]
@@ -369,6 +391,8 @@ mod tests {
     #[test]
     fn idle_unless_a_live_step_holds_the_marker_in_the_verbs_own_words_270() {
         let lease = |live| Lease {
+            file: String::new(),
+            text: String::new(),
             pid: "42".into(),
             step: "address".into(),
             since: "2026-10-22T00:00:00Z".into(),

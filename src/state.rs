@@ -1465,7 +1465,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     // ── O4 local vs remote ──
     // A followed PR's remote is its head as fetched: the author's, so never
     // judged ours or theirs (#250).
-    let remote_ref = if reviewer { git::pr_head_ref(branch) } else { format!("refs/remotes/{remote}/{branch}") };
+    let remote_ref = if reviewer { crate::pins::name(branch, crate::pins::Pin::PrHead) } else { format!("refs/remotes/{remote}/{branch}") };
     let remote_sha = rev(dir, &remote_ref);
     let (mut remote_ours, mut diverged, mut push_behind, mut theirs) = (Value::Null, false, 0i64, Value::Null);
     let ahead;

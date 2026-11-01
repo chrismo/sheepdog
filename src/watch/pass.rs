@@ -9,10 +9,11 @@
 
 use super::{die, env_or, home, HELP};
 use crate::config::{self, state_dir};
-use crate::git::{self, git, git_input, git_out};
+use crate::git::{self, git, git_out};
 use crate::json;
 use crate::proc;
-use crate::{failed, harness, limit, running, time};
+use crate::act::bookkeeping;
+use crate::{failed, harness, limit, pins, running, time};
 use crate::val::{at, on, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -98,7 +99,8 @@ fn end(pid: i32, sig: i32) {
 }
 
 /// End the launched step holding <l>, <b>'s lease: TERM to its process
-/// group, KILL if it's still there KILL_AFTER later; then release the lease.
+/// group, KILL if it's still there KILL_AFTER later; then release the lease,
+/// or the one the step rewrote under the same pid before it ended.
 fn stop(repo: &str, b: &str, l: &running::Lease) {
     let pid: i32 = l.pid.parse().unwrap_or(0);
     end(pid, libc::SIGTERM);
@@ -109,15 +111,8 @@ fn stop(repo: &str, b: &str, l: &running::Lease) {
     if running::lease(repo, b).is_some_and(|l| l.live) {
         end(pid, libc::SIGKILL);
     }
-    release(repo, b, l);
-}
-
-/// Remove <b>'s running marker if <l> still holds it.
-fn release(repo: &str, b: &str, l: &running::Lease) {
-    let Some(marker) = running::file(repo, b) else { return };
-    if running::lease(repo, b).is_some_and(|now| now.pid == l.pid) {
-        let _ = fs::remove_file(&marker);
-    }
+    let rewritten = running::lease(repo, b).filter(|now| now.pid == l.pid);
+    running::release(rewritten.as_ref().unwrap_or(l));
 }
 
 /// How long a launched step's lease outlasts its own timeout, so the lease
@@ -318,24 +313,6 @@ fn worktree_of(repo: &str) -> HashMap<String, String> {
             (w.rebasing || Path::new(&w.path).is_dir()).then_some((b, w.path))
         })
         .collect()
-}
-
-/// Delete refs/sheepdog/<b>/* whose branch no longer exists. Refs outlive
-/// git branch -D (config doesn't); the pin's last path component is its
-/// kind (base, local, bot, accepted), the rest is the branch name.
-fn sweep_pins(repo: &str) {
-    let refs = git(repo, &["for-each-ref", "--format=%(refname)", "refs/sheepdog/"]).stdout;
-    let gone: String = refs
-        .lines()
-        .filter(|r| {
-            let rest = r.strip_prefix("refs/sheepdog/").unwrap_or(r);
-            !git::branch_in(repo, rest.rsplit_once('/').map_or(rest, |(b, _)| b))
-        })
-        .map(|r| format!("delete {r}\n"))
-        .collect();
-    if !gone.is_empty() {
-        git_input(repo, &["update-ref", "--stdin"], Some(gone.as_bytes()));
-    }
 }
 
 /// settings.notify with <title> <message> appended, else a macOS
@@ -621,13 +598,12 @@ impl Watch {
             stale = json!({"reason": why, "since": since});
             let age = now - since;
             if !c.carry && (self.vacuum.is_some() || (self.vacuum_after > 0.0 && age as f64 >= self.vacuum_after)) {
-                let o = git(repo, &["config", "--unset", &format!("branch.{b}.sheepdog")]);
-                if o.ok {
+                if let Err(e) = bookkeeping::unenroll_in(repo, b) {
+                    eprint!("{e}");
+                    self.log(name, b, &format!("couldn't unenroll: {why} for {}", dur(age)));
+                } else {
                     unenrolled = Some(format!("unenrolled: {why} for {} (sd act enroll {b} to watch it again)", dur(age)));
                     stale = Value::Null;
-                } else {
-                    eprint!("{}", o.stderr);
-                    self.log(name, b, &format!("couldn't unenroll: {why} for {}", dur(age)));
                 }
             }
         }
@@ -809,7 +785,7 @@ impl Watch {
         let Some(l) = lease else { return out };
         let Some(deadline) = l.deadline else { return out };
         let why = if !l.live {
-            release(repo, b, &l);
+            running::release(&l);
             out.is_empty().then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
         } else if time::now_utc().1 > deadline {
             stop(repo, b, &l);
@@ -930,7 +906,7 @@ impl Watch {
                 continue;
             }
             let name = basename(&repo).to_string();
-            sweep_pins(&repo);
+            pins::sweep(&repo);
             for f in config::sweep_branch_files(&repo, false) {
                 self.log(&name, "-", &format!("deleted {f}: no local branch"));
             }
@@ -939,12 +915,12 @@ impl Watch {
                 if git::branch_in(&repo, &b) {
                     branches.push(b);
                 } else {
-                    let out = git(&repo, &["config", "--unset", &format!("branch.{b}.sheepdog")]);
-                    if out.ok {
-                        lines.push_str(&format!("{name}\t{b}\t-\tunenrolled: no local branch\n"));
-                        self.log(&name, &b, "unenrolled: no local branch");
-                    } else {
-                        eprint!("{}", out.stderr);
+                    match bookkeeping::unenroll_in(&repo, &b) {
+                        Ok(()) => {
+                            lines.push_str(&format!("{name}\t{b}\t-\tunenrolled: no local branch\n"));
+                            self.log(&name, &b, "unenrolled: no local branch");
+                        }
+                        Err(e) => eprint!("{e}"),
                     }
                 }
             }
