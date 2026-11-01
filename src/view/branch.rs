@@ -77,7 +77,8 @@ fn owed(s: &Value) -> Value {
         _ => vec![],
     };
     let failing = if at(s, "ci.for_head") == &Value::Bool(false) { json!([]) } else { at(s, "ci.failing").clone() };
-    json!({"findings": findings, "failing": failing, "question": at(s, "question"),
+    let question = if at(s, "question.answer").is_null() { at(s, "question") } else { &Value::Null };
+    json!({"findings": findings, "failing": failing, "question": question,
            "threads": at(s, "threads.items")})
 }
 
@@ -149,6 +150,13 @@ mod tests {
                        "ci": {"for_head": false, "failing": ["t"]}});
         assert_eq!(owed(&s)["findings"], json!([]));
         assert_eq!(owed(&s)["failing"], json!([]));
+    }
+
+    #[test]
+    fn an_answered_question_isn_t_owed() {
+        let q = |answer: Value| json!({"question": {"text": "which?", "answer": answer}});
+        assert_eq!(owed(&q(json!("this one")))["question"], Value::Null);
+        assert_eq!(t(&owed(&q(Value::Null)), "question.text"), "which?");
     }
 
     #[test]
