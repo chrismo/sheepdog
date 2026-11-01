@@ -179,16 +179,16 @@ fn foreign_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     )
 }
 
-/// Commits someone else made on the branch, when they're all that holds a
-/// push (#356): chrismo looks, then forces it. Not while attached: --force
-/// would push past the sd-lock too.
+/// Commits someone else made on the branch, when the push would rewrite
+/// them and they're all that holds it (#356): chrismo looks, then forces it.
+/// Not while attached: --force would push past the sd-lock too.
 fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     let holds = d.to_push && !d.empty && !push_runs(d) && push_runs(&Derived { foreign_authors: false, ..d.clone() });
     if !(d.foreign_authors && holds && !yes(d.locked)) {
         return None;
     }
     let step_say = format!(
-        "commits on {} by {}: look (git log --format='%h %ae %ce %s' {}), then push them",
+        "the push rewrites commits on {} by {}: look (git log --format='%h %ae %ce %s' {}), then force it",
         val::t(s, "branch"),
         sj(at(s, "sync.foreign_authors"), ", "),
         authors_range(s, remote)

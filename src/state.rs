@@ -1142,8 +1142,8 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
     }
 }
 
-/// O4: the author and committer emails on <head> past <not> other than
-/// user.email, case aside, newest first (#356), and those commits' ids: each
+/// O4: the author and committer emails on <head> past <not> that aren't
+/// ours (others_on), newest first (#356), and those commits' ids: each
 /// one's patch-id, or its SHA when it has none (a merge, an empty commit).
 /// A commit whose id is in branch.<b>.sd-authors-seen (sd act push --force
 /// records them) was looked at and doesn't count; a patch-id outlives a
@@ -1159,10 +1159,13 @@ fn foreign_authors(dir: &str, branch: &str, head: &str, reviewer: bool, not: &[&
     range.extend(not.iter().copied().filter(|r| !r.is_empty()));
     let range = |args: &[&'static str]| -> Vec<&str> { args.iter().copied().chain(range.iter().copied()).collect() };
     let Some(log) = git_out(dir, &range(&["log", "--format=%H%x09%ae%x09%ce"])) else { return unknown };
-    let theirs: Vec<Vec<&str>> = log
+    let theirs: Vec<(&str, Vec<&str>)> = log
         .lines()
-        .map(|l| l.split('\t').collect::<Vec<_>>())
-        .filter(|c| c[1..].iter().any(|p| !p.eq_ignore_ascii_case(&me)))
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            let (sha, others) = (f.next()?, others_on(&me, f.next()?, f.next()?));
+            (!others.is_empty()).then_some((sha, others))
+        })
         .collect();
     let ids = if theirs.is_empty() { Some(HashMap::new()) } else {
         patch_ids(dir, &range(&["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"]))
@@ -1170,19 +1173,34 @@ fn foreign_authors(dir: &str, branch: &str, head: &str, reviewer: bool, not: &[&
     let Some(ids) = ids else { return unknown };
     let seen = config_all(dir, branch, "sd-authors-seen");
     let (mut out, mut unseen): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
-    for c in &theirs {
-        let id = ids.get(c[0]).map_or(c[0], String::as_str);
+    for (sha, others) in &theirs {
+        let id = ids.get(*sha).map_or(*sha, String::as_str);
         if seen.iter().any(|s| s == id) {
             continue;
         }
         unseen.push(id);
-        for p in &c[1..] {
-            if !p.eq_ignore_ascii_case(&me) && !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
+        for p in others {
+            if !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
                 out.push(p);
             }
         }
     }
     (json!(out), json!(unseen))
+}
+
+/// A commit's emails other than <me>, case aside. GitHub commits its web
+/// actions (an edit, Update branch, a suggestion) as noreply@github.com, so
+/// that committer stands for the author and is never named (#356).
+fn others_on<'a>(me: &str, author: &'a str, committer: &'a str) -> Vec<&'a str> {
+    let mine = |e: &str| e.eq_ignore_ascii_case(me);
+    let mut others = Vec::new();
+    if !mine(author) {
+        others.push(author);
+    }
+    if !mine(committer) && !committer.eq_ignore_ascii_case("noreply@github.com") {
+        others.push(committer);
+    }
+    others
 }
 
 /// SHA → patch-id for the commits git <log_args> (a log -p) lists; a commit

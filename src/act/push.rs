@@ -22,7 +22,7 @@ pub fn push(b: &str, remote: &str, force: bool) {
     let d = Derived::new(&s);
     if let Some(go) = enforce(gates::push(&d), force, &format!("pushing {b}")) {
         publish(go, b, remote);
-        if d.foreign_authors {
+        if d.foreign_authors && gates::rewrites(&d) {
             seen_authors(b, &s);
         }
     }

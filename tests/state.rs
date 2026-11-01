@@ -2147,6 +2147,23 @@ fn sync_foreign_authors_leaves_out_what_was_forced_past_356() {
     assert_eq!(r.field(".sync.foreign_commits[0]"), sd.git(&["rev-parse", "HEAD"]), "no diff: its SHA");
 }
 
+// GitHub records chrismo's own web actions (an edit, Update branch, a
+// suggestion) as authored by user.email, committed by noreply@github.com:
+// ours. Someone else's web edit still counts, by its author (#356).
+#[test]
+fn sync_foreign_authors_counts_githubs_committer_on_our_own_web_edits_as_ours_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.write("y.txt", "y\n");
+    sd.git(&["add", "y.txt"]);
+    sd.git(&["-c", "user.email=noreply@github.com", "commit", "-qm", "our web edit", "--author=Tester <t@example.com>"]);
+    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), "[]");
+    sd.write("z.txt", "z\n");
+    sd.git(&["add", "z.txt"]);
+    sd.git(&["-c", "user.email=noreply@github.com", "commit", "-qm", "their web edit", "--author=Them <them@example.com>"]);
+    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), r#"["them@example.com"]"#);
+}
+
 // Commits on the target, merged in, aren't the branch's own (#356).
 #[test]
 fn sync_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {
