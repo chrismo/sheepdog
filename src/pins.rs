@@ -215,6 +215,45 @@ mod tests {
         }
     }
 
+    /// The lines in <text> where a git call writes something only this
+    /// module may: update-ref that doesn't move a branch alone (no
+    /// refs/heads/, or a refs/sheepdog or --stdin beside it), hash-object
+    /// -w. A call's args run to its `]`, so one split over lines is read
+    /// whole.
+    fn writes(text: &str) -> Vec<usize> {
+        let calls = text.match_indices("\"update-ref\"").chain(text.match_indices("\"hash-object\""));
+        let mut at: Vec<usize> = calls
+            .filter(|&(i, verb)| {
+                let call = &text[i..];
+                let args = &call[..call.find(']').unwrap_or(call.len())];
+                if verb == "\"update-ref\"" {
+                    !args.contains("refs/heads/") || args.contains("refs/sheepdog") || args.contains("--stdin")
+                } else {
+                    args.contains("\"-w\"")
+                }
+            })
+            .map(|(i, _)| text[..i].matches('\n').count() + 1)
+            .collect();
+        at.sort_unstable();
+        at
+    }
+
+    #[test]
+    fn writes_reads_a_call_whole_and_passes_a_branch_move_alone_342() {
+        let text = r#"
+git(".", &["update-ref", "-m", "sd act fetch", &format!("refs/heads/{b}"), &theirs, &head]);
+git(".", &[
+    "update-ref",
+    &r,
+]);
+git(".", &["update-ref", "refs/heads/x", "refs/sheepdog/x/local"]);
+git(".", &["hash-object", "--stdin"]);
+git(".", &["hash-object",
+    "-w"]);
+"#;
+        assert_eq!(writes(text), vec![4, 7, 9]);
+    }
+
     // I8 as a grep (#342): update-ref outside this module only moves a
     // branch, and only this module writes an object (hash-object -w).
     #[test]
@@ -224,12 +263,9 @@ mod tests {
         code(&src, &mut files);
         let mut bad = vec![];
         for (path, text) in files.iter().filter(|(p, _)| !p.ends_with("/src/pins.rs")) {
-            for (i, l) in text.lines().enumerate() {
-                let ref_write = l.contains("\"update-ref\"") && !l.contains("refs/heads/");
-                let object_write = l.contains("\"hash-object\"") && l.contains("\"-w\"");
-                if ref_write || object_write {
-                    bad.push(format!("{path}:{}: {}", i + 1, l.trim()));
-                }
+            let lines: Vec<&str> = text.lines().collect();
+            for n in writes(text) {
+                bad.push(format!("{path}:{n}: {}", lines[n - 1].trim()));
             }
         }
         assert!(bad.is_empty(), "pins are written through src/pins.rs only:\n{}", bad.join("\n"));
