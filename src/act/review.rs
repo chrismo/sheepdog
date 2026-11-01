@@ -84,7 +84,7 @@ fn accept(b: &str, head: &str, base: &str) {
 
 /// <why>, one of gates::review's or gates::accept's reasons, in record <s>'s
 /// words, about <head>.
-fn worded(why: &str, s: &Value, head: &str, remote: &str) -> String {
+fn worded(why: &str, s: &Value, d: &Derived, head: &str, remote: &str) -> String {
     let b = t(s, "branch");
     let covers = |p: &str| matches!(t(s, &format!("review.{p}.status")).as_str(), "covered" | "rewritten-same");
     match why {
@@ -99,7 +99,7 @@ fn worded(why: &str, s: &Value, head: &str, remote: &str) -> String {
         rvw::FINDINGS => {
             let n = at(s, "review.findings.n").as_u64().unwrap_or(0) as usize;
             let stand = if n == 1 { "stands" } else { "stand" };
-            format!("{} {stand} at {} (sd state --long): sd act implement fixes them, or sd act review --accept", plural(n, "review finding"), short(head))
+            format!("{} {stand} at {} (sd state --long): {}", plural(n, "review finding"), short(head), gates::findings_clear(d))
         }
         rvw::VERIFY_RED => format!("verify failed at {}: fix it, then sd act verify", short(head)),
         rvw::ANSWER => format!("your answer to the {} agent's question goes on first", t(s, "question.step")),
@@ -117,7 +117,7 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     let d = Derived::new(&s);
     let base = t(&s, "sync.old_base");
     let head = rev(".", &format!("refs/heads/{b}"));
-    let word = |w: &str| worded(w, &s, &head, remote);
+    let word = |w: &str| worded(w, &s, &d, &head, remote);
     if accepting {
         let Some(_go) = enforce(gates::accept(&d).worded(word), force, &format!("accepting {b}")) else { return };
         return accept(b, &head, &base);

@@ -445,6 +445,23 @@ fn findings_standing_at_head_are_refused_at_zero_tokens_unless_force_348() {
     assert!(sd.fx_exists("reviewer.env"));
 }
 
+// With the findings declined (or the rounds used up) implement won't fix
+// them, so the refusal doesn't send chrismo there (#348).
+#[test]
+fn findings_implement_wont_fix_arent_sent_to_implement_348() {
+    let sd = sd();
+    sd.findings(BLOCKING);
+    sd.review();
+    let r = sd.run(&["review"]);
+    assert_has(&r.output, &["1 review finding stands at", "sd act implement fixes them"]);
+    let rec = sd.findings_rec(r#".findings[0] += {action: "declined", reply: "c is right"}"#);
+    sd.write_findings_ref(&rec);
+    let r = sd.run(&["review"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["1 review finding stands at", "fix them by hand, or sd act review --accept"]);
+    assert_lacks(&r.output, "sd act implement");
+}
+
 // An accept covers HEAD as the local review does: NEXT offers no review, and
 // the verb refuses one unless --force (#348).
 #[test]

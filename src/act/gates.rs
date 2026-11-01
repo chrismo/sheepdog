@@ -304,6 +304,16 @@ pub fn review_held(d: &Derived) -> Option<(&'static str, &'static str)> {
     review_rules(d).into_iter().find(|r| r.refuses && r.level == Level::Hard && r.name != rvw::DIRTY).map(|r| (r.name, r.clears))
 }
 
+/// What clears findings standing at HEAD: implement only while a fix round
+/// runs (not declined, under settings.reviewRounds), else as review-decide.
+pub fn findings_clear(d: &Derived) -> &'static str {
+    if d.fix_due {
+        "sd act implement fixes them, or sd act review --accept"
+    } else {
+        "fix them by hand, or sd act review --accept"
+    }
+}
+
 fn review_rules(d: &Derived) -> [Rule; 11] {
     let Derived {
         reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending,
@@ -333,7 +343,7 @@ fn review_rules(d: &Derived) -> [Rule; 11] {
         rule(rvw::NO_BASE, Level::Hard, *old_base_null, "sd state's errors say why, or ship the parent first"),
         rule(rvw::CLOSED, Level::Soft, mine && !open, "reopen it, or start a new branch"),
         rule(rvw::COVERED, Level::Soft, mine && *any_cover, "a new commit, or sd act review --force"),
-        rule(rvw::FINDINGS, Level::Soft, mine && *fixing, "sd act implement fixes them, or sd act review --accept"),
+        rule(rvw::FINDINGS, Level::Soft, mine && *fixing, findings_clear(d)),
         rule(rvw::VERIFY_RED, Level::Soft, mine && *verify_red, "fix it, then sd act verify"),
         rule(rvw::ANSWER, Level::Soft, mine && *answer_pending, "its step runs, as sd state's NEXT says"),
         rule(stale, Level::Soft, theirs && !rv_current, catch_up),
