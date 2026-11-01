@@ -7,6 +7,7 @@ pub(crate) mod bookkeeping;
 mod ci_fix;
 mod commands;
 mod describe;
+mod editing;
 mod follow;
 pub mod gate;
 pub mod gates;

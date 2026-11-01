@@ -1237,6 +1237,34 @@ fn settings_cifixprompt_names_a_file_in_the_repo_read_from_the_base_commit() {
     assert_lacks(&sd.prompt(), &shipped_prompt());
 }
 
+// A repo's own guidance replaces lib/prompts/ci-fix.md, never the contract
+// the pipeline parses: the do-not-commit rule and the outcomes come after it
+// (#344).
+#[test]
+fn settings_cifixprompt_replaces_the_guidance_the_contract_stays_after_it_344() {
+    let sd = sd();
+    fs::write(sd.tmp.join("rules.md"), "OUR CI RULES\n").unwrap();
+    sd.set(&["settings.ciFixPrompt", &sd.path("rules.md")]);
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0);
+    let p = sd.prompt();
+    assert!(p.starts_with("OUR CI RULES\n\nEdit files, but do not commit, push, or run gh"), "{p}");
+    assert_has(&p, &[r#"outcome "flaky", saying why"#, r#"Return outcome "fixed""#, r#""needs-input""#, r#""gave-up""#]);
+    assert_lacks(&p, &shipped_prompt());
+}
+
+// The shipped guidance carries none of the contract, so the prompt says it once.
+#[test]
+fn the_shipped_guidance_leaves_the_contract_to_the_pipeline_344() {
+    let shipped = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/lib/prompts/ci-fix.md")).unwrap();
+    assert_lacks(&shipped, "do not commit");
+    assert_lacks(&shipped, "Return outcome");
+    let sd = sd();
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0);
+    assert_eq!(sd.prompt().matches("do not commit, push, or run gh").count(), 1);
+}
+
 // @test "settings.ciFixPrompt: an absolute path is read from disk; a missing file is an error"
 #[test]
 fn settings_cifixprompt_an_absolute_path_is_read_from_disk_a_missing_file_is_an_error() {

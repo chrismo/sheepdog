@@ -1784,6 +1784,18 @@ fn harness_run_settings_that_are_not_a_json_object_stop_the_step() {
     assert!(!sd.ran("claude.args"));
 }
 
+// needs-input on address stops less than on implement or ci-fix: the
+// contract says the rest is still committed, pushed and posted (#344).
+#[test]
+fn the_contract_says_needs_input_still_publishes_what_isnt_an_ask_344() {
+    let sd = sd();
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0);
+    let said = sd.fx("claude.args").split_whitespace().collect::<Vec<_>>().join(" ");
+    let rule = r#""needs-input" (anything you marked ask: the pipeline still commits, verifies, pushes and posts the rest, and your asks go to the PR's author)"#;
+    assert_has(&said, &[rule]);
+}
+
 // @test "settings.addressPrompt replaces the guidance; the actions and boundaries stay"
 #[test]
 fn settings_addressprompt_replaces_the_guidance_the_actions_and_boundaries_stay() {
