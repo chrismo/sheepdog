@@ -2198,6 +2198,22 @@ fn push_foreign_authors_counts_githubs_committer_on_our_own_web_edits_as_ours_35
     assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), r#"["them@example.com"]"#);
 }
 
+// With the account's email private, GitHub authors those web actions as the
+// viewer's users.noreply.github.com address, <id>+<login>@ or (older
+// accounts) <login>@: ours too. Another login's is still someone else's (#356).
+#[test]
+fn push_foreign_authors_counts_the_viewers_noreply_address_as_ours_356() {
+    let sd = sd();
+    sd.feat_pushed();
+    sd.commit_by("x.txt", "noreply@github.com", Some("Me <12345+Me@users.noreply.github.com>"));
+    sd.commit_by("y.txt", "noreply@github.com", Some("Me <me@users.noreply.github.com>"));
+    sd.pushed_then_rewritten(2);
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), "[]");
+    sd.commit_by("z.txt", "noreply@github.com", Some("Them <678+meme@users.noreply.github.com>"));
+    sd.pushed_then_rewritten(1);
+    assert_eq!(sd.state(&[]).field_c(".push.foreign_authors"), r#"["678+meme@users.noreply.github.com"]"#);
+}
+
 // Commits on the target, merged in, aren't the branch's own: dropping the
 // merge removes nothing of theirs (#356).
 #[test]

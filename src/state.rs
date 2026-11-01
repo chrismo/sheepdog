@@ -1151,8 +1151,9 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
 /// at, and one whose patch-id is on <target> (squash-merged alone) loses
 /// nothing: neither counts. A patch-id outlives a restack. Both [] when the
 /// push removes nothing (<removed> None), null for a followed PR
-/// (#250), without user.email, or when git fails.
-fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
+/// (#250), without user.email, or when git fails. <viewer> is gh's login,
+/// empty when gh failed.
+fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
     let unknown = (Value::Null, Value::Null);
     if reviewer {
         return unknown;
@@ -1167,7 +1168,7 @@ fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str
         .lines()
         .filter_map(|l| {
             let mut f = l.split('\t');
-            let (sha, others) = (f.next()?, others_on(&me, f.next()?, f.next()?));
+            let (sha, others) = (f.next()?, others_on(&me, viewer, f.next()?, f.next()?));
             (!others.is_empty()).then_some((sha, others))
         })
         .collect();
@@ -1198,9 +1199,11 @@ fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str
 
 /// A commit's emails other than <me>, case aside. GitHub commits its web
 /// actions (an edit, Update branch, a suggestion) as noreply@github.com, so
-/// that committer stands for the author and is never named (#356).
-fn others_on<'a>(me: &str, author: &'a str, committer: &'a str) -> Vec<&'a str> {
-    let mine = |e: &str| e.eq_ignore_ascii_case(me);
+/// that committer stands for the author and is never named (#356). With the
+/// account's email private it authors them as <viewer>'s noreply address,
+/// also ours.
+fn others_on<'a>(me: &str, viewer: &str, author: &'a str, committer: &'a str) -> Vec<&'a str> {
+    let mine = |e: &str| e.eq_ignore_ascii_case(me) || is_noreply_of(viewer, e);
     let mut others = Vec::new();
     if !mine(author) {
         others.push(author);
@@ -1209,6 +1212,14 @@ fn others_on<'a>(me: &str, author: &'a str, committer: &'a str) -> Vec<&'a str> 
         others.push(committer);
     }
     others
+}
+
+/// <email> is <login>'s GitHub noreply address: <id>+<login>@ or (accounts
+/// from before 2017) <login>@users.noreply.github.com, case aside.
+fn is_noreply_of(login: &str, email: &str) -> bool {
+    let Some((local, domain)) = email.rsplit_once('@') else { return false };
+    let name = local.split_once('+').map_or(local, |(id, name)| if id.bytes().all(|b| b.is_ascii_digit()) { name } else { local });
+    !login.is_empty() && domain.eq_ignore_ascii_case("users.noreply.github.com") && name.eq_ignore_ascii_case(login)
 }
 
 const PATCH_LOG: [&str; 5] = ["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"];
@@ -1623,7 +1634,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let facts = Facts {
         branch: branch.into(),
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
-        foreign_authors: foreign_authors(dir, branch, reviewer, removes.then_some(remote_sha.as_str()), &target_ref,
+        foreign_authors: foreign_authors(dir, branch, reviewer, &viewer, removes.then_some(remote_sha.as_str()), &target_ref,
             &[&head, &target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         head: head.clone(),
         task: cfg("sd-task"),
