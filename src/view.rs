@@ -7,6 +7,7 @@
 // rebind its name to 127.0.0.1. Read-only: before anything writes, add a
 // per-run token in the page and an Origin check (#376).
 
+mod branch;
 mod flock;
 
 use crate::config::state_dir;
@@ -94,11 +95,37 @@ fn respond(method: &str, path: &str, host: &str, port: u16, state: &Path) -> (&'
     if method != "GET" {
         return ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into());
     }
-    match path.split('?').next().unwrap_or("") {
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    match route {
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.into()),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
+        // Only an id the cache listing has: it never becomes a path.
+        "/api/branch" => match query.split('&').find_map(|kv| kv.strip_prefix("id=")).and_then(|id| branch::detail(state, &unescape(id))) {
+            Some(b) => ("200 OK", "application/json", b.to_string()),
+            None => ("404 Not Found", "text/plain", "no such branch in the watcher's cache\n".into()),
+        },
         _ => ("404 Not Found", "text/plain", "not found\n".into()),
     }
+}
+
+/// %XX escapes decoded, as encodeURIComponent writes them.
+fn unescape(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (b[i], b.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok())) {
+            (b'%', Some(x)) => {
+                out.push(x);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn serve(stream: TcpStream, port: u16, state: &Path) {

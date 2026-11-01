@@ -252,11 +252,15 @@ fn basename(p: &str) -> &str {
     Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p)
 }
 
-/// <state>/branches/<repo's name>-<first 8 hex of sha1 of its path>, as
-/// shasum named it.
-fn repo_state_dir(state: &str, repo: &str) -> String {
+/// <repo's name>-<first 8 hex of sha1 of its path>, as shasum named it:
+/// its dir under <state>/branches.
+pub fn repo_key(repo: &str) -> String {
     let hex = sha1_smol::Sha1::from(repo).digest().to_string();
-    format!("{state}/branches/{}-{}", basename(repo), &hex[..8])
+    format!("{}-{}", basename(repo), &hex[..8])
+}
+
+fn repo_state_dir(state: &str, repo: &str) -> String {
+    format!("{state}/branches/{}", repo_key(repo))
 }
 
 fn show(lines: &str) -> String {

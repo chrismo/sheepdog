@@ -57,9 +57,10 @@ fn sd() -> Sd {
     sd
 }
 
-/// The watcher's cache file for <branch> of a repo named <repo>: {"state": <state>}.
+/// The watcher's cache file for <branch> of the repo at /src/<repo>: {"state": <state>}.
 fn cache(sd: &Sd, repo: &str, branch: &str, state: Value) {
-    let f = sd.tmp.join(format!("state/branches/{repo}-0123abcd/{branch}.json"));
+    let dir = sheepdog::watch::repo_key(&format!("/src/{repo}"));
+    let f = sd.tmp.join(format!("state/branches/{dir}/{branch}.json"));
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, json!({ "glyph": "🤖", "state": state }).to_string()).unwrap();
 }
@@ -73,7 +74,7 @@ fn state(branch: &str, next: Value) -> Value {
         "ci": { "verdict": "green" },
         "review": { "local": { "status": "covered" }, "bot": { "status": "none" }, "findings": null },
         "bot": { "command": null },
-        "threads": { "owed_bot": 0, "owed_human": 0 },
+        "threads": { "owed_bot": 0, "owed_human": 0, "blocking": 0, "info": 0, "items": [] },
         "spend": { "usd": 1.5 },
         "next": next,
     })
@@ -129,13 +130,17 @@ fn no_pass_yet_serves_no_branches() {
 #[test]
 fn an_unreadable_cache_file_is_listed_as_unreadable() {
     let sd = sd();
-    let f = sd.tmp.join("state/branches/sheepdog-0123abcd/torn.json");
+    let f = sd.tmp.join(format!("state/branches/{}/torn.json", sheepdog::watch::repo_key("/src/sheepdog")));
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, "{\"state\":").unwrap();
-    let b = &serve(&sd).flock()["branches"][0];
+    let s = serve(&sd);
+    let b = &s.flock()["branches"][0];
     assert_eq!(b["branch"], "torn");
     assert_eq!(b["lead"]["who"], "wait");
     assert_has(b["lead"]["say"].as_str().unwrap(), &["unreadable"]);
+    let (code, d) = branch(&s, b["id"].as_str().unwrap());
+    assert_eq!(code, 200);
+    assert_eq!((&d["flow"], &d["owed"], &d["next"]), (&Value::Null, &Value::Null, &Value::Null));
 }
 
 #[test]
@@ -204,4 +209,59 @@ fn help_and_unknown_options() {
     let r = sd.run(&["--port", "x"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["sd view: --port takes a number"]);
+}
+
+/// GET /api/branch for the card whose id is <id>, percent-encoded as the page sends it.
+fn branch(s: &Server, id: &str) -> (u16, Value) {
+    let q: String = id.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'-' { (b as char).to_string() } else { format!("%{b:02X}") }).collect();
+    let (code, _, body) = s.get(&format!("/api/branch?id={q}"));
+    (code, serde_json::from_str(&body).unwrap_or(Value::Null))
+}
+
+#[test]
+fn drilling_into_a_branch_serves_its_flow_next_and_owed() {
+    let sd = sd();
+    let mut st = state("feat/x", json!([
+        { "key": "review-fix", "who": "agent", "say": "fix 1 review finding (round 2/3)", "cmd": "sd act implement" },
+        { "key": "ci-wait", "who": "wait", "say": "CI running", "cmd": null },
+    ]));
+    st["review"]["findings"] = json!({ "at_head": true, "n": 1, "round": 2, "items": [
+        { "file": "src/a.rs", "line": 3, "severity": "error", "body": "off by one" } ] });
+    st["ci"] = json!({ "verdict": "red", "for_head": true, "failing": ["cargo-test"] });
+    st["question"] = json!({ "step": "implement", "kind": "ask", "text": "which way?", "at_head": true });
+    st["threads"]["items"] = json!([{ "type": "thread", "kind": "bot", "mark": "!", "path": "src/a.rs", "line": 9,
+        "author": "bot", "url": "https://github.com/o/r/pull/7#c1", "excerpt": "rename it" }]);
+    cache(&sd, "sheepdog", "feat/x", st);
+    let rec = |step: &str, b: &str| format!("{{time:2026-10-31T10:00:00Z,repo:\"/src/sheepdog\",branch:\"{b}\",step:\"{step}\",cost_usd:0.5,context:1}}");
+    let usage = [rec("implement", "feat/x"), rec("review", "feat/x"), rec("implement", "feat/x"),
+                 rec("ci-fix", "feat/x"), rec("review", "feat/x"), rec("implement", "other")].join("\n");
+    fs::write(sd.tmp.join("state/usage.sup"), usage + "\n").unwrap();
+    let s = serve(&sd);
+    let id = s.flock()["branches"][0]["id"].as_str().unwrap().to_string();
+    let (code, b) = branch(&s, &id);
+    assert_eq!(code, 200, "{b}");
+    assert_eq!(b["branch"], "feat/x");
+    let counts: Vec<String> = ["implement", "review", "fix", "cifix"].iter().map(|k| b["flow"][k]["count"].to_string()).collect();
+    assert_eq!(counts, ["1", "2", "1", "1"]);
+    assert_eq!(b["flow"]["fix"]["who"], "agent");
+    assert_eq!(b["flow"]["ci"]["who"], "wait");
+    assert_eq!(b["next"].as_array().unwrap().len(), 2);
+    assert_eq!(b["owed"]["findings"][0]["body"], "off by one");
+    assert_eq!(b["owed"]["failing"], json!(["cargo-test"]));
+    assert_eq!(b["owed"]["question"]["text"], "which way?");
+    assert_eq!(b["owed"]["threads"][0]["excerpt"], "rename it");
+}
+
+#[test]
+fn an_id_that_isnt_a_cached_branch_is_not_found() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "a", state("a", json!([])));
+    fs::write(sd.tmp.join("secret.json"), "{}").unwrap();
+    let s = serve(&sd);
+    let dir = sheepdog::watch::repo_key("/src/sheepdog");
+    for id in [format!("{dir}/nope"), format!("{dir}/../../secret"), "../secret".into(), String::new()] {
+        assert_eq!(branch(&s, &id).0, 404, "{id}");
+    }
+    assert_eq!(s.get("/api/branch").0, 404);
+    assert_eq!(s.get(&format!("/api/branch?_=1&id={dir}%2Fa&x=2")).0, 200);
 }

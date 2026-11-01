@@ -10,20 +10,45 @@ use std::path::Path;
 
 pub const STAGES: [&str; 7] = ["build", "push", "ci", "review", "bot", "threads", "merge"];
 
-/// Each stage's NEXT keys (tests check them against src/next.rs).
-const KEYS: [(&str, &[&str]); 7] = [
-    ("build", &["implement", "nothing", "nothing-dirty", "reset-dirty", "dirty", "default"]),
-    ("push", &["push", "behind", "conflict", "restack-undone", "open-pr", "retarget", "fetch", "ship-parent", "take"]),
-    ("ci", &["ci-red", "ci-wait", "ci-rerun", "ci-blocked", "ci-config", "verify-red"]),
-    ("review", &["review", "review-fix", "review-wait", "review-decide", "submit", "yours"]),
-    ("bot", &["bot-trigger", "bot-wait", "bot-silent"]),
+/// Each stage's NEXT keys, with the word a lit stage shows (tests check
+/// the keys against src/next.rs).
+const KEYS: [(&str, &[(&str, &str)]); 7] = [
+    ("build", &[("implement", "implement"), ("nothing", "nothing to ship"), ("nothing-dirty", "nothing to ship"),
+                ("reset-dirty", "reset away"), ("dirty", "uncommitted"), ("default", "start")]),
+    ("push", &[("push", "push"), ("behind", "behind"), ("conflict", "conflict"), ("restack-undone", "restack undone"),
+               ("open-pr", "open PR"), ("retarget", "retarget"), ("fetch", "fetch"), ("ship-parent", "ship parent"),
+               ("take", "take back")]),
+    ("ci", &[("ci-red", "fix"), ("ci-wait", "running"), ("ci-rerun", "rerun"), ("ci-blocked", "blocked"),
+             ("ci-config", "set up CI"), ("verify-red", "verify")]),
+    ("review", &[("review", "queued"), ("review-fix", "fix"), ("review-wait", "waiting"), ("review-decide", "decide"),
+                 ("submit", "submit"), ("yours", "yours")]),
+    ("bot", &[("bot-trigger", "ask"), ("bot-wait", "waiting"), ("bot-silent", "silent")]),
     // "bot" is sd act address on the bot's threads.
-    ("threads", &["bot", "answer", "human", "read"]),
-    ("merge", &["ready", "draft", "merge-wait", "blocked", "merged", "closed", "parent-wait", "author-wait", "parent-closed"]),
+    ("threads", &[("bot", "address"), ("answer", "answer"), ("human", "reply"), ("read", "read")]),
+    ("merge", &[("ready", "ready"), ("draft", "mark ready"), ("merge-wait", "merging"), ("blocked", "blocked"),
+                ("merged", "merged"), ("closed", "closed"), ("parent-wait", "after parent"), ("author-wait", "author"),
+                ("parent-closed", "parent closed")]),
 ];
 
+fn lookup(key: &str) -> Option<(&'static str, &'static str)> {
+    KEYS.iter().find_map(|(stage, ks)| ks.iter().find(|(k, _)| *k == key).map(|(_, label)| (*stage, *label)))
+}
+
 fn key_stage(key: &str) -> Option<&'static str> {
-    KEYS.iter().find(|(_, ks)| ks.contains(&key)).map(|(stage, _)| *stage)
+    lookup(key).map(|(stage, _)| stage)
+}
+
+/// The stage a NEXT step in <s> lights: answer (chrismo's answer, waiting)
+/// belongs to the stage of the step that asked, ci-fix or address.
+pub(super) fn step_stage(key: &str, s: &Value) -> Option<&'static str> {
+    match (key, t(s, "question.step").as_str()) {
+        ("answer", "ci-fix") => Some("ci"),
+        _ => key_stage(key),
+    }
+}
+
+fn label(key: &str) -> String {
+    lookup(key).map_or(key.to_string(), |(_, l)| l.to_string())
 }
 
 fn count(n: f64, one: &str) -> String {
@@ -84,9 +109,9 @@ fn base(s: &Value, stage: &str) -> (&'static str, String) {
         ),
         "bot" => bot(s),
         "threads" if !pr => ("todo", String::new()),
-        // gh unread leaves the counts null; info bot items block nothing.
-        "threads" if at(s, "threads.owed_bot").is_null() => ("todo", "unknown".into()),
-        "threads" => match n(s, "threads.owed_bot") - n(s, "threads.info") + n(s, "threads.owed_human") {
+        // gh unread leaves the counts null.
+        "threads" if at(s, "threads.blocking").is_null() => ("todo", "unknown".into()),
+        "threads" => match n(s, "threads.blocking") {
             0.0 => ("done", String::new()),
             o => ("todo", format!("{o} owed")),
         },
@@ -101,23 +126,52 @@ pub fn stages(s: &Value) -> Vec<Value> {
     STAGES
         .iter()
         .map(|&stage| {
-            let lit = next.iter().find(|x| key_stage(&t(x, "key")) == Some(stage));
+            let lit = next.iter().find(|x| step_stage(&t(x, "key"), s) == Some(stage));
             let (status, text) = base(s, stage);
             match lit.map(|x| (t(x, "key"), at(x, "who"))) {
                 Some((k, _)) if k == "merged" => json!({"stage": stage, "status": "done", "text": k, "who": null}),
                 Some((k, _)) if k == "closed" => json!({"stage": stage, "status": "red", "text": k, "who": null}),
-                Some((k, who)) => json!({"stage": stage, "status": "cur", "text": k, "who": who}),
+                Some((k, who)) => json!({"stage": stage, "status": "cur", "text": label(&k), "who": who}),
                 None => json!({"stage": stage, "status": status, "text": text, "who": null}),
             }
         })
         .collect()
 }
 
-/// <doc> is None when the cache file was unreadable.
-pub fn card(repo: &str, branch: &str, doc: Option<&Value>) -> Value {
-    let Some(doc) = doc else {
+/// A branch's file in the watcher's cache. id is its path under
+/// branches/, less .json: <repo>-<hash>/<branch>.
+pub struct Cached {
+    pub id: String,
+    pub repo: String,
+    pub branch: String,
+    /// None when the file was unreadable.
+    pub doc: Option<Value>,
+}
+
+pub fn cached(state: &Path) -> Vec<Cached> {
+    let mut out = vec![];
+    for repo_dir in fs::read_dir(state.join("branches")).into_iter().flatten().flatten() {
+        let dir = repo_dir.path();
+        let name = repo_dir.file_name().to_string_lossy().into_owned();
+        let repo = name.rsplit_once('-').map_or(name.as_str(), |(r, _)| r).to_string();
+        let mut files = vec![];
+        json_files(&dir, &mut files);
+        for f in files {
+            let rel = f.strip_prefix(&dir).unwrap_or(&f).to_string_lossy();
+            let branch = rel.strip_suffix(".json").unwrap_or(&rel).to_string();
+            let doc = fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
+            out.push(Cached { id: format!("{name}/{branch}"), repo: repo.clone(), branch, doc });
+        }
+    }
+    out.sort_by(|a, b| (&a.repo, &a.branch).cmp(&(&b.repo, &b.branch)));
+    out
+}
+
+pub fn card(c: &Cached) -> Value {
+    let (id, repo, branch) = (&c.id, &c.repo, &c.branch);
+    let Some(doc) = &c.doc else {
         let say = "the watcher's cached state is unreadable; the next pass rewrites it";
-        return json!({"repo": repo, "branch": branch, "pr": null, "usd": null, "stages": [],
+        return json!({"id": id, "repo": repo, "branch": branch, "pr": null, "usd": null, "stages": [],
                       "lead": {"key": "unreadable", "who": "wait", "say": say, "cmd": null}});
     };
     let s = at(doc, "state");
@@ -131,32 +185,16 @@ pub fn card(repo: &str, branch: &str, doc: Option<&Value>) -> Value {
         Value::Null => Value::Null,
         p => json!({"number": at(p, "number"), "url": at(p, "url"), "draft": on(p, "draft")}),
     };
-    json!({"repo": repo, "branch": branch, "glyph": at(doc, "glyph"), "pr": pr,
+    json!({"id": id, "repo": repo, "branch": branch, "glyph": at(doc, "glyph"), "pr": pr,
            "usd": at(s, "spend.usd"), "lead": lead, "stages": stages(s)})
 }
 
-/// GET /api/flock: {at: the last pass's time or null, branches: [card]},
-/// sorted by repo, then branch.
+/// GET /api/flock: {at: the last pass's time or null, branches: [card]}.
 pub fn flock(state: &Path) -> Value {
     let at = fs::read_to_string(state.join("last-pass"))
         .ok()
         .and_then(|s| s.lines().next().and_then(|l| l.strip_prefix("last pass: ")).map(str::to_string));
-    let mut cards = vec![];
-    for repo_dir in fs::read_dir(state.join("branches")).into_iter().flatten().flatten() {
-        let dir = repo_dir.path();
-        let name = repo_dir.file_name().to_string_lossy().into_owned();
-        let repo = name.rsplit_once('-').map_or(name.as_str(), |(r, _)| r).to_string();
-        let mut files = vec![];
-        json_files(&dir, &mut files);
-        for f in files {
-            let rel = f.strip_prefix(&dir).unwrap_or(&f).to_string_lossy();
-            let branch = rel.strip_suffix(".json").unwrap_or(&rel).to_string();
-            let doc = fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
-            cards.push(((repo.clone(), branch.clone()), card(&repo, &branch, doc.as_ref())));
-        }
-    }
-    cards.sort_by(|a, b| a.0.cmp(&b.0));
-    json!({"at": at, "branches": cards.into_iter().map(|(_, c)| c).collect::<Vec<_>>()})
+    json!({"at": at, "branches": cached(state).iter().map(card).collect::<Vec<_>>()})
 }
 
 #[cfg(test)]
@@ -172,10 +210,14 @@ mod tests {
         st(&s)[i].clone()
     }
 
+    fn cached(doc: Value) -> Cached {
+        Cached { id: "r-0123abcd/b".into(), repo: "r".into(), branch: "b".into(), doc: Some(doc) }
+    }
+
     fn open() -> Value {
         json!({"pr": {"number": 1}, "sync": {"ahead": 1}, "ci": {"verdict": "green"},
                "review": {"local": {"status": "covered"}, "bot": {"status": "none"}},
-               "threads": {"owed_bot": 0, "owed_human": 0}, "next": []})
+               "threads": {"owed_bot": 0, "owed_human": 0, "blocking": 0, "info": 0}, "next": []})
     }
 
     fn with(mut s: Value, path: &str, v: Value) -> Value {
@@ -261,8 +303,7 @@ mod tests {
 
     #[test]
     fn owed_threads_are_todo() {
-        let s = with(with(open(), "threads.owed_bot", json!(1)), "threads.owed_human", json!(2));
-        assert_eq!(one(s, "threads"), "todo:3 owed");
+        assert_eq!(one(with(open(), "threads.blocking", json!(3)), "threads"), "todo:3 owed");
     }
 
     #[test]
@@ -273,7 +314,7 @@ mod tests {
         let got = stages(&s);
         assert_eq!((t(&got[2], "status"), t(&got[2], "who")), ("cur".into(), "wait".into()));
         assert_eq!((t(&got[3], "status"), t(&got[3], "text"), t(&got[3], "who")),
-                   ("cur".into(), "review".into(), "agent".into()));
+                   ("cur".into(), "queued".into(), "agent".into()));
         assert_eq!(got.iter().filter(|x| t(x, "status") == "cur").count(), 2);
     }
 
@@ -283,7 +324,7 @@ mod tests {
             {"key": "ready", "who": "you", "say": "merge it", "cmd": "gh pr merge"},
             {"key": "parent-wait", "who": "wait", "say": "w", "cmd": null},
         ]))});
-        let c = card("r", "b", Some(&doc));
+        let c = card(&cached(doc));
         assert_eq!(t(&c, "lead.who"), "you");
         assert_eq!(t(&c, "lead.cmd"), "gh pr merge");
     }
@@ -291,23 +332,35 @@ mod tests {
     #[test]
     fn no_next_steps_is_unsure_as_the_watcher_records_it() {
         let doc = json!({"note": "sd state gave no next steps", "state": open()});
-        let c = card("r", "b", Some(&doc));
+        let c = card(&cached(doc));
         assert_eq!((t(&c, "lead.key"), t(&c, "lead.who")), ("unsure".into(), "wait".into()));
         assert_eq!(t(&c, "lead.say"), "sd state gave no next steps");
     }
 
     #[test]
     fn threads_gh_couldnt_read_are_unknown_not_done() {
-        let s = with(with(open(), "threads.owed_bot", Value::Null), "threads.owed_human", Value::Null);
-        assert_eq!(one(s, "threads"), "todo:unknown");
+        assert_eq!(one(with(open(), "threads.blocking", Value::Null), "threads"), "todo:unknown");
     }
 
     #[test]
-    fn info_bot_items_aren_t_owed() {
-        let s = with(with(open(), "threads.owed_bot", json!(3)), "threads.info", json!(2));
+    fn info_items_aren_t_owed() {
+        let s = with(with(open(), "threads.blocking", json!(1)), "threads.info", json!(2));
         assert_eq!(one(s, "threads"), "todo:1 owed");
-        let s = with(with(open(), "threads.owed_bot", json!(2)), "threads.info", json!(2));
+        let s = with(with(open(), "threads.blocking", json!(0)), "threads.info", json!(2));
         assert_eq!(one(s, "threads"), "done:");
+    }
+
+    #[test]
+    fn a_waiting_answer_lights_its_question_s_stage() {
+        let s = with(with(open(), "question", json!({"step": "ci-fix"})), "next", json!([{"key": "answer", "who": "wait"}]));
+        assert_eq!(one(s, "ci"), "cur:answer");
+    }
+
+    #[test]
+    fn a_lit_stage_shows_its_step_s_word_not_its_key() {
+        let s = with(open(), "next", json!([{"key": "open-pr", "who": "run"}, {"key": "ci-red", "who": "agent"}]));
+        assert_eq!(one(s.clone(), "push"), "cur:open PR");
+        assert_eq!(one(s, "ci"), "cur:fix");
     }
 
     /// Keys that hold every stage, so light none.
@@ -335,7 +388,7 @@ mod tests {
     #[test]
     fn the_stage_table_names_no_key_next_never_gives() {
         let keys = next_keys();
-        for k in KEYS.iter().flat_map(|(_, ks)| ks.iter()).chain(GUARDS.iter()) {
+        for k in KEYS.iter().flat_map(|(_, ks)| ks.iter().map(|(k, _)| k)).chain(GUARDS.iter()) {
             assert!(keys.iter().any(|x| x == k), "{k}");
         }
     }
