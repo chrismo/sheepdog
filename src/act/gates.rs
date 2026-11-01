@@ -29,6 +29,7 @@ pub const MIGRATED: &[Migrated] = &[
         gate: implement,
     },
     Migrated { verb: "ci-fix", offered: |steps| steps.iter().any(|s| s["key"] == "ci-red"), gate: ci_fix },
+    Migrated { verb: "review", offered: |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gate: review },
 ];
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
@@ -268,6 +269,104 @@ pub fn ci_fix_once(rules: &[Rule]) -> &'static str {
     }
 }
 
+/// review's and accept's reasons; review::worded puts each in the record's words.
+pub mod rvw {
+    pub const UNSEEN: &str = "whether the worktree is clean is unknown";
+    pub const DIRTY: &str = "the worktree has uncommitted changes";
+    pub const NO_BASE: &str = "no base to review against";
+    pub const CLOSED: &str = "the PR is merged or closed";
+    pub const COVERED: &str = "a review already covers HEAD";
+    pub const FINDINGS: &str = "review findings stand at HEAD";
+    pub const VERIFY_RED: &str = "verify is red at HEAD";
+    pub const ANSWER: &str = "an answer to the agent's question goes on first";
+    // a followed PR (#250)
+    pub const NOT_OPEN: &str = "the PR isn't open";
+    pub const YOURS: &str = "commits here the PR doesn't have";
+    pub const FETCH: &str = "the author pushed, or GitHub is ahead of the remote refs";
+    pub const SUBMITTED: &str = "your review on GitHub is of HEAD";
+    pub const HAD: &str = "the local review, an accept or its findings cover HEAD";
+}
+
+/// sd act review (A8), the branch's own or a followed PR's (#250). Hard: no
+/// worktree known clean (verify would test edits in place of HEAD) or no
+/// base. Soft: wherever NEXT offers no review.
+pub fn review(d: &Derived) -> Gate {
+    judge(&review_rules(d))
+}
+
+/// The Hard rule alone holding back a review, and what clears it, for
+/// chrismo's step. Not the dirty worktree: NEXT has its own steps for that.
+pub fn review_held(d: &Derived) -> Option<(&'static str, &'static str)> {
+    let known = Derived { push_dirty: Some(false), old_base_null: false, ..d.clone() };
+    if !review(&known).runs() {
+        return None;
+    }
+    review_rules(d).into_iter().find(|r| r.refuses && r.level == Level::Hard && r.name != rvw::DIRTY).map(|r| (r.name, r.clears))
+}
+
+fn review_rules(d: &Derived) -> [Rule; 11] {
+    let Derived {
+        reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending,
+        rv_yours, rv_fetch, rv_current, rv_submitted, rv_local,
+        own_base: _, running: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _, lagging: _,
+        locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _,
+        held: _, unpushed: _, to_push: _, ci_held: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
+        up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
+        by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _,
+        ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
+        findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
+        failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
+        resume_ci: _, dirty: _, refused: _, bot: _, rv_dirty: _, rv_pending: _,
+    } = d;
+    let (mine, theirs) = (!reviewer, *reviewer);
+    let (stale, catch_up) = match (rv_yours, rv_fetch) {
+        (true, _) => (rvw::YOURS, "move them to a branch of your own"),
+        (_, true) => (rvw::FETCH, "sd act fetch"),
+        _ => (rvw::NOT_OPEN, "sd act forget"),
+    };
+    // only ci-fix's NEXT reads yours (#355)
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
+    [
+        rule(rvw::UNSEEN, Level::Hard, push_dirty.is_none(), "check the branch out in a worktree"),
+        rule(rvw::DIRTY, Level::Hard, yes(*push_dirty), "commit or discard them"),
+        rule(rvw::NO_BASE, Level::Hard, *old_base_null, "sd state's errors say why, or ship the parent first"),
+        rule(rvw::CLOSED, Level::Soft, mine && !open, "reopen it, or start a new branch"),
+        rule(rvw::COVERED, Level::Soft, mine && *any_cover, "a new commit, or sd act review --force"),
+        rule(rvw::FINDINGS, Level::Soft, mine && *fixing, "sd act implement fixes them, or sd act review --accept"),
+        rule(rvw::VERIFY_RED, Level::Soft, mine && *verify_red, "fix it, then sd act verify"),
+        rule(rvw::ANSWER, Level::Soft, mine && *answer_pending, "its step runs, as sd state's NEXT says"),
+        rule(stale, Level::Soft, theirs && !rv_current, catch_up),
+        rule(rvw::SUBMITTED, Level::Soft, theirs && *rv_submitted, "the author pushes"),
+        rule(rvw::HAD, Level::Soft, theirs && *rv_local, "the author pushes, or sd act review --force"),
+    ]
+}
+
+/// sd act review --accept pins HEAD against its base and reads no worktree.
+pub fn accept(d: &Derived) -> Gate {
+    let Derived {
+        old_base_null,
+        own_base: _, running: _, reviewer: _, pr_null: _, open: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
+        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
+        taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
+        up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
+        by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_verdict: _, ci_blocked: _,
+        ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
+        fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _,
+        over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
+        resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _,
+        rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
+    } = d;
+    judge(&[Rule {
+        name: rvw::NO_BASE,
+        level: Level::Hard,
+        refuses: *old_base_null,
+        clears: "sd state's errors say why, or ship the parent first",
+        yours: true,
+    }])
+}
+
 /// Each verb NEXT's <steps> offer while its gate refuses (runs() false).
 pub fn parity(d: &Derived, steps: &[Value]) -> Vec<String> {
     MIGRATED
@@ -441,6 +540,80 @@ mod tests {
                 (false, true) if !d.tasked => Err("the task runs with none recorded".into()),
                 (false, true) if d.ahead_target.is_none() && d.asking != "implement" => Err("the task runs with ahead unknown".into()),
                 _ => Ok(()),
+            }
+        });
+    }
+
+    /// The branch's own HEAD, unreviewed, in a clean worktree with a base.
+    fn unreviewed() -> Derived {
+        Derived { open: true, has_pr: true, push_dirty: Some(false), need_review: true, ..Derived::default() }
+    }
+
+    /// A followed PR (#250), caught up and unreviewed.
+    fn followed() -> Derived {
+        Derived { reviewer: true, has_pr: true, push_dirty: Some(false), rv_current: true, ..Derived::default() }
+    }
+
+    #[test]
+    fn review_goes_on_an_unreviewed_head_its_own_or_a_followed_prs() {
+        assert_eq!(review(&unreviewed()), Gate::Go);
+        assert_eq!(review(&followed()), Gate::Go);
+        assert_eq!(review(&Derived { pr_null: true, has_pr: false, need_review: false, ..unreviewed() }), Gate::Go);
+    }
+
+    #[test]
+    fn review_a_worktree_it_cant_see_a_dirty_one_or_no_base_is_hard_even_forced() {
+        for d in [unreviewed(), followed()] {
+            assert_eq!(review(&Derived { push_dirty: None, ..d.clone() }), Gate::Hard(rvw::UNSEEN.into()));
+            assert_eq!(review(&Derived { push_dirty: Some(true), any_cover: true, ..d.clone() }), Gate::Hard(rvw::DIRTY.into()));
+            assert_eq!(review(&Derived { old_base_null: true, ..d.clone() }), Gate::Hard(rvw::NO_BASE.into()));
+        }
+    }
+
+    #[test]
+    fn review_refuses_where_next_offers_none_unless_forced() {
+        assert_eq!(review(&Derived { open: false, merged: true, ..unreviewed() }), soft(&[rvw::CLOSED]));
+        assert_eq!(review(&Derived { any_cover: true, ..unreviewed() }), soft(&[rvw::COVERED]));
+        assert_eq!(review(&Derived { fixing: true, verify_red: true, ..unreviewed() }), soft(&[rvw::FINDINGS, rvw::VERIFY_RED]));
+        assert_eq!(review(&Derived { answer_pending: true, ..unreviewed() }), soft(&[rvw::ANSWER]));
+    }
+
+    #[test]
+    fn review_of_a_followed_pr_asks_its_own_list_not_the_authors_250() {
+        let theirs = Derived { open: false, any_cover: true, fixing: true, verify_red: true, answer_pending: true, ..followed() };
+        assert_eq!(review(&theirs), Gate::Go);
+        assert_eq!(review(&Derived { rv_current: false, rv_yours: true, ..followed() }), soft(&[rvw::YOURS]));
+        assert_eq!(review(&Derived { rv_current: false, rv_fetch: true, ..followed() }), soft(&[rvw::FETCH]));
+        assert_eq!(review(&Derived { rv_current: false, has_pr: false, ..followed() }), soft(&[rvw::NOT_OPEN]));
+        assert_eq!(review(&Derived { rv_submitted: true, rv_local: true, ..followed() }), soft(&[rvw::SUBMITTED, rvw::HAD]));
+        assert_eq!(review(&Derived { reviewer: false, rv_current: false, rv_local: true, open: true, ..followed() }), Gate::Go);
+    }
+
+    #[test]
+    fn review_held_names_the_hard_rule_only_when_it_alone_holds_review_back() {
+        let unseen = Derived { push_dirty: None, ..unreviewed() };
+        assert_eq!(review_held(&unseen).map(|(why, _)| why), Some(rvw::UNSEEN));
+        assert_eq!(review_held(&Derived { old_base_null: true, ..followed() }).map(|(why, _)| why), Some(rvw::NO_BASE));
+        assert_eq!(review_held(&Derived { any_cover: true, ..unseen.clone() }), None);
+        assert_eq!(review_held(&Derived { push_dirty: Some(true), ..unreviewed() }), None);
+        assert_eq!(review_held(&unreviewed()), None);
+    }
+
+    #[test]
+    fn accept_needs_only_a_base_whatever_the_worktree_holds_or_review_says() {
+        let d = Derived { push_dirty: Some(true), fixing: true, any_cover: true, verify_red: true, ..unreviewed() };
+        assert_eq!(accept(&d), Gate::Go);
+        assert_eq!(accept(&Derived { push_dirty: None, ..d.clone() }), Gate::Go);
+        assert_eq!(accept(&Derived { old_base_null: true, ..d }), Gate::Hard(rvw::NO_BASE.into()));
+    }
+
+    #[test]
+    fn review_never_runs_on_a_worktree_not_known_clean_or_with_no_base_on_generated_states() {
+        check("review unseen, dirty or baseless", |d| {
+            if review(d).runs() && (d.push_dirty != Some(false) || d.old_base_null) {
+                Err("review runs".into())
+            } else {
+                Ok(())
             }
         });
     }

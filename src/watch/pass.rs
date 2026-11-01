@@ -24,9 +24,9 @@ use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// The NEXT steps that are ❌: chrismo's to deal with.
-const RED: [&str; 21] = [
-    "ci-red", "ci-blocked", "conflict", "human", "foreign", "foreign-authors", "parent-closed", "review-decide", "question",
-    "restack-undone", "bot-silent", "budget", "failed", "ci-config", "nothing", "default", "dirty", "read",
+const RED: [&str; 22] = [
+    "ci-red", "ci-blocked", "conflict", "human", "foreign", "foreign-authors", "parent-closed", "review-decide",
+    "review-held", "question", "restack-undone", "bot-silent", "budget", "failed", "ci-config", "nothing", "default", "dirty", "read",
     "submit", "yours", "verify-red",
 ];
 

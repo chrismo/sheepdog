@@ -1,16 +1,20 @@
 // review (A8), and review --accept: verify, then the local reviewer over the
 // branch's own change, base..HEAD. Clean pins local; findings that block are
-// recorded for the review-fix round and nothing is pinned. A HEAD the local
-// review already covers is refused, at zero tokens, unless --force (#241).
-// verify and the reviewer run under the branch's running marker, a custom
-// settings.localReview too, so another live step's marker refuses review
-// before its verify runs (#270).
+// recorded for the review-fix round and nothing is pinned. Whether it runs is
+// gates::review's, which NEXT asks too (#348): a HEAD a review already covers
+// (#241), or one its findings or a failed verify stand at, is refused at
+// zero tokens unless --force. --accept asks gates::accept: a base to pin
+// against, whatever the worktree holds. verify and the reviewer run under the
+// branch's running marker, a custom settings.localReview too, so another live
+// step's marker refuses review before its verify runs (#270).
 
-use super::commands::{status, step_timeout, verify_run};
-use super::{attached_check, cfg, die, no_base_why, plural, state_json};
+use super::commands::{step_timeout, verify_run};
+use super::gates::{self, rvw};
+use super::{attached_check, cfg, die, enforce, no_base_why, plural, state_json};
 use crate::config::one_value;
 use crate::git::{git, git_input, git_out, pin_write, rev, strip_nl, worktree_for};
 use crate::json;
+use crate::next::Derived;
 use crate::{decisions, harness, limit, proc, running};
 use crate::state::flag_lines;
 use crate::val::{at, on, t};
@@ -78,31 +82,47 @@ fn accept(b: &str, head: &str, base: &str) {
     println!("accepted: {b} at {} against {}; pinned accepted", short(head), short(base));
 }
 
+/// <why>, one of gates::review's or gates::accept's reasons, in record <s>'s
+/// words, about <head>.
+fn worded(why: &str, s: &Value, head: &str, remote: &str) -> String {
+    let b = t(s, "branch");
+    let covers = |p: &str| matches!(t(s, &format!("review.{p}.status")).as_str(), "covered" | "rewritten-same");
+    match why {
+        rvw::UNSEEN => format!("{b} isn't checked out in any worktree, or git status failed there"),
+        rvw::DIRTY => format!("{b}'s worktree has uncommitted changes"),
+        rvw::NO_BASE => format!("can't find {b}'s base: {}", no_base_why(s, remote)),
+        rvw::CLOSED => format!("PR #{} is {}", t(s, "pr.number"), t(s, "pr.state").to_lowercase()),
+        rvw::COVERED => {
+            let by = if covers("local") { "local review" } else if covers("accepted") { "an accept" } else { "the bot's review" };
+            format!("{by} already covers {}", short(head))
+        }
+        rvw::FINDINGS => {
+            let n = at(s, "review.findings.n").as_u64().unwrap_or(0) as usize;
+            let stand = if n == 1 { "stands" } else { "stand" };
+            format!("{} {stand} at {} (sd state --long): sd act implement fixes them, or sd act review --accept", plural(n, "review finding"), short(head))
+        }
+        rvw::VERIFY_RED => format!("verify failed at {}: fix it, then sd act verify", short(head)),
+        rvw::ANSWER => format!("your answer to the {} agent's question goes on first", t(s, "question.step")),
+        _ => why.into(),
+    }
+}
+
 pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     let wt = worktree_for(".", b);
-    if wt.is_empty() {
-        die(format!("{b} isn't checked out in any worktree"));
-    }
-    if !status(&wt).is_empty() {
-        die(format!("{wt} has uncommitted changes"));
-    }
     attached_check(b, &format!("reviewing {b}"), force);
-    let s = state_json(&wt, b).unwrap_or_else(|e| {
+    let s = state_json(if wt.is_empty() { "." } else { &wt }, b).unwrap_or_else(|e| {
         eprint!("{e}");
         die("sd state failed")
     });
+    let d = Derived::new(&s);
     let base = t(&s, "sync.old_base");
-    if base.is_empty() {
-        die(format!("can't find {b}'s base: {}", no_base_why(&s, remote)));
-    }
     let head = rev(".", &format!("refs/heads/{b}"));
+    let word = |w: &str| worded(w, &s, &head, remote);
     if accepting {
+        let Some(_go) = enforce(gates::accept(&d).worded(word), force, &format!("accepting {b}")) else { return };
         return accept(b, &head, &base);
     }
-    // Covered as NEXT has it: at HEAD, or the same change rebased (#241).
-    if !force && matches!(t(&s, "review.local.status").as_str(), "covered" | "rewritten-same") {
-        die(format!("local review already covers {}; --force to review again", short(&head)));
-    }
+    let Some(_go) = enforce(gates::review(&d).worded(word), force, &format!("reviewing {b}")) else { return };
     super::step::spend_gate(b, "review");
     if running::holding(b, "review", || reviewed(b, &wt, &s, &base, &head)).is_none() {
         std::process::exit(1);

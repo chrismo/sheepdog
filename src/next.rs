@@ -30,8 +30,10 @@
 // chrismo's (#143). So are uncommitted changes there, which implement refuses.
 // Implement and review-fix are offered only when gates::implement says Go
 // (#348): with errors, pr may be wrong, so nothing spends on implementing;
-// past settings.reviewRounds the findings are chrismo's. A remote with
-// commits reset away here isn't empty: the #86 steps handle it.
+// past settings.reviewRounds the findings are chrismo's. Review, the
+// branch's own or a followed PR's, only when gates::review says Go; when only
+// its Hard rules hold it (no worktree, no base), review-held is chrismo's.
+// A remote with commits reset away here isn't empty: the #86 steps handle it.
 // While a step runs (session.running), its one step is to wait: the
 // worktree is the step's, so an agent's edits aren't chrismo's to commit,
 // and no other step should touch it (#170, #270).
@@ -630,13 +632,8 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                     ),
                     cmd("sd act review --accept"),
                 )
-            } else if open && d.need_review && !d.refused && !d.verify_red {
-                let say = match &last_review {
-                    Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
-                    None if d.reviewed => "review again: the branch was rewritten since the last review".into(),
-                    None => "review the branch's change".into(),
-                };
-                agent(hold, "review", say, "sd act review")
+            } else if d.need_review {
+                review_step(d, hold, &last_review)
             } else {
                 None
             },
@@ -937,10 +934,10 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
         } else {
             None
         },
-        if current && !d.rv_dirty && !d.rv_submitted && !d.rv_local {
+        if crate::act::gates::review(d).runs() {
             agent(hold, "review", again, "sd act review")
         } else {
-            None
+            review_held(d)
         },
         if current && ((!d.rv_submitted && d.rv_local) || d.rv_pending) {
             let say = if d.rv_pending {
@@ -963,6 +960,25 @@ fn reviewer(d: &Derived, s: &Value, hold: &Option<Value>, again: String) -> Vec<
             None
         },
     ]
+}
+
+/// The branch's own review: the agent's when gates::review says Go.
+fn review_step(d: &Derived, hold: &Option<Value>, last_review: &Option<Value>) -> Option<Value> {
+    if !crate::act::gates::review(d).runs() {
+        return review_held(d);
+    }
+    let say = match last_review {
+        Some(k) => format!("review again: {} since the last review", plural(k, "commit")),
+        None if d.reviewed => "review again: the branch was rewritten since the last review".into(),
+        None => "review the branch's change".into(),
+    };
+    agent(hold, "review", say, "sd act review")
+}
+
+/// chrismo's step when only a Hard rule of review's gate holds it back.
+fn review_held(d: &Derived) -> Option<Value> {
+    let (why, clears) = crate::act::gates::review_held(d)?;
+    step("review-held", "you", format!("review can't run: {why}: {clears}"), None)
 }
 
 fn minutes(w: &Value) -> String {
