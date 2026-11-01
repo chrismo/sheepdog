@@ -2217,6 +2217,49 @@ fn push_foreign_authors_leaves_out_the_targets_commits_merged_in_356() {
     assert_eq!(r.field_c(".push.foreign_authors"), "[]");
 }
 
+impl Sd {
+    /// Their x.txt, and y.txt when <two>, pushed on feat; main then gets
+    /// the same files in one commit, and feat restacks onto it.
+    fn theirs_landed_then_restacked(&self, two: bool) {
+        self.feat_pushed();
+        let files: &[&str] = if two { &["x.txt", "y.txt"] } else { &["x.txt"] };
+        for f in files {
+            self.commit_by(f, "them@example.com", None);
+        }
+        self.git(&["push", "-q", "origin", "feat"]);
+        self.git_in("other", &["pull", "-q", "origin", "main"]);
+        for f in files {
+            fs::write(self.tmp.join("other").join(f), format!("{f}\n")).unwrap();
+        }
+        self.git_in("other", &[&["add"], files].concat());
+        self.git_in("other", &["-c", "user.email=them@example.com", "commit", "-qm", "squashed"]);
+        self.git_in("other", &["push", "-q", "origin", "main"]);
+        self.git(&["fetch", "-q"]);
+        self.git(&["rebase", "-q", "origin/main"]);
+    }
+}
+
+// A restack past their commit, squash-merged to the target: the push
+// removes it from the remote, but its patch is on the target (#356).
+#[test]
+fn push_foreign_authors_leaves_out_what_landed_on_the_target_356() {
+    let sd = sd();
+    sd.theirs_landed_then_restacked(false);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".push.behind"), "2");
+    assert_eq!(r.field_c(".push.foreign_authors"), "[]");
+}
+
+// A squash of several commits is another patch: theirs still count (#356).
+#[test]
+fn push_foreign_authors_counts_commits_squashed_together_on_the_target_356() {
+    let sd = sd();
+    sd.theirs_landed_then_restacked(true);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".push.behind"), "3");
+    assert_eq!(r.field_c(".push.foreign_authors"), r#"["them@example.com"]"#);
+}
+
 // Without user.email nothing is known to be ours: unknown, not everyone (#356).
 #[test]
 fn push_foreign_authors_is_null_without_user_email_356() {

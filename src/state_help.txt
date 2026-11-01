@@ -32,7 +32,8 @@ Reports, for <branch> (default: the current one):
             than user.email on the commits sd act push would remove from
             the remote (diverged, or dropping commits reset away; past
             HEAD, the target, the base and the default branch), newest
-            first, leaving out those already looked at. GitHub's
+            first, leaving out those already looked at and those whose
+            patch is on the target (squash-merged alone). GitHub's
             noreply@github.com committer (a web edit, Update branch, a
             suggestion) counts as its author: ours when that's user.email,
             never named. sd act push refuses them unless --force (#356).

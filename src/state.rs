@@ -1148,10 +1148,11 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
 /// first (#356), and those commits' ids: each one's patch-id, or its SHA
 /// when it has none (a merge, an empty commit). A commit whose id is in
 /// branch.<b>.sd-authors-seen (sd act push --force records them) was looked
-/// at and doesn't count; a patch-id outlives a restack. Both [] when the
+/// at, and one whose patch-id is on <target> (squash-merged alone) loses
+/// nothing: neither counts. A patch-id outlives a restack. Both [] when the
 /// push removes nothing (<removed> None), null for a followed PR
 /// (#250), without user.email, or when git fails.
-fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str>, not: &[&str]) -> (Value, Value) {
+fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
     let unknown = (Value::Null, Value::Null);
     if reviewer {
         return unknown;
@@ -1171,14 +1172,18 @@ fn foreign_authors(dir: &str, branch: &str, reviewer: bool, removed: Option<&str
         })
         .collect();
     let ids = if theirs.is_empty() { Some(HashMap::new()) } else {
-        patch_ids(dir, &range(&["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"]))
+        patch_ids(dir, &range(&PATCH_LOG))
     };
-    let Some(ids) = ids else { return unknown };
-    let seen = config_all(dir, branch, "sd-authors-seen");
+    let landed = if theirs.is_empty() || target.is_empty() { Some(HashMap::new()) } else {
+        patch_ids(dir, &[&PATCH_LOG[..], &[target, "--not", removed]].concat())
+    };
+    let (Some(ids), Some(landed)) = (ids, landed) else { return unknown };
+    let mut skip = config_all(dir, branch, "sd-authors-seen");
+    skip.extend(landed.into_values());
     let (mut out, mut unseen): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
     for (sha, others) in &theirs {
         let id = ids.get(*sha).map_or(*sha, String::as_str);
-        if seen.iter().any(|s| s == id) {
+        if skip.iter().any(|s| s == id) {
             continue;
         }
         unseen.push(id);
@@ -1205,6 +1210,8 @@ fn others_on<'a>(me: &str, author: &'a str, committer: &'a str) -> Vec<&'a str> 
     }
     others
 }
+
+const PATCH_LOG: [&str; 5] = ["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"];
 
 /// SHA → patch-id for the commits git <log_args> (a log -p) lists; a commit
 /// with no diff has none. None when git fails.
@@ -1616,7 +1623,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let facts = Facts {
         branch: branch.into(),
         replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr),
-        foreign_authors: foreign_authors(dir, branch, reviewer, removes.then_some(remote_sha.as_str()),
+        foreign_authors: foreign_authors(dir, branch, reviewer, removes.then_some(remote_sha.as_str()), &target_ref,
             &[&head, &target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         head: head.clone(),
         task: cfg("sd-task"),

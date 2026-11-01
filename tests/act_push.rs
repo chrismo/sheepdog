@@ -438,12 +438,11 @@ fn a_restack_past_a_colleagues_squash_merged_commit_drops_it_from_the_branch_pus
     sd.git(&["fetch", "-q", "origin"]);
     sd.git(&["rebase", "-q", "origin/main"]);
     assert_eq!(sd.git(&["log", "--format=%s", "origin/main..feat"]), "mine\nfeat");
-    // the push removes their commit from the remote (#356)
-    assert_has(&sd.run(&["push"]).output, &["would remove commits someone else made"]);
-    let r = sd.run(&["push", "--force"]);
-    assert_eq!(r.status, 0);
+    // the push removes their commit, but its patch is on main (#356)
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
-    assert_has(&r.output, &["force-pushed feat to origin (rewritten;"]);
+    assert!(r.output.starts_with("force-pushed feat to origin (rewritten;"), "{}", r.output);
 }
 
 // @test "taken, reset away, then a new commit: the rewrite path leases over the taken commit, as before #86 (only a pure drop checks who made it)"
