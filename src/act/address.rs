@@ -2,17 +2,16 @@
 // branch's session; the pipeline commits its edits, runs verify, pushes, then
 // posts its replies and resolves the threads.
 
-use super::commands::{command, status, verify_autofix};
-use super::hold::{hold_gate, hold_since, pr_gate};
+use super::commands::{command, status};
+use super::editing::{guidance, run_editing_step, Outcome, Spec};
+use super::hold::{hold_gate, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base,
-                  question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
+use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, question_ask, question_gate, question_say,
+                  going_on, step_session, with_stored_answer};
 use super::gates::{self, addr};
 use super::{cfg, die, enforce, lock_recheck, state_json, Args, Gate, Go};
 use crate::git::{git, rev, worktree_for};
-use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::next::{round_key, yes, Derived};
 use crate::state::unbot;
 use crate::{decisions, proc, running};
@@ -55,9 +54,10 @@ Do not commit, push, or run gh: the pipeline commits your edits, runs checks,
 pushes, and posts each `reply` on the PR. A /word or @login in a reply is posted
 with a lookalike glyph so it can't trigger a bot or ping anyone; for a path,
 use a relative one. Return one item per finding id, a one-line commit_message
-if you changed anything (else null), and outcome "done", "needs-input"
-(anything you marked ask) or "gave-up" (you couldn't make sense of it; nothing
-is posted)."#;
+if you changed anything (else null), and outcome "done"; "needs-input"
+(anything you marked ask: the pipeline still commits, verifies, pushes and
+posts the rest, and your asks go to the PR's author); or "gave-up" (you
+couldn't make sense of it; nothing is posted)."#;
 
 const ACTIONS: [&str; 4] = ["fixed", "reply", "pushback", "ask"];
 
@@ -446,72 +446,45 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
 
     let sess = step_session(b, "address", &a.harness, a.force, answering);
     let verify = command("verify", b);
-    let gbase = guidance_base(b);
-    let guidance = step_guidance("addressPrompt", b, &gbase, &lib_dir().join("prompts/address.md")).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        die("can't read the address guidance")
-    });
-    let rules = agent_rules(b);
+    let base = guidance_base(b);
+    let guidance = guidance(b, &base, "addressPrompt", "address.md", "address");
     let list: Vec<Value> = fs.iter().cloned().map(Value::Object).collect();
     let listed = format!("Findings:\n{}", serde_json::to_string_pretty(&list).expect("a Value serializes"));
-    let mut prompt = format!("{guidance}\n\n{ADDRESS_CONTRACT}\n\nPR {}\n{listed}", t(&s, "pr.url"));
-    if answering {
-        prompt = answer_prompt(&a.answer, &listed);
-    }
-    if !verify.is_empty() {
-        prompt += &format!("\n\nThe repo's checks, which the pipeline runs after you: {verify}");
-    }
-    let (allow, said) = harness::tool_rules(&sess.harness, &rules);
-    prompt += &format!("\n\n{said}");
-
-    let (h, sid) = (sess.harness.as_str(), sess.id.as_str());
-    eprintln!("sd act: {h} ({} session {sid}) is addressing {} item(s) on {b}…", sess.mode, fs.len());
-    let head = format!("refs/heads/{b}");
-    let before = rev(".", &head);
-    let step = Step {
-        harness: h,
-        session: sid,
-        mode: sess.mode,
-        parent: &sess.parent,
-        timeout: sess.timeout,
-        prompt: &prompt,
+    let r = run_editing_step(Spec {
+        b,
+        wt,
+        step: "address",
+        asks_as: "address",
+        session: &sess,
+        base: &base,
+        prompt: format!("{guidance}\n\n{ADDRESS_CONTRACT}\n\nPR {}\n{listed}", t(&s, "pr.url")),
         schema: SCHEMA,
-        settings: &sess.cfg,
-        name: "address",
-        branch: b,
-        claude_allow: &allow,
-        pi_tools: PI_TOOLS,
+        done: "done",
+        doing: format!("addressing {} item(s) on {b}", fs.len()),
+        verify: &verify,
+        answer: &a.answer,
+        items: &listed,
+    });
+    // needs-input still publishes what isn't an ask, as ADDRESS_CONTRACT says.
+    let needs_input = match &r.outcome {
+        Outcome::Done => false,
+        Outcome::NeedsInput(_) => true,
+        Outcome::GaveUp(why) => r.give_up(why),
+        Outcome::Other(w) => r.unknown(w),
     };
-    let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
-        hold_since(b, &gbase, &before);
-        die(format!("the {h} step failed or returned no usable result (session {sid})"))
-    };
-    step_store(b, &sess, &ran);
-    question_answered(b, &a.answer);
-    hold_since(b, &gbase, &before);
-    let agent_head = rev(".", &head);
-
-    // pi has no schema enforcement, so check the shape here too.
-    let outcome = t(&result, "outcome");
-    let summary = t(&result, "summary");
-    match outcome.as_str() {
-        "done" | "needs-input" => {}
-        "gave-up" => give_up(b, wt, "address", &summary, format!("the agent gave up: {summary}. Any edits are left uncommitted in {wt}")),
-        _ => give_up(b, wt, "address", &format!("returned outcome \"{outcome}\": {summary}"), format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
-    }
-    let changed = !status(wt).is_empty();
-    let plan = scrubbed(plan(&fs, &result, changed, &theirs));
+    let summary = &r.summary;
+    let changed = r.dirty();
+    let plan = scrubbed(plan(&fs, &r.result, changed, &theirs));
     if changed {
-        commit_edits(b, "address", wt, &commit_message(&result));
+        commit_edits(b, "address", wt, &commit_message(&r.result));
     }
-    hold_since(b, &gbase, &agent_head);
-    let verified = verify_autofix(wt, b, "address");
+    let verified = r.verify();
     // The asks stay owed, so the bot step would hand them over again: the
     // question replaces it, recorded on HEAD as verify left it (a push keeps it).
     let lines = report(&plan);
     let asks = lines.iter().skip_while(|l| *l != "needs chrismo:").cloned().collect::<Vec<_>>().join("\n");
     let mut qmsg = String::new();
-    if outcome == "needs-input" || !asks.is_empty() {
+    if needs_input || !asks.is_empty() {
         let text = if asks.is_empty() { summary.clone() } else { format!("{summary}\n{asks}") };
         question_ask(b, wt, "address", &text);
         qmsg = format!(
@@ -525,7 +498,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         die(format!("verify failed ({verify}); the commit is kept in {wt}, nothing pushed or posted{q}"));
     }
 
-    print_report(b, &summary, &lines);
+    print_report(b, summary, &lines);
     if !qmsg.is_empty() {
         println!("{qmsg}");
     }
@@ -538,7 +511,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     // second address finds the fix already in (it spends tokens again).
     hold_gate(b, &format!("pushing {b}"), "The replies weren't posted, so the items are still owed: after sd act push, sd act address answers them again, or answer them on GitHub");
     // A reply-only round commits nothing, unless autofix did.
-    let left = if rev(".", &head) == before { "nothing was committed".to_string() } else { format!("the commit is kept in {wt}") };
+    let left = if r.moved() { format!("the commit is kept in {wt}") } else { "nothing was committed".to_string() };
     pr_gate(&t(&s, "pr.number"), &t(&s, "pr.url"), "address", "pushing or posting", &left);
     lock_recheck(b, "address", "pushing", &left);
     if let Err(e) = push_branch(b, remote) {

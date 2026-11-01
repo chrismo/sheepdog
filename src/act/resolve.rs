@@ -6,10 +6,10 @@
 // stopped, with the edits in it (#270).
 
 use super::attached_during;
-use super::step::{agent_rules, spend_held, step_session, step_store};
+use super::editing::{unknown, Outcome, Spec};
+use super::step::{spend_held, step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl, Git};
 use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::proc;
 use crate::val::t;
 use serde_json::Value;
@@ -83,11 +83,11 @@ struct Stop<'a> {
     hunks: &'a str,
 }
 
-fn prompt(r: &Rebase, guidance: &str, stop: &Stop, runs: &str) -> String {
+fn prompt(r: &Rebase, guidance: &str, stop: &Stop) -> String {
     let task = if stop.task.is_empty() { "(none recorded)" } else { stop.task };
     format!(
         "{guidance}\n\n{CONTRACT}\n\nBranch: {}, rebasing onto {}\nTask: {task}\nReplaying: {}\n{}\n\n\
-         Commits being replayed, oldest first:\n{}\n\nConflicting files:\n{}\n\nConflict hunks:\n{}{runs}",
+         Commits being replayed, oldest first:\n{}\n\nConflicting files:\n{}\n\nConflict hunks:\n{}",
         r.b,
         r.onto,
         stop.replaying,
@@ -103,9 +103,9 @@ fn prompt(r: &Rebase, guidance: &str, stop: &Stop, runs: &str) -> String {
 /// is a wrong base, never dropped on its word.
 fn verdict(r: &Rebase, replaying: &str, result: &Value) -> Result<String, Halt> {
     let (b, onto, back, summary) = (r.b, r.onto, r.back(), t(result, "summary"));
-    match t(result, "outcome").as_str() {
-        "done" => Ok(summary),
-        "already-on-target" => {
+    match Outcome::of(result, "done") {
+        Outcome::Done => Ok(summary),
+        Outcome::Other(w) if w == "already-on-target" => {
             let sha = replaying.split(' ').next().unwrap_or("");
             let why = format!(
                 "wrong base: the agent says {replaying} is already on {onto} ({summary}); {back}. If it's a merged parent's \
@@ -114,7 +114,11 @@ fn verdict(r: &Rebase, replaying: &str, result: &Value) -> Result<String, Halt> 
             );
             Err(gave_up(why.clone(), why))
         }
-        _ => Err(gave_up(summary.clone(), format!("the agent gave up: {summary}; {back}"))),
+        Outcome::GaveUp(why) => Err(gave_up(why.clone(), format!("the agent gave up: {why}; {back}"))),
+        Outcome::NeedsInput(_) | Outcome::Other(_) => {
+            let (text, line) = unknown(&t(result, "outcome"), &summary);
+            Err(gave_up(text, format!("{line}; {back}")))
+        }
     }
 }
 
@@ -171,12 +175,6 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             return Err(format!("sd config failed; {}", r.back()).into());
         }
     };
-    let (allow, said) = harness::tool_rules(&s.harness, &agent_rules(b));
-    let mut runs = String::new();
-    if !verify.is_empty() {
-        runs += &format!("\n\nThe repo's checks, which the pipeline runs after you: {verify}");
-    }
-    runs += &format!("\n\n{said}");
 
     let mut touched: Vec<String> = Vec::new();
     for stop in 1.. {
@@ -192,25 +190,23 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
         let replaying = git_out(wt, &["log", "-1", "--format=%h %s", "REBASE_HEAD"]).unwrap_or_default();
         let stat = git_out(wt, &["show", "--stat", "--format=", "REBASE_HEAD"]).unwrap_or_default();
         let snap = worktree_tree(wt).ok_or_else(|| format!("can't snapshot {wt} before the agent runs; {}", r.back()))?;
-        let (h, sid) = (s.harness.as_str(), s.id.as_str());
-        eprintln!("sd act: {h} ({} session {sid}) is resolving conflicts in: {} (stop {stop})…", s.mode, files.join(", "));
         let shown = Stop { task: &task, replaying: &replaying, stat: &stat, replayed: &replayed, files: &files, hunks: &hunks };
-        let prompt = prompt(r, &guidance, &shown, &runs);
-        let step = Step {
-            harness: h,
-            session: sid,
-            mode: s.mode,
-            parent: &s.parent,
-            timeout: s.timeout,
-            prompt: &prompt,
+        let done = Spec {
+            b,
+            wt,
+            step: "resolve",
+            asks_as: "resolve",
+            session: &s,
+            base: r.old_base,
+            prompt: prompt(r, &guidance, &shown),
             schema: SCHEMA,
-            settings: &s.cfg,
-            name: "resolve",
-            branch: b,
-            claude_allow: &allow,
-            pi_tools: PI_TOOLS,
-        };
-        let done = harness::run_step(&step).ok().and_then(Ran::last);
+            done: "done",
+            doing: format!("resolving conflicts in: {} (stop {stop})", files.join(", ")),
+            verify: &verify,
+            answer: "",
+            items: "",
+        }
+        .agent();
         // Before anything that rolls back: a rollback would throw the
         // attached session's edits away along with the agent's.
         if let Some(why) = attached_during(b, "resolve") {
@@ -218,7 +214,8 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<S
             return Err(Halt { why, gave_up: None, keep: true });
         }
         let Some((result, ran)) = done else {
-            return Err(format!("the {h} step failed or returned no usable result (session {sid}); {}", r.back()).into());
+            let why = format!("the {} step failed or returned no usable result (session {}); {}", s.harness, s.id, r.back());
+            return Err(why.into());
         };
         step_store(b, &s, &ran);
         s.fork_of(ran);
@@ -267,13 +264,22 @@ mod tests {
     }
 
     #[test]
-    fn verdict_anything_else_is_giving_up() {
-        for r in [json!({"outcome": "gave-up", "summary": "no sensible merge"}), json!({"outcome": "maybe", "summary": "no sensible merge"})] {
-            let why = "the agent gave up: no sensible merge; rolled back to 0123456";
-            assert_eq!(verdict(&rebase(), "abc1234 feat", &r), Err(gave_up("no sensible merge".into(), why.into())));
+    fn verdict_gave_up_is_giving_up() {
+        let r = json!({"outcome": "gave-up", "summary": "no sensible merge"});
+        let why = "the agent gave up: no sensible merge; rolled back to 0123456";
+        assert_eq!(verdict(&rebase(), "abc1234 feat", &r), Err(gave_up("no sensible merge".into(), why.into())));
+    }
+
+    #[test]
+    fn verdict_an_outcome_resolve_has_no_word_for_is_given_up_on_naming_it() {
+        for o in ["maybe", "needs-input"] {
+            let r = json!({"outcome": o, "summary": "no sensible merge"});
+            let text = format!("returned outcome \"{o}\": no sensible merge");
+            let why = format!("the agent returned outcome \"{o}\"; rolled back to 0123456");
+            assert_eq!(verdict(&rebase(), "abc1234 feat", &r), Err(gave_up(text, why)));
         }
-        let why = "the agent gave up: ; rolled back to 0123456";
-        assert_eq!(verdict(&rebase(), "abc1234 feat", &json!({})), Err(gave_up(String::new(), why.into())));
+        let why = "the agent returned outcome \"\"; rolled back to 0123456";
+        assert_eq!(verdict(&rebase(), "abc1234 feat", &json!({})), Err(gave_up("returned outcome \"\": ".into(), why.into())));
     }
 
     #[test]
@@ -287,10 +293,10 @@ mod tests {
             files: &files,
             hunks: "<<<<<<< HEAD",
         };
-        let p = prompt(&rebase(), "Guide.", &stop, "\n\nYou can't run commands here beyond read-only git.");
+        let p = prompt(&rebase(), "Guide.", &stop);
         assert!(p.starts_with(&format!("Guide.\n\n{CONTRACT}\n\nBranch: feat, rebasing onto origin/main\nTask: (none recorded)\n")));
         assert!(p.contains("\nReplaying: abc1234 feat\n a.txt | 2 +-\n 1 file changed\n\nCommits being replayed, oldest first:\nabc1234 feat\ndef5678 feat two\n\n"));
-        assert!(p.ends_with("\n\nConflicting files:\na.txt\nb.txt\n\nConflict hunks:\n<<<<<<< HEAD\n\nYou can't run commands here beyond read-only git."));
+        assert!(p.ends_with("\n\nConflicting files:\na.txt\nb.txt\n\nConflict hunks:\n<<<<<<< HEAD"));
     }
 
     #[test]

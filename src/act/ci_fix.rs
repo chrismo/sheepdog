@@ -4,18 +4,17 @@
 // and pushes. "flaky" is recorded against the red SHA (branch.<b>.sd-ci-fix),
 // so the same red isn't handed over again.
 
-use super::commands::{status, tail, verify_autofix, verify_autofix_to, Report};
-use super::hold::{hold_gate, hold_since, pr_gate};
+use super::commands::{status, tail, verify_autofix_to, Report};
+use super::editing::{guidance, run_editing_step, Outcome, Spec};
+use super::hold::{hold_gate, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{agent_rules, answer_cmd, answer_prompt, answer_store, answer_waits, commit_edits, give_up, guidance_base, in_worktree,
-                  must, question_answered, question_ask, question_gate, question_say, going_on, step_session, step_store, with_stored_answer};
+use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, in_worktree, must, question_ask, question_gate,
+                  question_say, going_on, step_session, with_stored_answer};
 use super::gate::{enforce, enforce_leaving, judge, reported, Gate, Go, Rule};
 use super::{cfg, die, gates, lock_recheck, state_json, Args};
 use crate::config::one_value;
-use crate::git::{git, git_out, rev};
-use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Ran, Step, PI_TOOLS};
+use crate::git::{git, git_out};
 use crate::next::Derived;
 use crate::proc;
 use crate::val::{at, sj, t, text};
@@ -23,6 +22,22 @@ use regex::Regex;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
+
+// The ci-fix step's prompt: guidance (settings.ciFixPrompt, else
+// .sheepdog/ci-fix.md in the base commit, else lib/prompts/ci-fix.md), then
+// this contract, which the schema and the pipeline rely on (#344).
+const CI_FIX_CONTRACT: &str = r#"Edit files, but do not commit, push, or run gh: the pipeline commits your edits
+with your commit_message, runs the repo's checks, and pushes so CI runs again.
+
+When the failure is in CI's environment rather than in the change (a timeout, a
+flaky dependency, an outage, a runner that died), change nothing and return
+outcome "flaky", saying why in summary; the pipeline reruns CI instead of
+spending another round here.
+
+Return outcome "fixed" with a one-line commit_message when you changed
+something; "flaky" as above; "needs-input" when you need a decision from the
+task's author (put the question in summary and leave your edits in place); or
+"gave-up" when you can't make sense of the failure (say why in summary)."#;
 
 const CI_FIX_SCHEMA: &str = r#"{"type": "object", "required": ["outcome", "commit_message", "summary"],
  "properties": {"outcome": {"enum": ["fixed", "flaky", "needs-input", "gave-up"]},
@@ -222,10 +237,57 @@ fn failing_line(sha: &str, failing: &str) -> String {
     }
 }
 
+/// Zero tokens first: verify, autofix, verify. A fix there is the whole step,
+/// and None. Else the agent's prompt, from guidance read at <base>, and
+/// autofix's commit if it made one.
+fn first_pass(b: &str, wt: &str, remote: &str, a: &Args, state: &Value, forced: &[String], base: &str) -> Option<(String, Option<String>)> {
+    let sha = t(state, "ci.sha");
+    let verify = cfg("settings.verify", b);
+    let mut vout = String::new();
+    let (verified, commit) = verify_autofix_to(wt, b, "ci-fix", &mut Report::Keep(&mut vout));
+    if commit.is_some() {
+        print!("{vout}");
+        if verified.is_ok() {
+            if let Some(red) = red_at_head(&sha, forced) {
+                record(b, red, "autofix");
+            }
+            if a.no_publish {
+                println!("autofix fixed what verify saw; not pushed (--no-publish): sd act push");
+                return None;
+            }
+            publish(b, wt, remote, state, a.force, &format!("autofix's commit is kept in {wt}, not pushed"));
+            println!("autofix fixed what verify saw; CI reruns on the push");
+            return None;
+        }
+    }
+    if !status(wt).is_empty() {
+        die(format!("verify ({verify}) changed files in {wt} (a formatter?); commit them, then sd act ci-fix"));
+    }
+    let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
+    let logs = if sha.is_empty() { String::new() } else { ci_logs(&sha) };
+    let mut p = guidance(b, base, "ciFixPrompt", "ci-fix.md", "ci-fix");
+    p += &format!("\n\n{CI_FIX_CONTRACT}\n\nTask: {}", if task.is_empty() { "(none recorded)" } else { &task });
+    p += &format!("\n\n{}", failing_line(&sha, &sj(at(state, "ci.failing"), ", ")));
+    if !forced.is_empty() {
+        p += "\n\nsd act ci-fix was forced past its gate, so CI may not be red at HEAD:";
+        p += &forced.iter().map(|w| format!("\n- {w}")).collect::<String>();
+    }
+    if !logs.is_empty() {
+        p += &format!("\n\n{}", logs.trim_end_matches('\n'));
+    }
+    p += &if verify.is_empty() {
+        "\n\nNo local checks are configured (settings.verify), so only CI's logs say what failed.".to_string()
+    } else if verified.is_ok() {
+        format!("\n\nThe repo's checks ({verify}) pass locally, so the failure may be in CI's environment, or in what CI runs that the local checks don't.")
+    } else {
+        format!("\n\nThe repo's checks ({verify}) fail locally too:\n{}", vout.trim_end_matches('\n'))
+    };
+    Some((p, commit))
+}
+
 fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, forced: &[String]) {
     let answering = !a.answer.is_empty();
     let sha = t(state, "ci.sha");
-    let failing = sj(at(state, "ci.failing"), ", ");
     let last = git_out(".", &["config", "--get", &format!("branch.{b}.sd-ci-fix")]).unwrap_or_default();
     if judged_flaky(&last, &sha) {
         if !a.force {
@@ -238,118 +300,53 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
     }
     question_gate(b, "ci-fix", a.force, answering);
     going_on("ci-fix", a);
-    let s = step_session(b, "ci-fix", &a.harness, a.force, answering);
+    let sess = step_session(b, "ci-fix", &a.harness, a.force, answering);
     // With no base from sd state, the trusted one guidance_base finds (maybe none).
     let mut base = t(state, "sync.old_base");
     if base.is_empty() {
         base = guidance_base(b);
     }
-    let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
-    let rules = agent_rules(b);
     let verify = cfg("settings.verify", b);
-
-    let mut autofixed = None;
-    let mut prompt = if answering {
-        // The session has the logs and the agent's edits are in the worktree,
-        // so neither verify nor autofix runs first.
-        answer_prompt(&a.answer, "")
-    } else {
-        // Zero tokens first: verify, autofix, verify. A fix there is the whole step.
-        let mut vout = String::new();
-        let (verified, commit) = verify_autofix_to(wt, b, "ci-fix", &mut Report::Keep(&mut vout));
-        if commit.is_some() {
-            print!("{vout}");
-            if verified.is_ok() {
-                if let Some(red) = red_at_head(&sha, forced) {
-                    record(b, red, "autofix");
-                }
-                if a.no_publish {
-                    println!("autofix fixed what verify saw; not pushed (--no-publish): sd act push");
-                    return;
-                }
-                publish(b, wt, remote, state, a.force, &format!("autofix's commit is kept in {wt}, not pushed"));
-                println!("autofix fixed what verify saw; CI reruns on the push");
-                return;
-            }
-        }
-        autofixed = commit;
-        if !status(wt).is_empty() {
-            die(format!("verify ({verify}) changed files in {wt} (a formatter?); commit them, then sd act ci-fix"));
-        }
-        let logs = if sha.is_empty() { String::new() } else { ci_logs(&sha) };
-        let mut p = step_guidance("ciFixPrompt", b, &base, &lib_dir().join("prompts/ci-fix.md")).unwrap_or_else(|e| {
-            eprintln!("{e}");
-            die("can't read the ci-fix guidance")
-        });
-        p += &format!("\n\nTask: {}", if task.is_empty() { "(none recorded)" } else { &task });
-        p += &format!("\n\n{}", failing_line(&sha, &failing));
-        if !forced.is_empty() {
-            p += "\n\nsd act ci-fix was forced past its gate, so CI may not be red at HEAD:";
-            p += &forced.iter().map(|w| format!("\n- {w}")).collect::<String>();
-        }
-        if !logs.is_empty() {
-            p += &format!("\n\n{}", logs.trim_end_matches('\n'));
-        }
-        p += &if verify.is_empty() {
-            "\n\nNo local checks are configured (settings.verify), so only CI's logs say what failed.".to_string()
-        } else if verified.is_ok() {
-            format!("\n\nThe repo's checks ({verify}) pass locally, so the failure may be in CI's environment, or in what CI runs that the local checks don't.")
-        } else {
-            format!("\n\nThe repo's checks ({verify}) fail locally too:\n{}", vout.trim_end_matches('\n'))
-        };
-        p
+    // An answer goes to the session that has the logs, with the agent's edits
+    // in the worktree, so neither verify nor autofix runs first.
+    let (prompt, autofixed) = match answering {
+        true => (String::new(), None),
+        false => match first_pass(b, wt, remote, a, state, forced, &base) {
+            Some(p) => p,
+            None => return,
+        },
     };
-    if !verify.is_empty() {
-        prompt += &format!("\n\nThe repo's checks, which the pipeline runs after you: {verify}");
-    }
-    let (allow, said) = harness::tool_rules(&s.harness, &rules);
-    prompt += &format!("\n\n{said}");
-
-    let (h, sid) = (s.harness.as_str(), s.id.as_str());
-    eprintln!("sd act: {h} ({} session {sid}) is fixing CI on {b} ({failing})…", s.mode);
-    let head = format!("refs/heads/{b}");
-    let before = rev(".", &head);
-    let step = Step {
-        harness: h,
-        session: sid,
-        mode: s.mode,
-        parent: &s.parent,
-        timeout: s.timeout,
-        prompt: &prompt,
+    let r = run_editing_step(Spec {
+        b,
+        wt,
+        step: "ci-fix",
+        asks_as: "ci-fix",
+        session: &sess,
+        base: &base,
+        prompt,
         schema: CI_FIX_SCHEMA,
-        settings: &s.cfg,
-        name: "ci-fix",
-        branch: b,
-        claude_allow: &allow,
-        pi_tools: PI_TOOLS,
-    };
-    let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
-        hold_since(b, &base, &before);
-        die(format!("the {h} ci-fix step failed or returned no usable result (session {sid})"))
-    };
-    step_store(b, &s, &ran);
-    question_answered(b, &a.answer);
-    hold_since(b, &base, &before);
-    let agent_head = rev(".", &head);
-
-    let outcome = t(&result, "outcome");
-    let summary = t(&result, "summary");
-    match outcome.as_str() {
-        "fixed" => {}
-        "flaky" => {
-            return flaky(b, wt, red_at_head(&sha, forced), &summary, (&before, &agent_head), autofixed);
+        done: "fixed",
+        doing: format!("fixing CI on {b} ({})", sj(at(state, "ci.failing"), ", ")),
+        verify: &verify,
+        answer: &a.answer,
+        items: "",
+    });
+    match &r.outcome {
+        Outcome::Done => {}
+        Outcome::Other(w) if w == "flaky" => {
+            return flaky(b, wt, red_at_head(&sha, forced), &r.summary, (&r.before, &r.agent_head), autofixed);
         }
-        "needs-input" => {
-            question_ask(b, wt, "ci-fix", &summary);
-            die(format!("the agent needs input on {b}: {summary}\n{}: answer with {}, which goes on from its edits (if any) in {wt}; or in its session (sd act attach {b}), then commit or discard the edits, or with none, sd act ack --question; then sd act ci-fix", question_say(b), answer_cmd(b)));
+        Outcome::NeedsInput(q) => {
+            question_ask(b, wt, "ci-fix", q);
+            die(format!("the agent needs input on {b}: {q}\n{}: answer with {}, which goes on from its edits (if any) in {wt}; or in its session (sd act attach {b}), then commit or discard the edits, or with none, sd act ack --question; then sd act ci-fix", question_say(b), answer_cmd(b)));
         }
-        "gave-up" => give_up(b, wt, "ci-fix", &summary, format!("the agent gave up on {b}: {summary}. Edits (if any) are left uncommitted in {wt}")),
-        _ => give_up(b, wt, "ci-fix", &format!("returned outcome \"{outcome}\": {summary}"), format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
+        Outcome::GaveUp(why) => r.give_up(why),
+        Outcome::Other(w) => r.unknown(w),
     }
-    if status(wt).is_empty() {
-        give_up(b, wt, "ci-fix", &format!("said fixed but changed nothing: {summary}"), format!("the agent says fixed but changed nothing (session {sid})"));
+    if !r.dirty() {
+        r.changed_nothing("fixed");
     }
-    let msg = match at(&result, "commit_message").as_str() {
+    let msg = match at(&r.result, "commit_message").as_str() {
         Some(m) if !blank(m) => m.to_string(),
         _ => match at(state, "ci.failing").get(0).map(text) {
             Some(check) if !check.is_empty() => format!("Fix CI: {check}"),
@@ -357,10 +354,9 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
         },
     };
     commit_edits(b, "ci-fix", wt, &msg);
-    println!("{b}: {summary}");
-    print!("{}", git(wt, &["log", "--format=  %h %s", &format!("{before}..{head}")]).stdout);
-    hold_since(b, &base, &agent_head);
-    if let Err(cmd) = verify_autofix(wt, b, "ci-fix") {
+    println!("{b}: {}", r.summary);
+    r.print_log();
+    if let Err(cmd) = r.verify() {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}, nothing pushed"));
     }
     if let Some(red) = red_at_head(&sha, forced) {

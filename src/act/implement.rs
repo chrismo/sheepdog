@@ -4,15 +4,13 @@
 // is gates::implement's, which NEXT asks too (#348): the task only before the
 // branch's first commit (#241), a fix round only below settings.reviewRounds.
 
-use super::commands::{status, verify_autofix};
-use super::hold::hold_since;
-use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree,
-                  question_answered, question_ask, question_gate, question_say, step_session, step_store};
+use super::commands::status;
+use super::editing::{guidance, run_editing_step, Outcome, Spec};
+use super::step::{agent_rules, answer_cmd, commit_edits, guidance_base, in_worktree, question_ask, question_gate, question_say,
+                  step_session};
 use super::gates::{self, imp};
 use super::{die, enforce, plural, state_json, Args};
-use crate::git::{git, git_out, rev};
-use crate::guidance::{lib_dir, step_guidance};
-use crate::harness::{self, Ran, Step, PI_TOOLS};
+use crate::git::{git, git_out};
 use crate::next::Derived;
 use crate::pins::{self, Pin};
 use crate::val::{at, sj, t, text};
@@ -241,8 +239,6 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         die(format!("{wt} has uncommitted changes"));
     }
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
-    let head = format!("refs/heads/{b}");
-    let before = rev(".", &head);
     let s = state_json(wt, b).unwrap_or_else(|e| {
         eprint!("{e}");
         die("sd state failed")
@@ -252,99 +248,64 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let fixing = gates::implement_fixes(&d);
     let findings_ref = format!("refs/sheepdog/{b}/findings");
     let (fs, fix) = if fixing { findings(b, &findings_ref) } else { (vec![], None) };
-    let list = listed(&fs);
     let qstep = if fixing { "review-fix" } else { "implement" };
     question_gate(b, qstep, a.force, answering);
     let verify = super::cfg("settings.verify", b);
-    let rules = agent_rules(b);
-    if !verify.is_empty() && rules.is_empty() {
+    if !verify.is_empty() && agent_rules(b).is_empty() {
         eprintln!("sd act: warning: verify ({verify}) isn't plain words, so the agent may not run it; allow what it may run in settings.implementAllow");
     }
-    let s = step_session(b, "implement", &a.harness, a.force, answering);
-    let gbase = guidance_base(b);
-    let lib = lib_dir();
-    let guidance = |setting: &str, file: &str, what: &str| {
-        step_guidance(setting, b, &gbase, &lib.join("prompts").join(file)).unwrap_or_else(|e| {
-            eprintln!("{e}");
-            die(format!("can't read the {what} guidance"))
-        })
-    };
-    let (mut prompt, schema) = if fixing {
-        let g = guidance("reviewFixPrompt", "review-fix.md", "review-fix");
+    let sess = step_session(b, "implement", &a.harness, a.force, answering);
+    let base = guidance_base(b);
+    let (prompt, schema) = if fixing {
+        let g = guidance(b, &base, "reviewFixPrompt", "review-fix.md", "review-fix");
         let task = if task.is_empty() { "(none recorded)" } else { &task };
         let decided = decisions::section(&decisions::on_record(b), DECIDED);
+        let list = listed(&fs);
         let p = format!("{g}\n\n{REVIEW_FIX_CONTRACT}\n\nFindings:\n{list}{decided}\n\nThe task this branch was made for, for context:\n{task}");
         (p, REVIEW_FIX_SCHEMA)
     } else {
-        let g = guidance("implementPrompt", "implement.md", "implement");
+        let g = guidance(b, &base, "implementPrompt", "implement.md", "implement");
         (format!("{g}\n\n{IMPLEMENT_CONTRACT}\n\nTask:\n{task}"), IMPLEMENT_SCHEMA)
     };
-    if answering {
-        prompt = answer_prompt(&a.answer, "");
-    }
-    if !verify.is_empty() {
-        prompt += &format!("\n\nThe repo's checks, which the pipeline runs after you: {verify}");
-    }
-    let (allow, said) = harness::tool_rules(&s.harness, &rules);
-    prompt += &format!("\n\n{said}");
-
-    let (h, sid) = (s.harness.as_str(), s.id.as_str());
-    eprintln!("sd act: {h} ({} session {sid}) is implementing {b}…", s.mode);
-    let step = Step {
-        harness: h,
-        session: sid,
-        mode: s.mode,
-        parent: &s.parent,
-        timeout: s.timeout,
-        prompt: &prompt,
+    let r = run_editing_step(Spec {
+        b,
+        wt,
+        step: "implement",
+        asks_as: qstep,
+        session: &sess,
+        base: &base,
+        prompt,
         schema,
-        settings: &s.cfg,
-        name: "implement",
-        branch: b,
-        claude_allow: &allow,
-        pi_tools: PI_TOOLS,
+        done: "done",
+        doing: format!("implementing {b}"),
+        verify: &verify,
+        answer: &a.answer,
+        items: "",
+    });
+    let mut question = match &r.outcome {
+        Outcome::Done => None,
+        Outcome::NeedsInput(q) => Some(q.clone()),
+        Outcome::GaveUp(why) => r.give_up(why),
+        Outcome::Other(w) => r.unknown(w),
     };
-    let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
-        hold_since(b, &gbase, &before);
-        die(format!("the {h} implement step failed or returned no usable result (session {sid})"))
-    };
-    step_store(b, &s, &ran);
-    question_answered(b, &a.answer);
-    hold_since(b, &gbase, &before);
-    let agent_head = rev(".", &head);
-
-    let mut outcome = t(&result, "outcome");
-    let mut summary = t(&result, "summary");
-    match outcome.as_str() {
-        "done" | "needs-input" => {}
-        "gave-up" => give_up(b, wt, qstep, &summary, format!("the agent gave up on {b}: {summary}. Edits (if any) are left uncommitted in {wt}")),
-        _ => give_up(b, wt, qstep, &format!("returned outcome \"{outcome}\": {summary}"), format!("the agent returned outcome \"{outcome}\"; edits (if any) are left uncommitted in {wt}")),
-    }
-    let changed = !status(wt).is_empty() || rev(".", &head) != before;
+    let changed = r.dirty() || r.moved();
     // A fix round's answers: any ask goes to chrismo, as needs-input does.
-    let answers = answered(&fs, &result, changed);
+    let answers = answered(&fs, &r.result, changed);
     let asked = asks(&answers);
     if fixing && !asked.is_empty() {
-        outcome = "needs-input".into();
-        summary += &format!("\n{asked}");
+        question = Some(format!("{}\n{asked}", question.as_deref().unwrap_or(&r.summary)));
     }
-    if outcome == "needs-input" {
-        question_ask(b, wt, qstep, &summary);
-        // implement refuses a dirty worktree, so with edits left an answer in
-        // the session itself is chrismo's to commit; sd act answer goes on
-        // from them.
-        if !status(wt).is_empty() {
-            die(format!("the agent needs input on {b}: {summary}\n{}. Its edits are left uncommitted in {wt}: answer with {}, which goes on from them; or in its session (sd act attach {b}) and commit what you keep; or discard them and run sd act implement again", question_say(b), answer_cmd(b)));
-        }
-        die(format!("the agent needs input on {b}: {summary}\n{}: answer with {}; or answer in its session (sd act attach {b}), then sd act ack --question and sd act implement", question_say(b), answer_cmd(b)));
+    if let Some(q) = question {
+        needs_input(b, wt, qstep, &q, r.dirty());
     }
-    if !status(wt).is_empty() {
-        commit_edits(b, "implement", wt, &commit_message(&result, fixing, &task));
+    let summary = &r.summary;
+    if r.dirty() {
+        commit_edits(b, "implement", wt, &commit_message(&r.result, fixing, &task));
     } else if !changed && !fixing {
-        give_up(b, wt, qstep, &format!("said done but changed nothing: {summary}"), format!("the agent says done but changed nothing (session {sid})"));
+        r.changed_nothing("done");
     }
-    if let Some(r) = &fix {
-        record_answers(b, r, &answers, &before);
+    if let Some(rec) = &fix {
+        record_answers(b, rec, &answers, &r.before);
     }
     if !changed {
         println!("{b}: the agent declined the review findings: {summary}");
@@ -355,12 +316,21 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     if fixing {
         println!("{}", report(&answers));
     }
-    let log = git(wt, &["log", "--format=  %h %s", &format!("{before}..{head}")]);
-    print!("{}", log.stdout);
-    hold_since(b, &gbase, &agent_head);
-    if let Err(cmd) = verify_autofix(wt, b, "implement") {
+    r.print_log();
+    if let Err(cmd) = r.verify() {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}"));
     }
+}
+
+/// The agent needs input on <b>: <q>, recorded as <qstep>'s question.
+/// implement refuses a dirty worktree, so with <edits> left an answer in the
+/// session itself is chrismo's to commit; sd act answer goes on from them.
+fn needs_input(b: &str, wt: &str, qstep: &str, q: &str, edits: bool) -> ! {
+    question_ask(b, wt, qstep, q);
+    if edits {
+        die(format!("the agent needs input on {b}: {q}\n{}. Its edits are left uncommitted in {wt}: answer with {}, which goes on from them; or in its session (sd act attach {b}) and commit what you keep; or discard them and run sd act implement again", question_say(b), answer_cmd(b)));
+    }
+    die(format!("the agent needs input on {b}: {q}\n{}: answer with {}; or answer in its session (sd act attach {b}), then sd act ack --question and sd act implement", question_say(b), answer_cmd(b)))
 }
 
 pub fn implement(b: &str, a: &Args) {
