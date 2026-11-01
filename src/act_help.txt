@@ -151,7 +151,14 @@ Verbs:
             target rolls it back as a wrong base. A resolved rebase skips the
             unchanged-change check (a resolution changes the diff), so its
             result is unreviewed: verify runs, and sd state's NEXT says
-            when to review it
+            when to review it. Refuses, --force or not, with no base, a
+            tree restack that would conflict, or the merged parent's
+            commits in what it would replay (or those unlisted). Refuses,
+            unless --force, a closed PR or parent, the parent's merge or a
+            conflict unknown, a stored answer it would drop, and commits
+            someone else made that it would rewrite (sd state's
+            sync.foreign_authors, #356): forced past those, it records
+            them as looked at, so the push after isn't held for them
   retarget  after the parent merged: point the PR at the default branch
             (gh pr edit --base; GitHub usually did it already when the
             parent's branch was deleted) and rewrite sd-parent to it
@@ -352,6 +359,9 @@ failed step did.
 --force:
   address         run even if the branch is unpushed, diverged or taken over
   restack, push, ship   run even if taken over
+  restack         even past a predicted conflict (rolled back if the rebase
+                  stops), a closed PR or parent, an unknown merge or
+                  conflict, a stored answer, or someone else's commits
   ship            ship though verify is red at HEAD
   implement, review, describe   the same
   implement       run though the branch is already ahead of its target (or

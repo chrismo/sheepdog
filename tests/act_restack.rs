@@ -320,6 +320,56 @@ fn restack_onto_a_parent_closed_without_merging_is_refused() {
     assert_eq!(sd.rev("child^"), a_head);
 }
 
+impl Sd {
+    /// Someone else (them@example.com) commits a→A to feat on origin, and
+    /// it's taken here with a fast-forward.
+    fn their_commit_taken(&self) {
+        self.git_in("other", &["fetch", "-q", "origin"]);
+        self.git_in("other", &["checkout", "-q", "-B", "feat", "origin/feat"]);
+        subst(&self.tmp.join("other/file.txt"), &[("a", "A")]);
+        self.git_in("other", &["-c", "user.email=them@example.com", "-c", "user.name=Them", "commit", "-qam", "theirs"]);
+        self.git_in("other", &["push", "-q", "origin", "feat"]);
+        self.git(&["pull", "-q", "--ff-only", "origin", "feat"]);
+    }
+}
+
+// A restack rewrites every commit it replays, so one someone else made on
+// the branch is held for chrismo to look at first, as push holds removing it
+// from the remote (#356, #348). --force restacks, and records them as looked
+// at: the push that publishes the restack isn't held for the same commits.
+#[test]
+fn a_restack_that_would_rewrite_someone_elses_commits_is_refused_unless_forced_356() {
+    let sd = sd();
+    sd.their_commit_taken();
+    sd.upstream("main", "d", "D", "upstream");
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["not restacking feat:", "would rewrite commits someone else made, by them@example.com", "--force"]);
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_eq!(sd.base_pin(), "");
+    let r = sd.run(&["restack", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.rev("feat~2"), sd.rev("origin/main"));
+    assert_has(&r.output, &["warning: restacking feat would rewrite commits someone else made"]);
+    let r = sd.run(&["push"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.remote_feat(), sd.rev("feat"));
+}
+
+// Their commit's patch is on the target already (squash-merged alone): a
+// restack loses nothing of theirs, so it isn't held for them (#356). This
+// one comes out different, as main has part of the change.
+#[test]
+fn someone_elses_commit_whose_patch_is_on_the_target_doesnt_hold_the_restack_356() {
+    let sd = sd();
+    sd.their_commit_taken();
+    sd.upstream("main", "a", "A", "theirs (#1)");
+    let r = sd.run(&["restack"]);
+    assert_lacks(&r.output, "someone else");
+    assert_has(&r.output, &["came out different"]);
+}
+
 // ── retarget ─────────────────────────────────────────────────────────────────
 
 // @test "retarget: parent merged, PR still on it: base edited to main, sd-parent rewritten"

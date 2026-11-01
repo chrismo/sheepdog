@@ -24,7 +24,7 @@ pub fn push(b: &str, remote: &str, force: bool) {
         publish(go, b, remote);
         // judged before push_branch's fetch: still what --force was told of
         if d.foreign_authors {
-            seen_authors(b, &s);
+            seen_authors(b, &s, "/push/foreign_commits");
         }
     }
     // chrismo pushing is the approval of what an agent changed in CI config.
@@ -44,11 +44,11 @@ fn publish(_: Go, b: &str, remote: &str) {
 }
 
 /// Forced past commits someone else made: chrismo has looked at them, so
-/// sd state stops counting them, restacked or not (push.foreign_commits'
-/// patch-ids, #356).
-fn seen_authors(b: &str, s: &serde_json::Value) {
+/// sd state stops counting them, restacked or not (the patch-ids at
+/// <ids>, push.foreign_commits or sync's, #356).
+pub(super) fn seen_authors(b: &str, s: &serde_json::Value, ids: &str) {
     let key = format!("branch.{b}.sd-authors-seen");
-    for id in s.pointer("/push/foreign_commits").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
+    for id in s.pointer(ids).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
         let o = git(".", &["config", "--add", &key, id]);
         if !o.ok {
             eprint!("{}", o.stderr);

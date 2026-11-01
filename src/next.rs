@@ -22,7 +22,9 @@
 // ci-fix question, follow gates::ci_fix (src/act/gates.rs, #348): a stored
 // answer runs as the ci-red step once CI is red at HEAD and a fix can be
 // pushed, and CI passing at HEAD, or none running there, makes the question
-// moot.
+// moot. The restack steps ask gates::restack, and the conflict step
+// gates::restack_resolve: one they refuse is chrismo's, saying why, and
+// GitHub's BEHIND with nothing new on the target is a wait (#348).
 //
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
@@ -196,7 +198,74 @@ fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     )
 }
 
-/// The steps for an sd state record, first is next.
+/// A restack its gate <g> refuses, as chrismo's <key> step: <say>, then
+/// sd act <verb>'s reasons. Hard says how by hand; Soft is forced past.
+fn refused_restack(key: &str, say: String, verb: &str, g: Gate, s: &Value, remote: &str) -> Option<Value> {
+    let (why, then) = match crate::act::restack_said(g, s, remote) {
+        Gate::Soft(why) => (why.join("; "), format!("{verb} --force")),
+        Gate::Hard(why) | Gate::Done(why) => (why, verb.to_string()),
+        Gate::Warn(_) | Gate::Go => return None,
+    };
+    step(key, "you", format!("{say}: {verb} refuses: {why}"), cmd(then))
+}
+
+/// The restack that would conflict: the agent's, as gates::restack_resolve
+/// lets it (#348).
+fn conflict_step(d: &Derived, s: &Value, remote: &str, hold: &Option<Value>) -> Option<Value> {
+    if !d.open || d.undone || d.parent_closed || !d.conflict {
+        return None;
+    }
+    let target = val::t(s, "sync.target");
+    if yes(d.by_tree) {
+        return step("conflict", "you",
+            format!("restack onto {target} by tree conflicts, which --resolve can't do: resolve it by hand (sd act restack says how)"),
+            cmd("sd act restack"),
+        );
+    }
+    if d.refused || d.asking == "resolve" {
+        return None;
+    }
+    let say = format!("restack onto {target} conflicts");
+    match crate::act::gates::restack_resolve(d) {
+        Gate::Go | Gate::Warn(_) => agent(hold, "conflict", format!("{say}: resolve it"), "sd act restack --resolve"),
+        g => refused_restack("conflict", say, "sd act restack --resolve", g, s, remote),
+    }
+}
+
+/// The restack behind a target worth chasing, or the default branch when
+/// GitHub requires it: run, as gates::restack lets it (#348).
+fn behind_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
+    let t = |p: &str| val::t(s, p);
+    let target = t("sync.target");
+    let say = if d.open && !d.undone && !d.parent_closed && d.chase_behind {
+        if d.old_base_null {
+            return step("behind", "you",
+                format!("restack onto {target} ({} behind): no base to restack from; see sd state's errors", t("sync.behind")),
+                cmd("sd state --json"),
+            );
+        }
+        if d.refused {
+            return None;
+        }
+        let (tree, one) = if yes(d.by_tree) { (" by tree", ": its commits become one") } else { ("", "") };
+        format!("restack onto {target}{tree} ({} behind){one}", t("sync.behind"))
+    } else if d.gh_restack && !d.undone && !d.parent_closed && !d.refused {
+        let n = if at(s, "sync.behind").is_null() { "0".into() } else { t("sync.behind") };
+        format!("restack onto {} ({n} behind): GitHub requires branches to be up to date", t("sync.default"))
+    } else {
+        return None;
+    };
+    match crate::act::gates::restack(d) {
+        Gate::Go | Gate::Warn(_) => step("behind", "run", say, cmd("sd act restack")),
+        Gate::Done(_) => step("behind", "wait",
+            format!("GitHub says the PR is behind {}, but {remote}/{target} has nothing {} lacks: wait for GitHub, or fetch", t("sync.default"), t("branch")),
+            cmd(format!("git fetch --prune {remote}")),
+        ),
+        g => refused_restack("behind", say, "sd act restack", g, s, remote),
+    }
+}
+
+/// The steps for an sd state record, first is next./// The steps for an sd state record, first is next.
 pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
         return Err("sd state JSON must be one record".into());
@@ -393,48 +462,8 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if open && !d.undone && !d.parent_closed && d.conflict {
-                if yes(d.by_tree) {
-                    step("conflict", "you",
-                        format!("restack onto {target} by tree conflicts, which --resolve can't do: resolve it by hand (sd act restack says how)"),
-                        cmd("sd act restack"),
-                    )
-                } else if d.refused || asking == "resolve" {
-                    None
-                } else {
-                    agent(hold, "conflict", format!("restack onto {target} conflicts: resolve it"), "sd act restack --resolve")
-                }
-            } else {
-                None
-            },
-            if open && !d.undone && !d.parent_closed && d.chase_behind {
-                if d.old_base_null {
-                    step("behind", "you",
-                        format!("restack onto {target} ({} behind): no base to restack from; see sd state's errors", t("sync.behind")),
-                        cmd("sd state --json"),
-                    )
-                } else if d.refused {
-                    None
-                } else if yes(d.by_tree) {
-                    step("behind", "run",
-                        format!("restack onto {target} by tree ({} behind): its commits become one", t("sync.behind")),
-                        cmd("sd act restack"),
-                    )
-                } else {
-                    step("behind", "run", format!("restack onto {target} ({} behind)", t("sync.behind")), cmd("sd act restack"))
-                }
-            } else if d.gh_restack && !d.undone && !d.parent_closed && !d.refused {
-                step("behind", "run",
-                    format!(
-                        "restack onto {} ({} behind): GitHub requires branches to be up to date",
-                        t("sync.default"),
-                        if nul("sync.behind") { "0".into() } else { t("sync.behind") }
-                    ),
-                    cmd("sd act restack"),
-                )
-            } else {
-                None
-            },
+            conflict_step(d, s, remote, hold),
+            behind_step(d, s, remote),
             if d.dirty && !d.dropping {
                 step("dirty", "you",
                     "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
