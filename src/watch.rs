@@ -4,6 +4,7 @@
 mod pass;
 
 pub(crate) use pass::json_files;
+pub use pass::repo_key;
 
 use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};

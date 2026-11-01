@@ -45,8 +45,8 @@ h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font
   padding: 12px 12px 10px; display: grid; gap: 8px; align-content: start; min-width: 0;
 }
 .card .b { font-family: var(--f-mono); font-weight: 600; font-size: 0.86rem; overflow-wrap: anywhere; }
-.card .meta { font-size: 0.76rem; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
-.card .meta a { color: var(--muted); }
+.meta { font-size: 0.76rem; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+.meta a { color: var(--muted); }
 .now { font-size: 0.82rem; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, var(--cc) 12%, transparent); display: grid; gap: 4px; overflow-wrap: anywhere; }
 .now .cmd { display: flex; gap: 6px; align-items: center; }
 .now code { font-family: var(--f-mono); font-size: 0.74rem; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
@@ -78,12 +78,38 @@ h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); align-items: center; }
 .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; border: 2px solid var(--lc); }
 .empty { color: var(--muted); }
+.card { cursor: pointer; }
+.card:hover { border-color: var(--cc); }
+.card:focus-visible { outline: 2px solid var(--cc); outline-offset: 2px; }
+#top { display: grid; gap: 10px; }
+#groups { display: grid; gap: 26px; }
+body.drill #top, body.drill #groups { display: none; }
+body:not(.drill) #detail { display: none; }
+#detail { display: grid; gap: 18px; }
+.back { font: inherit; font-size: 0.88rem; background: none; border: 0; padding: 0; color: var(--muted); cursor: pointer; justify-self: start; }
+.back:hover { color: var(--ink); }
+.dhead { display: grid; gap: 6px; }
+.dhead h1 { font-family: var(--f-mono); font-size: clamp(1.3rem, 4vw, 1.9rem); overflow-wrap: anywhere; }
+.dgrid { display: grid; grid-template-columns: minmax(0, 400px) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) { .dgrid { grid-template-columns: 1fr; } }
+.col { display: grid; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 10px; min-width: 0; }
+.panel h3 { margin: 0; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+.flow svg { width: 100%; height: auto; display: block; }
+.flow text { font-family: var(--f-body); }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; font-size: 0.85rem; }
+.list li { display: grid; gap: 3px; border-left: 3px solid var(--lc, var(--line)); padding-left: 9px; overflow-wrap: anywhere; }
+.list .where { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); }
+.list .where a { color: var(--muted); }
+.list .cmd { display: flex; gap: 6px; align-items: center; }
+.list code { font-family: var(--f-mono); font-size: 0.74rem; border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
+.none { color: var(--muted); font-size: 0.85rem; margin: 0; }
 footer { font-size: 0.78rem; color: var(--muted); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header style="display:grid; gap:10px">
+  <header id="top">
     <div class="eyebrow" id="eyebrow">loading…</div>
     <h1>Your PRs</h1>
     <div class="summary" id="summary"></div>
@@ -96,34 +122,34 @@ footer { font-size: 0.78rem; color: var(--muted); }
       <span><i style="--lc:var(--line); border-style:dashed"></i>not set up</span>
     </div>
   </header>
-  <div id="groups" style="display:grid; gap:26px"></div>
+  <div id="groups"></div>
+  <section id="detail" hidden></section>
   <footer id="foot"></footer>
 </div>
 <script>
 const POLL_MS = 30000;
 const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
 const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
-const SHORT = { ready: "ready", draft: "mark ready", "parent-wait": "after parent", "review-decide": "decide", review: "queued", "ci-wait": "running", "ci-red": "fix", "review-fix": "fix", bot: "address" };
 const GROUPS = [["you", "Needs you"], ["agent", "Agent next"], ["run", "sheepdog next"], ["wait", "Waiting"]];
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const color = who => `var(${WHO[who] || "--wait"})`;
 const group = b => (WHO[b.lead.who] ? b.lead.who : "wait");
+const $ = id => document.getElementById(id);
+const copyBtn = cmd => `<span class="cmd"><code>${esc(cmd)}</code><button class="copy" type="button" data-cmd="${esc(cmd)}">copy</button></span>`;
+const prLink = b => b.pr ? `<a href="${esc(b.pr.url)}" target="_blank" rel="noopener">#${esc(b.pr.number)}</a>${b.pr.draft ? " draft" : ""}` : "no PR";
+const usd = b => typeof b.usd === "number" ? `<span>$${b.usd.toFixed(2)}</span>` : "";
 
 function card(b) {
   const L = b.lead;
   const rows = b.stages.map(s => {
     const cur = s.status === "cur";
     const moving = cur && s.who !== "you";
-    const text = cur ? SHORT[s.text] || s.text : s.text;
     return `<li class="step ${s.status}${moving ? " moving" : ""}" style="--sc:${cur ? color(s.who) : "var(--line)"}">` +
-      `<span class="mk"></span><span class="lab">${NAME[s.stage] || esc(s.stage)}</span><span class="st">${esc(text)}</span></li>`;
+      `<span class="mk"></span><span class="lab">${NAME[s.stage] || esc(s.stage)}</span><span class="st">${esc(s.text)}</span></li>`;
   }).join("");
-  const pr = b.pr ? `<a href="${esc(b.pr.url)}" target="_blank" rel="noopener">#${esc(b.pr.number)}</a>${b.pr.draft ? " draft" : ""}` : "no PR";
-  const usd = typeof b.usd === "number" ? `<span>$${b.usd.toFixed(2)}</span>` : "";
-  const cmd = L.cmd ? `<span class="cmd"><code>${esc(L.cmd)}</code><button class="copy" type="button" data-cmd="${esc(L.cmd)}">copy</button></span>` : "";
-  return `<article class="card" style="--cc:${color(L.who)}">
-    <div><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span><span>${pr}</span>${usd}</div></div>
-    <div class="now"><span>${esc(L.say)}</span>${cmd}</div>
+  return `<article class="card" style="--cc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
+    <div><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span><span>${prLink(b)}</span>${usd(b)}</div></div>
+    <div class="now"><span>${esc(L.say)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
     <ol class="steps">${rows}</ol>
   </article>`;
 }
@@ -132,20 +158,99 @@ function render(f) {
   const bs = f.branches, counts = {};
   bs.forEach(b => (counts[group(b)] = (counts[group(b)] || 0) + 1));
   const repos = [...new Set(bs.map(b => b.repo))].join(", ");
-  const eb = document.getElementById("eyebrow");
+  const eb = $("eyebrow");
   eb.classList.remove("stale");
   eb.textContent = `${bs.length} branch${bs.length === 1 ? "" : "es"}${repos ? " · " + repos : ""}`;
-  document.getElementById("summary").innerHTML = GROUPS.filter(([w]) => counts[w]).map(([w, name]) =>
+  $("summary").innerHTML = GROUPS.filter(([w]) => counts[w]).map(([w, name]) =>
     `<span class="sum" style="--sc:${color(w)}"><b>${counts[w]}</b>${name.toLowerCase()}</span>`).join("");
-  document.getElementById("groups").innerHTML = bs.length ? GROUPS.map(([w, name]) => {
+  $("groups").innerHTML = bs.length ? GROUPS.map(([w, name]) => {
     const list = bs.filter(b => group(b) === w);
     if (!list.length) return "";
     return `<section class="group"><h2 style="--gc:${color(w)}"><span class="dot"></span>${name}<span class="n">${list.length}</span></h2>` +
       `<div class="cards">${list.map(card).join("")}</div></section>`;
   }).join("") : `<p class="empty">No cached branches yet: enroll one (sd act enroll), and let sd watch make a pass.</p>`;
-  const now = new Date().toLocaleTimeString();
-  document.getElementById("foot").textContent =
-    `sd watch's last pass: ${f.at || "none yet"}. Read at ${now}, again every ${POLL_MS / 1000}s. The lit stages are each branch's NEXT steps.`;
+  $("foot").textContent =
+    `sd watch's last pass: ${f.at || "none yet"}. Read at ${new Date().toLocaleTimeString()}, again every ${POLL_MS / 1000}s. The lit stages are each branch's NEXT steps.`;
+}
+
+const FLOW = {
+  implement: { x: 16, y: 16, w: 170, name: "Implement", sub: "agent builds the task", role: "agent" },
+  push: { x: 16, y: 96, w: 170, name: "Commit & push", sub: "sheepdog", role: "run" },
+  ci: { x: 16, y: 176, w: 170, name: "CI", sub: "tests on the PR", role: "wait" },
+  review: { x: 16, y: 256, w: 170, name: "Local review", sub: "agent reviews", role: "agent" },
+  merge: { x: 16, y: 336, w: 170, name: "Merge", sub: "you", role: "you" },
+  cifix: { x: 212, y: 176, w: 128, name: "ci-fix", sub: "when CI is red", role: "agent" },
+  fix: { x: 212, y: 256, w: 128, name: "Fix findings", sub: "when review finds", role: "agent" },
+};
+const NH = 46;
+const arrow = (d, c = "var(--muted)") => `<path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" marker-end="url(#ah)"/>`;
+
+function flowSvg(flow) {
+  const N = FLOW;
+  let s = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>`;
+  for (const [a, b] of [["implement", "push"], ["push", "ci"], ["ci", "review"], ["review", "merge"]]) s += arrow(`M101,${N[a].y + NH} L101,${N[b].y - 3}`);
+  s += arrow(`M186,${N.ci.y + 23} L${N.cifix.x - 3},${N.ci.y + 23}`, "var(--red)");
+  s += arrow(`M186,${N.review.y + 23} L${N.fix.x - 3},${N.review.y + 23}`);
+  s += arrow(`M276,${N.cifix.y} L276,128 L189,128`);
+  s += arrow(`M340,${N.fix.y + 23} L352,${N.fix.y + 23} L352,110 L189,110`);
+  for (const [k, n] of Object.entries(N)) {
+    const f = flow[k] || {}, lit = !!f.who, c = lit ? color(f.who) : "var(--line)";
+    const halo = lit ? `<rect x="${n.x - 4}" y="${n.y - 4}" width="${n.w + 8}" height="${NH + 8}" rx="11" fill="${c}" opacity="0.18"/>` : "";
+    const badge = f.count ? `<circle cx="${n.x + n.w - 4}" cy="${n.y + 4}" r="11" fill="${color(n.role)}"/>` +
+      `<text x="${n.x + n.w - 4}" y="${n.y + 8}" text-anchor="middle" font-size="11" font-weight="700" fill="var(--surface)" font-family="var(--f-mono)">${f.count}</text>` : "";
+    s += `<g><title>${esc(n.name)}${f.count ? `: ${f.count} agent run${f.count > 1 ? "s" : ""}` : ""}${lit ? " (now)" : ""}</title>${halo}` +
+      `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${NH}" rx="8" fill="var(--surface)" stroke="${c}" stroke-width="${lit ? 3 : 1.5}"/>` +
+      `<rect x="${n.x}" y="${n.y + 8}" width="4" height="${NH - 16}" rx="2" fill="${color(n.role)}"/>` +
+      `<text x="${n.x + 14}" y="${n.y + 20}" font-size="14" font-weight="700" fill="var(--ink)">${n.name}</text>` +
+      `<text x="${n.x + 14}" y="${n.y + 36}" font-size="10.5" fill="var(--muted)">${n.sub}</text>${badge}</g>`;
+  }
+  return `<svg viewBox="0 0 360 392" role="img" aria-label="The PR's flow; lit nodes are where it is now">${s}</svg>`;
+}
+
+function owedHtml(o) {
+  const parts = [];
+  if (o.question) parts.push(["The agent asks", [`<li style="--lc:var(--you)"><span>${esc(o.question.text)}</span><span class="where">${esc(o.question.step)} · ${esc(o.question.kind)}${o.question.at_head === false ? " · on an older commit" : ""}</span></li>`]]);
+  if (o.failing?.length) parts.push(["Failing checks", o.failing.map(n => `<li style="--lc:var(--red)">${esc(n)}</li>`)]);
+  if (o.findings?.length) parts.push(["Review findings", o.findings.map(f =>
+    `<li style="--lc:${f.severity === "nit" ? "var(--line)" : "var(--red)"}"><span class="where">${esc(f.severity)} · ${esc(f.file)}${f.line ? ":" + esc(f.line) : ""}</span><span>${esc(f.body)}</span></li>`)]);
+  if (o.threads?.length) parts.push(["Threads owed a reply", o.threads.map(t =>
+    `<li style="--lc:${t.mark === "!" ? "var(--you)" : "var(--line)"}"><span class="where">${t.mark === "!" ? "blocking" : "info"} · ${esc(t.author)}${t.path ? " · " + esc(t.path) + (t.line ? ":" + esc(t.line) : "") : ""}${t.url ? ` · <a href="${esc(t.url)}" target="_blank" rel="noopener">open</a>` : ""}</span><span>${esc(t.excerpt)}</span></li>`)]);
+  if (!parts.length) return `<div class="panel"><h3>What's owed</h3><p class="none">Nothing: no question, failing checks, findings or threads.</p></div>`;
+  return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
+}
+
+function renderDetail(b) {
+  const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
+  $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
+    <div class="dhead"><div class="eyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
+      <div class="meta"><span>${prLink(b)}</span>${usd(b)}</div></div>
+    <div class="dgrid">
+      <div class="col"><div class="panel flow"><h3>Flow</h3>${flowSvg(b.flow || {})}</div></div>
+      <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}</div>${owedHtml(b.owed || {})}</div>
+    </div>`;
+}
+
+const openId = () => { const m = location.hash.match(/^#b=(.+)$/); return m ? decodeURIComponent(m[1]) : null; };
+
+async function loadDetail(id) {
+  try {
+    const r = await fetch(`/api/branch?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    if (r.status === 404) {
+      $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button><p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`;
+      return;
+    }
+    if (!r.ok) throw new Error(r.status);
+    renderDetail(await r.json());
+  } catch (e) {
+    if (!$("detail").innerHTML) $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button><p class="none">can't reach sd view (${esc(e.message)})</p>`;
+  }
+}
+
+function route() {
+  const id = openId();
+  document.body.classList.toggle("drill", !!id);
+  $("detail").hidden = !id;
+  if (id) { $("detail").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
 async function poll() {
@@ -154,22 +259,37 @@ async function poll() {
     if (!r.ok) throw new Error(r.status);
     render(await r.json());
   } catch (e) {
-    const eb = document.getElementById("eyebrow");
+    const eb = $("eyebrow");
     eb.classList.add("stale");
     eb.textContent = `can't reach sd view (${e.message}): showing the last read`;
   }
+  const id = openId();
+  if (id) loadDetail(id);
 }
 
+const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
 document.addEventListener("click", async e => {
   const b = e.target.closest(".copy");
-  if (!b) return;
-  try { await navigator.clipboard.writeText(b.dataset.cmd); b.textContent = "copied"; }
-  catch {
-    const r = document.createRange(); r.selectNodeContents(b.previousElementSibling);
-    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = "selected";
+  if (b) {
+    try { await navigator.clipboard.writeText(b.dataset.cmd); b.textContent = "copied"; }
+    catch {
+      const r = document.createRange(); r.selectNodeContents(b.previousElementSibling);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); b.textContent = "selected";
+    }
+    setTimeout(() => (b.textContent = "copy"), 1400);
+    return;
   }
-  setTimeout(() => (b.textContent = "copy"), 1400);
+  if (e.target.closest("[data-back]")) { location.hash = ""; return; }
+  if (e.target.closest("a")) return;
+  const c = e.target.closest(".card[data-id]");
+  if (c) openCard(c);
 });
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && openId()) location.hash = "";
+  else if (e.key === "Enter" && e.target.matches?.(".card[data-id]")) openCard(e.target);
+});
+window.addEventListener("hashchange", route);
+route();
 poll();
 setInterval(poll, POLL_MS);
 </script>
