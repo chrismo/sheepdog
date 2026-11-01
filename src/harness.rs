@@ -12,7 +12,7 @@ mod probe;
 
 use crate::git::{git_out, main_worktree};
 use crate::val::{at, n, on, t, text};
-use crate::{config, failed, json, limit, proc, running, time, usage};
+use crate::{config, failed, json, limit, proc, running, stray, time, usage};
 use regex::Regex;
 use serde_json::{json, Value};
 use std::fs;
@@ -99,7 +99,8 @@ impl Step<'_> {
 /// use the login, so it keeps the key. settings.stepBudget (USD, read for
 /// the branch) caps a claude step through --max-budget-usd; 0 is no cap. pi
 /// has no such flag: settings.branchBudget (sd state) is its only guard.
-/// Every step appends a record to usage.sup. The harness's stderr (claude
+/// Every step appends a record to usage.sup, with what its agent committed
+/// or pushed itself (crate::stray, #346). The harness's stderr (claude
 /// can put protocol JSON there) shows only when the step fails, and then all
 /// at once: nothing streams while it runs. While it runs, the branch's
 /// running marker says so, for sd state (#170). A step the harness's usage
@@ -192,6 +193,7 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let from = if s.mode == "fork" { s.parent } else { minted };
     let before = tally(h, from);
     let spent = usage::session_total(h, from);
+    let seen = stray::Seen::now(b);
     let t0 = Instant::now();
     // No timeout: as long as a u32 of seconds runs, as perl's alarm 0 did.
     // A longer one is cut to that too: a later deadline overflows Instant.
@@ -209,22 +211,11 @@ fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
         _ => 0,
     };
     let (now, repo, after) = (time::now_utc().0, main_worktree("."), tally(h, &sid));
+    let ms = t0.elapsed().as_millis() as i64;
+    let stray = seen.since(s.label());
     usage::append(&usage::record(&usage::Step {
-        time: &now,
-        repo: &repo,
-        branch: b,
-        step: s.name,
-        harness: h,
-        session: &sid,
-        mode: s.mode,
-        status,
-        ms: t0.elapsed().as_millis() as i64,
-        cap,
-        prev: spent,
-        stopped: out.stopped,
-        o: &o,
-        a: &after,
-        b: &before,
+        time: &now, repo: &repo, branch: b, step: s.name, harness: h, session: &sid, mode: s.mode, status, ms, cap,
+        prev: spent, stopped: out.stopped, o: &o, a: &after, b: &before, stray,
     }));
 
     if let Some(l) = limit {

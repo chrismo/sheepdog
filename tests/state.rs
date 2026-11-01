@@ -4086,7 +4086,7 @@ fn spend_this_repos_steps_on_the_branch_summed_from_usage_sup_and_settings_branc
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".spend"), r#"{"usd":0,"unknown":[],"budget":25}"#);
+    assert_eq!(r.field_c(".spend"), r#"{"usd":0,"unknown":[],"budget":25,"stray":[]}"#);
     sd.usage_row("feat", "1.5", None);
     sd.usage_row("feat", "2.25", None);
     sd.usage_row("other", "9.", None);
@@ -4094,7 +4094,25 @@ fn spend_this_repos_steps_on_the_branch_summed_from_usage_sup_and_settings_branc
     sd.usage_row("feat", "3.", None);
     sd.sd_config(&["set", "--json", "settings.branchBudget", "10"]);
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".spend"), r#"{"usd":6.75,"unknown":[],"budget":10}"#);
+    assert_eq!(r.field_c(".spend"), r#"{"usd":6.75,"unknown":[],"budget":10,"stray":[]}"#);
+}
+
+// A step whose agent committed or pushed itself is listed, for counting
+// offenders per branch and harness; logged, never held (#346).
+#[test]
+fn spend_lists_the_steps_whose_agent_committed_or_pushed_itself_346() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.usage_row("feat", "1.5", None);
+    sd.append_usage(&format!(
+        r#"{{time:2026-10-31T00:00:00Z,repo:"{}",branch:"feat",step:"implement",harness:"pi",session:"s1",mode:"new",status:0,cost_usd:0.5,context:9,stray_commit:true,stray_push:false}}"#,
+        sd.path("work")
+    ));
+    let r = sd.state(&[]);
+    assert_eq!(
+        r.field_c(".spend"),
+        r#"{"usd":2,"unknown":[],"budget":25,"stray":[{"time":"2026-10-31T00:00:00Z","step":"implement","harness":"pi","session":"s1","commit":true,"push":false}]}"#
+    );
 }
 
 // @test "spend: past settings.branchBudget, NEXT is chrismo's instead of the agent's"
@@ -4128,7 +4146,7 @@ fn spend_a_step_whose_cost_is_unknown_is_named_and_next_holds_the_branch_349() {
         sd.path("work")
     ));
     let r = sd.state(&[]);
-    assert_eq!(r.field_c(".spend"), r#"{"usd":1.5,"unknown":[{"time":"2026-10-23T00:00:00Z","step":"implement","session":"s1"}],"budget":25}"#);
+    assert_eq!(r.field_c(".spend"), r#"{"usd":1.5,"unknown":[{"time":"2026-10-23T00:00:00Z","step":"implement","session":"s1"}],"budget":25,"stray":[]}"#);
     let r = sd.run(&[]);
     assert_eq!(r.status, 0);
     assert_eq!(
