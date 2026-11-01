@@ -6,6 +6,7 @@ use crate::usage::{shaped, sup_record};
 use crate::val::{at, on, t};
 use crate::watch::repo_key;
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -25,23 +26,30 @@ fn key_node(key: &str, s: &Value) -> Option<&'static str> {
     }
 }
 
-/// Agent steps per node from usage.sup's records for the branch, since sd
-/// act forget's last reset row (#349). usage.sup records a review-fix round
-/// as implement, so an implement after the branch's first review counts as
-/// a fix.
-fn counts(usage: &str, repo_dir: &str, branch: &str) -> Map<String, Value> {
-    let zero = || NODES.iter().map(|k| (k.to_string(), json!(0))).collect::<Map<_, _>>();
-    let (mut n, mut reviewed) = (zero(), false);
+/// The branch's usage.sup records since sd act forget's last reset row (#349).
+pub(super) fn records(usage: &str, repo_dir: &str, branch: &str) -> Vec<HashMap<String, Value>> {
+    let mut out = vec![];
     for r in usage.lines().filter(|l| shaped(l)).filter_map(sup_record) {
         let field = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default();
         if field("branch") != branch || repo_key(field("repo")) != repo_dir {
             continue;
         }
         if r.get("reset").is_some_and(|v| v == true) {
-            (n, reviewed) = (zero(), false);
-            continue;
+            out.clear();
+        } else {
+            out.push(r);
         }
-        let node = match field("step") {
+    }
+    out
+}
+
+/// Agent steps per node. usage.sup records a review-fix round as implement,
+/// so an implement after the branch's first review counts as a fix.
+fn counts(usage: &str, repo_dir: &str, branch: &str) -> Map<String, Value> {
+    let mut n: Map<String, Value> = NODES.iter().map(|k| (k.to_string(), json!(0))).collect();
+    let mut reviewed = false;
+    for r in records(usage, repo_dir, branch) {
+        let node = match r.get("step").and_then(Value::as_str).unwrap_or_default() {
             "implement" if reviewed => "fix",
             "implement" => "implement",
             "review" => {
@@ -83,16 +91,25 @@ fn owed(s: &Value) -> Value {
     json!({"findings": findings, "failing": failing, "question": question, "threads": threads})
 }
 
+pub(super) fn usage(state: &Path) -> String {
+    fs::read(state.join("usage.sup")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+}
+
+/// The cached branch with this id: looked up in the listing, never made into a path.
+pub(super) fn find(state: &Path, id: &str) -> Option<Cached> {
+    flock::cached(state).into_iter().find(|c| c.id == id)
+}
+
 /// None for an id the cache listing doesn't have. An unreadable file's
 /// card has null flow, next and owed.
 pub fn detail(state: &Path, id: &str) -> Option<Value> {
-    let c: Cached = flock::cached(state).into_iter().find(|c| c.id == id)?;
+    let c = find(state, id)?;
     let mut card = flock::card(&c);
     let (flow_, next, owed_) = match &c.doc {
         None => (Value::Null, Value::Null, Value::Null),
         Some(d) => {
             let s = at(d, "state");
-            let usage = fs::read(state.join("usage.sup")).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+            let usage = usage(state);
             let repo_dir = id.split_once('/').map_or("", |(d, _)| d);
             (flow(s, &usage, repo_dir, &c.branch), at(s, "next").clone(), owed(s))
         }

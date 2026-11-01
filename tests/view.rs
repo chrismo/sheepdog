@@ -265,3 +265,83 @@ fn an_id_that_isnt_a_cached_branch_is_not_found() {
     assert_eq!(s.get("/api/branch").0, 404);
     assert_eq!(s.get(&format!("/api/branch?_=1&id={dir}%2Fa&x=2")).0, 200);
 }
+
+/// GitHub's answer for PR 7: two commits, CI on each, and the merge.
+const PR_HISTORY: &str = r#"{"data":{"repository":{"pullRequest":{"createdAt":"2026-10-31T09:05:00Z",
+  "mergedAt":"2026-10-31T12:00:00Z","mergedBy":{"login":"chrismo"},"commits":{"nodes":[
+  {"commit":{"oid":"aaa1111","committedDate":"2026-10-31T09:00:00Z","messageHeadline":"first",
+    "statusCheckRollup":{"contexts":{"nodes":[{"__typename":"StatusContext","context":"RWX","state":"FAILURE","createdAt":"2026-10-31T09:20:00Z"}]}}}},
+  {"commit":{"oid":"bbb2222","committedDate":"2026-10-31T11:00:00Z","messageHeadline":"second",
+    "statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"lint","conclusion":"SUCCESS","status":"COMPLETED",
+      "startedAt":"2026-10-31T11:01:00Z","completedAt":"2026-10-31T11:03:00Z"}]}}}}]}}}}}"#;
+
+fn timeline(s: &Server, id: &str) -> (u16, Value) {
+    let (code, _, body) = s.get(&format!("/api/timeline?id={}", id.replace('/', "%2F")));
+    (code, serde_json::from_str(&body).unwrap_or(Value::Null))
+}
+
+#[test]
+fn a_branch_s_timeline_has_its_agent_steps_and_its_pr_s_history() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "feat/x", state("feat/x", json!([])));
+    let usage = [
+        r#"{time:2026-10-31T08:00:00Z,repo:"/src/sheepdog",branch:"feat/x",step:"implement",status:0,cost_usd:2.,duration_ms:600000}"#,
+        r#"{time:2026-10-31T08:30:00Z,repo:"/src/sheepdog",branch:"feat/x",reset:true}"#,
+        r#"{time:2026-10-31T09:00:00Z,repo:"/src/sheepdog",branch:"feat/x",step:"implement",status:0,cost_usd:1.5,duration_ms:900000}"#,
+        r#"{time:2026-10-31T10:00:00Z,repo:"/src/sheepdog",branch:"feat/x",step:"review",status:75,cost_usd:0.,duration_ms:null}"#,
+        r#"{time:2026-10-31T10:00:00Z,repo:"/src/sheepdog",branch:"other",step:"review",status:0,cost_usd:1.,duration_ms:1}"#,
+    ];
+    fs::write(sd.tmp.join("state/usage.sup"), usage.join("\n") + "\n").unwrap();
+    fs::write(sd.tmp.join("history.json"), PR_HISTORY).unwrap();
+    sd.fake("gh", &format!("#!/usr/bin/env bash\necho \"$*\" >> {}\ncat {}\n", sd.path("gh.log"), sd.path("history.json")));
+    let s = serve(&sd);
+    let id = s.flock()["branches"][0]["id"].as_str().unwrap().to_string();
+    let (code, t) = timeline(&s, &id);
+    assert_eq!(code, 200, "{t}");
+    assert_eq!(t["agent"], json!([
+        { "step": "implement", "end": "2026-10-31T09:00:00Z", "ms": 900000, "status": 0, "usd": 1.5 },
+        { "step": "review", "end": "2026-10-31T10:00:00Z", "ms": null, "status": 75, "usd": 0.0 },
+    ]));
+    assert_eq!(t["github"]["opened"], "2026-10-31T09:05:00Z");
+    assert_eq!(t["github"]["merged"], json!({ "at": "2026-10-31T12:00:00Z", "by": "chrismo" }));
+    assert_eq!(t["github"]["commits"], json!([
+        { "sha": "aaa1111", "at": "2026-10-31T09:00:00Z", "title": "first",
+          "ci": [{ "name": "RWX", "result": "FAILURE", "start": null, "end": "2026-10-31T09:20:00Z" }] },
+        { "sha": "bbb2222", "at": "2026-10-31T11:00:00Z", "title": "second",
+          "ci": [{ "name": "lint", "result": "SUCCESS", "start": "2026-10-31T11:01:00Z", "end": "2026-10-31T11:03:00Z" }] },
+    ]));
+    assert_eq!(t["error"], Value::Null);
+    let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
+    // -F would send an all-digit repo name as a number.
+    assert_has(&log, &["api graphql", "-f owner=o", "-f repo=r", "-F number=7"]);
+}
+
+#[test]
+fn a_timeline_without_github_still_has_its_agent_steps() {
+    let sd = sd();
+    let mut st = state("a", json!([]));
+    cache(&sd, "sheepdog", "b", st.clone());
+    st["pr"] = Value::Null;
+    cache(&sd, "sheepdog", "a", st);
+    let rec = |b: &str| format!("{{time:2026-10-31T09:00:00Z,repo:\"/src/sheepdog\",branch:\"{b}\",step:\"implement\",status:0,cost_usd:1.,duration_ms:5}}");
+    fs::write(sd.tmp.join("state/usage.sup"), [rec("a"), rec("b")].join("\n") + "\n").unwrap();
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'gh: rate limit exceeded' >&2\nexit 1\n");
+    let s = serve(&sd);
+    let id = |b: &str| format!("{}/{b}", sheepdog::watch::repo_key("/src/sheepdog"));
+    let (_, no_pr) = timeline(&s, &id("a"));
+    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"]), (1, &Value::Null, &Value::Null));
+    let (_, gh_down) = timeline(&s, &id("b"));
+    assert_eq!((gh_down["agent"].as_array().unwrap().len(), &gh_down["github"]), (1, &Value::Null));
+    assert_has(gh_down["error"].as_str().unwrap(), &["rate limit exceeded"]);
+    assert_eq!(timeline(&s, "nope/x").0, 404);
+}
+
+#[test]
+fn a_gh_answer_with_no_pr_in_it_says_so() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "a", state("a", json!([])));
+    sd.fake("gh", "#!/usr/bin/env bash\necho '{\"data\":{\"repository\":{\"pullRequest\":null}}}'\n");
+    let s = serve(&sd);
+    let (_, t) = timeline(&s, &format!("{}/a", sheepdog::watch::repo_key("/src/sheepdog")));
+    assert_eq!(t["error"], "gh: no PR in its answer");
+}
