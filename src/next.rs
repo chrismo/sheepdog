@@ -26,9 +26,11 @@
 // The default branch (or a branch that is its own base) gets one step, to
 // start a branch (#159). A branch with nothing ahead of its base and no PR
 // has nothing to push or ship: its task is implemented, or with no task it's
-// chrismo's (#143). So are uncommitted changes there, which implement refuses;
-// and with errors, pr may be wrong, so nothing spends on implementing. A
-// remote with commits reset away here isn't empty: the #86 steps handle it.
+// chrismo's (#143). So are uncommitted changes there, which implement refuses.
+// Implement and review-fix are offered only when gates::implement says Go
+// (#348): with errors, pr may be wrong, so nothing spends on implementing;
+// past settings.reviewRounds the findings are chrismo's. A remote with
+// commits reset away here isn't empty: the #86 steps handle it.
 // While a step runs (session.running), its one step is to wait: the
 // worktree is the step's, so an agent's edits aren't chrismo's to commit,
 // and no other step should touch it (#170, #270).
@@ -251,6 +253,8 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
     };
     let last_review = last_review(s);
     let hold = &hold_step(d, s);
+    let implement = crate::act::gates::implement(d);
+    let fixes = crate::act::gates::implement_fixes(d) && implement.runs();
     let addr = crate::act::gates::address(d);
     let addr_why = refusal(crate::act::address_said(crate::act::gates::address(d), s));
     let ci_waits = match d.ci_waits.then(|| crate::act::ci_fix_gate(s)) {
@@ -495,7 +499,7 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
                     None,
                 )
             } else if d.empty && d.tasked {
-                if !d.errors && asking != "implement" {
+                if implement.runs() && asking != "implement" {
                     agent(hold, "implement", format!("implement the task: nothing ahead of {target} yet"), "sd act implement")
                 } else {
                     None
@@ -580,9 +584,9 @@ pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
             } else {
                 None
             },
-            if open && d.fixing && (asking == "review-fix" || (d.refused && d.fix_due)) {
+            if open && d.fixing && (asking == "review-fix" || (d.refused && fixes)) {
                 None
-            } else if open && d.fix_due {
+            } else if fixes {
                 agent(hold, "review-fix", format!(
                         "fix {} (round {}/{})",
                         plural(g("review.findings.n"), "review finding"),

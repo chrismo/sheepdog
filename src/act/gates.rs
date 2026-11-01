@@ -24,6 +24,11 @@ pub const MIGRATED: &[Migrated] = &[
     Migrated { verb: "push", offered: |steps| steps.iter().any(|s| s["key"] == "push"), gate: push },
     // NEXT lists address behind the steps that clear its gate (#326): only a first step runs
     Migrated { verb: "address", offered: |steps| steps.first().is_some_and(|s| s["key"] == "bot" && s["who"] == "agent"), gate: address },
+    Migrated {
+        verb: "implement",
+        offered: |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"),
+        gate: implement,
+    },
 ];
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
@@ -36,7 +41,7 @@ pub fn push(d: &Derived) -> Gate {
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
         to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_red: _, ci_blocked: _, ci_inconclusive: _,
+        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_red: _, ci_blocked: _, ci_inconclusive: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, fixing: _,
         findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, ci_waits: _, ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
@@ -90,7 +95,7 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
         owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _,
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
-        by_tree: _, old_base_null: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
+        by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _,
         ci_red: _, ci_blocked: _, ci_inconclusive: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
         need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
         budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, ci_waits: _,
@@ -125,6 +130,56 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
 /// commits of ours to push, or ones reset away here to drop.
 pub fn address_pushes(d: &Derived) -> bool {
     (d.unpushed && !d.foreign) || d.dropping
+}
+
+/// implement's reasons; implement::worded puts each in the record's words.
+pub mod imp {
+    pub const NO_TASK: &str = "no task recorded";
+    pub const CAPPED: &str = "the review findings had settings.reviewRounds rounds";
+    pub const CLOSED: &str = "the PR is merged or closed";
+    pub const ERRORS: &str = "sd state has errors, so the PR may be wrong";
+    pub const AHEAD_UNKNOWN: &str = "how far ahead of the target is unknown";
+    pub const AHEAD: &str = "nothing to implement: already ahead of the target";
+    pub const REMOTE_MORE: &str = "the remote branch has commits you don't";
+}
+
+/// Whether sd act implement runs a review-fix round, not the task: review
+/// findings stand at HEAD, uncovered, and the agent hasn't declined them all.
+pub fn implement_fixes(d: &Derived) -> bool {
+    d.fixing && !yes(d.findings_declined)
+}
+
+/// sd act implement: the task, before the branch's first commit (#241), or
+/// a review-fix round below settings.reviewRounds. Its question and a dirty
+/// worktree are step.rs's, as for every agent step.
+pub fn implement(d: &Derived) -> Gate {
+    let Derived {
+        open, errors, tasked, behind_remote, ahead_target, fix_due, asking,
+        fixing: _, findings_declined: _,
+        own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, stale: _, lagging: _, locked: _,
+        owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _,
+        verify_red: _, foreign: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
+        push_dirty: _, parent_unpushed: _, empty: _, chase: _, undone: _, up_to_date: _, behind_target: _, sync_conflict: _,
+        conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
+        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, ci_red: _, ci_blocked: _, ci_inconclusive: _,
+        ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, bot_due: _, bot_late: _,
+        bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, stored: _, addr_moot: _, ci_moot: _, ci_waits: _,
+        ci_runs: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
+        rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
+    } = d;
+    let task = !implement_fixes(d);
+    // with its own question standing, what's ahead is its work in progress
+    let unasked = task && asking != "implement";
+    let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears };
+    judge(&[
+        rule(imp::NO_TASK, Level::Hard, task && !tasked, "git config branch.<b>.sd-task \"<task>\""),
+        rule(imp::CAPPED, Level::Hard, !task && !fix_due, "raise settings.reviewRounds, fix them by hand, or sd act review --accept"),
+        rule(imp::CLOSED, Level::Soft, !open, "reopen it, or start a new branch"),
+        rule(imp::ERRORS, Level::Soft, task && *errors, "sd state --json says why"),
+        rule(imp::AHEAD_UNKNOWN, Level::Soft, unasked && ahead_target.is_none(), "sd state's errors say why"),
+        rule(imp::AHEAD, Level::Soft, unasked && yes(*ahead_target), "sd act implement --force"),
+        rule(imp::REMOTE_MORE, Level::Soft, unasked && *behind_remote, "take or drop them, as sd state's NEXT says"),
+    ])
 }
 
 /// Each verb NEXT's <steps> offer while its gate refuses (runs() false).
@@ -222,6 +277,74 @@ mod tests {
         let d = Derived { up_to_date: Some(false), ci_pending: true, ..owed() };
         assert_eq!(address(&d), Gate::Warn(vec![addr::BEHIND.into(), addr::CI_RUNNING.into()]));
         assert_eq!(address(&Derived { up_to_date: Some(false), sync_conflict: Some(true), ..owed() }), soft(&[addr::CONFLICT]));
+    }
+
+    /// A branch with a task and nothing ahead of its target, no PR yet.
+    fn fresh() -> Derived {
+        Derived { open: true, pr_null: true, tasked: true, ahead_target: Some(false), ..Derived::default() }
+    }
+
+    /// Review findings standing at HEAD, below the round cap.
+    fn findings() -> Derived {
+        Derived { open: true, has_pr: true, fixing: true, findings_declined: Some(false), fix_due: true, ahead_target: Some(true), ..Derived::default() }
+    }
+
+    #[test]
+    fn implement_goes_on_a_tasked_branch_with_nothing_ahead_and_a_fix_round_below_the_cap() {
+        assert_eq!(implement(&fresh()), Gate::Go);
+        assert_eq!(implement(&findings()), Gate::Go);
+        assert!(implement_fixes(&findings()) && !implement_fixes(&fresh()));
+    }
+
+    #[test]
+    fn implement_with_no_task_and_no_findings_to_fix_is_hard() {
+        assert_eq!(implement(&Derived { tasked: false, ..fresh() }), Gate::Hard(imp::NO_TASK.into()));
+        assert_eq!(implement(&Derived { tasked: false, ..findings() }), Gate::Go);
+        let declined = Derived { tasked: false, findings_declined: Some(true), ..findings() };
+        assert!(!implement_fixes(&declined));
+        assert_eq!(implement(&declined), Gate::Hard(imp::NO_TASK.into()));
+    }
+
+    #[test]
+    fn implement_refuses_a_branch_already_ahead_of_its_target_or_unknown_unless_forced_241() {
+        assert_eq!(implement(&Derived { ahead_target: Some(true), ..fresh() }), soft(&[imp::AHEAD]));
+        assert_eq!(implement(&Derived { ahead_target: None, ..fresh() }), soft(&[imp::AHEAD_UNKNOWN]));
+        assert_eq!(implement(&Derived { behind_remote: true, ..fresh() }), soft(&[imp::REMOTE_MORE]));
+    }
+
+    #[test]
+    fn implement_its_own_question_standing_makes_whats_ahead_its_work_in_progress() {
+        let asked = Derived { asking: "implement".into(), ahead_target: Some(true), behind_remote: true, ..fresh() };
+        assert_eq!(implement(&asked), Gate::Go);
+        assert_eq!(implement(&Derived { asking: "address".into(), ..asked }), soft(&[imp::AHEAD, imp::REMOTE_MORE]));
+    }
+
+    #[test]
+    fn implement_refuses_the_task_with_sd_state_errors_and_either_round_on_a_closed_pr() {
+        assert_eq!(implement(&Derived { errors: true, ..fresh() }), soft(&[imp::ERRORS]));
+        assert_eq!(implement(&Derived { errors: true, ..findings() }), Gate::Go);
+        assert_eq!(implement(&Derived { open: false, merged: true, ..findings() }), soft(&[imp::CLOSED]));
+        assert_eq!(implement(&Derived { open: false, closed: true, ahead_target: Some(true), ..fresh() }), soft(&[imp::CLOSED, imp::AHEAD]));
+    }
+
+    #[test]
+    fn implement_a_fix_round_past_settings_review_rounds_is_hard_even_forced() {
+        let capped = Derived { fix_due: false, ..findings() };
+        assert_eq!(implement(&capped), Gate::Hard(imp::CAPPED.into()));
+        assert_eq!(implement(&Derived { open: false, ..capped }), Gate::Hard(imp::CAPPED.into()));
+    }
+
+    #[test]
+    fn implement_never_runs_a_fix_round_past_the_cap_or_the_task_untasked_on_generated_states() {
+        check("implement past the cap or with no task", |d| {
+            let runs = implement(d).runs();
+            match (implement_fixes(d), runs) {
+                (true, true) if !d.fix_due => Err("a fix round past the cap runs".into()),
+                (false, true) if !d.tasked => Err("the task runs with none recorded".into()),
+                (false, true) if d.ahead_target.is_none() && d.asking != "implement" => Err("the task runs with ahead unknown".into()),
+                _ => Ok(()),
+            }
+        });
     }
 
     #[test]

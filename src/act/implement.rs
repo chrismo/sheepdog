@@ -1,18 +1,20 @@
 // implement (J0) and its review-fix rounds: the agent works the recorded
 // task, or the local review's open findings about HEAD, in the branch's
-// session; the pipeline commits its edits, then runs verify. A branch already
-// ahead of its target, with no findings to fix, is refused at zero tokens
-// unless --force (#241).
+// session; the pipeline commits its edits, then runs verify. Whether it runs
+// is gates::implement's, which NEXT asks too (#348): the task only before the
+// branch's first commit (#241), a fix round only below settings.reviewRounds.
 
 use super::commands::{status, verify_autofix};
 use super::hold::hold_since;
 use super::step::{agent_rules, answer_cmd, answer_prompt, commit_edits, give_up, guidance_base, in_worktree,
                   question_answered, question_ask, question_gate, question_say, step_session, step_store};
-use super::{die, plural, state_json, Args};
+use super::gates::{self, imp};
+use super::{die, enforce, plural, state_json, Args};
 use crate::git::{git, git_input, git_out, rev, strip_nl};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
-use crate::val::{at, on, t, text};
+use crate::next::Derived;
+use crate::val::{at, sj, t, text};
 use crate::json;
 use serde_json::{Map, Value};
 
@@ -180,6 +182,38 @@ fn commit_message(result: &Value, fixing: bool, task: &str) -> String {
     }
 }
 
+/// <why>, one of gates::implement's reasons, in record <s>'s words.
+fn worded(why: &str, s: &Value) -> String {
+    let b = t(s, "branch");
+    let target = t(s, "sync.target");
+    match why {
+        imp::NO_TASK => format!("no task recorded for {b}: git config branch.{b}.sd-task \"<task>\""),
+        imp::CAPPED => format!(
+            "the review findings on {b} had their {} rounds (settings.reviewRounds): fix them by hand, raise it, or sd act review --accept",
+            t(s, "review.findings.cap")
+        ),
+        imp::CLOSED => format!("PR #{} is {}", t(s, "pr.number"), text(at(s, "pr.state")).to_lowercase()),
+        imp::ERRORS => format!("{why}: {}", sj(at(s, "errors"), "; ")),
+        imp::AHEAD_UNKNOWN => format!("how far {b} is ahead of {target} is unknown"),
+        imp::AHEAD => {
+            let ahead = at(s, "sync.ahead").as_u64().unwrap_or(0) as usize;
+            format!("nothing to implement: {b} is already {} ahead of {target}", plural(ahead, "commit"))
+        }
+        imp::REMOTE_MORE => format!("the remote branch has {} commit(s) {b} doesn't", t(s, "push.behind")),
+        _ => why.into(),
+    }
+}
+
+/// The findings record at <findings_ref>, numbered, and the record itself.
+fn findings(b: &str, findings_ref: &str) -> (Vec<Map<String, Value>>, Option<Value>) {
+    let rec = git(".", &["cat-file", "blob", findings_ref]);
+    let r = rec.ok.then(|| crate::config::one_value(&rec.stdout)).flatten().filter(Value::is_object);
+    match r.as_ref().and_then(numbered) {
+        Some(fs) if fs.iter().any(is_open) => (fs, r),
+        _ => die(format!("couldn't read the review findings on {b}")),
+    }
+}
+
 fn implement_run(b: &str, wt: &str, a: &Args) {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {
@@ -188,40 +222,18 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
     let head = format!("refs/heads/{b}");
     let before = rev(".", &head);
-    // A fix round: sd act review's open findings, when they're about HEAD.
-    // The task goes along as context. sd state decides whether they're about
-    // HEAD, so NEXT and this agree.
-    let findings_ref = format!("refs/sheepdog/{b}/findings");
-    let rec = git(".", &["cat-file", "blob", &findings_ref]);
-    let rec = if rec.ok { rec.stdout } else { String::new() };
-    let mut fs: Vec<Map<String, Value>> = vec![];
-    let mut fix: Option<Value> = None;
     let s = state_json(wt, b).unwrap_or_else(|e| {
         eprint!("{e}");
         die("sd state failed")
     });
-    if !rec.is_empty() && on(&s, "review.findings.at_head") {
-        let r = crate::config::one_value(&rec).filter(Value::is_object);
-        fs = r.as_ref().and_then(numbered).unwrap_or_else(|| die(format!("couldn't read the review findings on {b}")));
-        fix = r;
-    }
+    let d = Derived::new(&s);
+    let Some(_go) = enforce(gates::implement(&d).worded(|w| worded(w, &s)), a.force, &format!("implementing {b}")) else { return };
+    let fixing = gates::implement_fixes(&d);
+    let findings_ref = format!("refs/sheepdog/{b}/findings");
+    let (fs, fix) = if fixing { findings(b, &findings_ref) } else { (vec![], None) };
     let list = listed(&fs);
-    let fixing = !list.is_empty();
-    let fix = fix.filter(|_| fixing);
-    if task.is_empty() && !fixing {
-        die(format!("no task recorded for {b}: git config branch.{b}.sd-task \"<task>\""));
-    }
     let qstep = if fixing { "review-fix" } else { "implement" };
     question_gate(b, qstep, a.force, answering);
-    // NEXT offers implement only with nothing ahead of the target (#241).
-    let ahead = at(&s, "sync.ahead").as_u64().unwrap_or(0);
-    if ahead > 0 && !fixing && !answering && !a.force {
-        die(format!(
-            "nothing to implement: {b} is already {} ahead of {}; --force to implement its task anyway",
-            plural(ahead as usize, "commit"),
-            t(&s, "sync.target")
-        ));
-    }
     let verify = super::cfg("settings.verify", b);
     let rules = agent_rules(b);
     if !verify.is_empty() && rules.is_empty() {
