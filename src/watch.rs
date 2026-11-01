@@ -258,8 +258,10 @@ mod tests {
         assert_eq!(xml("plain \"quotes\" 'stay'"), "plain \"quotes\" 'stay'");
     }
 
+    // A format test: the text began as the bash version's and may change
+    // (#379); launchd reads it, and tests/watch.rs's install tests lint it.
     #[test]
-    fn plist_is_byte_for_byte_what_the_bash_wrote() {
+    fn plist_runs_sd_watch_on_an_interval_with_its_path_and_log() {
         let want = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

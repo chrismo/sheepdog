@@ -1,6 +1,8 @@
-// JSON as super 0.3.0 prints it (-j), so sd state --json stays byte for byte
-// what the bash version printed: compact, keys in order, Go's float format
-// and Go's escapes (  and   escaped, no HTML escaping).
+// JSON as sheepdog prints it: compact, keys in insertion order, Go's float
+// format and Go's escapes (U+2028 and U+2029 escaped, no HTML escaping). It
+// began as what super 0.3.0's -j printed for the bash version, retired with
+// #235; nothing holds it to those bytes now. What reads sd state --json or a
+// record parses it as JSON, so the format is free to change (#379).
 
 use serde_json::{Number, Value};
 
@@ -81,7 +83,8 @@ fn string(s: &str, out: &mut String, seps: bool) {
     out.push('"');
 }
 
-// The same values as super prints them in SUP (usage.sup) and f-strings.
+// The same values in SUP (usage.sup, which usage::sup_record reads back) and
+// in text, where an f-string printed them.
 
 pub fn sup_string(s: &str) -> String {
     let mut out = String::new();
@@ -112,9 +115,11 @@ pub fn sup_float(f: f64) -> String {
 mod tests {
     use super::*;
 
-    // Each expected line is super 0.3.0's -j output for the same input.
+    // Format tests: they pin today's output, which began as super 0.3.0's,
+    // and may change with it (#379). A number's text shows in sd state's
+    // and NEXT's lines (val.rs, next.rs).
     #[test]
-    fn numbers_print_as_super_prints_them() {
+    fn numbers_print_in_gos_float_format() {
         let v: Value = serde_json::from_str(
             r#"{"a":1,"b":25.0,"c":0.1,"h":1e21,"i":1.5e-7,"j":100000000000000000000.0,"k":0.30000000000000004,"m":-0.0,"n":12345678.9,"o":1e-6,"p":1.7976931348623157e308}"#,
         )
@@ -126,15 +131,13 @@ mod tests {
     }
 
     #[test]
-    fn strings_escape_as_super_escapes_them() {
+    fn strings_escape_control_characters_and_line_separators() {
         let v: Value = serde_json::from_str(r#"{"d":"<&>é\u0001\t\"\\/\b\f\r\n\u001f  \u007f😀"}"#).unwrap();
         assert_eq!(to_string(&v), "{\"d\":\"<&>é\\u0001\\t\\\"\\\\/\\b\\f\\r\\n\\u001f\\u2028\\u2029\u{7f}😀\"}");
     }
 
-    // Each expected value is super 0.3.0's, -f sup for a ::float64 and an
-    // f-string for go_g.
     #[test]
-    fn floats_print_as_super_prints_them_in_sup_and_f_strings() {
+    fn floats_print_in_sup_and_in_text() {
         let sup = [
             (5.0, "5."), (0.0, "0."), (1234567.0, "1234567."), (-1234567.0, "-1234567."), (1e18, "1000000000000000000."),
             (9.2233720368547e18, "9223372036854700032."), (1e19, "1e+19"), (1e20, "1e+20"), (1e21, "1e+21"),

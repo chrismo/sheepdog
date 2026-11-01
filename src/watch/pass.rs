@@ -1328,13 +1328,16 @@ mod tests {
     }
 
     #[test]
-    fn class_record_is_in_the_order_the_bash_wrote_it() {
-        let rec = |c: &Class| json::to_string(&Value::Object(c.record()));
+    fn class_record_has_a_note_only_when_the_class_has_one() {
+        let rec = |c: &Class| Value::Object(c.record());
         assert_eq!(
             rec(&of(&[step("ready", "you")])),
-            r#"{"carry":false,"hold":false,"keep":[],"glyph":"✅","reasons":[{"key":"ready","msg":"say ready"}]}"#
+            json!({"carry": false, "hold": false, "keep": [], "glyph": "✅", "reasons": [{"key": "ready", "msg": "say ready"}]})
         );
-        assert_eq!(rec(&of(&[])), r#"{"carry":true,"hold":false,"keep":[],"glyph":"⚠️","reasons":[],"note":"sd state gave no next steps"}"#);
+        assert_eq!(
+            rec(&of(&[])),
+            json!({"carry": true, "hold": false, "keep": [], "glyph": "⚠️", "reasons": [], "note": "sd state gave no next steps"})
+        );
     }
 
     #[test]

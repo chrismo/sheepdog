@@ -470,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn plural_is_bashs() {
+    fn plural_adds_an_s_to_all_but_one() {
         assert_eq!(plural(1, "file"), "1 file");
         assert_eq!(plural(0, "file"), "0 files");
         assert_eq!(plural(3, "commit"), "3 commits");

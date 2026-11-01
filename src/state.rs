@@ -1,6 +1,6 @@
 // sd state: where a branch's PR stands (src/state_help.txt). sd act and sd
-// watch read its --json, so that stays byte for byte what the bash version
-// printed (src/json.rs); NEXT is src/next.rs.
+// watch read its --json as JSON, not as bytes (src/json.rs, #379); NEXT is
+// src/next.rs.
 
 use crate::git::{
     commits_not_ours, count, git, git_ok, git_out, is_ancestor, made_here, main_worktree, patch_id, rev, show_ref, stacked_on,
@@ -1873,7 +1873,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_test_matches_names_paths_and_directories_as_bash_globs() {
+    fn is_test_matches_names_paths_and_directories_as_shell_globs() {
         let g = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert!(is_test("a/b/x_test.go", &g(&["*_test.go"])));
         assert!(!is_test("a/b/x.go", &g(&["*_test.go"])));

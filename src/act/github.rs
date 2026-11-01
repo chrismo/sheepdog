@@ -252,9 +252,9 @@ mod tests {
     }
 
     #[test]
-    fn ack_items_what_is_as_super_printed_it() {
-        // What super 0.3.0 printed for bash's ack query (ACK_Q, retired with
-        // its fixture) over these items.
+    fn ack_items_what_is_type_author_excerpt_and_url() {
+        // A format test: the line began as the bash version's and may change
+        // (#379).
         let s = owed(&[
             json!({"id": "T1", "type": "thread", "kind": "bot", "last": "copilot", "mark": "!", "author": "copilot",
                    "url": "https://example/pr/7#t1", "excerpt": "Heading"}),
