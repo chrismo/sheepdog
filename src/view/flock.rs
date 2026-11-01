@@ -17,7 +17,7 @@ const KEYS: [(&str, &[(&str, &str)]); 7] = [
                 ("reset-dirty", "reset away"), ("dirty", "uncommitted"), ("default", "start")]),
     ("push", &[("push", "push"), ("behind", "behind"), ("conflict", "conflict"), ("restack-undone", "restack undone"),
                ("open-pr", "open PR"), ("retarget", "retarget"), ("fetch", "fetch"), ("ship-parent", "ship parent"),
-               ("take", "take back")]),
+               ("take", "take back"), ("foreign-authors", "others' commits")]),
     ("ci", &[("ci-red", "fix"), ("ci-wait", "running"), ("ci-rerun", "rerun"), ("ci-blocked", "blocked"),
              ("ci-config", "set up CI"), ("verify-red", "verify")]),
     ("review", &[("review", "queued"), ("review-fix", "fix"), ("review-wait", "waiting"), ("review-decide", "decide"),

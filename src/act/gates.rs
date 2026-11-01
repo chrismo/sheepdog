@@ -211,7 +211,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         pr_null, has_pr, to_push, unpushed, ci_held, verify_red, ci_verdict, ci_for_head, undone, parent_unpushed,
         own_base: _, running: _, reviewer: _, open: _, merged: _, closed: _, errors: _, stale: _, lagging: _, locked: _,
         owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _, tasked: _,
-        foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
+        foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
         empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _,
         gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
         parent_closed: _, parent_merged: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
