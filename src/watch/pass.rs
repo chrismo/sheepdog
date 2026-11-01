@@ -13,7 +13,7 @@ use crate::git::{self, git, git_out};
 use crate::json;
 use crate::proc;
 use crate::act::bookkeeping;
-use crate::{failed, harness, limit, pins, running, time};
+use crate::{failed, gh, harness, limit, pins, running, time};
 use crate::val::{at, on, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -521,8 +521,8 @@ impl Watch {
         };
         let mut reset = t(s, "rate_limit.reset_at");
         if reset.is_empty() {
-            let o = proc::with_timeout(self.timeout, "gh", &["api", "rate_limit", "--jq", ".resources.graphql.reset | todate"], None);
-            reset = if o.ok { git::strip_nl(o.stdout) } else { String::new() };
+            let o = gh::call(&["api", "rate_limit", "--jq", ".resources.graphql.reset | todate"], self.timeout);
+            reset = if o.ok() { git::strip_nl(o.stdout) } else { String::new() };
         }
         let resets = if reset.is_empty() { String::new() } else { format!(" (the quota resets at {reset})") };
         Some(format!("{why}: the branches below weren't checked{resets}"))
@@ -810,17 +810,11 @@ impl Watch {
         let url = t(cached, "state.pr.url");
         let re = PR_URL.get_or_init(|| Regex::new(r"^https://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)$").unwrap());
         let api = re.captures(&url).map_or(format!("repos/{{owner}}/{{repo}}/pulls/{pr}"), |c| format!("repos/{}/pulls/{}", &c[1], &c[2]));
-        let mut c = Command::new("gh");
-        c.args(["api", &api]).current_dir(repo);
-        if let Some(r) = git::gh_repo(repo, &remote) {
-            c.env("GH_REPO", r);
-        }
-        let o = proc::timeout(self.timeout, c, false);
-        if !o.ok {
-            if !o.stderr.contains("HTTP 404") {
-                return (format!("{name}\t{b}\t⚠️\tbranch is gone; GitHub didn't say what became of #{pr}\n"), true);
-            }
-            return (format!("{name}\t{b}\t⚠️\tbranch is gone; GitHub has no #{pr}\n"), false);
+        let o = gh::call_in(repo, Some(&remote), &["api", &api], self.timeout);
+        match o.class {
+            gh::Class::Ok => {}
+            gh::Class::Gone => return (format!("{name}\t{b}\t⚠️\tbranch is gone; GitHub has no #{pr}\n"), false),
+            _ => return (format!("{name}\t{b}\t⚠️\tbranch is gone; GitHub didn't say what became of #{pr}\n"), true),
         }
         let pull = config::one_value(&o.stdout);
         if !pull.as_ref().is_some_and(|p| on(p, "merged")) {

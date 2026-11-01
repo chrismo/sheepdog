@@ -11,7 +11,7 @@ use super::restack::{parent_to_default, state};
 use super::review::short;
 use super::{die, no_base_why, Args};
 use crate::git::{git, git_out, rev, show_ref, worktree_for};
-use crate::proc;
+use crate::gh;
 use crate::val::{at, on, sj, t, text};
 use serde_json::Value;
 
@@ -157,9 +157,9 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
     push_branch(b, remote).unwrap_or_else(|e| die(e));
     // GH_REPO, which act::run set, points gh at settings.remote's repo.
     if pr_state == "none" {
-        let o = proc::run("gh", &["pr", "create", "--draft", "--base", &parent, "--head", b, "--title", &title, "--body", &body], None, None);
+        let o = gh::create_draft_pr(&parent, b, &title, &body);
         eprint!("{}", o.stderr);
-        if !o.ok {
+        if !o.ok() {
             die(format!("gh pr create failed; {b} is pushed. Fix the cause and ship again"));
         }
         println!("opened a draft PR for {b} on {parent}: {}", o.stdout.trim_end_matches('\n'));
@@ -167,14 +167,10 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
         return;
     }
     let number = t(&s, "pr.number");
-    let mut args = vec!["pr", "edit", &number, "--title", &title, "--body", &body];
     let retarget = t(&s, "pr.base") != parent;
-    if retarget {
-        args.extend(["--base", &parent]);
-    }
-    let o = proc::run("gh", &args, None, None);
+    let o = gh::edit_pr(&number, &title, &body, retarget.then_some(parent.as_str()));
     eprint!("{}", o.stderr);
-    if !o.ok {
+    if !o.ok() {
         die(format!("gh pr edit failed for PR #{number}; {b} is pushed"));
     }
     let base_now = if retarget { format!(", base now {parent}") } else { String::new() };

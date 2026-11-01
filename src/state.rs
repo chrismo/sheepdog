@@ -13,7 +13,8 @@ use crate::git::{
 use crate::time::{epoch_ns, now_utc};
 use crate::usage;
 use crate::val::{at, n, on, sj, t, text, NULL};
-use crate::{config, git, json, next, proc, running};
+use crate::gh::{self, Class};
+use crate::{config, git, json, next, running};
 use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -198,35 +199,24 @@ struct Gh<'a> {
     rl_limited: bool,
 }
 
-enum Call {
-    Ok,
-    Failed,
-    Gone,
-}
-
-fn rate_limited(err: &str) -> bool {
-    static RL: OnceLock<Regex> = OnceLock::new();
-    RL.get_or_init(|| re(r"(?i)rate.?limit")).is_match(err)
-}
-
 impl Gh<'_> {
     /// One GraphQL call into resp, its rateLimit added to rl_*. A failure is
-    /// recorded in errors, unless it's a number GitHub can't resolve (Gone:
-    /// the caller re-discovers), and a rate-limit refusal sets rl_limited.
-    fn call(&mut self, label: &str, fields: &[String]) -> Call {
+    /// recorded in errors, unless it's Gone (a number GitHub can't resolve:
+    /// the caller re-discovers); RateLimited sets rl_limited and comes back
+    /// Failed.
+    fn call(&mut self, label: &str, fields: &[String]) -> Class {
         let mut args: Vec<&str> = vec!["api", "graphql", "-F", "owner={owner}", "-F", "repo={repo}"];
         args.extend(fields.iter().map(String::as_str));
-        let o = proc::run("gh", &args, Some(self.dir), None);
-        if !o.ok {
+        let o = gh::call_in(self.dir, None, &args, gh::READ);
+        if !o.ok() {
             self.resp = Value::Null;
-            if o.stderr.contains("Could not resolve to a PullRequest") {
-                return Call::Gone;
-            }
-            if rate_limited(&o.stderr) {
-                self.rl_limited = true;
+            match o.class {
+                Class::Gone => return Class::Gone,
+                Class::RateLimited => self.rl_limited = true,
+                _ => {}
             }
             self.errors.push(format!("gh ({label}): {}", o.stderr.replace('\n', " ")));
-            return Call::Failed;
+            return Class::Failed;
         }
         self.resp = serde_json::from_str(&o.stdout).unwrap_or(Value::Null);
         let rl = at(&self.resp, "data.rateLimit");
@@ -234,10 +224,10 @@ impl Gh<'_> {
         self.rl_cost = Some(self.rl_cost.unwrap_or(0) + cost);
         self.rl_remaining = rl.get("remaining").filter(|v| !v.is_null()).cloned().unwrap_or(Value::Null);
         self.rl_reset = rl.get("resetAt").and_then(Value::as_str).unwrap_or("").to_string();
-        Call::Ok
+        Class::Ok
     }
 
-    fn fetch(&mut self, label: &str, number: &str, commits: bool) -> Call {
+    fn fetch(&mut self, label: &str, number: &str, commits: bool) -> Class {
         self.call(
             label,
             &[
@@ -271,8 +261,8 @@ impl Gh<'_> {
         let mut fetched_pr = Value::Null;
         if !n.is_empty() {
             match self.fetch(b, &n, commits) {
-                Call::Failed => return Err(()),
-                Call::Ok => {
+                Class::Failed | Class::RateLimited => return Err(()),
+                Class::Ok => {
                     let pr = self.pr();
                     let head = str_or(at(&pr, "headRefName"), "");
                     let st = str_or(at(&pr, "state"), "");
@@ -284,11 +274,11 @@ impl Gh<'_> {
                         fetched_pr = pr;
                     }
                 }
-                Call::Gone => {}
+                Class::Gone => {}
             }
         }
         // -f, not -F, for the branch: -F would send "1234" or "true" as a non-string.
-        if let Call::Failed | Call::Gone = self.call(b, &["-f".into(), format!("branch={b}"), "-f".into(), format!("query={DISCOVER}")]) {
+        if self.call(b, &["-f".into(), format!("branch={b}"), "-f".into(), format!("query={DISCOVER}")]) != Class::Ok {
             return Err(());
         }
         let pick = pick_pr(&self.resp);
@@ -306,12 +296,12 @@ impl Gh<'_> {
             return Ok(fetched_pr);
         }
         match self.fetch(b, &pick, commits) {
-            Call::Ok => Ok(self.pr()),
-            Call::Gone => {
+            Class::Ok => Ok(self.pr()),
+            Class::Gone => {
                 self.errors.push(format!("gh ({b}): GitHub has no PR #{pick}, which it just listed"));
                 Err(())
             }
-            Call::Failed => Err(()),
+            Class::Failed | Class::RateLimited => Err(()),
         }
     }
 
@@ -324,12 +314,12 @@ impl Gh<'_> {
             return Ok(Value::Null);
         }
         match self.fetch(b, &n, commits) {
-            Call::Ok => Ok(self.pr()),
-            Call::Gone => {
+            Class::Ok => Ok(self.pr()),
+            Class::Gone => {
                 self.errors.push(format!("gh ({b}): GitHub has no PR #{n}"));
                 Ok(Value::Null)
             }
-            Call::Failed => Err(()),
+            Class::Failed | Class::RateLimited => Err(()),
         }
     }
 }
@@ -1090,15 +1080,12 @@ fn pin_status(dir: &str, branch: &str, kind: &str, head: &str, target_ref: &str,
 /// it's a rate limit; any other failure is Err with gh's stderr.
 fn required_checks(dir: &str, base: &str) -> Result<Value, String> {
     let rest = |path: &str| -> Result<Value, String> {
-        let o = proc::run("gh", &["api", path], Some(dir), None);
-        if o.ok {
-            return serde_json::from_str(&o.stdout).map_err(|_| String::new());
-        }
-        let http = o.stderr.contains("HTTP 404") || o.stderr.contains("HTTP 403");
-        if http && !rate_limited(&o.stderr) {
-            Ok(Value::Null)
-        } else {
-            Err(o.stderr)
+        let o = gh::call_in(dir, None, &["api", path], gh::READ);
+        match o.class {
+            Class::Ok => serde_json::from_str(&o.stdout).map_err(|_| String::new()),
+            Class::Gone => Ok(Value::Null),
+            Class::Failed if o.stderr.contains("HTTP 403") => Ok(Value::Null),
+            _ => Err(o.stderr),
         }
     };
     let rules = rest(&format!("repos/{{owner}}/{{repo}}/rules/branches/{base}?per_page=100"))?;
@@ -1968,9 +1955,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         die(format!("no such branch: {branch}"));
     }
     let remote = config::get_global("settings.remote", false).unwrap_or_else(|l| exit_with(&config_failed(l)));
-    if let Some(r) = git::gh_repo(".", &remote) {
-        std::env::set_var("GH_REPO", r);
-    }
+    gh::point_at(".", &remote);
     let state = observe(".", &branch, &remote).unwrap_or_else(|e| exit_with(&e));
     if as_json {
         println!("{}", json::to_string(&state));

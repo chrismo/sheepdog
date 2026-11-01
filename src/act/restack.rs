@@ -352,9 +352,9 @@ pub fn retarget(b: &str) {
         _ => {
             let (number, default) = (t(&s, "pr.number"), t(&s, "sync.default"));
             // GH_REPO, which act::run set, points gh at settings.remote's repo.
-            let o = proc::run("gh", &["pr", "edit", &number, "--base", &default], None, None);
+            let o = crate::gh::retarget_pr(&number, &default);
             eprint!("{}", o.stderr);
-            if !o.ok {
+            if !o.ok() {
                 die(format!("gh pr edit --base {default} failed for PR #{number}"));
             }
             println!("PR #{number} now targets {default} (was {})", t(&s, "pr.base"));

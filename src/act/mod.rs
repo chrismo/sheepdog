@@ -304,10 +304,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         die("not a git repository");
     }
     let remote = repo_remote();
-    // Unset, gh picks among the remotes, and in a fork's clone that's upstream.
-    if let Some(r) = git::gh_repo(".", &remote) {
-        std::env::set_var("GH_REPO", r);
-    }
+    crate::gh::point_at(".", &remote);
     a.check(verb).unwrap_or_else(|e| die(e));
     let b = match a.branch.as_str() {
         "" => git_out(".", &["branch", "--show-current"]).unwrap_or_default(),
