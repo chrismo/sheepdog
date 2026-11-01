@@ -85,7 +85,7 @@ h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font
 #groups { display: grid; gap: 26px; }
 body.drill #top, body.drill #groups { display: none; }
 body:not(.drill) #detail { display: none; }
-#detail { display: grid; gap: 18px; }
+#detail, #dmain { display: grid; gap: 18px; }
 .back { font: inherit; font-size: 0.88rem; background: none; border: 0; padding: 0; color: var(--muted); cursor: pointer; justify-self: start; }
 .back:hover { color: var(--ink); }
 .dhead { display: grid; gap: 6px; }
@@ -104,6 +104,10 @@ body:not(.drill) #detail { display: none; }
 .list .cmd { display: flex; gap: 6px; align-items: center; }
 .list code { font-family: var(--f-mono); font-size: 0.74rem; border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+details.tl > summary { cursor: pointer; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+details.tl[open] > summary { margin-bottom: 10px; }
+.tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
+.tl text { font-family: var(--f-body); }
 footer { font-size: 0.78rem; color: var(--muted); }
 </style>
 </head>
@@ -123,7 +127,7 @@ footer { font-size: 0.78rem; color: var(--muted); }
     </div>
   </header>
   <div id="groups"></div>
-  <section id="detail" hidden></section>
+  <section id="detail" hidden><div id="dmain"></div><details class="panel tl" id="tl"><summary>Timeline</summary><div id="tlbody"></div></details></section>
   <footer id="foot"></footer>
 </div>
 <script>
@@ -224,16 +228,93 @@ function owedHtml(o) {
 let shown = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
-  if (key === shown && $("detail").innerHTML) return;
+  if (key === shown && $("dmain").innerHTML) return;
   shown = key;
+  if ($("tl").open) loadTimeline(openId());
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
-  $("detail").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
+  $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
       <div class="meta"><span>${prLink(b)}</span>${usd(b)}</div></div>
     <div class="dgrid">
       <div class="col"><div class="panel flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div></div>
       <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
+}
+
+const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["you", "You", "--you"]];
+const GAP = 20 * 60e3, FOLD = 30, LX = 58, LW = 74;
+const ms = t => Date.parse(t);
+const span = m => m >= 36e5 ? `${Math.floor(m / 36e5)}h ${Math.round(m % 36e5 / 6e4)}m` : `${Math.round(m / 6e4)}m`;
+const ciColor = r => r === "SUCCESS" ? "var(--run)" : /FAIL|ERROR|TIMED|CANCEL|ACTION/.test(r || "") ? "var(--red)" : "var(--wait)";
+
+function tlEvents(t) {
+  const ev = (t.agent || []).map(a => {
+    const end = ms(a.end), bad = a.status !== 0;
+    return { lane: 0, s: end - (a.ms || 0), e: end, label: a.step, c: bad ? "var(--red)" : "var(--agent)",
+      tip: `${a.step}${bad ? (a.status === 75 ? " (usage limit)" : ` (exit ${a.status})`) : ""} · ${a.ms ? span(a.ms) : "?"}${typeof a.usd === "number" ? ` · $${a.usd.toFixed(2)}` : ""}` };
+  });
+  const g = t.github;
+  if (g) {
+    for (const c of g.commits) {
+      ev.push({ lane: 1, s: ms(c.at), e: ms(c.at), label: c.sha.slice(0, 7), c: "var(--run)", tip: `commit ${c.sha.slice(0, 7)}: ${c.title}` });
+      for (const k of c.ci) {
+        const e = k.end ? ms(k.end) : Date.now();
+        ev.push({ lane: 2, s: k.start ? ms(k.start) : ms(c.at), e, label: "", c: ciColor(k.result), tip: `${k.name}: ${k.result || "running"} on ${c.sha.slice(0, 7)}` });
+      }
+    }
+    if (g.opened) ev.push({ lane: 3, s: ms(g.opened), e: ms(g.opened), label: "opened", c: "var(--you)", tip: "PR opened" });
+    if (g.merged) ev.push({ lane: 3, s: ms(g.merged.at), e: ms(g.merged.at), label: "merged", c: "var(--you)", tip: `merged by ${g.merged.by || "?"}` });
+  }
+  return ev.filter(x => !isNaN(x.s) && !isNaN(x.e));
+}
+
+function tlSvg(ev) {
+  const iv = ev.map(x => [x.s, x.e]).sort((a, b) => a[0] - b[0]), cl = [];
+  for (const [a, b] of iv) {
+    const last = cl[cl.length - 1];
+    if (last && a - last.e <= GAP) last.e = Math.max(last.e, b); else cl.push({ s: a, e: b });
+  }
+  const active = cl.reduce((n, c) => n + (c.e - c.s), 0) / 6e4;
+  const scale = Math.min(30, Math.max(0.4, 480 / Math.max(active, 1)));
+  let y0 = 34;
+  for (const c of cl) { c.y = y0; c.h = Math.max(22, (c.e - c.s) / 6e4 * scale); y0 += c.h + FOLD; }
+  const y = t => { const c = cl.find(c => t >= c.s && t <= c.e) || cl[0]; return c.y + (t - c.s) / 6e4 * scale; };
+  const W = LX + LW * LANES.length;
+  let s = LANES.map(([, name, v], i) => `<text x="${LX + i * LW + 8}" y="16" font-size="12" font-weight="700" fill="var(${v})">${name}</text>` +
+    `<line x1="${LX + i * LW + 8}" y1="24" x2="${LX + i * LW + 8}" y2="${y0 - FOLD + 4}" stroke="var(--line)"/>`).join("");
+  let day = "";
+  cl.forEach((c, i) => {
+    const d = new Date(c.s), dd = d.toLocaleDateString([], { month: "short", day: "numeric" });
+    const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    s += `<text x="0" y="${c.y + 4}" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${hm}</text>` +
+      (dd !== day ? `<text x="0" y="${c.y + 16}" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${dd}</text>` : "");
+    day = dd;
+    const next = cl[i + 1];
+    if (next) s += `<rect x="0" y="${c.y + c.h + 6}" width="${W}" height="${FOLD - 12}" rx="4" fill="var(--line)" opacity="0.45"/>` +
+      `<text x="${W / 2}" y="${c.y + c.h + FOLD / 2 + 4}" text-anchor="middle" font-size="10.5" fill="var(--muted)">⋯ ${span(next.s - c.e)} ⋯</text>`;
+  });
+  for (const x of ev) {
+    const cx = LX + x.lane * LW + 8, ya = y(x.s), h = y(x.e) - ya;
+    const mark = h < 5 ? `<circle cx="${cx}" cy="${ya}" r="5" fill="${x.c}"/>` : `<rect x="${cx - 5}" y="${ya}" width="10" height="${h}" rx="3" fill="${x.c}"/>`;
+    s += `<g><title>${esc(x.tip)}</title>${mark}${x.label ? `<text x="${cx + 9}" y="${ya + 4}" font-size="10" fill="var(--ink)">${esc(x.label)}</text>` : ""}</g>`;
+  }
+  return `<svg viewBox="0 -2 ${W} ${y0 - FOLD + 14}" role="img" aria-label="The branch's timeline: agent steps, commits, CI and the PR, top to bottom">${s}</svg>`;
+}
+
+async function loadTimeline(id) {
+  const body = $("tlbody");
+  if (!body.innerHTML) body.innerHTML = `<p class="none">asking GitHub…</p>`;
+  try {
+    const r = await fetch(`/api/timeline?id=${encodeURIComponent(id)}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const t = await r.json();
+    if (openId() !== id) return;
+    const ev = tlEvents(t);
+    const note = t.error ? `<p class="none">GitHub didn't answer, so this is the agent's steps only (${esc(t.error)})</p>` : t.github ? "" : `<p class="none">No PR yet: the agent's steps only.</p>`;
+    body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
+  } catch (e) {
+    if (openId() === id) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
+  }
 }
 
 function openId() {
@@ -249,7 +330,7 @@ async function loadDetail(id) {
     if (openId() !== id) return;
     if (r.status === 404) {
       shown = "";
-      $("detail").innerHTML = `${back}<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`;
+      $("dmain").innerHTML = `${back}<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`;
     } else if (!r.ok) {
       throw new Error(r.status);
     } else {
@@ -260,7 +341,7 @@ async function loadDetail(id) {
     const eb = $("deyebrow");
     shown = "";
     if (eb) { eb.classList.add("stale"); eb.textContent = `can't reach sd view (${e.message}): showing the last read`; }
-    else $("detail").innerHTML = `${back}<p class="none">can't reach sd view (${esc(e.message)})</p>`;
+    else $("dmain").innerHTML = `${back}<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }
 }
 
@@ -268,7 +349,7 @@ function route() {
   const id = openId();
   document.body.classList.toggle("drill", !!id);
   $("detail").hidden = !id;
-  if (id) { $("detail").innerHTML = ""; shown = ""; loadDetail(id); window.scrollTo(0, 0); }
+  if (id) { $("dmain").innerHTML = ""; shown = ""; $("tl").open = false; $("tlbody").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
 async function poll(detail) {
@@ -306,6 +387,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Escape" && openId()) location.hash = "";
   else if (e.key === "Enter" && e.target.matches?.(".card[data-id]")) openCard(e.target);
 });
+$("tl").addEventListener("toggle", () => { if ($("tl").open && openId()) loadTimeline(openId()); });
 window.addEventListener("hashchange", route);
 route();
 poll(false);
