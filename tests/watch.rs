@@ -535,7 +535,8 @@ fn glyph_work_an_agent_will_do_later_is() {
         ".threads.owed_bot = 1",
         ".push.ahead = 1",
         ".pr = null",
-        r#".review.local.status = "uncovered""#,
+        // review's gate needs a known-clean worktree, or NEXT hands chrismo review-held
+        r#".review.local.status = "uncovered" | .push.dirty = false"#,
     ] {
         sd.ps_fixture("feat", &[a]);
         sd.pass();
