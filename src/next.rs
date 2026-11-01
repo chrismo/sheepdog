@@ -265,7 +265,7 @@ fn behind_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     }
 }
 
-/// The steps for an sd state record, first is next./// The steps for an sd state record, first is next.
+/// The steps for an sd state record, first is next.
 pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
         return Err("sd state JSON must be one record".into());
