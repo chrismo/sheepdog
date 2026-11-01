@@ -184,7 +184,7 @@ fn pr_refusal(number: &str, step: &str, doing: &str, left: &str, read: Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::tests::Repo;
+    use crate::test_support::Repo;
 
     fn strings(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()

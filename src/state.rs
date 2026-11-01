@@ -1919,7 +1919,7 @@ mod tests {
 
     #[test]
     fn observe_returns_what_sd_state_would_say_instead_of_exiting() {
-        let r = crate::git::tests::Repo::new();
+        let r = crate::test_support::Repo::new();
         assert_eq!(observe(&r.dir, "nope", "origin"), Err("sd state: no such branch: nope\n".into()));
     }
 }

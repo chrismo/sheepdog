@@ -12,6 +12,8 @@ pub mod review_local;
 pub mod rules;
 pub mod running;
 pub mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod time;
 pub mod usage;
 pub mod val;
