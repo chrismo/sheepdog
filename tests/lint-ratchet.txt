@@ -7,7 +7,7 @@ src/act/ci_fix.rs  ci_fix_run  cognitive_complexity  27
 src/act/ci_fix.rs  ci_fix_run  too_many_lines  172
 src/act/implement.rs  implement_run  too_many_lines  140
 src/act/restack.rs  restack  too_many_lines  121
-src/act/ship.rs  ship  too_many_lines  113
+src/act/ship.rs  ship  too_many_lines  105
 src/config.rs  cli  too_many_lines  105
 src/config.rs  explain  too_many_lines  131
 src/harness.rs  agent  too_many_lines  115

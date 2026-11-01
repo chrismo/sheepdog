@@ -70,10 +70,6 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
     if !status(&wt).is_empty() {
         die(format!("{wt} has uncommitted changes"));
     }
-    let lock = git_out(".", &["config", "--get", &format!("branch.{b}.sd-lock")]).unwrap_or_default();
-    if !a.force && !lock.is_empty() {
-        die(format!("not shipping {b}: taken over (branch.{b}.sd-lock is set; --force to ship anyway)"));
-    }
     if let Err(e) = std::env::set_current_dir(&wt) {
         die(format!("can't work in {wt}: {e}"));
     }

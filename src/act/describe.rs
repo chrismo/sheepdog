@@ -6,12 +6,13 @@ use super::commands::status;
 use super::implement::blank;
 use super::restack::state;
 use super::review::short;
-use super::step::{step_session, step_store};
-use super::{attached_check, die, no_base_why, Args};
+use super::step::{spend_worded, step_session, step_store};
+use super::{die, enforce, gates, no_base_why, Args};
 use crate::git::{git_out, rev, worktree_for};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::json;
+use crate::next::Derived;
 use crate::val::{at, on, t};
 use serde_json::{json, Value};
 use std::fs;
@@ -67,8 +68,11 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
     if base.is_empty() {
         die(format!("can't find {b}'s base: {}", no_base_why(s, remote)));
     }
+    let gate = spend_worded(gates::describe(&Derived::new(s)), s, "describe", b);
+    // Hard or Go: the spend rule alone
+    let _go = enforce(gate, a.force, &format!("describing {b}"));
     let head = rev(".", &format!("refs/heads/{b}"));
-    let ss = step_session(b, "describe", &a.harness, a.force, false);
+    let ss = step_session(b, "describe", &a.harness, false);
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
     let task = if task.is_empty() { "(none recorded)" } else { &task };
     let commits = git_out(".", &["log", "--format=- %s", &format!("{base}..{head}")]).unwrap_or_default();
@@ -121,7 +125,6 @@ pub fn describe(b: &str, remote: &str, a: &Args) {
     if !status(&wt).is_empty() {
         die(format!("{wt} has uncommitted changes"));
     }
-    attached_check(b, &format!("describing {b}"), a.force);
     if let Err(e) = std::env::set_current_dir(&wt) {
         die(format!("can't work in {wt}: {e}"));
     }

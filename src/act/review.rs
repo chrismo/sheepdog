@@ -10,13 +10,14 @@
 
 use super::commands::{step_timeout, verify_run};
 use super::gates::{self, rvw};
-use super::{attached_check, cfg, die, enforce, no_base_why, plural, state_json};
+use super::step::spend_worded;
+use super::{cfg, die, enforce, no_base_why, plural, state_json};
 use crate::config::one_value;
 use crate::git::{git, git_out, rev, worktree_for};
 use crate::pins::{self, Pin};
 use crate::json;
 use crate::next::Derived;
-use crate::{decisions, harness, limit, proc, running};
+use crate::{decisions, harness, limit, proc};
 use crate::state::flag_lines;
 use crate::val::{at, on, t};
 use serde_json::{json, Value};
@@ -109,7 +110,6 @@ fn worded(why: &str, s: &Value, d: &Derived, head: &str, remote: &str) -> String
 
 pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
     let wt = worktree_for(".", b);
-    attached_check(b, &format!("reviewing {b}"), force);
     let s = state_json(if wt.is_empty() { "." } else { &wt }, b).unwrap_or_else(|e| {
         eprint!("{e}");
         die("sd state failed")
@@ -122,11 +122,9 @@ pub fn review(b: &str, remote: &str, accepting: bool, force: bool) {
         let Some(_go) = enforce(gates::accept(&d).worded(word), force, &format!("accepting {b}")) else { return };
         return accept(b, &head, &base);
     }
-    let Some(_go) = enforce(gates::review(&d).worded(word), force, &format!("reviewing {b}")) else { return };
-    super::step::spend_gate(b, "review");
-    if running::holding(b, "review", || reviewed(b, &wt, &s, &base, &head)).is_none() {
-        std::process::exit(1);
-    }
+    let gate = spend_worded(gates::review(&d).worded(word), &s, "review", b);
+    let Some(_go) = enforce(gate, force, &format!("reviewing {b}")) else { return };
+    reviewed(b, &wt, &s, &base, &head);
 }
 
 /// verify, the reviewer, and its findings pinned or recorded.

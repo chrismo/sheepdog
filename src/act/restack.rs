@@ -11,12 +11,12 @@ use super::hold::hold_after;
 use super::push::seen_authors;
 use super::resolve::{resolve_conflicts, Halt, Rebase};
 use super::bookkeeping::parent_write;
-use super::step::{question_gate, resolve_gave_up};
+use super::step::{question_gate, resolve_gave_up, spend_worded};
 use super::{die, enforce, no_base_why, plural, state_json, Args, Gate, Go};
 use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for, Git};
 use crate::next::{yes, Derived};
 use crate::pins::{self, Pin};
-use crate::{proc, running};
+use crate::proc;
 use crate::val::{at, sj, t, text};
 use serde_json::Value;
 
@@ -176,7 +176,7 @@ fn gated(b: &str, remote: &str, a: &Args) -> Option<(Go, String, Value)> {
     let s = state(&wt, b);
     let d = Derived::new(&s);
     let gate = if a.resolve { gates::restack_resolve(&d) } else { gates::restack(&d) };
-    let go = enforce(said(gate, &s, remote), a.force, &format!("restacking {b}"))?;
+    let go = enforce(spend_worded(said(gate, &s, remote), &s, "resolve", b), a.force, &format!("restacking {b}"))?;
     if !a.force && yes(d.locked) {
         die(format!("not restacking {b}: taken over (branch.{b}.sd-lock is set; --force to restack anyway)"));
     }
@@ -215,25 +215,18 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
             ));
         }
         let r = Rebase { b, wt: &wt, old_base: &old_base, old_head: &old_head, onto: &onto };
-        // Marked running across every stop and continue, not only each agent
-        // run (#170). By hand and from a pass, the marker is already held
-        // (act::run, sd watch step); this holds it for any other caller.
-        let run = || {
-            resolve_conflicts(&r, &a.harness, a.force).inspect_err(|h| {
-                if !h.keep {
-                    rollback(&wt, b, &old_head)
-                }
-            })
-        };
-        match running::holding(b, "resolve", run) {
-            None => {
-                rollback(&wt, b, &old_head);
-                std::process::exit(1)
+        // Under the running marker across every stop and continue, not only
+        // each agent run (#170): act::run holds it for restack --resolve.
+        let resolved_by = resolve_conflicts(&r, &a.harness).inspect_err(|h| {
+            if !h.keep {
+                rollback(&wt, b, &old_head)
             }
-            Some(Err(Halt { why, gave_up: Some(text), .. })) => resolve_gave_up(b, &wt, &text, why, &onto, &new_base),
-            Some(Err(Halt { why, .. })) => die(why),
+        });
+        match resolved_by {
+            Err(Halt { why, gave_up: Some(text), .. }) => resolve_gave_up(b, &wt, &text, why, &onto, &new_base),
+            Err(Halt { why, .. }) => die(why),
             // Before anything below can die: the resolution is on the branch now.
-            Some(Ok(touched)) => hold_after(b, &old_base, &touched),
+            Ok(touched) => hold_after(b, &old_base, &touched),
         }
         resolved = true;
     }

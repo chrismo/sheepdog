@@ -38,16 +38,26 @@ fn resumes(b: &str, q: &Value) -> Result<Resume, String> {
     }
 }
 
-/// <a>.answer is the answer; --force, --no-publish and --harness go to the
-/// step as given.
-pub fn answer(b: &str, remote: &str, a: &Args) {
+/// The verb that goes on from <b>'s standing question, or die saying why
+/// none can: act::run runs answer under that verb's declaration (#341).
+pub fn resumed(b: &str) -> &'static str {
     let q = question_state(".", b, &rev(".", &format!("refs/heads/{b}")))
         .unwrap_or_else(|()| die(format!("refs/sheepdog/{b}/question isn't a question record")))
         .unwrap_or_else(|| die(format!("no question to answer on {b}")));
     match resumes(b, &q).unwrap_or_else(|e| die(e)) {
-        Resume::Implement => implement::implement(b, a),
-        Resume::Address => address::address(b, remote, a),
-        Resume::CiFix => ci_fix::ci_fix(b, remote, a),
+        Resume::Implement => "implement",
+        Resume::Address => "address",
+        Resume::CiFix => "ci-fix",
+    }
+}
+
+/// <verb> is resumed()'s; --force, --no-publish and --harness go to the
+/// step as given.
+pub fn answer(b: &str, remote: &str, a: &Args, verb: &str) {
+    match verb {
+        "implement" => implement::implement(b, a),
+        "address" => address::address(b, remote, a),
+        _ => ci_fix::ci_fix(b, remote, a),
     }
 }
 

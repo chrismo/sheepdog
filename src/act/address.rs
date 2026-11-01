@@ -8,13 +8,13 @@ use super::hold::{hold_gate, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
 use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, question_ask, question_gate, question_say,
-                  going_on, step_session, with_stored_answer};
+                  enter_worktree, going_on, spend_worded, step_session, with_stored_answer};
 use super::gates::{self, addr};
 use super::{cfg, die, enforce, lock_recheck, state_json, Args, Gate, Go};
-use crate::git::{git, rev, worktree_for};
+use crate::git::{git, rev};
 use crate::next::{round_key, yes, Derived};
 use crate::state::unbot;
-use crate::{decisions, gh, running};
+use crate::{decisions, gh};
 use crate::val::{at, sj, t, text};
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -114,7 +114,7 @@ fn yours(why: &[String], d: &Derived, s: &Value) -> Vec<String> {
 fn gated(b: &str, s: &Value, a: &Args) -> Option<Go> {
     let answering = !a.answer.is_empty();
     let d = Derived::new(s);
-    match said(gates::address(&d), s) {
+    match spend_worded(said(gates::address(&d), s), s, "address", b) {
         Gate::Done(line) if answering => die(format!("{line}{UNANSWERED}")),
         // not for a restack: it moves HEAD, dropping the question (#326)
         Gate::Soft(why) if answering && !a.force && !yes(d.sync_conflict) => {
@@ -427,7 +427,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
         return true;
     }
 
-    let sess = step_session(b, "address", &a.harness, a.force, answering);
+    let sess = step_session(b, "address", &a.harness, answering);
     let verify = command("verify", b);
     let base = guidance_base(b);
     let guidance = guidance(b, &base, "addressPrompt", "address.md", "address");
@@ -516,20 +516,13 @@ fn unposted(b: &str, items: &[&Value]) {
     }
 }
 
-/// address, marked running for all of it, commit, verify and posting
-/// included, so NEXT doesn't hand the worktree on mid-step (#170). It runs
-/// in the branch's worktree.
+/// address, in the branch's worktree, under the running marker act::run
+/// holds for all of it, commit, verify and posting included, so NEXT
+/// doesn't hand the worktree on mid-step (#170).
 pub fn address(b: &str, remote: &str, a: &Args) {
     let stored = with_stored_answer(b, "address", a);
     let a = stored.as_ref().unwrap_or(a);
-    let wt = worktree_for(".", b);
-    if wt.is_empty() {
-        die(format!("{b} isn't checked out in any worktree"));
-    }
-    if let Err(e) = std::env::set_current_dir(&wt) {
-        die(format!("can't work in {wt}: {e}"));
-    }
-    if running::holding(b, "address", || address_run(b, &wt, remote, a)) != Some(true) {
+    if !address_run(b, &enter_worktree(b), remote, a) {
         std::process::exit(1);
     }
 }

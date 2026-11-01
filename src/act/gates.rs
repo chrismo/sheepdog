@@ -1,42 +1,55 @@
-// Each migrated verb's gate over Derived (#348). A verb joins MIGRATED in
-// the PR that moves its guard here; parity runs on every tests/next.rs
-// fixture and on generated states, whose fields are drawn independently on
-// purpose: parity must hold on every state, not only those sd state makes.
-// A Migrated's offered reads steps' key and who, which offer takes from
-// Derived alone (tested below); cmd and say also read the record. Each gate
-// destructures Derived without .., so a new field doesn't compile until
-// every gate claims or ignores it.
+// Each gated verb's gate over Derived (#348), named by its declaration in
+// src/act/verbs.rs (#341); parity runs on every tests/next.rs fixture and on generated states,
+// whose fields are drawn independently on purpose: parity must hold on every
+// state, not only those sd state makes. A Gated's offered reads steps' key
+// and who, which offer takes from Derived alone (tested below); cmd and say
+// also read the record. Each gate destructures Derived without .., so a new
+// field doesn't compile until every gate claims or ignores it. Every
+// spending verb's gate ends with spend_rule (#371).
 
 use super::gate::{judge, reported, warnings, Gate, Level, Rule};
 use crate::next::{no, yes, Derived};
 use serde_json::Value;
 
-/// A verb whose gate NEXT asks.
-pub struct Migrated {
-    pub verb: &'static str,
+pub struct Gated {
     /// Whether NEXT's steps offer the verb, by key and who only.
     pub offered: fn(&[Value]) -> bool,
     pub gate: fn(&Derived) -> Gate,
 }
 
-pub const MIGRATED: &[Migrated] = &[
-    Migrated { verb: "push", offered: |steps| steps.iter().any(|s| s["key"] == "push"), gate: push },
-    // NEXT lists address behind the steps that clear its gate (#326): only a first step runs
-    Migrated { verb: "address", offered: |steps| steps.first().is_some_and(|s| s["key"] == "bot" && s["who"] == "agent"), gate: address },
-    Migrated {
-        verb: "implement",
-        offered: |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"),
-        gate: implement,
-    },
-    Migrated { verb: "ci-fix", offered: |steps| steps.iter().any(|s| s["key"] == "ci-red"), gate: ci_fix },
-    Migrated { verb: "review", offered: |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gate: review },
-    Migrated { verb: "restack", offered: |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), gate: restack },
-    Migrated {
-        verb: "restack --resolve",
-        offered: |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"),
-        gate: restack_resolve,
-    },
-];
+/// Every spending verb's gate's rule (#371, #349). Hard: it enforces a
+/// setting, so only raising the budget clears it.
+pub const SPEND: &str = "the branch's spend holds its agent steps: past settings.branchBudget, or unknown";
+
+pub fn spend_rule(budget_unread: bool, over_budget: bool) -> Rule {
+    let clears = "raise settings.branchBudget, or set the step's cost_usd in usage.sup";
+    Rule { name: SPEND, level: Level::Hard, refuses: budget_unread || over_budget, clears, yours: true }
+}
+
+/// NEXT's budget step asks it.
+pub fn spend(d: &Derived) -> Gate {
+    judge(&[spend_rule(d.budget_unread, d.over_budget)])
+}
+
+/// sd act describe, and ship's describe.
+pub fn describe(d: &Derived) -> Gate {
+    let Derived {
+        budget_unread, over_budget,
+        own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
+        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
+        taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _, chase: _,
+        undone: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
+        gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
+        parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
+        ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
+        reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
+        failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _,
+        dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
+        rv_submitted: _, rv_local: _,
+    } = d;
+    judge(&[spend_rule(*budget_unread, *over_budget)])
+}
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
 /// own fetch: sd state doesn't fetch. Only sd act push asks this gate:
@@ -106,7 +119,7 @@ pub fn address_warnings(d: &Derived) -> Vec<String> {
     warnings(&address_rules(d))
 }
 
-fn address_rules(d: &Derived) -> [Rule; 11] {
+fn address_rules(d: &Derived) -> [Rule; 12] {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
         unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
@@ -116,7 +129,7 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
         by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
         ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
         need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
-        budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _,
+        budget_unread, over_budget, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _,
         resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
         rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
@@ -142,6 +155,7 @@ fn address_rules(d: &Derived) -> [Rule; 11] {
         rule(push.unwrap_or(addr::UNPUSHED), Level::Soft, push.is_some(), "sd act push"),
         rule(addr::BEHIND, Level::Warn, no(*up_to_date) && !conflict, "sd act restack"),
         rule(addr::CI_RUNNING, Level::Warn, *ci_pending, "CI reports"),
+        spend_rule(*budget_unread, *over_budget),
     ]
 }
 
@@ -182,7 +196,7 @@ pub fn implement(d: &Derived) -> Gate {
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
         restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, bot_due: _, bot_late: _,
-        bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, stored: _, addr_moot: _, ci_moot: _,
+        bot_waiting: _, budget_unread, over_budget, failed_out: _, stored: _, addr_moot: _, ci_moot: _,
         resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
         rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
@@ -199,6 +213,7 @@ pub fn implement(d: &Derived) -> Gate {
         rule(imp::AHEAD_UNKNOWN, Level::Soft, unasked && ahead_target.is_none(), "sd state's errors say why"),
         rule(imp::AHEAD, Level::Soft, unasked && yes(*ahead_target), "sd act implement --force"),
         rule(imp::REMOTE_MORE, Level::Soft, unasked && *behind_remote, "take or drop them, as sd state's NEXT says"),
+        spend_rule(*budget_unread, *over_budget),
     ])
 }
 
@@ -220,7 +235,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
         parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
         any_cover: _, reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _,
-        bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _, failed_out: _, asking: _, stored: _,
+        bot_late: _, bot_waiting: _, budget_unread, over_budget, failed_out: _, asking: _, stored: _,
         addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
         answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _,
         rv_pending: _, rv_submitted: _, rv_local: _,
@@ -257,6 +272,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         // still keeps the copies off the remote.
         wait(CI_FIX_PUSH_WAITS[0], *undone, "redo the restack (sd state's NEXT says how)", true),
         wait(CI_FIX_PUSH_WAITS[1], *parent_unpushed, "ship it first (sd act ship <parent>)", true),
+        spend_rule(*budget_unread, *over_budget),
     ]
 }
 
@@ -324,7 +340,7 @@ pub fn findings_clear(d: &Derived) -> &'static str {
     }
 }
 
-fn review_rules(d: &Derived) -> [Rule; 11] {
+fn review_rules(d: &Derived) -> [Rule; 12] {
     let Derived {
         reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending,
         rv_yours, rv_fetch, rv_current, rv_submitted, rv_local,
@@ -335,7 +351,7 @@ fn review_rules(d: &Derived) -> [Rule; 11] {
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
         merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
-        findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
+        findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread, over_budget,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
         resume_ci: _, dirty: _, refused: _, bot: _, rv_dirty: _, rv_pending: _,
     } = d;
@@ -359,6 +375,7 @@ fn review_rules(d: &Derived) -> [Rule; 11] {
         rule(stale, Level::Soft, theirs && !rv_current, catch_up),
         rule(rvw::SUBMITTED, Level::Soft, theirs && *rv_submitted, "the author pushes"),
         rule(rvw::HAD, Level::Soft, theirs && *rv_local, "the author pushes, or sd act review --force"),
+        spend_rule(*budget_unread, *over_budget),
     ]
 }
 
@@ -419,7 +436,7 @@ pub fn restack_resolve(d: &Derived) -> Gate {
 
 /// restack's rules: Hard only where --force can't help, or would replay a
 /// merged parent's commits.
-pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 14] {
+pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 15] {
     let Derived {
         open, up_to_date, old_base_null, sync_conflict, by_tree, parent_merged, parent_abandoned, merge_unknown, replays,
         restack_foreign, answer_pending, undone,
@@ -430,8 +447,8 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 14] {
         ahead_target: _, chase: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, ci_verdict: _, ci_blocked: _,
         ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
-        fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _,
-        over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
+        fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread,
+        over_budget, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
         dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
         rv_submitted: _, rv_local: _,
     } = d;
@@ -456,19 +473,32 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 14] {
         rule(rs::ANSWER, Level::Soft, *answer_pending, "the asking step goes on first, or sd act ack --question drops both"),
         rule(rs::FOREIGN, Level::Soft, yes(*restack_foreign), "look at them, then sd act restack --force"),
         rule(rs::FOREIGN_UNKNOWN, Level::Soft, restack_foreign.is_none(), "git config user.email <yours>, or look at them, then sd act restack --force"),
+        spend_rule(resolve && *budget_unread, resolve && *over_budget),
     ]
 }
 
-/// Each verb NEXT's <steps> offer while its gate refuses (runs() false).
+/// What parity finds wrong with NEXT's <steps> for <d>: a gated verb NEXT
+/// offers while its gate refuses (runs() false), an sd act verb with no
+/// declaration, and an agent step whose verb has no gate (#341).
 pub fn parity(d: &Derived, steps: &[Value]) -> Vec<String> {
-    MIGRATED
-        .iter()
-        .filter(|m| (m.offered)(steps))
-        .filter_map(|m| match (m.gate)(d) {
-            g if g.runs() => None,
-            g => Some(format!("NEXT offers {} while its gate says {g:?}", m.verb)),
-        })
-        .collect()
+    let mut off: Vec<String> = steps.iter().filter_map(registry_miss).collect();
+    off.extend(super::verbs::VERBS.iter().filter_map(|v| {
+        let g = v.gate.as_ref().filter(|g| (g.offered)(steps))?;
+        match (g.gate)(d) {
+            gate if gate.runs() => None,
+            gate => Some(format!("NEXT offers {} while its gate says {gate:?}", v.name)),
+        }
+    }));
+    off
+}
+
+/// Why step <s>'s command escapes the declarations, if it does.
+fn registry_miss(s: &Value) -> Option<String> {
+    let cmd = s["cmd"].as_str()?.strip_prefix("sd act ")?;
+    let Some(v) = super::verbs::of_cmd(cmd) else {
+        return Some(format!("NEXT offers sd act {cmd}, which has no declaration"));
+    };
+    (s["who"] == "agent" && v.gate.is_none()).then(|| format!("NEXT offers {} as an agent step, but it has no gate", v.name))
 }
 
 #[cfg(test)]
@@ -936,5 +966,60 @@ mod tests {
                 Err(off.join("; "))
             }
         });
+    }
+
+    // ── the spend rule and the registry (#341, #371) ─────────────────────────
+
+    /// Generated states for <v>'s gate: Hard past the budget or with spend
+    /// unread, and never the spend rule otherwise.
+    fn spend_holds(v: &crate::act::verbs::Verb, gate: fn(&Derived) -> Gate) {
+        check(&format!("{}'s spend rule", v.name), |d| match (gate(d), d.budget_unread || d.over_budget) {
+            (Gate::Hard(_), true) => Ok(()),
+            (g, true) => Err(format!("{} isn't Hard past the budget: {g:?}", v.name)),
+            (Gate::Hard(w), false) if w == SPEND => Err(format!("{} refuses for spend with none held", v.name)),
+            _ => Ok(()),
+        });
+    }
+
+    #[test]
+    fn every_spending_verbs_gate_refuses_hard_past_the_budget_even_forced_341() {
+        for v in crate::act::verbs::VERBS.iter().filter(|v| v.spends) {
+            if let Some(g) = &v.gate {
+                spend_holds(v, g.gate);
+            }
+        }
+    }
+
+    // Each spends through another verb's gate: answer through the one it
+    // resumes, start through its sd act implement, ship through describe's.
+    #[test]
+    fn the_spending_verbs_with_no_gate_of_their_own_341() {
+        let gateless: Vec<&str> = crate::act::verbs::VERBS.iter().filter(|v| v.spends && v.gate.is_none()).map(|v| v.name).collect();
+        assert_eq!(gateless, ["start", "answer", "ship"]);
+        spend_holds(crate::act::verbs::find("describe").unwrap(), describe);
+    }
+
+    #[test]
+    fn nexts_budget_step_only_while_the_spend_rule_refuses_341() {
+        check("budget step", |d| {
+            let budget = crate::next::offer(d, &json!({}), "origin").iter().any(|s| s["key"] == "budget");
+            if budget && spend(d).runs() {
+                Err("NEXT holds for spend while the rule says Go".into())
+            } else {
+                Ok(())
+            }
+        });
+    }
+
+    #[test]
+    fn parity_reports_an_undeclared_verb_and_an_agent_step_with_no_gate_341() {
+        let steps = [
+            json!({"key": "x", "who": "run", "cmd": "sd act frobnicate"}),
+            json!({"key": "open-pr", "who": "agent", "cmd": "sd act ship"}),
+            json!({"key": "verify", "who": "run", "cmd": "sd act verify"}),
+            json!({"key": "conflict", "who": "agent", "cmd": "sd act restack --resolve"}),
+        ];
+        let off = parity(&Derived { up_to_date: Some(false), sync_conflict: Some(true), restack_foreign: Some(false), open: true, ..Derived::default() }, &steps);
+        assert_eq!(off, ["NEXT offers sd act frobnicate, which has no declaration", "NEXT offers ship as an agent step, but it has no gate"]);
     }
 }

@@ -6,8 +6,8 @@
 
 use super::commands::status;
 use super::editing::{guidance, run_editing_step, Outcome, Spec};
-use super::step::{agent_rules, answer_cmd, commit_edits, guidance_base, in_worktree, question_ask, question_gate, question_say,
-                  step_session};
+use super::step::{agent_rules, answer_cmd, commit_edits, guidance_base, enter_worktree, question_ask, question_gate, question_say,
+                  spend_worded, step_session};
 use super::gates::{self, imp};
 use super::{die, enforce, plural, state_json, Args};
 use crate::git::{git, git_out};
@@ -244,7 +244,8 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         die("sd state failed")
     });
     let d = Derived::new(&s);
-    let Some(_go) = enforce(gates::implement(&d).worded(|w| worded(w, &s)), a.force, &format!("implementing {b}")) else { return };
+    let gate = spend_worded(gates::implement(&d).worded(|w| worded(w, &s)), &s, "implement", b);
+    let Some(_go) = enforce(gate, a.force, &format!("implementing {b}")) else { return };
     let fixing = gates::implement_fixes(&d);
     let findings_ref = format!("refs/sheepdog/{b}/findings");
     let (fs, fix) = if fixing { findings(b, &findings_ref) } else { (vec![], None) };
@@ -254,7 +255,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     if !verify.is_empty() && agent_rules(b).is_empty() {
         eprintln!("sd act: warning: verify ({verify}) isn't plain words, so the agent may not run it; allow what it may run in settings.implementAllow");
     }
-    let sess = step_session(b, "implement", &a.harness, a.force, answering);
+    let sess = step_session(b, "implement", &a.harness, answering);
     let base = guidance_base(b);
     let (prompt, schema) = if fixing {
         let g = guidance(b, &base, "reviewFixPrompt", "review-fix.md", "review-fix");
@@ -334,7 +335,7 @@ fn needs_input(b: &str, wt: &str, qstep: &str, q: &str, edits: bool) -> ! {
 }
 
 pub fn implement(b: &str, a: &Args) {
-    in_worktree(b, "implement", |wt| implement_run(b, wt, a));
+    implement_run(b, &enter_worktree(b), a);
 }
 
 #[cfg(test)]

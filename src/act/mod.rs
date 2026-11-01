@@ -21,6 +21,7 @@ mod review;
 mod ship;
 mod start;
 mod step;
+pub mod verbs;
 pub(crate) use address::said as address_said;
 pub(crate) use restack::said as restack_said;
 pub use gate::{enforce, judge, Gate, Go, Level, Rule};
@@ -272,24 +273,6 @@ pub fn no_base_why(state: &Value, remote: &str) -> String {
     String::new()
 }
 
-/// The mechanical verbs that write the worktree or the remote, in their own
-/// words: each refuses, --force or not, before it writes anything, while
-/// another process's step holds the branch's running marker (#270), so none
-/// rests on NEXT or a pass's snapshot. restack --resolve is refused before
-/// its rebase starts, so HEAD never moves under the running step. Run by
-/// hand, each then holds the marker itself, so an agent step started by
-/// hand sees it running; a pass's lease already covers one it launched.
-/// A HUP, INT or TERM to sd is then held till the verb returns, as for an
-/// agent step: its timed commands (verify, autofix) end at once.
-const WAIT_FOR_STEP: &[(&str, &str)] = &[
-    ("restack", "restacking"),
-    ("push", "pushing"),
-    ("ship", "shipping"),
-    ("autofix", "running autofix"),
-    ("verify", "running verify"),
-    ("fetch", "fetching"),
-];
-
 pub fn run(argv: &[String]) -> ExitCode {
     let Some((verb, rest)) = argv.split_first() else {
         eprint!("{HELP}");
@@ -317,16 +300,32 @@ pub fn run(argv: &[String]) -> ExitCode {
     if follow::AUTHORS.contains(&verb.as_str()) && follow::reviewing(&b) {
         die(format!("{b} is a PR you're reviewing (sd act follow): sd act {verb} is the author's"));
     }
-    if let Some((_, doing)) = WAIT_FOR_STEP.iter().find(|(v, _)| v == verb) {
-        crate::running::idle(".", &b, doing).unwrap_or_else(|e| die(e));
-        let step = if a.resolve { "resolve" } else { verb };
-        let ran = crate::running::holding(&b, step, || act(verb, &b, &remote, &a));
-        return ran.unwrap_or_else(|| std::process::exit(crate::harness::failed_status()));
-    }
-    act(verb, &b, &remote, &a)
+    let declared = if verb == "answer" { verbs::find(answer::resumed(&b)) } else { verbs::of(verb, &a) };
+    let v = declared.unwrap_or_else(|| die(format!("unknown verb: {verb}")));
+    run_declared(v, verb, &b, &remote, &a)
 }
 
-fn act(verb: &str, b: &str, remote: &str, a: &Args) -> ExitCode {
+/// A verb that writes the branch refuses, --force or not, while another
+/// process's step holds its running marker (#270), then holds the marker
+/// itself, so restack --resolve is refused before its rebase starts.
+fn run_declared(v: &verbs::Verb, verb: &str, b: &str, remote: &str, a: &Args) -> ExitCode {
+    let run = || {
+        if v.agent {
+            attached_check(b, &format!("running sd act {} on {b}", v.name), a.force);
+        }
+        act(verb, v, b, remote, a)
+    };
+    if v.scope == verbs::Scope::None {
+        return run();
+    }
+    if !v.doing.is_empty() {
+        crate::running::idle(".", b, v.doing).unwrap_or_else(|e| die(e));
+    }
+    crate::running::holding(b, v.step(), run).unwrap_or_else(|| std::process::exit(crate::harness::failed_status()))
+}
+
+/// For answer, <v> is the declaration of the verb it resumes.
+fn act(verb: &str, v: &verbs::Verb, b: &str, remote: &str, a: &Args) -> ExitCode {
     match verb {
         "push" => push::push(b, remote, a.force),
         "verify" => commands::verify(b),
@@ -337,7 +336,7 @@ fn act(verb: &str, b: &str, remote: &str, a: &Args) -> ExitCode {
         "unregister" => bookkeeping::unregister(&a.branch, a.force),
         "ack" => github::ack(b, &a.ids, a.question),
         "trigger" => github::trigger(b, remote, a.force),
-        "answer" => answer::answer(b, remote, a),
+        "answer" => answer::answer(b, remote, a, v.name),
         "restack" => restack::restack(b, remote, a),
         "retarget" => restack::retarget(b),
         "review" => review::review(b, remote, a.accept, a.force),

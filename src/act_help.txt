@@ -287,16 +287,20 @@ Verbs:
             of the stored one, says so, and stores it on exit
 
 Running steps (#270): while another process's step holds the branch's
-running marker (sd state shows it), restack (--resolve too), push, ship,
-autofix, verify and fetch refuse before they write anything, --force or not,
-as attach and forget --remove do: wait for it to end, or kill it.
+running marker (sd state shows it), the verbs that write the worktree or
+the remote refuse before they write anything, --force or not: restack
+(--resolve too), push, ship, autofix, verify and fetch, and the agent
+steps implement, address, ci-fix, answer and review; so do attach and
+forget --remove, and describe before its agent runs. Wait for it to end,
+or kill it. Each verb's declaration (src/act/verbs.rs, #341) says which.
 
 Branch budget (#121, #349): implement, address, ci-fix, describe (ship and
 start's too), answer, review and restack --resolve refuse to run their
 agent, --force or not, while sd state's NEXT holds the branch for its
 spend: past settings.branchBudget, or with a step of unknown cost in
 usage.sup. Raise the budget, or set the step's cost_usd. restack --resolve
-rolls its rebase back first.
+refuses before its rebase starts. Each one's gate asks the same rule as
+NEXT's budget step (#371).
 
 Usage limits (#269): a verb whose agent step stopped on its harness's
 usage limit exits 75, isn't counted in the failure record, and writes limit

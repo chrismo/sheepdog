@@ -625,6 +625,15 @@ fn tally_of(h: &str, text: &str) -> Value {
 
 const HELP: &str = include_str!("harness_help.txt");
 
+/// Unnamed, a step on a detached HEAD runs with no running marker (#341).
+fn unmarked(branch: &str, release: bool) -> Option<String> {
+    (release && branch.is_empty()).then(|| {
+        "sd harness: HARNESS_BRANCH must name the step's branch, which its running marker is for (#170): \
+         HARNESS_BRANCH=<branch> sd harness run ..."
+            .to_string()
+    })
+}
+
 fn usage_exit() -> ExitCode {
     eprint!("{HELP}");
     eprintln!("Test seams, unlisted above:");
@@ -661,6 +670,10 @@ pub fn run(argv: &[String]) -> ExitCode {
             };
             let env = |k: &str| std::env::var(k).unwrap_or_default();
             let (name, branch, parent) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"), env("HARNESS_PARENT"));
+            if let Some(why) = unmarked(&branch, !cfg!(debug_assertions)) {
+                eprintln!("{why}");
+                return ExitCode::from(1);
+            }
             let (Ok(claude_allow), Ok(pi_tools)) = (std::env::var("HARNESS_CLAUDE_ALLOW"), std::env::var("HARNESS_PI_TOOLS")) else {
                 eprintln!("sd harness: HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS must be set");
                 return ExitCode::from(1);
@@ -702,6 +715,15 @@ pub fn run(argv: &[String]) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_refuses_no_harness_branch_outside_a_debug_build_341() {
+        assert_eq!(unmarked("", false), None);
+        assert_eq!(unmarked("feat", true), None);
+        let why = unmarked("", true).unwrap();
+        assert!(why.starts_with("sd harness: HARNESS_BRANCH must name the step's branch"), "{why}");
+        assert!(why.contains("HARNESS_BRANCH=<branch> sd harness run"), "{why}");
+    }
 
     // Was lib/sheepdog.bats: "harness_tally: claude's context is its session's last turn, read from the transcript"
     #[test]

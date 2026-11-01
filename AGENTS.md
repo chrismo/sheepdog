@@ -23,7 +23,9 @@ reasoning. These are the rules agents build by:
    `implement`, `address`, `ci-fix`, `answer`, `describe`, `review`,
    `restack --resolve`, and `start` and `ship` when they run implement or
    describe; `sd act --help` marks them "Spends tokens", as `sd harness
-   --help` marks `probe`. Every other verb is zero tokens.
+   --help` marks `probe`, and each one's declaration in `src/act/verbs.rs`
+   says `spends` (`tests/act.rs` holds the two together, #341). Every other
+   verb is zero tokens.
 2. **The pipeline drives; agents are workers.** The pipeline initiates every
    step and hands an agent one bounded task; the agent edits, and sheepdog
    commits, pushes and talks to GitHub. Agents never need to know the
