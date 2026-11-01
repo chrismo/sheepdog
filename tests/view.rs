@@ -451,13 +451,14 @@ fn api_map_serves_sheepdog_s_source_sized_with_its_ratchet_and_issues() {
     assert_eq!(view["issues"], json!([{ "number": 378, "title": "sd view map", "url": "https://github.com/o/r/issues/378" }]));
     assert_eq!(map_file(&m, "src/view/map.rs")["issues"], json!([]));
     let ratchet = this_repo("tests/lint-ratchet.txt");
-    let listed: Vec<Vec<&str>> = ratchet.lines().map(|l| l.split('#').next().unwrap().split_whitespace().collect()).filter(|w: &Vec<&str>| w.len() == 4).collect();
+    let listed: Vec<Vec<&str>> = ratchet.lines().map(|l| l.split('#').next().unwrap().split_whitespace().collect()).filter(|w: &Vec<&str>| w.len() == 4 && w[0].starts_with("src/")).collect();
     assert!(!listed.is_empty());
+    let fns: std::collections::BTreeSet<_> = listed.iter().map(|w| (w[0], w[1])).collect();
     for w in &listed {
         let over = &map_file(&m, w[0])["over"];
         assert!(over.as_array().unwrap().contains(&json!({ "fn": w[1], "lint": w[2], "score": w[3].parse::<u64>().unwrap() })), "{w:?} in {over}");
     }
-    assert_eq!((&m["ratchet"], &m["issues"], &m["error"]), (&json!(listed.len()), &json!(1), &Value::Null));
+    assert_eq!((&m["ratchet"], &m["issues"], &m["error"]), (&json!(fns.len()), &json!(1), &Value::Null));
     let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
     assert_has(&log, &["issue list", "--state open"]);
 }

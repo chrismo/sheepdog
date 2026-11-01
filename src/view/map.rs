@@ -106,7 +106,9 @@ fn build(files: &[(String, String)], ratchet_text: &str, issues: &Result<Vec<Val
         })
         .collect();
     groups.sort_by_key(|g| std::cmp::Reverse(lines(g)));
-    json!({"groups": groups, "ratchet": over.len(), "issues": issues.as_ref().ok().map(Vec::len), "error": issues.as_ref().err()})
+    // Functions, not lines: one over both caps is listed twice.
+    let fns: BTreeSet<_> = over.iter().filter(|(f, _)| files.iter().any(|(p, _)| p == f)).map(|(f, o)| (f, t(o, "fn"))).collect();
+    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.as_ref().ok().map(Vec::len), "error": issues.as_ref().err()})
 }
 
 pub fn map() -> Value {
@@ -125,6 +127,7 @@ mod tests {
         src/act/a.rs  run  too_many_lines  140\n\
         src/act/a.rs  run  cognitive_complexity  30  # #335 splits it\n\
         src/b.rs  big  too_many_lines  120\n\
+        tests/t.rs  long  too_many_lines  110\n\
         \n\
         torn line\n\
         src/b.rs  x  too_many_lines  NaN\n";
@@ -149,6 +152,7 @@ mod tests {
             ("src/act/a.rs".into(), json!({"fn": "run", "lint": "too_many_lines", "score": 140})),
             ("src/act/a.rs".into(), json!({"fn": "run", "lint": "cognitive_complexity", "score": 30})),
             ("src/b.rs".into(), json!({"fn": "big", "lint": "too_many_lines", "score": 120})),
+            ("tests/t.rs".into(), json!({"fn": "long", "lint": "too_many_lines", "score": 110})),
         ]);
     }
 
@@ -178,7 +182,12 @@ mod tests {
         assert_eq!(file(&m, "src/act/a.rs")["over"].as_array().unwrap().len(), 2);
         assert_eq!(file(&m, "src/b.rs")["over_lines"], 120);
         assert_eq!((&file(&m, "src/c.rs")["over_lines"], &file(&m, "src/c.rs")["over"]), (&json!(0), &json!([])));
-        assert_eq!(m["ratchet"], 3);
+    }
+
+    #[test]
+    fn the_ratchet_count_is_functions_in_the_mapped_files_not_lines() {
+        let m = build(&fixture(), RATCHET, &Ok(vec![]));
+        assert_eq!(m["ratchet"], 2);
     }
 
     #[test]
