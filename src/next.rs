@@ -197,7 +197,7 @@ fn foreign_authors_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
 }
 
 /// The range sync.foreign_authors is read from: the branch past its target,
-/// base, the default branch and the head last forced past them.
+/// base and the default branch. It shows the commits already forced past too.
 fn authors_range(s: &Value, remote: &str) -> String {
     let (target, default) = (val::t(s, "sync.target"), val::t(s, "sync.default"));
     let short = |p: &str| val::t(s, p).chars().take(7).collect::<String>();
@@ -205,7 +205,6 @@ fn authors_range(s: &Value, remote: &str) -> String {
     if !default.is_empty() && default != target {
         not.push(format!("{remote}/{default}"));
     }
-    not.push(short("sync.authors_seen"));
     not.retain(|p| !p.is_empty());
     format!("{} --not {}", val::t(s, "branch"), not.join(" "))
 }

@@ -2121,25 +2121,30 @@ fn sync_foreign_authors_names_who_else_made_the_branchs_commits_after_a_pull_356
     assert_eq!(r.field_c(".sync.foreign_authors"), r#"["bot@example.com","Them@Example.com"]"#, "newest first");
 }
 
-// Commits up to the head sd act push --force recorded (sd-authors-seen) were
-// looked at; only what's past it counts (#356).
+// sync.foreign_commits are the ids sd act push --force records in
+// sd-authors-seen: the patch-id, else (no diff) the SHA. A recorded one was
+// looked at and doesn't count (#356).
 #[test]
 fn sync_foreign_authors_leaves_out_what_was_forced_past_356() {
     let sd = sd();
     sd.feat_pushed();
-    assert_eq!(sd.state(&[]).field(".sync.authors_seen"), "null");
+    assert_eq!(sd.state(&[]).field_c(".sync.foreign_commits"), "[]");
     sd.write("y.txt", "y\n");
     sd.git(&["add", "y.txt"]);
     sd.git(&["-c", "user.email=them@example.com", "commit", "-qm", "theirs"]);
-    let seen = sd.git(&["rev-parse", "HEAD"]);
-    sd.git(&["config", "branch.feat.sd-authors-seen", &seen]);
+    let sha = sd.git(&["rev-parse", "HEAD"]);
+    let r = sd.state(&[]);
+    let id = r.field(".sync.foreign_commits[0]");
+    assert_eq!(r.field(".sync.foreign_commits | length"), "1");
+    assert_ne!(id, sha, "a patch-id, which a restack keeps");
+    sd.git(&["config", "--add", "branch.feat.sd-authors-seen", &id]);
     let r = sd.state(&[]);
     assert_eq!(r.field_c(".sync.foreign_authors"), "[]");
-    assert_eq!(r.field(".sync.authors_seen"), seen);
-    sd.write("z.txt", "z\n");
-    sd.git(&["add", "z.txt"]);
-    sd.git(&["-c", "user.email=new@example.com", "commit", "-qm", "theirs again"]);
-    assert_eq!(sd.state(&[]).field_c(".sync.foreign_authors"), r#"["new@example.com"]"#);
+    assert_eq!(r.field_c(".sync.foreign_commits"), "[]");
+    sd.git(&["-c", "user.email=new@example.com", "commit", "-q", "--allow-empty", "-m", "theirs again"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field_c(".sync.foreign_authors"), r#"["new@example.com"]"#);
+    assert_eq!(r.field(".sync.foreign_commits[0]"), sd.git(&["rev-parse", "HEAD"]), "no diff: its SHA");
 }
 
 // Commits on the target, merged in, aren't the branch's own (#356).

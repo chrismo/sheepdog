@@ -24,13 +24,15 @@ Reports, for <branch> (default: the current one):
             restack refuses unless it goes by tree; [] otherwise, null
             when git can't list them
             sync.foreign_authors: the author and committer emails on
-            HEAD's own commits (past the target, the base, the default
-            branch and sync.authors_seen) other than user.email, newest
-            first; sd act push refuses them unless --force (#356). [] when
-            there are none, null when user.email is unset, git can't list
-            them, or the branch is a followed PR
-            sync.authors_seen: the head sd act push --force last pushed past
-            foreign_authors (branch.<b>.sd-authors-seen); null when none
+            HEAD's own commits (past the target, the base and the default
+            branch) other than user.email, newest first, leaving out those
+            already looked at; sd act push refuses them unless --force
+            (#356). [] when there are none, null when user.email is unset,
+            git can't list them, or the branch is a followed PR
+            sync.foreign_commits: those commits' ids, each its patch-id (or
+            its SHA with no diff); sd act push --force adds them to
+            branch.<b>.sd-authors-seen, the looked-at ones, and a patch-id
+            outlives a restack
   push      local vs remote branch; whether the remote SHA is ours (reflog),
             and for a remote ahead of a reset: whether those commits were
             made here and whether the worktree has uncommitted changes;

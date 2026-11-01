@@ -32,7 +32,9 @@ pub const MIGRATED: &[Migrated] = &[
 ];
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
-/// own fetch: sd state doesn't fetch.
+/// own fetch: sd state doesn't fetch. Only sd act push asks this gate:
+/// ship, address and ci-fix call push_branch directly, so FOREIGN_AUTHORS
+/// (#356) doesn't hold their pushes yet; address's own gate has no such rule.
 pub fn push(d: &Derived) -> Gate {
     let Derived {
         open, verify_red, undone, parent_unpushed, foreign_authors,

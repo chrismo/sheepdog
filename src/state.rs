@@ -997,7 +997,7 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone, "replays_parent": s.replays_parent, "foreign_authors": s.foreign_authors.0, "authors_seen": s.foreign_authors.1},
+                 "undone": s.undone, "replays_parent": s.replays_parent, "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "held": s.held},
@@ -1142,32 +1142,58 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
     }
 }
 
-/// O4: authors() past <not> and past the head chrismo last pushed past them
-/// (branch.<b>.sd-authors-seen, which sd act push --force records), and that
-/// head, null when there's none (#356).
-fn foreign_authors(dir: &str, branch: &str, head: &str, reviewer: bool, not: &[&str]) -> (Value, Value) {
-    let seen = git_out(dir, &["config", "--get", &format!("branch.{branch}.sd-authors-seen")]).map_or(String::new(), |s| rev(dir, &s));
-    (authors(dir, head, reviewer, &[not, &[seen.as_str()]].concat()), nn(&seen))
-}
-
 /// O4: the author and committer emails on <head> past <not> other than
-/// user.email, case aside, newest first (#356). null for a followed PR
-/// (#250), with no target (<not>'s first) or user.email, or when git fails.
-fn authors(dir: &str, head: &str, reviewer: bool, not: &[&str]) -> Value {
+/// user.email, case aside, newest first (#356), and those commits' ids: each
+/// one's patch-id, or its SHA when it has none (a merge, an empty commit).
+/// A commit whose id is in branch.<b>.sd-authors-seen (sd act push --force
+/// records them) was looked at and doesn't count; a patch-id outlives a
+/// restack. Both null for a followed PR (#250), with no target (<not>'s
+/// first) or user.email, or when git fails.
+fn foreign_authors(dir: &str, branch: &str, head: &str, reviewer: bool, not: &[&str]) -> (Value, Value) {
+    let unknown = (Value::Null, Value::Null);
     if reviewer || not.first().is_none_or(|t| t.is_empty()) {
-        return Value::Null;
+        return unknown;
     }
-    let Some(me) = git_out(dir, &["config", "user.email"]).filter(|m| !m.is_empty()) else { return Value::Null };
-    let mut args = vec!["log", "--format=%ae%n%ce", head, "--not"];
-    args.extend(not.iter().copied().filter(|r| !r.is_empty()));
-    let Some(people) = git_out(dir, &args) else { return Value::Null };
-    let mut out: Vec<&str> = Vec::new();
-    for p in people.lines() {
-        if !p.eq_ignore_ascii_case(&me) && !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
-            out.push(p);
+    let Some(me) = git_out(dir, &["config", "user.email"]).filter(|m| !m.is_empty()) else { return unknown };
+    let mut range = vec![head, "--not"];
+    range.extend(not.iter().copied().filter(|r| !r.is_empty()));
+    let range = |args: &[&'static str]| -> Vec<&str> { args.iter().copied().chain(range.iter().copied()).collect() };
+    let Some(log) = git_out(dir, &range(&["log", "--format=%H%x09%ae%x09%ce"])) else { return unknown };
+    let theirs: Vec<Vec<&str>> = log
+        .lines()
+        .map(|l| l.split('\t').collect::<Vec<_>>())
+        .filter(|c| c[1..].iter().any(|p| !p.eq_ignore_ascii_case(&me)))
+        .collect();
+    let ids = if theirs.is_empty() { Some(HashMap::new()) } else {
+        patch_ids(dir, &range(&["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"]))
+    };
+    let Some(ids) = ids else { return unknown };
+    let seen = config_all(dir, branch, "sd-authors-seen");
+    let (mut out, mut unseen): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+    for c in &theirs {
+        let id = ids.get(c[0]).map_or(c[0], String::as_str);
+        if seen.iter().any(|s| s == id) {
+            continue;
+        }
+        unseen.push(id);
+        for p in &c[1..] {
+            if !p.eq_ignore_ascii_case(&me) && !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
+                out.push(p);
+            }
         }
     }
-    json!(out)
+    (json!(out), json!(unseen))
+}
+
+/// SHA → patch-id for the commits git <log_args> (a log -p) lists; a commit
+/// with no diff has none. None when git fails.
+fn patch_ids(dir: &str, log_args: &[&str]) -> Option<HashMap<String, String>> {
+    let patches = git(dir, log_args);
+    let o = git::git_input(dir, &["patch-id", "--stable"], Some(patches.stdout.as_bytes()));
+    if !(patches.ok && o.ok) {
+        return None;
+    }
+    Some(o.stdout.lines().filter_map(|l| l.split_once(' ')).map(|(id, sha)| (sha.to_string(), id.to_string())).collect())
 }
 
 /// sd state --json <branch>: its record, NEXT included, as seen from <dir>,

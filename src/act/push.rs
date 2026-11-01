@@ -23,7 +23,7 @@ pub fn push(b: &str, remote: &str, force: bool) {
     if let Some(go) = enforce(gates::push(&d), force, &format!("pushing {b}")) {
         publish(go, b, remote);
         if d.foreign_authors {
-            seen_authors(b, &crate::val::t(&s, "head"));
+            seen_authors(b, &s);
         }
     }
     // chrismo pushing is the approval of what an agent changed in CI config.
@@ -43,12 +43,17 @@ fn publish(_: Go, b: &str, remote: &str) {
 }
 
 /// Forced past commits someone else made: chrismo has looked at them, so
-/// sd state counts only what's past <head> from here on (#356).
-fn seen_authors(b: &str, head: &str) {
-    let o = git(".", &["config", &format!("branch.{b}.sd-authors-seen"), head]);
-    if !o.ok {
-        eprint!("{}", o.stderr);
-        eprintln!("sd act: warning: couldn't record {b}'s commits as looked at; the next push asks again");
+/// sd state stops counting them, restacked or not (sync.foreign_commits'
+/// patch-ids, #356).
+fn seen_authors(b: &str, s: &serde_json::Value) {
+    let key = format!("branch.{b}.sd-authors-seen");
+    for id in s.pointer("/sync/foreign_commits").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
+        let o = git(".", &["config", "--add", &key, id]);
+        if !o.ok {
+            eprint!("{}", o.stderr);
+            eprintln!("sd act: warning: couldn't record {b}'s commits as looked at; the next push asks again");
+            return;
+        }
     }
 }
 

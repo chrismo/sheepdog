@@ -228,6 +228,17 @@ fn commits_someone_else_made_on_the_branch_refused_unless_force_356() {
     sd.commit("more");
     sd.ok(&["push"]);
     assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    // nor is it once a restack has rewritten their commit (the same patch)
+    sd.main_moves(true, "main.txt", "moved", "main moves", false);
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git(&["rebase", "-q", "origin/main"]);
+    sd.ok(&["push"]);
+    assert_eq!(sd.remote("feat"), sd.rev("feat"));
+    // someone else's new commit is held again
+    sd.upstream("theirs again");
+    sd.git(&["pull", "-q", "--ff-only", "origin", "feat"]);
+    sd.commit("mine again");
+    assert_eq!(sd.run(&["push"]).status, 1);
 }
 
 // @test "a pushed commit reset away locally: the remote head is ours, so it's force-pushed with a lease (#86)"

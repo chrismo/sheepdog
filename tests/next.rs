@@ -991,11 +991,10 @@ fn commits_someone_else_made_hold_the_push_chrismo_looks_then_forces_it_356() {
         step("foreign-authors", "say", &st),
         "commits on feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' feat --not origin/main b0b0b0b), then push them"
     );
-    // the same range the fact is: past the default branch and what was last forced past
-    let stacked = [".sync.target = \"p\"", ".sync.authors_seen = \"c0c0c0c0c0\""];
+    // the same range the fact is: past the default branch too
     assert_eq!(
-        step("foreign-authors", "say", &e![".push.ahead = 1", them, &stacked[..]]),
-        "commits on feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' feat --not origin/p b0b0b0b origin/main c0c0c0c), then push them"
+        step("foreign-authors", "say", &e![".push.ahead = 1", them, ".sync.target = \"p\""]),
+        "commits on feat by them@example.com, bot@example.com: look (git log --format='%h %ae %ce %s' feat --not origin/p b0b0b0b origin/main), then push them"
     );
     // attached: --force would push past the sd-lock too
     assert_eq!(keys(&e![".push.ahead = 1", them, ".session.locked = true"]), "attached");
