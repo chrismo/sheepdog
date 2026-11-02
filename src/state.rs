@@ -1735,6 +1735,27 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
 
 // ── output ───────────────────────────────────────────────────────────────────
 
+/// The one-liner's CI slot: a glyph for the verdict, then the words, so
+/// "CI red" still greps (#75). blocked, inconclusive and none get no glyph,
+/// nor does any verdict on an old head: it isn't HEAD's (O5).
+fn ci_item(s: &Value) -> String {
+    let verdict = t(s, "ci.verdict");
+    let old = at(s, "ci.for_head") == &Value::Bool(false);
+    let glyph = match verdict.as_str() {
+        _ if old => "",
+        "green" => "✅ ",
+        "red" => "🔴 ",
+        "pending" => "⏳ ",
+        _ => "",
+    };
+    let failing = arr(at(s, "ci.failing"));
+    format!(
+        "{glyph}CI {verdict}{}{}",
+        if failing.is_empty() { String::new() } else { format!(" ({})", sj(at(s, "ci.failing"), ", ")) },
+        if old { " on old head" } else { "" }
+    )
+}
+
 fn summary(s: &Value) -> String {
     let pin = |k: &str, p: &Value| -> Option<String> {
         let st = str_or(at(p, "status"), "");
@@ -1790,15 +1811,7 @@ fn summary(s: &Value) -> String {
                 format!("remote +{}{}", t(s, "push.behind"), if on(s, "push.remote_ours") { " (reset away here)" } else { "" })
             }
         }),
-        (!pr.is_null()).then(|| {
-            let failing = arr(at(s, "ci.failing"));
-            format!(
-                "CI {}{}{}",
-                t(s, "ci.verdict"),
-                if failing.is_empty() { String::new() } else { format!(" ({})", sj(at(s, "ci.failing"), ", ")) },
-                if at(s, "ci.for_head") == &Value::Bool(false) { " on old head" } else { "" }
-            )
-        }),
+        (!pr.is_null()).then(|| ci_item(s)),
         (!pr.is_null() && !at(s, "threads.blocking").is_null())
             .then(|| format!("!:{} i:{}", t(s, "threads.blocking"), t(s, "threads.info"))),
         pin("local", at(s, "review.local")),
@@ -1967,6 +1980,21 @@ pub fn run(argv: &[String]) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ci_item_puts_a_glyph_before_the_words_green_red_pending_and_none_for_the_rest_75() {
+        let ci = |verdict: &str, failing: Value| json!({"ci": {"verdict": verdict, "failing": failing, "for_head": true}});
+        assert_eq!(ci_item(&ci("green", json!([]))), "✅ CI green");
+        assert_eq!(ci_item(&ci("red", json!(["lint", "test"]))), "🔴 CI red (lint, test)");
+        assert_eq!(ci_item(&ci("pending", json!([]))), "⏳ CI pending");
+        assert_eq!(ci_item(&ci("none", json!([]))), "CI none");
+        assert_eq!(ci_item(&ci("blocked", json!([]))), "CI blocked");
+        assert_eq!(ci_item(&ci("inconclusive", json!([]))), "CI inconclusive");
+        // checks on a non-HEAD SHA give no verdict (O5): the words, no glyph
+        let old = |verdict: &str| json!({"ci": {"verdict": verdict, "failing": [], "for_head": false}});
+        assert_eq!(ci_item(&old("green")), "CI green on old head");
+        assert_eq!(ci_item(&old("red")), "CI red on old head");
+    }
 
     #[test]
     fn is_test_matches_names_paths_and_directories_as_shell_globs() {

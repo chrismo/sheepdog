@@ -194,6 +194,10 @@ fn classify(s: &Value) -> Class {
 }
 
 impl Class {
+    fn why(&self) -> Vec<String> {
+        self.reasons.iter().map(|r| at(r, "msg")).filter(|m| !m.is_null()).map(text).chain(self.note.map(str::to_string)).collect()
+    }
+
     fn record(&self) -> Map<String, Value> {
         let mut m = Map::new();
         m.insert("carry".into(), self.carry.into());
@@ -638,8 +642,7 @@ impl Watch {
         }
 
         self.write_glyph(wt, b, c.glyph);
-        let msgs: Vec<String> = c.reasons.iter().map(|r| at(r, "msg")).filter(|m| !m.is_null()).map(text).chain(c.note.map(str::to_string)).collect();
-        let mut out = format!("{name}\t{b}\t{}\t{}\n", c.glyph, msgs.join("; "));
+        let mut out = super::status::row(name, b, c.glyph, c.why(), &s);
         out.push_str(&ended);
         if let Some(u) = unenrolled {
             if self.vacuum.is_none() {

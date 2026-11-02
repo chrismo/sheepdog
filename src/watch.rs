@@ -2,6 +2,7 @@
 // glyph, status, install and uninstall, which need no pass, are here.
 
 mod pass;
+mod status;
 
 pub(crate) use pass::{act_args, dispatch_verb, json_files, may_dispatch, registered, sd_verb, step_secs, watch_timeout};
 pub use pass::repo_key;
