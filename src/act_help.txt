@@ -298,9 +298,10 @@ Branch budget (#121, #349): implement, address, ci-fix, describe (ship and
 start's too), answer, review and restack --resolve refuse to run their
 agent, --force or not, while sd state's NEXT holds the branch for its
 spend: past settings.branchBudget, or with a step of unknown cost in
-usage.sup. Raise the budget, or set the step's cost_usd. restack --resolve
-refuses before its rebase starts. Each one's gate asks the same rule as
-NEXT's budget step (#371).
+usage.sup. Raise the budget, or set the step's cost_usd. A verb with
+nothing to do says so first, past the budget or attached: neither binds a
+step that runs no agent. restack --resolve refuses before its rebase
+starts. Each one's gate asks the same rule as NEXT's budget step (#371).
 
 Usage limits (#269): a verb whose agent step stopped on its harness's
 usage limit exits 75, isn't counted in the failure record, and writes limit

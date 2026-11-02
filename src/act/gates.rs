@@ -17,13 +17,13 @@ pub struct Gated {
     pub gate: fn(&Derived) -> Gate,
 }
 
-/// Every spending verb's gate's rule (#371, #349). Hard: it enforces a
+/// Every spending verb's gate's rule (#371, #349). Limit: it enforces a
 /// setting, so only raising the budget clears it.
 pub const SPEND: &str = "the branch's spend holds its agent steps: past settings.branchBudget, or unknown";
 
 pub fn spend_rule(budget_unread: bool, over_budget: bool) -> Rule {
     let clears = "raise settings.branchBudget, or set the step's cost_usd in usage.sup";
-    Rule { name: SPEND, level: Level::Hard, refuses: budget_unread || over_budget, clears, yours: true }
+    Rule { name: SPEND, level: Level::Limit, refuses: budget_unread || over_budget, clears, yours: true }
 }
 
 /// NEXT's budget step asks it.
@@ -970,19 +970,19 @@ mod tests {
 
     // ── the spend rule and the registry (#341, #371) ─────────────────────────
 
-    /// Generated states for <v>'s gate: Hard past the budget or with spend
-    /// unread, and never the spend rule otherwise.
+    /// Generated states for <v>'s gate: Hard or Done past the budget or with
+    /// spend unread, and never the spend rule otherwise.
     fn spend_holds(v: &crate::act::verbs::Verb, gate: fn(&Derived) -> Gate) {
         check(&format!("{}'s spend rule", v.name), |d| match (gate(d), d.budget_unread || d.over_budget) {
-            (Gate::Hard(_), true) => Ok(()),
-            (g, true) => Err(format!("{} isn't Hard past the budget: {g:?}", v.name)),
+            (Gate::Hard(_) | Gate::Done(_), true) => Ok(()),
+            (g, true) => Err(format!("{} runs past the budget: {g:?}", v.name)),
             (Gate::Hard(w), false) if w == SPEND => Err(format!("{} refuses for spend with none held", v.name)),
             _ => Ok(()),
         });
     }
 
     #[test]
-    fn every_spending_verbs_gate_refuses_hard_past_the_budget_even_forced_341() {
+    fn no_spending_verbs_gate_runs_past_the_budget_even_forced_341() {
         for v in crate::act::verbs::VERBS.iter().filter(|v| v.spends) {
             if let Some(g) = &v.gate {
                 spend_holds(v, g.gate);

@@ -311,7 +311,11 @@ pub fn run(argv: &[String]) -> ExitCode {
 fn run_declared(v: &verbs::Verb, verb: &str, b: &str, remote: &str, a: &Args) -> ExitCode {
     let run = || {
         if v.agent {
-            attached_check(b, &format!("running sd act {} on {b}", v.name), a.force);
+            let (b, doing, force) = (b.to_string(), format!("running sd act {} on {b}", v.name), a.force);
+            match v.gate {
+                Some(_) => gate::arm(move || attached_check(&b, &doing, force)),
+                None => attached_check(&b, &doing, force),
+            }
         }
         act(verb, v, b, remote, a)
     };

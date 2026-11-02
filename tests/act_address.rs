@@ -315,6 +315,26 @@ fn nothing_owed_says_so_exits_0_no_agent() {
     assert!(!sd.ran("claude.args"));
 }
 
+#[test]
+fn nothing_owed_past_the_budget_says_so_exits_0_341() {
+    let sd = sd();
+    sd.state(&[".threads.owed_bot = 0 | .threads.items = [] | .spend = {usd: 5, unknown: [], budget: 2}"]);
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["nothing to address"]);
+}
+
+#[test]
+fn nothing_owed_while_attached_says_so_exits_0_341() {
+    let sd = sd();
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    sd.state(&[".threads.owed_bot = 0 | .threads.items = []"]);
+    let r = sd.run(&["address"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["nothing to address"]);
+}
+
 // @test "human items are not handed to the agent"
 #[test]
 fn human_items_are_not_handed_to_the_agent() {
