@@ -3,7 +3,7 @@
 // clippy's cap and the open issues that name it. Read from the checkout the
 // binary was built in, whatever repo sd view runs from.
 
-use crate::proc;
+use crate::gh;
 use crate::val::t;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -76,9 +76,9 @@ fn naming(issues: &[Value], path: &str) -> Vec<Value> {
 fn open_issues(root: &Path) -> Result<Vec<Value>, String> {
     let limit = ISSUE_LIMIT.to_string();
     let args = ["issue", "list", "--state", "open", "--limit", &limit, "--json", "number,title,body,url"];
-    let out = proc::with_timeout(GH_SECS, "gh", &args, Some(&root.to_string_lossy()));
+    let out = gh::call_in(&root.to_string_lossy(), None, &args, GH_SECS);
     match serde_json::from_str::<Value>(&out.stdout) {
-        Ok(Value::Array(list)) if out.ok => Ok(list),
+        Ok(Value::Array(list)) if out.ok() => Ok(list),
         _ if out.stderr.trim().is_empty() => Err("gh: no issue list in its answer".into()),
         _ => Err(format!("gh: {}", out.stderr.trim())),
     }
