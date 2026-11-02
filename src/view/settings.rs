@@ -11,7 +11,9 @@ use crate::proc;
 use crate::val::{at, t};
 use crate::watch::sd_verb;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 const SECS: u64 = 30;
 
@@ -29,12 +31,31 @@ fn sd_config(repo: &str, args: &[&str]) -> proc::Out {
     proc::with_timeout(SECS, &prog, &[&pre[..], args].concat(), Some(repo))
 }
 
+/// Logs <failure> for <key> unless it's the one last logged for it, as the
+/// drill-in reads a branch on every poll; None clears it.
+fn log_new(key: &str, failure: Option<String>) {
+    static LAST: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    match failure {
+        None => {
+            last.remove(key);
+        }
+        Some(f) if last.get(key) != Some(&f) => {
+            eprintln!("sd view: {f}");
+            last.insert(key.to_string(), f);
+        }
+        Some(_) => {}
+    }
+}
+
 /// [{path, value, source, edit}] for <branch>'s settings.* keys in <repo>,
 /// or null when sd config couldn't explain them.
 pub fn list(repo: &str, branch: &str) -> Value {
     let out = sd_config(repo, &["explain", "--json", "--branch", branch]);
-    if !out.ok {
-        eprintln!("sd view: sd config explain --branch {branch} in {repo}: {}", out.stderr.lines().next().unwrap_or("failed"));
+    let failure = (!out.ok).then(|| format!("sd config explain --branch {branch} in {repo}: {}", out.stderr.lines().next().unwrap_or("failed")));
+    let failed = failure.is_some();
+    log_new(&format!("{repo}\n{branch}"), failure);
+    if failed {
         return Value::Null;
     }
     let Ok(v) = serde_json::from_str::<Value>(&out.stdout) else { return Value::Null };

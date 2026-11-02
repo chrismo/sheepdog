@@ -719,21 +719,52 @@ const EXPLAIN: &str = r#"{"keys":[
  "warnings":[],"steps":{}}"#;
 
 /// A fake sd config (SHEEPDOG_CONFIG_PROGRAM) that logs "<cwd> <args>" to
-/// config.log; explain prints EXPLAIN, set refuses the value x as sd config
+/// config.log; explain prints EXPLAIN, or fails saying explain.fail's text
+/// while that file is there, and set refuses the value x as sd config
 /// refuses a bad one.
 fn configuring(sd: &mut Sd) {
     let log = sd.path("config.log");
     let explain = sd.path("explain.json");
+    let fail = sd.path("explain.fail");
     fs::write(&explain, EXPLAIN).unwrap();
     sd.fake("sd-config", &format!(
         "#!/usr/bin/env bash\necho \"$(pwd -P) $*\" >> {log}\n\
-         if [ \"$1\" = explain ]; then cat {explain}; exit 0; fi\n\
+         if [ \"$1\" = explain ]; then if [ -f {fail} ]; then cat {fail} >&2; exit 1; fi; cat {explain}; exit 0; fi\n\
          if [ \"$6\" = x ]; then echo 'sd config: settings.reviewRounds: expected a whole number of 0 or more, got \"x\"' >&2; exit 1; fi\n"));
     sd.env.push(("SHEEPDOG_CONFIG_PROGRAM".into(), sd.path("fakebin/sd-config")));
 }
 
 fn config_log(sd: &Sd) -> Vec<String> {
     fs::read_to_string(sd.path("config.log")).unwrap_or_default().lines().map(str::to_string).collect()
+}
+
+// The drill-in reads a branch on every poll: a failing explain is logged when
+// its failure is new, not on each read.
+#[test]
+fn a_failing_explain_is_logged_once_till_its_failure_changes() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let log = sd.path("view.log");
+    let s = serve_logging(&sd, &log);
+    let fail = sd.path("explain.fail");
+    let explains = || fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("sd config explain")).map(str::to_string).collect::<Vec<_>>();
+    fs::write(&fail, "sd config: bad branch file\n").unwrap();
+    for _ in 0..3 {
+        assert_eq!(branch(&s, &id).1["settings"], Value::Null);
+    }
+    assert_eq!(explains().len(), 1, "{:?}", explains());
+    assert_has(&explains()[0], &["feat", "bad branch file"]);
+    fs::write(&fail, "sd config: worse branch file\n").unwrap();
+    branch(&s, &id);
+    branch(&s, &id);
+    assert_eq!(explains().len(), 2, "{:?}", explains());
+    fs::remove_file(&fail).unwrap();
+    assert!(branch(&s, &id).1["settings"].is_array());
+    fs::write(&fail, "sd config: worse branch file\n").unwrap();
+    branch(&s, &id);
+    assert_eq!(explains().len(), 3, "{:?}", explains());
 }
 
 /// POST /api/config {id, path, value} from our page, with the run's token.
