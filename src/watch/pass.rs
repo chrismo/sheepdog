@@ -7,7 +7,7 @@
 // as sd act calls it, since the watcher supervises its children with
 // deadlines (#12).
 
-use super::{die, env_or, home, HELP};
+use super::{die, env_or, home, log, HELP};
 use crate::config::{self, state_dir};
 use crate::git::{self, git, git_out};
 use crate::json;
@@ -214,7 +214,7 @@ impl Class {
 
 /// Whole days, else hours, minutes or seconds; a negative span (a clock
 /// running behind) reads 0s.
-fn dur(s: i64) -> String {
+pub(super) fn dur(s: i64) -> String {
     let s = s.max(0);
     if s >= 86400 {
         format!("{}d", s / 86400)
@@ -231,29 +231,7 @@ fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
-// localtime_r needn't read TZ, as localtime does. Not in the libc crate.
-extern "C" {
-    fn tzset();
-}
-
-/// date '+%Y-%m-%d %H:%M:%S'.
-fn local_time() -> String {
-    let mut buf = [0u8; 64];
-    // SAFETY: tm is plain data that localtime_r fills, and strftime writes
-    // at most buf.len() bytes, returning how many.
-    let n = unsafe {
-        tzset();
-        let t = libc::time(std::ptr::null_mut());
-        let mut tm: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&t, &mut tm).is_null() {
-            return String::new();
-        }
-        libc::strftime(buf.as_mut_ptr().cast(), buf.len(), c"%Y-%m-%d %H:%M:%S".as_ptr(), &tm)
-    };
-    String::from_utf8_lossy(&buf[..n]).into_owned()
-}
-
-fn basename(p: &str) -> &str {
+pub(super) fn basename(p: &str) -> &str {
     Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p)
 }
 
@@ -274,8 +252,20 @@ fn show(lines: &str) -> String {
 
 fn config_lines(lines: Vec<String>) {
     for l in lines {
-        eprintln!("sd config: {l}");
+        log::say(&format!("sd config: {l}"));
     }
+}
+
+/// The branch's settings.autoRun, as inside <repo>; a file that doesn't
+/// read is off.
+pub(super) fn auto_run(repo: &str, b: &str) -> bool {
+    config::get_text_in(repo, "settings.autoRun", b, false).is_ok_and(|v| v == "true")
+}
+
+/// The agent steps running in every registered repo, launched or run by
+/// hand (#350): what settings.agentSteps caps.
+fn agents_running() -> u64 {
+    registered().iter().flat_map(|r| running::leases(r)).filter(|l| l.live && AGENT_STEPS.contains(&l.step.as_str())).count() as u64
 }
 
 fn global_num(path: &str) -> f64 {
@@ -297,7 +287,7 @@ pub(crate) fn registered() -> Vec<String> {
     git(".", &["config", "--global", "--get-all", "sheepdog.repo"]).stdout.lines().map(str::to_string).collect()
 }
 
-fn enrolled(repo: &str) -> Vec<String> {
+pub(super) fn enrolled(repo: &str) -> Vec<String> {
     let o = git(repo, &["config", "--get-regexp", r"^branch\..*\.sheepdog$"]);
     o.stdout
         .lines()
@@ -326,12 +316,12 @@ fn worktree_of(repo: &str) -> HashMap<String, String> {
 }
 
 /// settings.notify with <title> <message> appended, else a macOS
-/// notification, given <secs>: one that hangs has failed (#350). Its stdout
-/// goes to stderr, out of the pass record.
+/// notification, given <secs>: one that hangs has failed (#350). Its output,
+/// stdout and stderr, goes to the log stamped, out of the pass record (#364).
 fn notify(secs: u64, title: &str, msg: &str) -> bool {
     let cmd = config::get_global("settings.notify", false).unwrap_or_else(|lines| {
         config_lines(lines);
-        eprintln!("sd watch: sd config failed; using the default notifier");
+        log::say("sd watch: sd config failed; using the default notifier");
         String::new()
     });
     let (c, what) = if cmd.is_empty() {
@@ -344,13 +334,15 @@ fn notify(secs: u64, title: &str, msg: &str) -> bool {
         c.args(["-c", &format!("{cmd} \"$@\""), "_", title, msg]);
         (c, cmd)
     };
-    let o = proc::timeout_passing_stderr(secs, c);
-    eprint!("{}", o.stdout);
+    let o = proc::timeout(secs, c, true);
+    // A timeout's own line: the one below says it, naming the notifier.
+    let said = if o.timed_out { o.stdout.strip_suffix(&format!("timed out after {secs}s\n")).unwrap_or(&o.stdout) } else { &o.stdout };
+    log::say(said);
     if o.ok {
         return true;
     }
     let how = if o.timed_out { format!("timed out after {secs}s") } else { "failed".into() };
-    eprintln!("sd watch: notify {how}: {what}");
+    log::say(&format!("sd watch: notify {how}: {what}"));
     false
 }
 
@@ -429,6 +421,11 @@ struct Watch {
     /// The .pr files and the glyph index rows written.
     written: Vec<String>,
     glyphs: String,
+    /// Counted for the pass's summary line (#364).
+    auto_run: bool,
+    branches: usize,
+    overrides: usize,
+    launched: usize,
 }
 
 impl Watch {
@@ -445,13 +442,32 @@ impl Watch {
             agent_steps: 0,
             written: vec![],
             glyphs: String::new(),
+            auto_run: false,
+            branches: 0,
+            overrides: 0,
+            launched: 0,
         }
+    }
+
+    fn tally(&mut self, repo: &str, branches: &[String]) {
+        self.branches += branches.len();
+        self.overrides += branches.iter().filter(|b| auto_run(repo, b) != self.auto_run).count();
+    }
+
+    /// The job's pass ends with its one line, quiet or not (#364).
+    fn summarize(&self) {
+        if !self.dispatch {
+            return;
+        }
+        let Watch { auto_run, branches, overrides, launched, .. } = *self;
+        log::say(&log::summary(&log::Tally { branches, auto_run, overrides, launched, agents: agents_running(), cap: self.agent_steps }));
     }
 
     fn dirs(&self) {
         for d in [&self.state, &self.status] {
             if let Err(e) = fs::create_dir_all(d) {
-                die(format!("can't create {d}: {e}"));
+                log::say(&format!("sd watch: can't create {d}: {e}"));
+                std::process::exit(1);
             }
         }
     }
@@ -474,7 +490,7 @@ impl Watch {
         }
         let f = self.pr_file(wt);
         if let Err(e) = fs::write(&f, format!("{b}\t{glyph}\n")) {
-            eprintln!("sd watch: can't write {f}: {e}");
+            log::say(&format!("sd watch: can't write {f}: {e}"));
         }
         self.written.push(f);
         self.glyphs.push_str(&format!("{wt}\t{b}\t{glyph}\n"));
@@ -577,7 +593,7 @@ impl Watch {
             if notify(self.timeout, &title, &msg) {
                 sent.push(key.clone());
             } else if prev_failed.contains(key) {
-                eprintln!("sd watch: giving up on: {msg}");
+                log::say(&format!("sd watch: giving up on: {msg}"));
                 sent.push(key.clone());
             } else {
                 failed.push(key.clone());
@@ -609,7 +625,7 @@ impl Watch {
             let age = now - since;
             if !c.carry && (self.vacuum.is_some() || (self.vacuum_after > 0.0 && age as f64 >= self.vacuum_after)) {
                 if let Err(e) = bookkeeping::unenroll_in(repo, b) {
-                    eprint!("{e}");
+                    log::say(&e);
                     self.log(name, b, &format!("couldn't unenroll: {why} for {}", dur(age)));
                 } else {
                     unenrolled = Some(format!("unenrolled: {why} for {} (sd act enroll {b} to watch it again)", dur(age)));
@@ -638,7 +654,7 @@ impl Watch {
         rec.insert("failed".into(), failed.into());
         rec.insert("notified".into(), notified.into());
         if !save(&file, &Value::Object(rec)) {
-            eprintln!("sd watch: couldn't save {file}: its reasons will notify again");
+            log::say(&format!("sd watch: couldn't save {file}: its reasons will notify again"));
         }
 
         self.write_glyph(wt, b, c.glyph);
@@ -672,7 +688,7 @@ impl Watch {
         let msg = format!("sd act {}: ended, #{} {}", l.step, t(s, "pr.number"), state.to_lowercase());
         self.log(name, b, &msg);
         let line = format!("{name}\t{b}\t-\t{msg}\n");
-        eprint!("{}", show(&line));
+        log::say(&show(&line));
         line
     }
 
@@ -680,13 +696,12 @@ impl Watch {
     /// attempt, under the watch timeout, waiting only till its lease is
     /// taken. Its output goes to steps.log in the state dir; its pass line
     /// to stderr, the job's log.
-    fn dispatch(&self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
+    fn dispatch(&mut self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
         let first = at(s, "next").get(0)?;
         let key = at(first, "key").as_str()?;
         let step = dispatch_verb(first)?;
         let agent = AGENT_STEPS.contains(&step);
-        // A file that doesn't read is off.
-        let enabled = config::get_text_in(repo, "settings.autoRun", b, false).is_ok_and(|v| v == "true");
+        let enabled = auto_run(repo, b);
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
         let busy = !at(s, "session.running").is_null()
             || on(s, "session.locked")
@@ -698,12 +713,15 @@ impl Watch {
         let msg = match agent.then(|| self.held()).flatten() {
             Some(why) => format!("not launching sd act {verb}: {why}"),
             None => match self.launch(repo, step, b) {
-                Ok(()) => format!("launched sd act {verb}"),
+                Ok(()) => {
+                    self.launched += 1;
+                    format!("launched sd act {verb}")
+                }
                 Err(e) => format!("couldn't launch sd act {verb}: {e}"),
             },
         };
         let line = format!("{name}\t{b}\t-\t{msg}\n");
-        eprint!("{}", show(&line));
+        log::say(&show(&line));
         Some(line)
     }
 
@@ -714,11 +732,7 @@ impl Watch {
         if self.agent_steps == 0 {
             return Some("settings.agentSteps 0".into());
         }
-        let running = registered()
-            .iter()
-            .flat_map(|r| running::leases(r))
-            .filter(|l| l.live && AGENT_STEPS.contains(&l.step.as_str()))
-            .count() as u64;
+        let running = agents_running();
         if running >= self.agent_steps {
             let n = if running == 1 { "1 agent step".into() } else { format!("{running} agent steps") };
             return Some(format!("{n} running, settings.agentSteps {}", self.agent_steps));
@@ -775,7 +789,7 @@ impl Watch {
     fn reconcile(&self, repo: &str, name: &str, b: &str) -> String {
         let line = |msg: &str| {
             let l = format!("{name}\t{b}\t-\t{msg}\n");
-            eprint!("{}", show(&l));
+            log::say(&show(&l));
             l
         };
         // The lease before the outcome: a holder gone by the first read
@@ -838,7 +852,7 @@ impl Watch {
             return (line, false);
         }
         if list(cached, "failed").contains(&json!("merged")) {
-            eprintln!("sd watch: giving up on: {msg}");
+            log::say(&format!("sd watch: giving up on: {msg}"));
             return (line, false);
         }
         let mut doc = cached.clone();
@@ -846,7 +860,7 @@ impl Watch {
             m.insert("failed".into(), [list(cached, "failed"), vec![json!("merged")]].concat().into());
         }
         if !save(f, &doc) {
-            eprintln!("sd watch: couldn't save {f}: its merge will notify again");
+            log::say(&format!("sd watch: couldn't save {f}: its merge will notify again"));
         }
         (line, true)
     }
@@ -898,6 +912,7 @@ impl Watch {
         self.vacuum_after = global_num("settings.vacuumAfter");
         self.rate_floor = global_num("settings.rateLimitFloor");
         self.agent_steps = global_num("settings.agentSteps") as u64;
+        self.auto_run = config::get_global("settings.autoRun", false).is_ok_and(|v| v == "true");
         let mut lines = String::new();
         let (mut stopped, mut stop_line) = (false, String::new());
         let mut skipped: Vec<(String, String)> = vec![];
@@ -920,11 +935,12 @@ impl Watch {
                             lines.push_str(&format!("{name}\t{b}\t-\tunenrolled: no local branch\n"));
                             self.log(&name, &b, "unenrolled: no local branch");
                         }
-                        Err(e) => eprint!("{e}"),
+                        Err(e) => log::say(&e),
                     }
                 }
             }
             lines.push_str(&self.report_gone(&repo, &name));
+            self.tally(&repo, &branches);
             if branches.is_empty() {
                 continue;
             }
@@ -982,7 +998,13 @@ impl Watch {
         }
         self.drop_ambiguous(&self.glyphs);
         self.write_index(&self.glyphs);
-        let _ = fs::write(format!("{}/last-pass", self.state), format!("last pass: {}\n{lines}", local_time()));
+        let _ = fs::write(format!("{}/last-pass", self.state), format!("last pass: {}\n{lines}", log::now()));
+        // The job's pass alone stamps job-pass, whose age status reads: a
+        // vacuum by hand writes last-pass too, and mustn't hide an overdue job (#364).
+        if self.dispatch {
+            let _ = fs::write(format!("{}/job-pass", self.state), format!("{}\n", log::now()));
+        }
+        self.summarize();
     }
 
     fn write_index(&self, rows: &str) {
@@ -990,7 +1012,7 @@ impl Watch {
         let tmp = format!("{index}.{}.tmp", std::process::id());
         if fs::write(&tmp, rows).and_then(|_| fs::rename(&tmp, &index)).is_err() {
             let _ = fs::remove_file(&tmp);
-            eprintln!("sd watch: couldn't save {index}");
+            log::say(&format!("sd watch: couldn't save {index}"));
         }
     }
 }
@@ -1032,6 +1054,10 @@ pub fn step(argv: &[String]) -> ExitCode {
     let secs = step_secs(".", step, b, secs);
     let args = act_args(step);
     let verb = args.join(" ");
+    // steps.log is one stream: a header and an end line mark this step's part (#364).
+    let repo = std::env::current_dir().map_or(String::new(), |d| basename(&d.to_string_lossy()).to_string());
+    let started = Instant::now();
+    eprintln!("{}", log::step_header(&log::now(), &repo, b, &verb));
     let ran = running::leasing(b, step, secs + GRACE, || {
         let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
         let mut c = Command::new(prog);
@@ -1051,11 +1077,16 @@ pub fn step(argv: &[String]) -> ExitCode {
         } else {
             format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
         };
-        if let Err(e) = fs::write(&outcome, format!("ran sd act {verb}: {how}\n")) {
+        let ran = format!("ran sd act {verb}: {how}");
+        if let Err(e) = fs::write(&outcome, format!("{ran}\n")) {
             eprintln!("sd watch: can't write {outcome}: {e}");
         }
+        ran
     });
-    if ran.is_some() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    let ok = ran.is_some();
+    let ended = ran.unwrap_or_else(|| format!("sd act {verb} didn't run: {b}'s marker is held"));
+    eprintln!("{}", log::step_end(&log::now(), &repo, b, &ended, started.elapsed().as_secs()));
+    if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
 }
 
 pub fn refresh(argv: &[String]) -> ExitCode {
@@ -1399,18 +1430,5 @@ mod tests {
         assert_eq!(notified_of(&json!({"notified": ["a"], "reasons": [{"key": "b"}]})), vec![json!("a")]);
         assert_eq!(notified_of(&json!({"reasons": [{"key": "b"}]})), vec![json!("b")]);
         assert!(notified_of(&json!(null)).is_empty());
-    }
-
-    #[test]
-    fn local_time_is_dates_format() {
-        let s = local_time();
-        assert!(Regex::new(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$").unwrap().is_match(&s), "{s}");
-        // Local, not UTC: date's hour, read either side of it so an hour
-        // boundary between them doesn't fail the test.
-        let hour = || proc::run("date", &["+%H"], None, None).stdout.trim_end().to_string();
-        let before = hour();
-        let s = local_time();
-        let after = hour();
-        assert!(s[11..13] == before || s[11..13] == after, "{s} vs {before}..{after}");
     }
 }

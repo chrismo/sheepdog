@@ -35,7 +35,11 @@ Usage: sd watch [refresh [<branch>] | glyph [<path>] | vacuum [--dry-run] | stat
              waiting on review from alice; waiting on <parent> (#n) to merge
              first). A branch sd state checked adds its PR's URL (empty with
              no PR), so its row pastes as it is (#317); rows for errors, gone
-             branches and steps launched or ended have none
+             branches and steps launched or ended have none. Then the job's
+             diagnosis (Logs, below): the pass's age against
+             settings.interval, autoRun and the branches overriding it,
+             running steps, a usage limit, failure records, launchd's view of
+             the job, and the log paths
   install    launchd job: a pass every settings.interval seconds (default 300),
              on the PATH install ran with (re-run install after changing it)
   uninstall  remove the job
@@ -158,8 +162,9 @@ Launched steps (#268): the pass doesn't wait for one. It runs as sd watch
 step <secs> <step> <branch>, in a session of its own (launchd's cleanup of
 the job never signals it), holding the branch's running marker as a lease:
 the marker's second line, deadline <time>, is the step's timeout plus 60s.
-Its output goes to steps.log in SHEEPDOG_STATE_DIR. The pass's line, also
-in status, is launched sd act <verb>; the next pass reports how it ended:
+Its output goes to steps.log in SHEEPDOG_STATE_DIR, between a header and
+an end line (Logs, below). The pass's line, also in status, is launched sd
+act <verb>; the next pass reports how it ended:
 ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
 <n>s, stopped on a usage limit (exit 75, not counted), or stopped by a
 signal. Each pass first reconciles every branch's
@@ -171,6 +176,32 @@ doesn't count it again (#270). A launched step still running once
 its PR has merged or closed is ended the same way, not counted, its edits
 left in the worktree: sd act <step>: ended, #<n> merged (or closed). A
 marker with no deadline, a step chrismo ran, is never ended or counted.
+
+Logs (#364), in SHEEPDOG_STATE_DIR, neither rotated: launchd.log is the
+job's stdout and stderr. Every line a pass writes there carries the local
+time, and each pass ends with one line, quiet pass or not:
+  2026-11-02 09:27:10 pass: 4 branches, autoRun on (2 branches off),
+  1 launched, agent steps 1/2
+the enrolled branches, settings.autoRun with the branches whose own differs,
+the steps launched, and the agent steps running against settings.agentSteps.
+steps.log holds each launched step's output, unchanged, between
+  ==> <time> <repo> <branch>: sd act <verb>
+  <== <time> <repo> <branch>: ran sd act <verb>: <how it ended> (<how long>)
+status reads what a silent job usually comes down to, writing nothing:
+  job's last pass: 3m ago (settings.interval 300s): not a vacuum by hand,
+    which the first line counts; overdue once two intervals passed with no
+    pass
+  autoRun on; off on 2 branches: <repo> <branch>, ... (the global, and
+    the enrolled branches whose own setting differs)
+  running: <repo> <branch> <step> (pid, since, deadline or run by hand),
+    one per live running marker, else none
+  usage limit: till <reset>, <harness>: <what it said>, while one holds
+  failures: <repo> <branch> <step> failed <n> in a row (holds at 3): <error>,
+    one per failure record (#242)
+  launchd: com.sheepdog.watch loaded, state, runs, last exit, interval and
+    program from launchctl print; not loaded, with launchctl's reason; or
+    not here, with no launchctl (Linux)
+  logs: the two paths
 
 GitHub's rate limit: a pass checks no more branches after one whose sd
 state found less than settings.rateLimitFloor GraphQL points left (default

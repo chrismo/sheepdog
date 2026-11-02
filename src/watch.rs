@@ -1,6 +1,7 @@
 // sd watch (src/watch_help.txt): the pass, refresh and vacuum are pass.rs's;
 // glyph, status, install and uninstall, which need no pass, are here.
 
+mod log;
 mod pass;
 mod status;
 
@@ -231,10 +232,7 @@ pub fn run(argv: &[String]) -> ExitCode {
                 }
             }
         }
-        "status" => match fs::read_to_string(format!("{}/last-pass", state_dir())) {
-            Ok(text) => print!("{}", text.replace('\t', "  ")),
-            Err(_) => println!("no pass yet"),
-        },
+        "status" => status::print(),
         "install" => return install(),
         "uninstall" => return uninstall(),
         "" => return pass::pass(),
