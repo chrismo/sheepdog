@@ -134,6 +134,7 @@ footer { font-size: 0.78rem; color: var(--muted); }
   <section id="detail" hidden><div id="dmain"></div><details class="panel tl" id="tl"><summary>Timeline</summary><div id="tlbody"></div></details></section>
   <footer id="foot"></footer>
 </div>
+<script src="/gh.js"></script>
 <script>
 const POLL_MS = 30000;
 const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
@@ -229,14 +230,11 @@ function owedHtml(o) {
   return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
 }
 
-let shown = "", tlKey = "";
+let shown = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
   if (key === shown && $("dmain").innerHTML) return;
   shown = key;
-  const k = JSON.stringify([b.pr, b.stages, b.usd]);
-  if ($("tl").open && k !== tlKey) loadTimeline(openId());
-  tlKey = k;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
@@ -310,21 +308,29 @@ function tlSvg(ev) {
   return `<svg viewBox="0 -2 ${W} ${y0 - FOLD + 14}" role="img" aria-label="The branch's timeline: agent steps, commits, CI and the PR, top to bottom">${s}</svg>`;
 }
 
+// Only the latest load draws and retries, for the branch still open.
+let tlAgain, tlSeq = 0;
 async function loadTimeline(id) {
+  clearTimeout(tlAgain);
+  const mine = ++tlSeq, current = () => mine === tlSeq && openId() === id;
   const body = $("tlbody");
   if (!body.innerHTML) body.innerHTML = `<p class="none">asking GitHub…</p>`;
   try {
     const r = await fetch(`/api/timeline?id=${encodeURIComponent(id)}`, { cache: "no-store" });
-    if (openId() !== id) return;
+    if (!current()) return;
     if (r.status === 404) { body.innerHTML = `<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`; return; }
     if (!r.ok) throw new Error(r.status);
     const t = await r.json();
+    if (!current()) return;
     const ev = tlEvents(t);
     const cut = t.github?.total ? `<p class="none">The last ${t.github.commits.length} of ${t.github.total} commits: the earlier ones aren't drawn.</p>` : "";
-    const note = cut + (t.error ? `<p class="none">GitHub didn't answer, so this is the agent's steps only (${esc(t.error)})</p>` : t.github ? "" : `<p class="none">No PR yet: the agent's steps only.</p>`);
+    const pr = t.github || t.error || t.refreshing || t.fetched;
+    const down = t.error ? `<p class="none">GitHub didn't answer${t.github ? ", so its part is the last answer" : ", so this is the agent's steps only"} (${esc(t.error)})</p>` : "";
+    const note = cut + down + (pr ? ghLine(t) : `<p class="none">No PR yet: the agent's steps only.</p>`);
     body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
+    if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id && !document.hidden) loadTimeline(id); }, 1000);
   } catch (e) {
-    if (openId() === id) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
+    if (current()) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }
 }
 
@@ -375,6 +381,7 @@ async function poll(detail) {
   }
   const id = openId();
   if (detail && id) loadDetail(id);
+  if (detail && id && $("tl").open && !document.hidden) loadTimeline(id);
 }
 
 const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
@@ -390,6 +397,7 @@ document.addEventListener("click", async e => {
     return;
   }
   if (e.target.closest("[data-back]")) { location.hash = ""; return; }
+  if (e.target.closest("[data-refresh]")) { const id = openId(); refreshGh().then(() => id && loadTimeline(id), () => {}); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card[data-id]");
   if (c) openCard(c);
@@ -400,6 +408,7 @@ document.addEventListener("keydown", e => {
 });
 $("tl").addEventListener("toggle", () => { if ($("tl").open && openId()) loadTimeline(openId()); });
 window.addEventListener("hashchange", route);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && $("tl").open && openId()) loadTimeline(openId()); });
 route();
 poll(false);
 setInterval(() => poll(true), POLL_MS);

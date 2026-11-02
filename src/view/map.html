@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="sd-token" content="__SD_TOKEN__">
 <title>sheepdog map</title>
 <style>
 :root {
@@ -98,6 +99,7 @@ body.sheet footer { margin-bottom: 40vh; }
     <div class="nav"><a href="/">← Flock</a><span class="eyebrow" id="eyebrow">loading…</span></div>
     <h1>The code</h1>
     <div class="summary" id="summary"></div>
+    <div id="gh"></div>
     <div class="legend">
       <span><i class="k"></i>a file: area is lines</span>
       <span><i class="k h"></i>in functions over the cap</span>
@@ -108,6 +110,7 @@ body.sheet footer { margin-bottom: 40vh; }
   <footer id="foot"></footer>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
+<script src="/gh.js"></script>
 <script>
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const $ = id => document.getElementById(id);
@@ -129,11 +132,15 @@ function tile(f, maxLines) {
 }
 
 function render(m) {
+  const open = $("sheet").hidden ? null : document.querySelector(".sq.on")?.dataset.p;
+  const expanded = !!document.querySelector("#sbody [data-more].all");
   const all = m.groups.flatMap(g => g.files);
   files = Object.fromEntries(all.map(f => [f.path, f]));
   const lines = all.reduce((n, f) => n + f.lines, 0);
   const maxLines = Math.max(1, ...all.map(f => f.lines));
-  $("eyebrow").textContent = `${all.length} files · src/`;
+  const eb = $("eyebrow");
+  eb.classList.remove("stale");
+  eb.textContent = `${all.length} files · src/`;
   const chips = [[fmt(lines), "lines", "--ink"], [m.ratchet, "over the cap", "--agent"]];
   if (m.issues !== null) chips.push([m.issues, "open issues", "--wait"]);
   $("summary").innerHTML = chips.map(([n, what, c]) => `<span class="sum" style="--sc:var(${c})"><b>${n}</b>${what}</span>`).join("");
@@ -141,8 +148,16 @@ function render(m) {
     `<section class="group"><h2>${esc(g.name)}<span class="n">${fmt(g.lines)}</span></h2>` +
     `<div class="tiles">${g.files.map(f => tile(f, maxLines)).join("")}</div></section>`).join("")
     : `<p class="none">No source here: sd runs from ${esc(m.root)}, which has no src/.</p>`;
-  const note = m.error ? `Open issues left out: ${m.error}. ` : "";
+  $("gh").innerHTML = ghLine(m);
+  const down = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
+  const note = down + (m.cut ? `Some open issues may be left out: ${m.cut}. ` : "");
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
+  if (open && !files[open]) hideFile();
+  else if (open && JSON.stringify(files[open]) === sheetKey) document.querySelector(`.sq[data-p="${CSS.escape(open)}"]`)?.classList.add("on");
+  else if (open) {
+    showFile(open);
+    if (expanded) document.querySelector("#sbody [data-more]")?.classList.add("all");
+  }
 }
 
 function bars(over) {
@@ -153,9 +168,11 @@ function bars(over) {
   }).join("");
 }
 
+let sheetKey = "";
 function showFile(path) {
   const f = files[path];
   if (!f) return;
+  sheetKey = JSON.stringify(f);
   document.querySelectorAll(".sq.on").forEach(e => e.classList.remove("on"));
   document.querySelector(`.sq[data-p="${CSS.escape(path)}"]`)?.classList.add("on");
   const share = Math.round(Math.min(1, f.over_lines / Math.max(f.lines, 1)) * 100);
@@ -181,20 +198,33 @@ document.addEventListener("click", e => {
   if (e.target.closest("[data-close]")) return hideFile();
   const more = e.target.closest("[data-more]");
   if (more) more.classList.toggle("all");
+  if (e.target.closest("[data-refresh]")) refreshGh().then(load, () => {});
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideFile(); });
 
-(async () => {
+// Only the latest load schedules the next: one polling chain.
+let again, seq = 0;
+async function load() {
+  clearTimeout(again);
+  if (document.hidden) return;
+  const mine = ++seq;
   try {
     const r = await fetch("/api/map", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    render(await r.json());
+    const m = await r.json();
+    if (mine !== seq) return;
+    render(m);
+    again = setTimeout(load, m.refreshing ? 1000 : 60000);
   } catch (e) {
+    if (mine !== seq) return;
     const eb = $("eyebrow");
     eb.classList.add("stale");
     eb.textContent = `can't reach sd view (${e.message})`;
+    again = setTimeout(load, 60000);
   }
-})();
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+load();
 </script>
 </body>
 </html>

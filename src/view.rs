@@ -7,9 +7,10 @@
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
 // rebind its name to 127.0.0.1. Writes go to POST /api/act behind the guard
 // (view/guard.rs, #396): this run's token, which the page carries, and our
-// own Origin.
+// own Origin, as does POST /api/refresh, the pages' refresh button (#401).
 
 mod branch;
+mod cache;
 mod flock;
 mod guard;
 mod map;
@@ -26,6 +27,7 @@ use std::time::Duration;
 const HELP: &str = include_str!("view_help.txt");
 const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
+const GH_JS: &str = include_str!("view/gh.js");
 const PORT: u16 = 7377;
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -96,13 +98,17 @@ fn read_request(r: &mut impl BufRead) -> Option<Request> {
     Some(req)
 }
 
-/// Slice 2 of #396 runs NEXT's step here, behind the guard.
-fn act(req: &Request, port: u16, token: &str) -> (&'static str, &'static str, String) {
+/// The guarded writes. Slice 2 of #396 runs NEXT's step at /api/act.
+fn write(route: &str, req: &Request, port: u16, token: &str) -> (&'static str, &'static str, String) {
     if req.method != "POST" {
         return ("405 Method Not Allowed", "text/plain", "a write is a POST\n".into());
     }
     if let Some(why) = guard::refusal(req, port, token) {
         return ("403 Forbidden", "text/plain", why.into());
+    }
+    if route == "/api/refresh" {
+        cache::force();
+        return ("200 OK", "text/plain", "GitHub data is stale: the next read fetches it again\n".into());
     }
     ("501 Not Implemented", "text/plain", "no action yet (#396)\n".into())
 }
@@ -113,8 +119,8 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")));
     }
     let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
-    if route == "/api/act" {
-        return act(req, port, token);
+    if route == "/api/act" || route == "/api/refresh" {
+        return write(route, req, port, token);
     }
     if req.method != "GET" {
         return ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into());
@@ -122,13 +128,14 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
     match route {
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.replace("__SD_TOKEN__", token)),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
-        "/map" => ("200 OK", "text/html; charset=utf-8", MAP_PAGE.into()),
-        "/api/map" => ("200 OK", "application/json", map::map().to_string()),
+        "/map" => ("200 OK", "text/html; charset=utf-8", MAP_PAGE.replace("__SD_TOKEN__", token)),
+        "/gh.js" => ("200 OK", "text/javascript; charset=utf-8", GH_JS.into()),
+        "/api/map" => ("200 OK", "application/json", map::map(state).to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();
             let found = match route {
                 "/api/branch" => branch::detail(state, &id),
-                _ => branch::find(state, &id).map(|c| timeline::timeline(&c, &branch::usage(state))),
+                _ => branch::find(state, &id).map(|c| timeline::timeline(&c, &branch::usage(state), state)),
             };
             match found {
                 Some(b) => ("200 OK", "application/json", b.to_string()),

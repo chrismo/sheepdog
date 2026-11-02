@@ -282,9 +282,32 @@ const PR_HISTORY: &str = r#"{"data":{"repository":{"pullRequest":{"createdAt":"2
     "statusCheckRollup":{"contexts":{"nodes":[{"__typename":"CheckRun","name":"lint","conclusion":"SUCCESS","status":"COMPLETED",
       "startedAt":"2026-10-31T11:01:00Z","completedAt":"2026-10-31T11:03:00Z"}]}}}}]}}}}}"#;
 
+fn timeline_path(id: &str) -> String {
+    format!("/api/timeline?id={}", id.replace('/', "%2F"))
+}
+
+/// The timeline once its GitHub fetch, if any, has landed.
 fn timeline(s: &Server, id: &str) -> (u16, Value) {
-    let (code, _, body) = s.get(&format!("/api/timeline?id={}", id.replace('/', "%2F")));
-    (code, serde_json::from_str(&body).unwrap_or(Value::Null))
+    settled(s, &timeline_path(id))
+}
+
+/// GET <path> until its answer isn't "refreshing": the status code and JSON.
+fn settled(s: &Server, path: &str) -> (u16, Value) {
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (code, _, body) = s.get(path);
+        let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+        if v["refreshing"] != true {
+            return (code, v);
+        }
+        assert!(Instant::now() < end, "{path} still refreshing after 10s: {body}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The gh calls the fakes logged (the timeline's query spans lines).
+fn gh_calls(sd: &Sd) -> usize {
+    fs::read_to_string(sd.tmp.join("gh.log")).map_or(0, |l| l.matches("api graphql").count() + l.matches("issue list").count())
 }
 
 #[test]
@@ -339,7 +362,7 @@ fn a_timeline_without_github_still_has_its_agent_steps() {
     assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"]), (1, &Value::Null, &Value::Null));
     let (_, gh_down) = timeline(&s, &id("b"));
     assert_eq!((gh_down["agent"].as_array().unwrap().len(), &gh_down["github"]), (1, &Value::Null));
-    assert_has(gh_down["error"].as_str().unwrap(), &["rate limit exceeded"]);
+    assert_eq!(gh_down["error"], "gh: rate limit exceeded");
     assert_eq!(timeline(&s, "nope/x").0, 404);
 }
 
@@ -362,11 +385,15 @@ fn page_token(s: &Server) -> String {
 
 /// A write to the guarded route, from <origin> with <token> (either left out when None).
 fn write(s: &Server, method: &str, origin: Option<&str>, token: Option<&str>) -> (u16, String) {
+    write_to(s, "/api/act", method, origin, token)
+}
+
+fn write_to(s: &Server, path: &str, method: &str, origin: Option<&str>, token: Option<&str>) -> (u16, String) {
     let host = format!("127.0.0.1:{}", s.port);
     let mut hs = vec![("Host", host.as_str())];
     hs.extend(origin.map(|o| ("Origin", o)));
     hs.extend(token.map(|t| ("X-Sd-Token", t)));
-    let (code, _, body) = s.send(method, "/api/act", &hs);
+    let (code, _, body) = s.send(method, path, &hs);
     (code, body)
 }
 
@@ -428,11 +455,13 @@ fn this_repo(path: &str) -> String {
     fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
 }
 
+/// The Map once its GitHub fetch has landed.
 fn map(s: &Server) -> Value {
-    let (code, head, body) = s.get("/api/map");
-    assert_eq!(code, 200, "{head}\n{body}");
-    assert_has(&head.to_lowercase(), &["content-type: application/json"]);
-    serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"))
+    let (_, head, _) = s.get("/api/map");
+    assert_has(&head.to_lowercase(), &["200 ok", "content-type: application/json"]);
+    let (code, m) = settled(s, "/api/map");
+    assert_eq!(code, 200, "{m}");
+    m
 }
 
 fn map_file<'a>(m: &'a Value, path: &str) -> &'a Value {
@@ -458,7 +487,7 @@ fn api_map_serves_sheepdog_s_source_sized_with_its_ratchet_and_issues() {
         let over = &map_file(&m, w[0])["over"];
         assert!(over.as_array().unwrap().contains(&json!({ "fn": w[1], "lint": w[2], "score": w[3].parse::<u64>().unwrap() })), "{w:?} in {over}");
     }
-    assert_eq!((&m["ratchet"], &m["issues"], &m["error"]), (&json!(fns.len()), &json!(1), &Value::Null));
+    assert_eq!((&m["ratchet"], &m["issues"], &m["error"], &m["cut"]), (&json!(fns.len()), &json!(1), &Value::Null, &Value::Null));
     let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
     assert_has(&log, &["issue list", "--state open"]);
 }
@@ -470,7 +499,7 @@ fn the_map_without_github_still_has_its_files() {
     let m = map(&serve(&sd));
     assert_eq!(map_file(&m, "src/view.rs")["issues"], json!([]));
     assert_eq!(m["issues"], Value::Null);
-    assert_has(m["error"].as_str().unwrap(), &["rate limit exceeded"]);
+    assert_eq!(m["error"], "gh: rate limit exceeded");
 }
 
 #[test]
@@ -482,4 +511,115 @@ fn the_map_page_and_the_flock_link_to_each_other() {
     assert_has(&head.to_lowercase(), &["content-type: text/html"]);
     assert_has(&body, &["<title>", "href=\"/\"", "/api/map"]);
     assert_has(&s.get("/").2, &["href=\"/map\""]);
+}
+
+// GitHub data is cached under <state>/github/ (#401): served at once, and
+// fetched again in the background once it's a minute old or the page's
+// refresh button asks.
+
+#[test]
+fn fresh_github_data_isn_t_asked_for_again() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "a", state("a", json!([])));
+    fs::write(sd.tmp.join("history.json"), PR_HISTORY).unwrap();
+    sd.fake("gh", &format!("#!/usr/bin/env bash\necho \"$*\" >> {}\ncat {}\n", sd.path("gh.log"), sd.path("history.json")));
+    let s = serve(&sd);
+    let id = format!("{}/a", sheepdog::watch::repo_key("/src/sheepdog"));
+    let (_, _, first) = s.get(&timeline_path(&id));
+    let first: Value = serde_json::from_str(&first).unwrap();
+    assert_eq!((&first["github"], &first["refreshing"], first["agent"].is_array()), (&Value::Null, &json!(true), true));
+    let (_, t) = timeline(&s, &id);
+    assert_eq!(t["github"]["opened"], "2026-10-31T09:05:00Z");
+    assert!(regex::Regex::new(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$").unwrap().is_match(t["fetched"].as_str().unwrap_or("")), "{t}");
+    let (_, again) = timeline(&s, &id);
+    assert_eq!((&again["github"], &again["refreshing"]), (&t["github"], &json!(false)));
+    assert_eq!(gh_calls(&sd), 1);
+}
+
+/// The Map's cached issue list, as asked <secs_ago> seconds ago.
+fn cached_issues(sd: &Sd, secs_ago: u64, issues: Value) {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let f = sd.tmp.join(format!("state/github/issues-{}.json", sheepdog::watch::repo_key(root)));
+    fs::create_dir_all(f.parent().unwrap()).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let then = now - secs_ago * 1000;
+    fs::write(f, json!({ "tried": then, "at": then, "data": issues, "error": null }).to_string()).unwrap();
+}
+
+#[test]
+fn stale_github_data_is_served_at_once_while_a_fresh_copy_is_fetched() {
+    let sd = sd();
+    cached_issues(&sd, 61, json!([{ "number": 1, "title": "old", "url": "u1", "body": "src/view.rs" }]));
+    let issues = r#"[{"number":2,"title":"new","url":"u2","body":"src/view.rs"}]"#;
+    sd.fake("gh", &format!("#!/usr/bin/env bash\necho \"$*\" >> {}\necho '{issues}'\n", sd.path("gh.log")));
+    let s = serve(&sd);
+    let (_, _, body) = s.get("/api/map");
+    let stale: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!((&map_file(&stale, "src/view.rs")["issues"][0]["number"], &stale["refreshing"]), (&json!(1), &json!(true)));
+    let m = map(&s);
+    assert_eq!(map_file(&m, "src/view.rs")["issues"][0]["number"], 2);
+    assert_eq!(gh_calls(&sd), 1);
+}
+
+#[test]
+fn a_failed_fetch_keeps_the_last_data_and_says_why() {
+    let sd = sd();
+    cached_issues(&sd, 61, json!([{ "number": 1, "title": "old", "url": "u1", "body": "src/view.rs" }]));
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'rate limit exceeded' >&2\nexit 1\n");
+    let m = map(&serve(&sd));
+    assert_eq!((&map_file(&m, "src/view.rs")["issues"][0]["number"], &m["error"]), (&json!(1), &json!("gh: rate limit exceeded")));
+}
+
+#[test]
+fn a_timeline_s_failed_fetch_keeps_its_last_pr_history() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "a", state("a", json!([])));
+    let f = sd.tmp.join("state/github/pr%2Fgithub.com%2Fo%2Fr%2F7.json");
+    fs::create_dir_all(f.parent().unwrap()).unwrap();
+    let old = json!({ "opened": "2026-10-31T09:05:00Z", "merged": null, "commits": [], "total": null });
+    fs::write(&f, json!({ "tried": 1, "at": 1, "data": old, "error": null }).to_string()).unwrap();
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'rate limit exceeded' >&2\nexit 1\n");
+    let s = serve(&sd);
+    let (_, t) = timeline(&s, &format!("{}/a", sheepdog::watch::repo_key("/src/sheepdog")));
+    assert_eq!((&t["github"], &t["error"], &t["fetched"]), (&old, &json!("gh: rate limit exceeded"), &json!("1970-01-01T00:00:00Z")));
+}
+
+#[test]
+fn a_failed_fetch_of_a_full_list_still_says_it_may_be_cut_off() {
+    let sd = sd();
+    let full: Vec<Value> = (0..500).map(|i| json!({ "number": i, "title": "t", "url": "u", "body": "" })).collect();
+    cached_issues(&sd, 61, json!(full));
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'rate limit exceeded' >&2\nexit 1\n");
+    let m = map(&serve(&sd));
+    assert_eq!((&m["error"], &m["cut"]), (&json!("gh: rate limit exceeded"), &json!("gh lists 500 at most, and gave 500")));
+}
+
+#[test]
+fn the_refresh_button_makes_cached_github_data_stale() {
+    let sd = sd();
+    cached_issues(&sd, 0, json!([]));
+    sd.fake("gh", &format!("#!/usr/bin/env bash\necho \"$*\" >> {}\necho '[]'\n", sd.path("gh.log")));
+    let s = serve(&sd);
+    map(&s);
+    assert_eq!(gh_calls(&sd), 0);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    assert_eq!(write_to(&s, "/api/refresh", "POST", Some(&ours), None).0, 403);
+    assert_eq!(write_to(&s, "/api/refresh", "GET", Some(&ours), Some(&page_token(&s))).0, 405);
+    let (code, body) = write_to(&s, "/api/refresh", "POST", Some(&ours), Some(&page_token(&s)));
+    assert_eq!(code, 200, "{body}");
+    map(&s);
+    assert_eq!(gh_calls(&sd), 1);
+}
+
+#[test]
+fn the_map_page_carries_the_run_s_token() {
+    let sd = sd();
+    let s = serve(&sd);
+    let token = page_token(&s);
+    assert_has(&s.get("/map").2, &[&format!(r#"<meta name="sd-token" content="{token}">"#), r#"<script src="/gh.js">"#]);
+    assert_has(&s.get("/").2, &[r#"<script src="/gh.js">"#]);
+    let (code, head, js) = s.get("/gh.js");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: text/javascript"]);
+    assert_has(&js, &["sd-token", "/api/refresh", "X-Sd-Token"]);
 }
