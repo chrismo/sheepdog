@@ -265,18 +265,31 @@ function settingRow(k) {
   else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="copy" type="button" data-set="${esc(k.path)}">set</button></span>`;
   return `<li><span class="k">${esc(name)}</span>${v}${layer}</li>`;
 }
+// The last set's word and whether "all settings" is open, per branch: the
+// drill-in is redrawn whole, so both are drawn from here, not left in the old DOM.
+let setNote = { id: "", text: "", bad: false }, moreOpen = { id: "", open: false };
 function settingsHtml(b) {
   if (!b.settings) return `<div class="panel"><h3>Settings</h3><p class="none">Not read: the branch's repo isn't registered with sd watch, or sd config couldn't explain it.</p></div>`;
   const edit = b.settings.filter(k => k.editable), rest = b.settings.filter(k => !k.editable);
+  const note = setNote.id === b.id ? setNote : { text: "", bad: false };
+  const open = moreOpen.id === b.id && moreOpen.open;
   return `<div class="panel"><h3>Settings</h3>
-    <ul class="set">${edit.map(settingRow).join("")}</ul><p class="none setsay"></p>
-    <details class="more"><summary>all ${b.settings.length} settings</summary><ul class="set">${rest.map(settingRow).join("")}</ul></details></div>`;
+    <ul class="set">${edit.map(settingRow).join("")}</ul><p class="none setsay${note.bad ? " bad" : ""}">${esc(note.text)}</p>
+    <details class="more"${open ? " open" : ""}><summary>all ${b.settings.length} settings</summary><ul class="set">${rest.map(settingRow).join("")}</ul></details></div>`;
+}
+
+function sayNote(id, text, bad) {
+  setNote = { id, text, bad };
+  const say = document.querySelector(".setsay");
+  if (!say) return;
+  say.textContent = text;
+  say.classList.toggle("bad", bad);
 }
 
 async function setConfig(path, value) {
-  const id = openId(), say = document.querySelector(".setsay");
+  const id = openId();
   if (!id) return;
-  if (say) { say.textContent = `setting ${path.replace(/^settings\./, "")}…`; say.classList.remove("bad"); }
+  sayNote(id, `setting ${path.replace(/^settings\./, "")}…`, false);
   let r, text;
   try {
     r = await fetch("/api/config", { method: "POST", headers: { "X-Sd-Token": TOKEN, "Content-Type": "application/json" },
@@ -285,10 +298,11 @@ async function setConfig(path, value) {
   } catch (e) {
     text = "can't reach sd view";
   }
-  if (openId() !== id || !say) return;
-  if (r?.ok) { shown = ""; poll(true); say.textContent = text; return; }
-  say.classList.add("bad");
-  say.textContent = r?.status === 403 ? "refused: reload the page" : text;
+  if (openId() !== id) return;
+  sayNote(id, r?.ok ? text : r?.status === 403 ? "refused: reload the page" : text, !r?.ok);
+  // Redraw either way: a set shows its new value, a refused one puts the control back.
+  shown = "";
+  poll(true);
 }
 
 // The server says which step gets a button (act: {key, verb}) and whether it's running (acting).
@@ -328,13 +342,17 @@ async function runStep(btn) {
   poll(true);
 }
 
-let shown = "";
+let shown = "", shownId = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
   if (key === shown && $("dmain").innerHTML) return;
   // A redraw under a value being typed would lose it: the next poll draws it.
   if (document.activeElement?.matches("#dmain input[type=number]")) return;
   shown = key;
+  const more = document.querySelector("#dmain details.more");
+  if (more) moreOpen = { id: shownId, open: more.open };
+  if (moreOpen.id !== b.id) moreOpen = { id: b.id, open: false };
+  shownId = b.id;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
