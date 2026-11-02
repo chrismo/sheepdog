@@ -111,8 +111,8 @@ fn build(files: &[(String, String)], ratchet_text: &str, issues: Option<&[Value]
     groups.sort_by_key(|g| std::cmp::Reverse(lines(g)));
     // Functions, not lines: one over both caps is listed twice.
     let fns: BTreeSet<_> = over.iter().filter(|(f, _)| files.iter().any(|(p, _)| p == f)).map(|(f, o)| (f, t(o, "fn"))).collect();
-    let error = issues.filter(|l| l.len() >= ISSUE_LIMIT).map(|l| format!("gh lists {ISSUE_LIMIT} at most, and gave {}", l.len()));
-    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.map(<[Value]>::len), "error": error})
+    let cut = issues.filter(|l| l.len() >= ISSUE_LIMIT).map(|l| format!("gh lists {ISSUE_LIMIT} at most, and gave {}", l.len()));
+    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.map(<[Value]>::len), "cut": cut})
 }
 
 pub fn map(state: &Path) -> Value {
@@ -122,10 +122,7 @@ pub fn map(state: &Path) -> Value {
     let got = cache::get(state, &key, move || open_issues(&from).map(Value::Array));
     let ratchet_text = fs::read_to_string(root.join("tests/lint-ratchet.txt")).unwrap_or_default();
     let mut m = build(&sources(&root), &ratchet_text, got["data"].as_array().map(Vec::as_slice));
-    if let Some(e) = got["error"].as_str() {
-        m["error"] = json!(m["error"].as_str().map_or(e.to_string(), |full| format!("{e}; {full}")));
-    }
-    for k in ["fetched", "refreshing"] {
+    for k in ["error", "fetched", "refreshing"] {
         m[k] = got[k].clone();
     }
     m["root"] = json!(root.display().to_string());
@@ -213,7 +210,7 @@ mod tests {
         let nums = |p| file(&m, p)["issues"].as_array().unwrap().iter().map(|i| i["number"].as_u64().unwrap()).collect::<Vec<_>>();
         assert_eq!([nums("src/act/a.rs"), nums("src/b.rs"), nums("src/act.rs")], [vec![1, 2], vec![1], vec![]]);
         assert_eq!(file(&m, "src/b.rs")["issues"][0], json!({"number": 1, "title": "split src/b.rs", "url": "u1"}));
-        assert_eq!((&m["issues"], &m["error"]), (&json!(2), &Value::Null));
+        assert_eq!((&m["issues"], &m["cut"]), (&json!(2), &Value::Null));
     }
 
     #[test]
@@ -221,14 +218,14 @@ mod tests {
         let list = |n: u64| (0..n).map(|i| json!({"number": i, "title": "t", "url": "u", "body": ""})).collect::<Vec<_>>();
         let m = build(&fixture(), "", Some(&list(ISSUE_LIMIT as u64)));
         assert_eq!(m["issues"], ISSUE_LIMIT);
-        assert_eq!(m["error"], format!("gh lists {ISSUE_LIMIT} at most, and gave {ISSUE_LIMIT}"));
-        assert_eq!(build(&fixture(), "", Some(&list(ISSUE_LIMIT as u64 - 1)))["error"], Value::Null);
+        assert_eq!(m["cut"], format!("gh lists {ISSUE_LIMIT} at most, and gave {ISSUE_LIMIT}"));
+        assert_eq!(build(&fixture(), "", Some(&list(ISSUE_LIMIT as u64 - 1)))["cut"], Value::Null);
     }
 
     #[test]
     fn without_the_issue_list_files_name_none() {
         let m = build(&fixture(), "", None);
         assert_eq!(file(&m, "src/b.rs")["issues"], json!([]));
-        assert_eq!((&m["issues"], &m["error"]), (&Value::Null, &Value::Null));
+        assert_eq!((&m["issues"], &m["cut"]), (&Value::Null, &Value::Null));
     }
 }

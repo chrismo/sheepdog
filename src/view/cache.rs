@@ -108,15 +108,19 @@ pub fn get<F>(state: &Path, key: &str, fetch: F) -> Value
 where
     F: FnOnce() -> Result<Value, String> + Send + 'static,
 {
+    // Before the read: a fetch that ended by now has written its file.
+    let (last, running) = {
+        let k = keys();
+        (k.tried.get(key).copied().unwrap_or(0), k.running.contains(key))
+    };
     let f = file(state, key);
     let doc = fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).unwrap_or(Value::Null);
-    let last = keys().tried.get(key).copied().unwrap_or(0);
     let tried = doc["tried"].as_u64().unwrap_or(0).max(last);
     let refreshing = if stale(tried, now_ms(), FORCED.load(Ordering::Relaxed)) {
         start(key, f, doc.clone(), fetch);
         true
     } else {
-        keys().running.contains(key)
+        running
     };
     let fetched = doc["at"].as_u64().map(|ms| utc((ms / 1000) as i64));
     json!({"data": doc["data"], "error": doc["error"], "fetched": fetched, "refreshing": refreshing})

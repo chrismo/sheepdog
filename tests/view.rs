@@ -486,7 +486,7 @@ fn api_map_serves_sheepdog_s_source_sized_with_its_ratchet_and_issues() {
         let over = &map_file(&m, w[0])["over"];
         assert!(over.as_array().unwrap().contains(&json!({ "fn": w[1], "lint": w[2], "score": w[3].parse::<u64>().unwrap() })), "{w:?} in {over}");
     }
-    assert_eq!((&m["ratchet"], &m["issues"], &m["error"]), (&json!(fns.len()), &json!(1), &Value::Null));
+    assert_eq!((&m["ratchet"], &m["issues"], &m["error"], &m["cut"]), (&json!(fns.len()), &json!(1), &Value::Null, &Value::Null));
     let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
     assert_has(&log, &["issue list", "--state open"]);
 }
@@ -590,7 +590,7 @@ fn a_failed_fetch_of_a_full_list_still_says_it_may_be_cut_off() {
     cached_issues(&sd, 61, json!(full));
     sd.fake("gh", "#!/usr/bin/env bash\necho 'rate limit exceeded' >&2\nexit 1\n");
     let m = map(&serve(&sd));
-    assert_eq!(m["error"], "gh: rate limit exceeded; gh lists 500 at most, and gave 500");
+    assert_eq!((&m["error"], &m["cut"]), (&json!("gh: rate limit exceeded"), &json!("gh lists 500 at most, and gave 500")));
 }
 
 #[test]

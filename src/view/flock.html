@@ -343,7 +343,7 @@ async function loadTimeline(id) {
     const down = t.error ? `<p class="none">GitHub didn't answer${t.github ? ", so its part is the last answer" : ", so this is the agent's steps only"} (${esc(t.error)})</p>` : "";
     const note = cut + down + (pr ? ghLine(t) : `<p class="none">No PR yet: the agent's steps only.</p>`);
     body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
-    if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id) loadTimeline(id); }, 1000);
+    if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id && !document.hidden) loadTimeline(id); }, 1000);
   } catch (e) {
     if (openId() === id) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }

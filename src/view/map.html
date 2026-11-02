@@ -160,7 +160,8 @@ function render(m) {
     `<div class="tiles">${g.files.map(f => tile(f, maxLines)).join("")}</div></section>`).join("")
     : `<p class="none">No source here: sd runs from ${esc(m.root)}, which has no src/.</p>`;
   $("gh").innerHTML = ghLine(m);
-  const note = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
+  const down = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
+  const note = down + (m.cut ? `Some open issues may be left out: ${m.cut}. ` : "");
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
 }
 

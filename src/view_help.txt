@@ -7,10 +7,9 @@ Usage: sd view [--port <n>] [--no-open]
   browser, then serves until Ctrl-C. The page reads the state each sd watch
   pass caches, and asks again every 30s. It shows the last pass's time: with
   the watcher stopped, that time stops moving. A branch's timeline has its
-  PR's commits, CI and merge from GitHub (gh). Its one write is the refresh
-  button below. A branch is there from its first pass, and stays until the
-  watcher drops its cache: after it's unenrolled, or once its merge is
-  notified.
+  PR's commits, CI and merge from GitHub (gh). A branch is there from its
+  first pass, and stays until the watcher drops its cache: after it's
+  unenrolled, or once its merge is notified.
 
   The Map (/map, linked from the Flock) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's
@@ -21,7 +20,7 @@ Usage: sd view [--port <n>] [--no-open]
   GitHub data is cached under <state>/github/ and served at once; the first
   read after it's a minute old fetches it again in the background, so with
   no page open nothing is asked. Each page shows its age and has a refresh
-  button.
+  button, the pages' one write.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser
