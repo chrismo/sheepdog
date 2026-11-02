@@ -132,7 +132,8 @@ Reports, for <branch> (default: the current one):
   verify    the last failed settings.verify (refs/sheepdog/<b>/verify-red):
             {sha (the commit it ran on, or a restack carried it to), step
             (the verb that ran it), cmd, at, at_head}; a pass removes it,
-            null with none. While at_head, NEXT's verify-red step stands
+            null with none. at_head counts the heads a restack carried
+            it from too. While at_head, NEXT's verify-red step stands
             in for push, open-pr, draft, review, bot-trigger and ready,
             and sd act ship refuses (#325)
   fresh     false when GitHub's PR / parent-PR head differs from the local
