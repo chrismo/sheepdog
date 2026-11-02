@@ -192,24 +192,26 @@ fn trend(root: &Path) -> Result<Value, String> {
 
 /// One trend point. A git failure (an object missing from a partial or
 /// shallow clone) is an error, not a day of zeros; no lint-ratchet.txt at
-/// the commit is a real 0.
+/// the commit is a real 0. GIT_NO_LAZY_FETCH keeps a partial clone from
+/// fetching each past day's blobs from its remote instead (git 2.44+).
 fn sample(dir: &str, sha: &str, date: &str) -> Result<Value, String> {
+    let git = |args: &[&str]| crate::git::Git::new(dir, args).env("GIT_NO_LAZY_FETCH", "1").run();
     let fail = |o: &crate::proc::Out| format!("git: {}", o.stderr.trim());
     // git grep exits 1 for no match: no lines under src/ or tests/.
-    let grep = git(dir, &["grep", "-c", "", sha, "--", "src", "tests"]);
+    let grep = git(&["grep", "-c", "", sha, "--", "src", "tests"]);
     let no_match = grep.code == 1 && grep.stderr.trim().is_empty();
     if !grep.ok && !no_match {
         return Err(fail(&grep));
     }
     let (src, tests) = tree_lines(&grep.stdout);
-    let listed = git(dir, &["ls-tree", "--name-only", sha, "--", "tests/lint-ratchet.txt"]);
+    let listed = git(&["ls-tree", "--name-only", sha, "--", "tests/lint-ratchet.txt"]);
     if !listed.ok {
         return Err(fail(&listed));
     }
     let text = if listed.stdout.trim().is_empty() {
         String::new()
     } else {
-        let show = git(dir, &["show", &format!("{sha}:tests/lint-ratchet.txt")]);
+        let show = git(&["show", &format!("{sha}:tests/lint-ratchet.txt")]);
         if !show.ok {
             return Err(fail(&show));
         }
