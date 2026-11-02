@@ -761,3 +761,36 @@ fn each_flock_card_says_when_its_branch_was_checked() {
     let checked = f["branches"][0]["checked"].as_str().unwrap_or_else(|| panic!("{f}"));
     assert_match(checked, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$");
 }
+
+#[test]
+fn a_cache_file_written_in_the_future_is_refreshed_once() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "ahead", 0);
+    let f = sd.tmp.join(format!("state/branches/{}/ahead.json", sheepdog::watch::repo_key(&sd.path("repos/r"))));
+    fs::File::options().write(true).open(f).unwrap().set_modified(std::time::SystemTime::now() + Duration::from_secs(3600)).unwrap();
+    sd.fake("sd-watch", &format!("#!/usr/bin/env bash\necho \"start $*\" >> {}\nexit 1\n", sd.path("watch.log")));
+    let s = serve(&sd);
+    s.flock();
+    flock_settled(&s);
+    s.flock();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(watch_log(&sd), ["start refresh ahead"]);
+}
+
+#[test]
+fn a_branch_whose_refresh_failed_waits_for_the_watcher_to_rewrite_it() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "gone", 120);
+    sd.fake("sd-watch", &format!("#!/usr/bin/env bash\necho \"start $*\" >> {}\nexit 1\n", sd.path("watch.log")));
+    let s = serve(&sd);
+    s.flock();
+    flock_settled(&s);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    assert_eq!(write_to(&s, "/api/refresh", "POST", Some(&ours), Some(&page_token(&s))).0, 200);
+    assert_eq!(s.flock()["refreshing"], false);
+    let f = sd.tmp.join(format!("state/branches/{}/gone.json", sheepdog::watch::repo_key(&sd.path("repos/r"))));
+    fs::File::options().write(true).open(f).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(90)).unwrap();
+    assert_eq!(s.flock()["refreshing"], true);
+    flock_settled(&s);
+    assert_eq!(watch_log(&sd), ["start refresh gone", "start refresh gone"]);
+}

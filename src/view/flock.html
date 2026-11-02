@@ -180,7 +180,7 @@ function render(f) {
     return `<section class="group"><h2 style="--gc:${color(w)}"><span class="dot"></span>${name}<span class="n">${list.length}</span></h2>` +
       `<div class="cards">${list.map(card).join("")}</div></section>`;
   }).join("") : `<p class="empty">No cached branches yet: enroll one (sd act enroll), and let sd watch make a pass.</p>`;
-  $("fresh").innerHTML = bs.length ? `<p class="none ghline">${f.refreshing ? "Checking a branch a minute old…" : "A branch is checked again once it's a minute old"} ${refreshBtn()}</p>` : "";
+  $("fresh").innerHTML = bs.length ? `<p class="none ghline">${f.refreshing ? "Checking a branch…" : "A branch is checked again once it's a minute old"} ${refreshBtn()}</p>` : "";
   $("foot").textContent =
     `sd watch's last pass: ${f.at || "none yet"}. While this page is open, a branch a minute old is checked again, one at a time. The lit stages are each branch's NEXT steps.`;
 }

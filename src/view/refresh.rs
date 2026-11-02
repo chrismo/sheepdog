@@ -1,8 +1,9 @@
 // The Flock's branches, kept fresh while a page is open (#401): a read of
 // /api/flock starts `sd watch refresh <branch>` in its repo on the stalest
 // branch whose cache file is a minute old, or older than the refresh button,
-// one branch at a time. A refresh counts as tried when it starts, so one that
-// fails, leaving the file as it was, waits a minute like any other.
+// one branch at a time. A refresh counts as tried when it starts; one that
+// fails (a branch deleted or unenrolled since) waits until the watcher
+// rewrites the file it left as it was.
 
 use super::cache::{forced, now_ms, stale};
 use super::flock::Cached;
@@ -21,8 +22,11 @@ const REFRESH_SECS: u64 = 120;
 struct Branches {
     running: Option<String>,
     tried: BTreeMap<String, u64>,
+    /// Each failed refresh's file, by when it was written.
+    failed: BTreeMap<String, Option<u64>>,
 }
-static BRANCHES: Mutex<Branches> = Mutex::new(Branches { running: None, tried: BTreeMap::new() });
+static BRANCHES: Mutex<Branches> =
+    Mutex::new(Branches { running: None, tried: BTreeMap::new(), failed: BTreeMap::new() });
 
 fn branches() -> MutexGuard<'static, Branches> {
     BRANCHES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -64,20 +68,28 @@ pub fn refreshing(state: &Path, cached: &[Cached]) -> bool {
         .filter(|c| !done(c))
         .filter_map(|c| {
             let repo = repos.get(c.id.split_once('/')?.0)?;
-            let tried = written(state, c).unwrap_or(0).max(b.tried.get(&c.id).copied().unwrap_or(0));
-            stale(tried, now, forced).then_some((tried, c, repo))
+            let w = written(state, c);
+            if b.failed.get(&c.id) == Some(&w) {
+                return None;
+            }
+            // A file written ahead of the clock would be stale on every read.
+            let tried = w.filter(|&w| w <= now).unwrap_or(0).max(b.tried.get(&c.id).copied().unwrap_or(0));
+            stale(tried, now, forced).then_some((tried, c, repo, w))
         })
         .min_by_key(|(tried, ..)| *tried);
-    let Some((_, c, repo)) = stalest else { return false };
+    let Some((_, c, repo, w)) = stalest else { return false };
     b.running = Some(c.id.clone());
     b.tried.insert(c.id.clone(), now);
-    let (repo, branch) = (repo.clone(), c.branch.clone());
+    let (id, repo, branch) = (c.id.clone(), repo.clone(), c.branch.clone());
     std::thread::spawn(move || {
         let _running = Running;
         let (prog, verb) = sd_verb("watch", "SHEEPDOG_WATCH_PROGRAM");
         let out = proc::with_timeout(REFRESH_SECS, &prog, &[&verb[..], &["refresh", &branch]].concat(), Some(&repo));
-        if !out.ok {
+        if out.ok {
+            branches().failed.remove(&id);
+        } else {
             eprintln!("sd view: sd watch refresh {branch} in {repo}: {}", out.stderr.lines().next().unwrap_or("failed"));
+            branches().failed.insert(id, w);
         }
     });
     true
