@@ -3730,6 +3730,57 @@ fn dispatch_an_agent_step_launched_earlier_in_the_pass_counts_toward_the_cap_269
     sd.settle(launched);
 }
 
+// ── the loop: a step the loop has isn't notified (#302) ─────────────────────
+
+// Soak 7 saw a conflict ❌ sent the second the pass launched restack
+// --resolve itself, and a ci-red ❌ five minutes before ci-fix ran: under
+// autoRun the loop has those steps, so the pass stays quiet about them.
+#[test]
+fn notify_under_autorun_a_step_the_pass_launches_isnt_notified_or_red_302() {
+    let sd = sd();
+    sd.dispatching();
+    for (key, args) in [("conflict", "restack --resolve"), ("ci-red", "ci-fix")] {
+        sd.first_agent_step("feat", key);
+        sd.pass();
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t🔧\t\t\nrepo\tfeat\t-\tlaunched sd act {args}")]);
+        assert_eq!(sd.glyph("repo"), "🔧", "{key}");
+        assert_eq!(sd.notified(), "", "{key}");
+        sd.settle("feat");
+        let _ = sd.acts();
+    }
+    // autoRun off, the step is chrismo's again: notified, as before, and
+    // not held back by a "seen" marker the quiet passes never set.
+    sd.write_cfg(r#"{"settings":{"autoRun":false}}"#);
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "❌");
+    assert_eq!(sd.notified(), "repo feat|say ci-red");
+}
+
+#[test]
+fn notify_under_autorun_a_step_queued_behind_the_cap_waits_quietly_till_the_loop_cant_run_it_302() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
+    sd.git(&["branch", "other"]);
+    let held = orphan("sleep 30");
+    sd.lease_for("other", "implement", held, 600);
+    sd.first_agent_step("feat", "conflict");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t🔧\t\t\nrepo\tfeat\t-\tnot launching sd act restack --resolve: 1 agent step running, settings.agentSteps 1"]);
+    assert_eq!(sd.notified(), "");
+    assert_eq!(sd.acts(), "");
+
+    // The gate refuses someone else's PR: the loop can't run the step, so
+    // it's ❌ and notified once, as any step chrismo must deal with.
+    sd.jq_file(&sd.fixture("feat"), &[r#".pr.author = "them""#]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t❌\tsay conflict"]);
+    assert_lacks(&sd.last_pass(), "sd act");
+    assert_eq!(sd.notified(), "repo feat|say conflict");
+    sd.pass();
+    assert_eq!(sd.notified_lines().len(), 1);
+    end_orphan(held);
+}
+
 // ── the job is diagnosable (#364) ───────────────────────────────────────────
 
 /// A pass at a fixed clock: SHEEPDOG_WATCH_CLOCK, a debug build's seam.

@@ -2,10 +2,10 @@
 // branch, glyph it, notify per the policy, and keep each branch's state for
 // the next pass; with settings.autoRun, a pass also launches a branch's
 // first step when it's one a pass runs, mechanical (#267) or an agent's
-// (#269). sd state runs as `sd state`, this binary in a process of its own,
-// so a hung one can be timed out: on purpose not state::observe in-process,
-// as sd act calls it, since the watcher supervises its children with
-// deadlines (#12).
+// (#269); a step the loop has that way isn't notified (#302). sd state runs
+// as `sd state`, this binary in a process of its own, so a hung one can be
+// timed out: on purpose not state::observe in-process, as sd act calls it,
+// since the watcher supervises its children with deadlines (#12).
 
 use super::{die, env_or, home, log, HELP};
 use crate::config::{self, state_dir};
@@ -157,16 +157,83 @@ pub(crate) fn may_dispatch(s: &Value, key: &str) -> bool {
     mine && no_one_elses
 }
 
+/// The branch's first NEXT step when it's one a pass runs, given as the
+/// agent's or run's: its key and step. None: chrismo's, waiting, or no step
+/// a pass runs (failed and budget among them).
+fn runnable(s: &Value) -> Option<(&str, &'static str)> {
+    let first = next_of(s).first()?;
+    Some((at(first, "key").as_str()?, dispatch_verb(first)?))
+}
+
+/// What a pass does about the branch's first NEXT step (#302). Launch,
+/// Wait and Hold are the loop's: it runs the step with nobody asked, so the
+/// pass neither notifies nor ❌s it. Leave is the policy's: the step is
+/// chrismo's, or waits for them.
+#[derive(Debug, PartialEq)]
+enum Plan {
+    /// Nothing: no step a pass runs, autoRun off, or the gate refused.
+    Leave,
+    /// Launch sd act <step> now.
+    Launch(&'static str),
+    /// A step runs on the branch already, or its session is attached.
+    Wait,
+    /// Not <step> now, for <why>: settings.agentSteps, or a usage limit.
+    Hold(&'static str, String),
+}
+
+/// <enabled>: the branch's settings.autoRun; <busy>: a step runs on the
+/// branch or its session is attached; <held>: why an agent step can't
+/// start now, if it can't.
+fn plan(s: &Value, enabled: bool, busy: bool, held: impl FnOnce() -> Option<String>) -> Plan {
+    let Some((key, step)) = runnable(s) else { return Plan::Leave };
+    if !enabled || !may_dispatch(s, key) {
+        return Plan::Leave;
+    }
+    if busy {
+        return Plan::Wait;
+    }
+    match AGENT_STEPS.contains(&step).then(held).flatten() {
+        Some(why) => Plan::Hold(step, why),
+        None => Plan::Launch(step),
+    }
+}
+
+/// What dispatch did: its pass line, if any, and whether the loop has the
+/// step (#302). After a launch that failed it doesn't.
+#[derive(Default)]
+struct Dispatched {
+    line: String,
+    taken: bool,
+}
+
 fn reason(step: &Value) -> Value {
     json!({"key": at(step, "key"), "msg": at(step, "say")})
 }
 
-fn classify(s: &Value) -> Class {
-    let next: &[Value] = at(s, "next").as_array().map_or(&[], Vec::as_slice);
-    let k: Vec<&str> = next.iter().map(|x| at(x, "key").as_str().unwrap_or("")).collect();
+fn next_of(s: &Value) -> &[Value] {
+    at(s, "next").as_array().map_or(&[], Vec::as_slice)
+}
+
+fn keys(next: &[Value]) -> Vec<&str> {
+    next.iter().map(|x| at(x, "key").as_str().unwrap_or("")).collect()
+}
+
+/// sd state gave no next steps, or is unsure: what was notified carries
+/// over, and no step is launched.
+fn carries(s: &Value) -> bool {
+    let k = keys(next_of(s));
+    k.is_empty() || k.iter().any(|k| unsure(k))
+}
+
+/// <taken>: the loop has the first step (#302), launched this pass or held
+/// till it can be, so it's neither ❌ nor notified; the steps after it are
+/// as the policy says.
+fn classify(s: &Value, taken: bool) -> Class {
+    let next = next_of(s);
+    let k = keys(next);
     let notifies = |i: usize, x: &Value| {
         let key = at(x, "key").as_str().unwrap_or("");
-        stuck(key) || (i == 0 && at(x, "who") == "you" && !quiet(key))
+        !(i == 0 && taken) && (stuck(key) || (i == 0 && at(x, "who") == "you" && !quiet(key)))
     };
     let red: Vec<Value> = next.iter().enumerate().filter(|(i, x)| notifies(*i, x)).map(|(_, x)| reason(x)).collect();
     let waiting = !next.iter().any(|x| at(x, "who").as_str().is_some_and(|w| w != "wait"));
@@ -570,9 +637,12 @@ impl Watch {
             self.log(name, b, "skipped, sd state is unsure: unparseable sd state output");
             return (format!("{name}\t{b}\t⚠️\tunparseable sd state output\n"), false, None);
         };
-        let c = classify(&s);
         let title = format!("{name} {b}");
         let ended = self.end_on_a_dead_pr(repo, name, b, &s);
+        // Dispatch before notify (#302): a step the loop has isn't notified.
+        let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
+        let d = if stop.is_none() { self.dispatch(repo, name, b, &s) } else { Dispatched::default() };
+        let c = classify(&s, d.taken);
 
         let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
         if let Some(d) = Path::new(&file).parent() {
@@ -583,22 +653,7 @@ impl Watch {
         let prev_doc = read_json(&file).unwrap_or(Value::Null);
         let prev = notified_of(&prev_doc);
         let prev_failed = list(&prev_doc, "failed");
-        let (mut sent, mut failed) = (vec![], vec![]);
-        for r in &c.reasons {
-            let key = at(r, "key");
-            if prev.contains(key) {
-                continue;
-            }
-            let msg = text(at(r, "msg"));
-            if notify(self.timeout, &title, &msg) {
-                sent.push(key.clone());
-            } else if prev_failed.contains(key) {
-                log::say(&format!("sd watch: giving up on: {msg}"));
-                sent.push(key.clone());
-            } else {
-                failed.push(key.clone());
-            }
-        }
+        let (sent, failed) = self.notify_reasons(&title, &c.reasons, &prev, &prev_failed);
 
         // The stale clock: merged, closed or checked out nowhere, since when.
         let prev_since = at(&prev_doc, "stale.since").as_f64().map(|f| f as i64);
@@ -667,12 +722,31 @@ impl Watch {
             out.push_str(&format!("{name}\t{b}\t-\t{u}\n"));
             self.log(name, b, &u);
         }
-        let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
-        let errors = at(&s, "errors").as_array().is_some_and(|e| !e.is_empty());
-        if self.dispatch && !c.carry && !errors && stop.is_none() {
-            out.push_str(&self.dispatch(repo, name, b, &s).unwrap_or_default());
-        }
+        out.push_str(&d.line);
         (out, true, stop)
+    }
+
+    /// Notify each of <reasons> not in <prev>, the keys already notified
+    /// (N3): the keys notified, and those whose notification failed, which
+    /// the next pass tries once more unless <prev_failed> has them.
+    fn notify_reasons(&self, title: &str, reasons: &[Value], prev: &[Value], prev_failed: &[Value]) -> (Vec<Value>, Vec<Value>) {
+        let (mut sent, mut failed) = (vec![], vec![]);
+        for r in reasons {
+            let key = at(r, "key");
+            if prev.contains(key) {
+                continue;
+            }
+            let msg = text(at(r, "msg"));
+            if notify(self.timeout, title, &msg) {
+                sent.push(key.clone());
+            } else if prev_failed.contains(key) {
+                log::say(&format!("sd watch: giving up on: {msg}"));
+                sent.push(key.clone());
+            } else {
+                failed.push(key.clone());
+            }
+        }
+        (sent, failed)
     }
 
     /// End the step a pass launched on <b> once its PR has merged or closed
@@ -695,34 +769,33 @@ impl Watch {
     /// Launch the branch's first NEXT step when it's one a pass runs: one
     /// attempt, under the watch timeout, waiting only till its lease is
     /// taken. Its output goes to steps.log in the state dir; its pass line
-    /// to stderr, the job's log.
-    fn dispatch(&mut self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
-        let first = at(s, "next").get(0)?;
-        let key = at(first, "key").as_str()?;
-        let step = dispatch_verb(first)?;
-        let agent = AGENT_STEPS.contains(&step);
-        let enabled = auto_run(repo, b);
+    /// to stderr, the job's log. Only the job's pass, and not while sd
+    /// state reports errors or is unsure.
+    fn dispatch(&mut self, repo: &str, name: &str, b: &str, s: &Value) -> Dispatched {
+        let errors = at(s, "errors").as_array().is_some_and(|e| !e.is_empty());
+        if !self.dispatch || errors || carries(s) {
+            return Dispatched::default();
+        }
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
         let busy = !at(s, "session.running").is_null()
             || on(s, "session.locked")
             || running::lease(repo, b).is_some_and(|l| l.live);
-        if !enabled || busy || !may_dispatch(s, key) {
-            return None;
-        }
-        let verb = act_args(step).join(" ");
-        let msg = match agent.then(|| self.held()).flatten() {
-            Some(why) => format!("not launching sd act {verb}: {why}"),
-            None => match self.launch(repo, step, b) {
+        let verb = |step| act_args(step).join(" ");
+        let (msg, taken) = match plan(s, auto_run(repo, b), busy, || self.held()) {
+            Plan::Leave => return Dispatched::default(),
+            Plan::Wait => return Dispatched { line: String::new(), taken: true },
+            Plan::Hold(step, why) => (format!("not launching sd act {}: {why}", verb(step)), true),
+            Plan::Launch(step) => match self.launch(repo, step, b) {
                 Ok(()) => {
                     self.launched += 1;
-                    format!("launched sd act {verb}")
+                    (format!("launched sd act {}", verb(step)), true)
                 }
-                Err(e) => format!("couldn't launch sd act {verb}: {e}"),
+                Err(e) => (format!("couldn't launch sd act {}: {e}", verb(step)), false),
             },
         };
         let line = format!("{name}\t{b}\t-\t{msg}\n");
         log::say(&show(&line));
-        Some(line)
+        Dispatched { line, taken }
     }
 
     /// Why an agent step isn't launched now: settings.agentSteps of them
@@ -1230,7 +1303,7 @@ mod tests {
     }
 
     fn of(steps: &[Value]) -> Class {
-        classify(&json!({"next": steps}))
+        classify(&json!({"next": steps}), false)
     }
 
     const KEYS: [&str; 54] = [
@@ -1272,6 +1345,44 @@ mod tests {
         assert_eq!(table, KEYS, "the table names every key, and only those");
     }
 
+    /// Under autoRun the loop has a step it launches or holds (#302): the
+    /// pass neither notifies nor ❌s it. Only the first step is the loop's.
+    #[test]
+    fn classify_a_step_the_loop_has_is_quiet_work_for_later_302() {
+        for k in ["conflict", "ci-red"] {
+            let one = json!({"next": [step(k, "agent")]});
+            let c = classify(&one, true);
+            assert_eq!((c.glyph, c.reasons.len(), c.carry), ("🔧", 0, false), "{k}");
+            let c = classify(&one, false);
+            assert_eq!((c.glyph, c.reasons.clone()), ("❌", vec![json!({"key": k, "msg": format!("say {k}")})]), "{k}, not the loop's");
+        }
+        let c = classify(&json!({"next": [step("conflict", "agent"), step("ci-red", "agent")]}), true);
+        assert_eq!((c.glyph, c.reasons.clone()), ("❌", vec![json!({"key": "ci-red", "msg": "say ci-red"})]));
+    }
+
+    /// What a pass does about the first step (#302): launched or held, the
+    /// loop has it; chrismo's, failed out, autoRun off or the gate refusing,
+    /// it's left to the policy.
+    #[test]
+    fn plan_launches_or_holds_a_runnable_step_and_leaves_the_rest_302() {
+        let mine = |k: &str, who: &str| json!({"viewer": "me", "pr": {"author": "me"}, "push": {"remote_ours": true}, "next": [step(k, who), step("ci-wait", "wait")]});
+        let free = || None;
+        let cap = || Some("1 agent step running, settings.agentSteps 1".to_string());
+        assert_eq!(plan(&mine("conflict", "agent"), true, false, free), Plan::Launch("resolve"));
+        assert_eq!(plan(&mine("ci-red", "agent"), true, false, free), Plan::Launch("ci-fix"));
+        assert_eq!(plan(&mine("ci-red", "agent"), true, false, cap), Plan::Hold("ci-fix", "1 agent step running, settings.agentSteps 1".into()));
+        assert_eq!(plan(&mine("ci-red", "agent"), true, true, cap), Plan::Wait, "a lease on the branch");
+        assert_eq!(plan(&mine("push", "run"), true, false, cap), Plan::Launch("push"), "mechanical steps run past the cap");
+        let mut theirs = mine("conflict", "agent");
+        theirs["pr"]["author"] = json!("them");
+        assert_eq!(plan(&theirs, true, false, free), Plan::Leave, "the gate refused");
+        assert_eq!(plan(&mine("conflict", "you"), true, false, free), Plan::Leave, "chrismo's");
+        assert_eq!(plan(&mine("failed", "you"), true, false, free), Plan::Leave, "failed out");
+        assert_eq!(plan(&mine("push", "agent"), true, false, free), Plan::Leave, "as the one it is");
+        assert_eq!(plan(&mine("conflict", "agent"), false, false, free), Plan::Leave, "autoRun off");
+        assert_eq!(plan(&json!({}), true, false, free), Plan::Leave);
+    }
+
     fn glyph(steps: &[Value]) -> &'static str {
         of(steps).glyph
     }
@@ -1279,7 +1390,7 @@ mod tests {
     #[test]
     fn classify_no_next_steps_is_unsure_with_a_note() {
         for s in [json!({}), json!({"next": null}), json!({"next": []}), json!({"next": "x"}), json!(null)] {
-            let c = classify(&s);
+            let c = classify(&s, false);
             assert_eq!(
                 c,
                 Class { carry: true, hold: false, keep: vec![], glyph: "⚠️", reasons: vec![], note: Some("sd state gave no next steps") },
