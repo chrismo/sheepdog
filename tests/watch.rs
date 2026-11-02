@@ -3121,7 +3121,7 @@ fn dispatch_launches_the_first_run_step_and_the_next_pass_reports_how_it_ended_2
         sd.first_step("feat", key, &[]);
         let r = sd.pass_run(&[]);
         assert_eq!(r.status, 0, "{key}: {}", r.stderr);
-        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t🔧\t\nrepo\tfeat\t-\tlaunched sd act {verb}")]);
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t🔧\t\t\nrepo\tfeat\t-\tlaunched sd act {verb}")]);
         assert_has(&r.stderr, &[&format!("repo  feat  -  launched sd act {verb}")]);
         sd.settle("feat");
         assert_eq!(sd.acts(), format!("{repo} {verb} feat"), "{key}");
