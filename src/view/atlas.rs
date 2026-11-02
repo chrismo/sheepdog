@@ -241,6 +241,7 @@ mod tests {
         assert_eq!(t(rule(address, "nothing to address"), "means"), "nothing to do");
         assert_eq!(t(rule(address, "behind the target"), "means"), "warns");
         assert_eq!(t(rule(address, crate::act::gates::SPEND), "means"), "setting holds");
+        assert_eq!(t(rule(verb(&a, "review --accept"), rvw::NO_BASE), "means"), "force can't");
     }
 
     #[test]

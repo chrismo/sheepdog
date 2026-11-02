@@ -64,8 +64,9 @@ pub const VERBS: &[Verb] = &[
     v("autofix", Worktree, false, false, "running autofix"),
     gated(v("ci-fix", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "ci-red"), gates::ci_fix_rules),
     gated(v("review", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gates::review_rules),
-    // reads no worktree; refused while attached, as review is
-    v("review --accept", Nothing, true, false, ""),
+    // reads no worktree; refused while attached, as review is. NEXT's
+    // review-decide step offers it, but to chrismo, so parity doesn't ask it
+    gated(v("review --accept", Nothing, true, false, ""), |_| false, gates::accept_rules),
     // NEXT never offers it: ship runs it
     gated(v("describe", Nothing, true, true, ""), |_| false, gates::describe_rules),
     // describes unless a description is stored (its gate is describe's)
