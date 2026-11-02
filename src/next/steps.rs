@@ -19,19 +19,19 @@ pub const STEPS: &[StepDef] = &[
         .at(Merge, "merged", "the PR merged: drop the branch's pins and enrollment, remove its worktree and delete it").path(3),
     s("closed", YOU, Never, Some("🚫"), None).at(Merge, "closed", "the PR was closed without merging"),
     s("errors", YOU, Unsure, None, None)
-        .at(Hold, "errors", "sd state hit errors reading the branch, so the steps listed under it may be wrong, and sd watch starts nothing until they clear (sd state --json has them)")
+        .at(Hold, "errors", "sd state hit errors reading the branch, so we can't go forward until we figure out what's wrong (sd state --json has them)")
         .hold(HUnsure),
     s("stale", RUN, Unsure, None, None)
-        .at(Hold, "stale", "GitHub shows commits our remote refs don't have yet, so the steps under it may be wrong: fetch, then look again")
+        .at(Hold, "stale", "we haven't fetched, so we can't tell what's on the remote yet: fetch, then look again")
         .hold(HUnsure),
     s("gh-wait", WAIT, Unsure, None, None)
         .at(Hold, "gh-wait", "the push landed, but GitHub's PR data still shows the old head; it catches up in seconds")
         .hold(HUnsure),
     s("attached", WAIT, Turn, None, None)
-        .at(Hold, "attached", "chrismo is working in this branch's session: until it's closed, sd watch starts nothing on the branch and agent steps refuse to run (--force overrides)")
+        .at(Hold, "attached", "chrismo is working in this branch's session, so sheepdog starts nothing until it's closed")
         .hold(Top),
     s("foreign", YOU, Stuck, None, None)
-        .at(Hold, "foreign", "the remote has commits this copy never had: look at them before anything pushes")
+        .at(Hold, "foreign", "we're current with the remote and it has commits this machine never made: the branch has diverged from us, so look at them before anything pushes")
         .hold(Top),
     s("human", YOU, Stuck, None, None).at(Threads, "reply", "a human's review item is owed a reply, which chrismo writes"),
     s("question", YOU, Stuck, None, None)
