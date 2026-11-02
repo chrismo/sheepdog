@@ -19,11 +19,11 @@ Usage: sd view [--port <n>] [--no-open]
 
   GitHub data is cached under <state>/github/ and served at once; the first
   read after it's a minute old fetches it again in the background, so with
-  no page open nothing is asked. A file a week unread is deleted. The Map
-  and a branch's timeline show its age and have a refresh button. While the
-  Flock is open, a branch whose cached state is a minute old is checked
-  again (sd watch refresh), one at a time, and its card shows when; its
-  refresh button checks every branch again.
+  no page open nothing is asked. A file not fetched for a week is deleted.
+  The Map and a branch's timeline show its age and have a refresh button.
+  While the Flock is open, a branch whose cached state is a minute old is
+  checked again (sd watch refresh), one at a time, and its card shows when;
+  its refresh button checks every branch again.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

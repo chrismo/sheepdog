@@ -626,7 +626,8 @@ fn the_map_page_carries_the_run_s_token() {
 
 /// A registered repo at <dir> (under the temp dir), its watcher cache file for
 /// <branch> written <secs_ago> ago, and a fake sd watch, which logs
-/// "start <cwd> <args>" and "end <branch>" to watch.log and rewrites the file.
+/// "start <cwd> <args>" and "end <branch>" to watch.log and rewrites the file:
+/// after $WATCH_SLEEP, and once $WATCH_GATE is gone (10s at most).
 fn watched(sd: &mut Sd, dir: &str, branch: &str, secs_ago: u64) {
     let repo = sd.path(dir);
     fs::create_dir_all(&repo).unwrap();
@@ -641,6 +642,7 @@ fn watched(sd: &mut Sd, dir: &str, branch: &str, secs_ago: u64) {
     let log = sd.path("watch.log");
     sd.fake("sd-watch", &format!(
         "#!/usr/bin/env bash\necho \"start $(pwd -P) $*\" >> {log}\nsleep \"${{WATCH_SLEEP:-0}}\"\n\
+         for _ in $(seq 200); do [ -e \"${{WATCH_GATE:-/nonexistent}}\" ] || break; sleep 0.05; done\n\
          find \"$SHEEPDOG_STATE_DIR/branches\" -name \"$2.json\" -exec touch {{}} +\necho \"end $2\" >> {log}\n"));
     if !sd.env.iter().any(|(k, _)| k == "SHEEPDOG_WATCH_PROGRAM") {
         sd.env.push(("SHEEPDOG_WATCH_PROGRAM".into(), sd.path("fakebin/sd-watch")));
@@ -833,11 +835,14 @@ fn a_refresh_that_started_before_a_hold_still_reports_refreshing() {
     let mut sd = sd();
     watched(&mut sd, "repos/r", "old", 120);
     watched(&mut sd, "repos/r", "other", 5);
-    sd.env.push(("WATCH_SLEEP".into(), "1".into()));
+    let gate = sd.path("gate");
+    fs::write(&gate, "").unwrap();
+    sd.env.push(("WATCH_GATE".into(), gate.clone()));
     let s = serve(&sd);
     assert_eq!(s.flock()["refreshing"], true);
     with_rate(&sd, "other", json!({ "remaining": 0, "limited": true }), 0);
     let f = s.flock();
+    fs::remove_file(&gate).unwrap();
     assert!(f["held"].is_string(), "{f}");
     assert_eq!(f["refreshing"], true, "{f}");
 }
