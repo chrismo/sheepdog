@@ -67,7 +67,8 @@
 // step whose cost is unknown (spend.unknown, #349), with a budget set, holds
 // the same way: a cost guard fails closed. spends() makes
 // that swap, agent() for agent steps; the dedupe at the end keeps the first.
-// The verbs refuse the same way (budget_hold, sd act's spend_gate), so
+// That hold is gates::spend, the rule every spending verb's gate shares
+// (#371), so the verbs refuse the same way. So
 // ship-parent, whose describe spends on the parent, is held there, against
 // the parent's own budget: this state has only this branch's spend (#148).
 //
@@ -325,14 +326,14 @@ pub fn budget_hold(s: &Value) -> Option<String> {
 }
 
 fn budget_say(d: &Derived, s: &Value) -> Option<String> {
-    if d.budget_unread {
-        Some(unread_say(at(s, "spend.unknown")))
-    } else if d.over_budget {
-        let n = |p: &str| val::n(s, p);
-        Some(format!("spent {} on this branch, past settings.branchBudget ({}): raise it, or take over", usd(n("spend.usd")), usd(n("spend.budget"))))
-    } else {
-        None
+    if crate::act::gates::spend(d).runs() {
+        return None;
     }
+    if d.budget_unread {
+        return Some(unread_say(at(s, "spend.unknown")));
+    }
+    let n = |p: &str| val::n(s, p);
+    Some(format!("spent {} on this branch, past settings.branchBudget ({}): raise it, or take over", usd(n("spend.usd")), usd(n("spend.budget"))))
 }
 
 fn unread_say(unknown: &Value) -> String {
@@ -395,7 +396,7 @@ struct Cx<'a> {
 }
 
 impl Cx<'_> {
-    fn new<'a>(d: &'a Derived, s: &'a Value, remote: &'a str) -> Cx<'a> {
+    fn new<'a>(d: &'a Derived, s: &'a Value, remote: &'a str, hold: Option<Value>) -> Cx<'a> {
         let asked = if d.asking.is_empty() {
             String::new()
         } else {
@@ -414,7 +415,7 @@ impl Cx<'_> {
             d,
             s,
             remote,
-            hold: hold_step(d, s),
+            hold,
             asked,
             last_review: last_review(s),
             implement,
@@ -457,7 +458,9 @@ const AUTHOR: &[fn(&Cx) -> Option<Value>] = &[
 /// alone; <s> is the record it was derived from, which some say and cmd
 /// text still reads.
 pub(crate) fn offer(d: &Derived, s: &Value, remote: &str) -> Vec<Value> {
-    let cx = Cx::new(d, s, remote);
+    // hold stands in for the gates' spend rule
+    let (hold, d) = (hold_step(d, s), &Derived { budget_unread: false, over_budget: false, ..d.clone() });
+    let cx = Cx::new(d, s, remote, hold);
     let all: Vec<Option<Value>> = if d.own_base {
         vec![step(def!("default"), "you", format!("on {}: start a branch", cx.t("branch")), cmd("sd act start"))]
     } else if d.running {

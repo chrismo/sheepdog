@@ -1322,3 +1322,20 @@ fn help_lists_ci_fix() {
     let r = sd.run(&["--help"]);
     assert_match(&r.output, r"sd act ci-fix ");
 }
+
+// The interlock sd act's declaration gives ci-fix (#341): while attached,
+// refused before verify, autofix or the agent runs, unless --force.
+#[test]
+fn ci_fix_refused_while_attached_before_verify_or_the_agent_runs_341() {
+    let sd = sd();
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    sd.set(&["settings.verify", "touch ../verify-ran; false"]);
+    let before = sd.remote_feat();
+    let r = sd.run(&["ci-fix"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["attached", "--force"]);
+    assert!(!sd.tmp.join("verify-ran").exists());
+    assert!(!sd.ran("claude.args"));
+    assert_eq!(sd.remote_feat(), before);
+}

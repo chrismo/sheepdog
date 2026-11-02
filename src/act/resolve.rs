@@ -7,7 +7,7 @@
 
 use super::attached_during;
 use super::editing::{unknown, Outcome, Spec};
-use super::step::{spend_held, step_session, step_store};
+use super::step::{step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl, Git};
 use crate::guidance::{lib_dir, step_guidance};
 use crate::proc;
@@ -151,18 +151,14 @@ fn worktree_tree(wt: &str) -> Option<String> {
 /// the agent changed): the worktree before and after each stop compared
 /// whole, so staging or committing them itself hides nothing. Err(why), the
 /// rebase left for the caller to roll back.
-pub fn resolve_conflicts(r: &Rebase, harness: &str, force: bool) -> Result<Vec<String>, Halt> {
+pub fn resolve_conflicts(r: &Rebase, harness: &str) -> Result<Vec<String>, Halt> {
     let (b, wt) = (r.b, r.wt);
     std::env::set_current_dir(wt).map_err(|e| format!("can't work in {wt}: {e}; {}", r.back()))?;
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
     let range = format!("{}..{}", r.old_base, r.old_head);
     let replayed = git_out(".", &["log", "--reverse", "--no-merges", "--topo-order", "--format=%h %s", &range]).unwrap_or_default();
-    // step_session's spend gate would die with the rebase stopped.
-    if let Some(why) = spend_held(b) {
-        return Err(format!("not running resolve on {b}: {why}; {}", r.back()).into());
-    }
     // implement's settings and session, logged in usage.sup as its own step.
-    let mut s = step_session(b, "implement", harness, force, false);
+    let mut s = step_session(b, "implement", harness, false);
     let guidance = step_guidance("resolvePrompt", b, r.old_base, &lib_dir().join("prompts").join("resolve.md")).map_err(|e| {
         eprintln!("{e}");
         format!("can't read the resolve guidance; {}", r.back())

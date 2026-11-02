@@ -770,6 +770,7 @@ fn implement_refused_while_attached_nothing_runs() {
 #[test]
 fn describe_refused_while_attached() {
     let sd = sd();
+    nothing_ahead(&sd);
     let _sleeper = sd.live_lock();
     let r = sd.run(&["describe"]);
     assert_ne!(r.status, 0);
@@ -781,6 +782,7 @@ fn describe_refused_while_attached() {
 #[test]
 fn review_refused_while_attached_before_verify_runs() {
     let sd = sd();
+    nothing_ahead(&sd);
     let _sleeper = sd.live_lock();
     sd.write_global(r#"{"settings": {"verify": "touch verify-ran"}}"#);
     let r = sd.run(&["review"]);
@@ -905,4 +907,23 @@ fn force_over_one_attach_another_during_the_step_nothing_committed_270() {
     assert_ne!(r.status, 0);
     assert_has(&r.output, &[&format!("not committing: feat was attached during implement ({lock})")]);
     assert_eq!(sd.git(&["rev-parse", "HEAD"]), before);
+}
+
+// The interlock sd act's declaration gives implement (#341): while another
+// step holds the branch's running marker, refused, and no agent runs.
+#[test]
+fn implement_refused_while_another_step_holds_the_marker_341() {
+    let sd = sd();
+    nothing_ahead(&sd);
+    let holder = Holder::new();
+    let pid = holder.pid().to_string();
+    let marker = sd.tmp.join("repo/.git/sheepdog/feat.running");
+    fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    fs::write(&marker, format!("{pid} address 2026-10-18T14:03:00Z {}\n", proc_start(&pid))).unwrap();
+    sd.fake("claude", IMPLEMENTER);
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("address is running on feat (pid {pid}"), "not starting another agent step"]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert!(marker.exists());
 }

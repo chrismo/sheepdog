@@ -394,6 +394,19 @@ fn two_results_from_the_harness_stdout_is_still_one_findings_list_the_last() {
     assert_eq!(jq(&["-r", ".[0].body"], &r.output), "last");
 }
 
+// Moved from tests/harness.rs: run_step still runs unnamed on a detached HEAD
+// from here, though sd harness run refuses to (#341).
+#[test]
+fn outside_a_branch_a_push_cant_be_told_so_its_null_346() {
+    let sd = sd();
+    sd.git(&["switch", "-q", "--detach"]);
+    sd.ok(&[]);
+    let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
+    let r = sheepdog::usage::sup_record(usage.lines().last().unwrap()).unwrap();
+    let got: Vec<_> = ["branch", "stray_commit", "stray_push"].iter().map(|k| r[*k].to_string()).collect();
+    assert_eq!(got, ["null", "false", "null"]);
+}
+
 #[test]
 fn help_prints_the_usage_and_the_contract_without_a_base() {
     let mut sd = sd();

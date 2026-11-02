@@ -625,6 +625,17 @@ fn tally_of(h: &str, text: &str) -> Value {
 
 const HELP: &str = include_str!("harness_help.txt");
 
+/// Unnamed, a step on a detached HEAD would run with no running marker (#341):
+/// run_step falls back to the current branch, so only `current` empty too
+/// refuses.
+fn unmarked(branch: &str, current: impl FnOnce() -> String) -> Option<String> {
+    (branch.is_empty() && current().is_empty()).then(|| {
+        "sd harness: HARNESS_BRANCH must name the step's branch, which its running marker is for (#170): \
+         HARNESS_BRANCH=<branch> sd harness run ..."
+            .to_string()
+    })
+}
+
 fn usage_exit() -> ExitCode {
     eprint!("{HELP}");
     eprintln!("Test seams, unlisted above:");
@@ -661,6 +672,10 @@ pub fn run(argv: &[String]) -> ExitCode {
             };
             let env = |k: &str| std::env::var(k).unwrap_or_default();
             let (name, branch, parent) = (env("HARNESS_STEP"), env("HARNESS_BRANCH"), env("HARNESS_PARENT"));
+            if let Some(why) = unmarked(&branch, || git_out(".", &["branch", "--show-current"]).unwrap_or_default()) {
+                eprintln!("{why}");
+                return ExitCode::from(1);
+            }
             let (Ok(claude_allow), Ok(pi_tools)) = (std::env::var("HARNESS_CLAUDE_ALLOW"), std::env::var("HARNESS_PI_TOOLS")) else {
                 eprintln!("sd harness: HARNESS_CLAUDE_ALLOW and HARNESS_PI_TOOLS must be set");
                 return ExitCode::from(1);
@@ -702,6 +717,15 @@ pub fn run(argv: &[String]) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_refuses_no_harness_branch_only_on_a_detached_head_341() {
+        assert_eq!(unmarked("", || "feat".into()), None);
+        assert_eq!(unmarked("feat", || unreachable!()), None);
+        let why = unmarked("", String::new).unwrap();
+        assert!(why.starts_with("sd harness: HARNESS_BRANCH must name the step's branch"), "{why}");
+        assert!(why.contains("HARNESS_BRANCH=<branch> sd harness run"), "{why}");
+    }
 
     // Was lib/sheepdog.bats: "harness_tally: claude's context is its session's last turn, read from the transcript"
     #[test]

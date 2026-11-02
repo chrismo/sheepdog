@@ -3,6 +3,8 @@
 // token by value; Go's field is private to this module, so only enforce
 // makes one.
 
+use std::sync::Mutex;
+
 /// A verb's verdict on the state. Hard can't be forced; Done means nothing
 /// to do; Soft refuses unless --force; Warn runs with a warning.
 #[must_use]
@@ -34,11 +36,13 @@ impl Gate {
     }
 }
 
-/// How severe a rule's refusal is, most severe first.
+/// How severe a rule's refusal is, most severe first. Limit refuses like
+/// Hard but after Done: a settings limit binds only a verb with work to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
     Hard,
     Done,
+    Limit,
     Soft,
     Warn,
 }
@@ -67,7 +71,7 @@ pub fn judge(rules: &[Rule]) -> Gate {
     let Some(first) = shown.first() else { return Gate::Go };
     let why = || shown.iter().map(|r| r.name.to_string()).collect();
     match first.level {
-        Level::Hard => Gate::Hard(first.name.into()),
+        Level::Hard | Level::Limit => Gate::Hard(first.name.into()),
         Level::Done => Gate::Done(first.name.into()),
         Level::Soft => Gate::Soft(why()),
         Level::Warn => Gate::Warn(why()),
@@ -77,6 +81,15 @@ pub fn judge(rules: &[Rule]) -> Gate {
 /// <rules>' Warn reasons that refuse, which judge drops from a worse verdict.
 pub fn warnings(rules: &[Rule]) -> Vec<String> {
     rules.iter().filter(|r| r.level == Level::Warn && r.refuses).map(|r| r.name.to_string()).collect()
+}
+
+/// The check act::run arms for an agent verb (#341): enforce runs it on Go,
+/// so a verb with nothing to do reports Done, attached or not. The first
+/// enforce to reach Run takes it, so it must be the verb's own gate's.
+static ARMED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+
+pub fn arm(check: impl FnOnce() + Send + 'static) {
+    *ARMED.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(check));
 }
 
 /// Proof the verb's gate let it run: only enforce makes one.
@@ -135,6 +148,9 @@ pub fn enforce_leaving(gate: Gate, force: bool, doing: &str, left: &str) -> Opti
             None
         }
         Enforced::Run(warn) => {
+            if let Some(check) = ARMED.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                check();
+            }
             for w in warn {
                 eprintln!("sd act: warning: {w}");
             }

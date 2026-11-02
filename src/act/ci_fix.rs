@@ -9,8 +9,8 @@ use super::editing::{guidance, run_editing_step, Outcome, Spec};
 use super::hold::{hold_gate, pr_gate};
 use super::implement::blank;
 use super::push::push_branch;
-use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, in_worktree, must, question_ask, question_gate,
-                  question_say, going_on, step_session, with_stored_answer};
+use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, enter_worktree, must, question_ask, question_gate,
+                  question_say, going_on, spend_worded, step_session, with_stored_answer};
 use super::gate::{enforce, enforce_leaving, judge, reported, Gate, Go, Rule};
 use super::{cfg, die, gates, lock_recheck, state_json, Args};
 use crate::config::one_value;
@@ -186,7 +186,7 @@ fn gated(b: &str, wt: &str, remote: &str, a: &Args) -> Option<(Go, Value, Vec<St
     });
     let rules = gates::ci_fix_rules(&Derived::new(&state));
     let mut forced = vec![];
-    let gate = match judge(&rules) {
+    let gate = match spend_worded(judge(&rules), &state, "ci-fix", b) {
         Gate::Done(why) if answering => die(format!("{why}: the ci-fix agent's question is moot; sd act ack --question drops it")),
         Gate::Done(why) => Gate::Done(format!("{why}: nothing to fix on {b}")),
         Gate::Soft(why) if answering => {
@@ -300,7 +300,7 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
     }
     question_gate(b, "ci-fix", a.force, answering);
     going_on("ci-fix", a);
-    let sess = step_session(b, "ci-fix", &a.harness, a.force, answering);
+    let sess = step_session(b, "ci-fix", &a.harness, answering);
     // With no base from sd state, the trusted one guidance_base finds (maybe none).
     let mut base = t(state, "sync.old_base");
     if base.is_empty() {
@@ -373,11 +373,10 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
 pub fn ci_fix(b: &str, remote: &str, a: &Args) {
     let stored = with_stored_answer(b, "ci-fix", a);
     let a = stored.as_ref().unwrap_or(a);
-    in_worktree(b, "ci-fix", |wt| {
-        if let Some((go, state, forced)) = gated(b, wt, remote, a) {
-            ci_fix_run(go, b, wt, remote, a, &state, &forced);
-        }
-    });
+    let wt = enter_worktree(b);
+    if let Some((go, state, forced)) = gated(b, &wt, remote, a) {
+        ci_fix_run(go, b, &wt, remote, a, &state, &forced);
+    }
 }
 
 #[cfg(test)]

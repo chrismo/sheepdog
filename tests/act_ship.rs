@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, chomp, dead_pid, jq, running_marker, step_refusal, Holder, Sd};
+use common::{assert_has, assert_lacks, chomp, dead_pid, jq, lock_by, running_marker, step_refusal, Holder, Sd};
 use std::fs;
 
 const GH: &str = r#"#!/usr/bin/env bash
@@ -958,4 +958,32 @@ fn ship_retried_after_gh_pr_create_failed_the_pr_opens_tracking_origin_feat() {
     assert_has(&r.output, &["https://example/pr/9"]);
     assert_eq!(sd.tracks("feat"), "origin/feat");
     assert_eq!(sd.rev("feat"), head);
+}
+
+// The interlocks sd act's declaration gives ship and describe (#341). ship:
+// while attached, refused before describe or the push, unless --force.
+// describe writes nothing of the branch, so only its agent holds the marker:
+// while another step holds it, no agent runs.
+#[test]
+fn ship_refused_while_attached_before_describe_or_push_341() {
+    let sd = sd();
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    let r = sd.run(&["ship"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["--force"]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.remote("feat"), "");
+}
+
+#[test]
+fn describe_runs_no_agent_while_another_step_holds_the_marker_341() {
+    let sd = sd();
+    let holder = Holder::new();
+    let marker = running_marker(&sd.tmp.join("repo/.git"), "feat", "implement", holder.pid());
+    let r = sd.run(&["describe"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&format!("implement is running on feat (pid {}", holder.pid())]);
+    assert!(!sd.fx_exists("claude.args"));
+    assert!(marker.exists());
 }

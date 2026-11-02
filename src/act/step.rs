@@ -4,17 +4,16 @@
 
 use super::commands::step_timeout;
 use super::start::start_default;
-use super::{attached_check, cfg, die, lock_recheck, or_die, repo_remote};
-use crate::git::{git, git_out, main_worktree, rev, show_ref, worktree_for, worktree_mark};
+use super::{cfg, die, gates, lock_recheck, or_die, repo_remote, Gate};
+use crate::git::{git, git_out, rev, show_ref, worktree_for, worktree_mark};
 use crate::pins::{self, Pin};
 use crate::val::{at, on, t};
-use crate::{config, decisions, harness, json, next, rules, running, state, usage};
+use crate::{config, decisions, harness, json, next, rules, state};
 use serde_json::{json, Value};
 
-/// <run> in <b>'s worktree, given its path, marked running as <step> for
-/// all of it, commit and verify included, so NEXT doesn't hand the worktree
-/// on mid-step (#170).
-pub fn in_worktree(b: &str, step: &str, run: impl FnOnce(&str)) {
+/// <b>'s worktree, made the current directory: an editing step runs there,
+/// under the running marker act::run holds for it (#170).
+pub fn enter_worktree(b: &str) -> String {
     let wt = worktree_for(".", b);
     if wt.is_empty() {
         die(format!("{b} isn't checked out in any worktree"));
@@ -22,9 +21,7 @@ pub fn in_worktree(b: &str, step: &str, run: impl FnOnce(&str)) {
     if let Err(e) = std::env::set_current_dir(&wt) {
         die(format!("can't work in {wt}: {e}"));
     }
-    if running::holding(b, step, || run(&wt)).is_none() {
-        std::process::exit(1);
-    }
+    wt
 }
 
 /// The harness and session a step runs in: step_session's STEP_*.
@@ -55,12 +52,11 @@ fn branch_config(b: &str, key: &str) -> String {
 
 /// A fork of the branch's session (branch.<b>.sd-session), else a new one
 /// (#69): the branch's session isn't touched, so a failed step leaves
-/// nothing in it for a rerun to inherit. Refuses while the branch is
-/// attached: the session is open in a TUI, and a fork misses what it hasn't
-/// written yet (#14). <harness> is --harness's, else the branch's own.
-pub fn step_session(b: &str, step: &str, harness: &str, force: bool, answering: bool) -> Session {
-    attached_check(b, &format!("running the {step} step on {b}"), force);
-    spend_gate(b, step);
+/// nothing in it for a rerun to inherit. An attached branch was refused
+/// already (act::run): the session is open in a TUI, and a fork misses what
+/// it hasn't written yet (#14); so was spend past the budget, by the verb's
+/// gate (gates::spend_rule). <harness> is --harness's, else the branch's own.
+pub fn step_session(b: &str, step: &str, harness: &str, answering: bool) -> Session {
     let stored_h = branch_config(b, "sd-harness");
     let cfg = or_die(config::step(step, b, if harness.is_empty() { &stored_h } else { harness }));
     let h = t(&cfg, "harness");
@@ -75,24 +71,14 @@ pub fn step_session(b: &str, step: &str, harness: &str, force: bool, answering: 
     Session { cfg, harness: h, id: harness::new_session(), mode, parent, timeout: step_timeout(b) }
 }
 
-/// Refuse, at zero tokens, an agent step on <b> while NEXT's budget step
-/// holds it (#121, #349): past settings.branchBudget, or with spend it
-/// can't tell. --force doesn't override it; raising the budget does.
-pub fn spend_gate(b: &str, step: &str) {
-    if let Some(why) = spend_held(b) {
-        die(format!("not running {step} on {b}: {why}"));
-    }
-}
-
-/// next::budget_hold of <b>'s spend as sd state reports it.
-pub fn spend_held(b: &str) -> Option<String> {
-    let budget = or_die(config::get_text("settings.branchBudget", b, true));
-    let budget: Value = serde_json::from_str(&budget).unwrap_or(Value::Null);
-    let spend = match usage::spend(&main_worktree("."), b) {
-        Some(s) => json!({"usd": s.usd, "unknown": s.unknown, "budget": budget}),
-        None => json!({"usd": null, "unknown": null, "budget": budget}),
-    };
-    next::budget_hold(&json!({"spend": spend}))
+/// <g> with the spend rule's reason (gates::SPEND) in record <s>'s words,
+/// as <step> on <b> refuses it: next::budget_hold's line, which NEXT's
+/// budget step says too.
+pub fn spend_worded(g: Gate, s: &Value, step: &str, b: &str) -> Gate {
+    g.worded(|w| match w {
+        gates::SPEND => format!("not running {step} on {b}: {}", next::budget_hold(s).unwrap_or_default()),
+        w => w.to_string(),
+    })
 }
 
 /// Whether a step on <h> forks the branch's session <sid>, which belongs
