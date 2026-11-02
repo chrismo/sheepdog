@@ -1339,6 +1339,29 @@ fn notify_a_hung_notifier_times_out_counts_as_failed_and_doesnt_hold_up_the_pass
     assert_eq!(sd.attempts(), 3, "feat twice, other once");
 }
 
+/// What a notifier prints, stdout or stderr, lands in launchd.log stamped (#364).
+#[test]
+fn log_a_notifiers_own_output_carries_the_time_364() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[]);
+    sd.fake("notify", "#!/usr/bin/env bash\necho said\necho grumbled >&2\nexit 1\n");
+    let r = sd.pass_run(&[CLOCK]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_has(&r.stderr, &["2026-11-02 09:27:10 said\n", "2026-11-02 09:27:10 grumbled\n"]);
+    assert!(r.stderr.lines().all(|l| l.starts_with("2026-11-02 09:27:10 ")), "{}", r.stderr);
+}
+
+/// A notifier that hangs is said once, stamped (#364).
+#[test]
+fn log_a_hung_notifiers_timeout_is_said_once_364() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[]);
+    sd.fake("notify", NOTIFY_HANGS_ON_FEAT);
+    let r = sd.pass_run(&[CLOCK, ("SHEEPDOG_WATCH_TIMEOUT", "1")]);
+    assert_eq!(r.stderr.matches("timed out").count(), 1, "{}", r.stderr);
+    assert!(r.stderr.lines().all(|l| l.starts_with("2026-11-02 09:27:10 ")), "{}", r.stderr);
+}
+
 // @test "notify: GitHub recomputing mergeability doesn't make ready re-notify"
 #[test]
 fn notify_github_recomputing_mergeability_doesnt_make_ready_re_notify() {

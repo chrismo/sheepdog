@@ -316,8 +316,8 @@ fn worktree_of(repo: &str) -> HashMap<String, String> {
 }
 
 /// settings.notify with <title> <message> appended, else a macOS
-/// notification, given <secs>: one that hangs has failed (#350). Its stdout
-/// goes to stderr, out of the pass record.
+/// notification, given <secs>: one that hangs has failed (#350). Its output,
+/// stdout and stderr, goes to the log stamped, out of the pass record (#364).
 fn notify(secs: u64, title: &str, msg: &str) -> bool {
     let cmd = config::get_global("settings.notify", false).unwrap_or_else(|lines| {
         config_lines(lines);
@@ -334,8 +334,10 @@ fn notify(secs: u64, title: &str, msg: &str) -> bool {
         c.args(["-c", &format!("{cmd} \"$@\""), "_", title, msg]);
         (c, cmd)
     };
-    let o = proc::timeout_passing_stderr(secs, c);
-    log::say(&o.stdout);
+    let o = proc::timeout(secs, c, true);
+    // A timeout's own line: the one below says it, naming the notifier.
+    let said = if o.timed_out { o.stdout.strip_suffix(&format!("timed out after {secs}s\n")).unwrap_or(&o.stdout) } else { &o.stdout };
+    log::say(said);
     if o.ok {
         return true;
     }
@@ -464,7 +466,8 @@ impl Watch {
     fn dirs(&self) {
         for d in [&self.state, &self.status] {
             if let Err(e) = fs::create_dir_all(d) {
-                die(format!("can't create {d}: {e}"));
+                log::say(&format!("sd watch: can't create {d}: {e}"));
+                std::process::exit(1);
             }
         }
     }
