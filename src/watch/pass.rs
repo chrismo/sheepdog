@@ -431,7 +431,7 @@ impl Watch {
         Watch {
             state: state_dir(),
             status: env_or("STATUS_DIR", || format!("{}/.claude/tab-status", home())),
-            timeout: std::env::var("SHEEPDOG_WATCH_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(120),
+            timeout: watch_timeout(),
             vacuum_after: 0.0,
             rate_floor: 0.0,
             rate_stop: false,
@@ -996,6 +996,12 @@ pub fn pass() -> ExitCode {
     w.dispatch = true;
     w.pass();
     ExitCode::SUCCESS
+}
+
+/// SHEEPDOG_WATCH_TIMEOUT (120): seconds a pass's fetch, sd state or run
+/// step gets, and the base of an agent step's (step_secs).
+pub(crate) fn watch_timeout() -> u64 {
+    std::env::var("SHEEPDOG_WATCH_TIMEOUT").ok().and_then(|s| s.parse().ok()).unwrap_or(120)
 }
 
 /// A launched step's timeout: <secs> for a run step; for an agent step,

@@ -3,7 +3,7 @@
 
 mod pass;
 
-pub(crate) use pass::{act_args, dispatch_verb, json_files, registered, sd_verb, step_secs};
+pub(crate) use pass::{act_args, dispatch_verb, json_files, registered, sd_verb, step_secs, watch_timeout};
 pub use pass::repo_key;
 
 use crate::config::{self, state_dir};

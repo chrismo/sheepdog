@@ -28,9 +28,11 @@ Usage: sd view [--port <n>] [--no-open]
   A branch's drill-in has a button for NEXT's first step when it's the
   agent's or sheepdog's: it runs sd act <verb> <branch> in the branch's
   repo, the same command the watcher's autoRun pass launches for that step,
+  under the same timeout (SHEEPDOG_WATCH_TIMEOUT, settings.stepTimeout),
   one step at a time; the branch is checked again when it ends, so the page
   shows the result. The step runs only if it's still NEXT's first; your
-  steps and waits have no button.
+  steps and waits have no button. The step is sd view's: Ctrl-C ends it as
+  it would a hand-run sd act, and sd view's log says it was stopped.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

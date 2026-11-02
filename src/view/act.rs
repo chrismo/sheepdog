@@ -10,13 +10,10 @@ use super::branch::find;
 use super::refresh;
 use crate::proc;
 use crate::val::{at, t};
-use crate::watch::{act_args, dispatch_verb, registered, repo_key, sd_verb, step_secs};
+use crate::watch::{act_args, dispatch_verb, registered, repo_key, sd_verb, step_secs, watch_timeout};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-
-/// The watcher's default pass timeout, the base of a launched step's.
-const BASE_SECS: u64 = 120;
 
 struct Acting {
     id: String,
@@ -102,22 +99,32 @@ pub fn run(state: &Path, body: &str) -> (&'static str, String) {
     ("200 OK", said)
 }
 
-/// sd act <step> <branch> in <repo>, then the branch's refresh, holding the slot.
+/// sd act <step> <branch> in <repo>, then the branch's refresh, holding the
+/// slot. A Ctrl-C to sd view ends the step (proc::timeout passes it on to
+/// the step's group, as a hand-run sd act does to its agent), and sd view
+/// ends once the line saying so is written; the watcher's next pass sees
+/// where the branch was left.
 fn launch(state: &Path, id: &str, repo: &str, step: &str, branch: &str) {
     let _running = Running;
     let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
     let verb = act_args(step);
-    let secs = step_secs(repo, step, branch, BASE_SECS);
-    let out = proc::with_timeout_merged(secs, &prog, &[&pre[..], &verb, &[branch]].concat(), Some(repo));
-    let how = if out.ok {
-        "ok".to_string()
-    } else if out.timed_out {
-        format!("timed out after {secs}s")
-    } else {
-        format!("failed (exit {}): {}", out.code, out.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
-    };
-    eprintln!("sd view: sd act {} {branch} in {repo}: {how}", verb.join(" "));
-    refresh::now(state, id, repo, branch);
+    let secs = step_secs(repo, step, branch, watch_timeout());
+    proc::deferring_signals(|| {
+        let out = proc::with_timeout_merged(secs, &prog, &[&pre[..], &verb, &[branch]].concat(), Some(repo));
+        let how = if out.ok {
+            "ok".to_string()
+        } else if out.timed_out {
+            format!("timed out after {secs}s")
+        } else if out.stopped {
+            "stopped by a signal".to_string()
+        } else {
+            format!("failed (exit {}): {}", out.code, out.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+        };
+        eprintln!("sd view: sd act {} {branch} in {repo}: {how}", verb.join(" "));
+        if !out.stopped {
+            refresh::now(state, id, repo, branch);
+        }
+    });
 }
 
 #[cfg(test)]

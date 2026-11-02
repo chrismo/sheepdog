@@ -93,8 +93,17 @@ fn state(branch: &str, next: Value) -> Value {
 }
 
 fn serve(sd: &Sd) -> Server {
+    serve_to(sd, Stdio::null())
+}
+
+/// serve, its stderr written to <log>.
+fn serve_logging(sd: &Sd, log: &str) -> Server {
+    serve_to(sd, fs::File::create(log).unwrap().into())
+}
+
+fn serve_to(sd: &Sd, stderr: Stdio) -> Server {
     let mut c = sd.command(&sd.bin);
-    c.args(["--no-open", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    c.args(["--no-open", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(stderr);
     let mut child = spawn(&mut c);
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
@@ -554,6 +563,54 @@ fn a_conflict_s_step_runs_as_restack_resolve() {
     acted(&s, &id);
     let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
     assert_eq!(act_log(&sd)[0], format!("start {repo} restack --resolve feat"));
+}
+
+// The step's limit is the watcher's: SHEEPDOG_WATCH_TIMEOUT, as a pass's.
+#[test]
+fn a_step_runs_under_the_watcher_s_timeout() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let gate = sd.path("gate");
+    fs::write(&gate, "").unwrap();
+    sd.env.push(("ACT_GATE".into(), gate));
+    sd.env.push(("SHEEPDOG_WATCH_TIMEOUT".into(), "1".into()));
+    let id = with_next(&sd, "feat", json!([{ "key": "push", "who": "run", "say": "push", "cmd": "sd act push" }]));
+    let s = serve(&sd);
+    assert_eq!(act(&s, &id, "push").0, 200);
+    acted(&s, &id);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(act_log(&sd), [format!("start {repo} push feat")]);
+}
+
+// Ctrl-C to sd view mid-step ends the step as Ctrl-C on a hand-run sd act
+// would (proc::timeout passes it on), and sd view's log says so.
+#[test]
+fn ctrl_c_to_sd_view_stops_its_step_and_says_so() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let gate = sd.path("gate");
+    fs::write(&gate, "").unwrap();
+    sd.env.push(("ACT_GATE".into(), gate));
+    let id = with_next(&sd, "feat", json!([{ "key": "push", "who": "run", "say": "push", "cmd": "sd act push" }]));
+    let log = sd.path("view.log");
+    let mut s = serve_logging(&sd, &log);
+    assert_eq!(act(&s, &id, "push").0, 200);
+    let end = Instant::now() + Duration::from_secs(5);
+    while act_log(&sd).is_empty() {
+        assert!(Instant::now() < end, "the step never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    unsafe { libc::kill(s.child.id() as i32, libc::SIGINT) };
+    let end = Instant::now() + Duration::from_secs(5);
+    while s.child.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < end, "sd view still running");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(act_log(&sd), [format!("start {repo} push feat")]);
+    assert_has(&fs::read_to_string(&log).unwrap(), &["sd act push feat", "stopped by a signal"]);
 }
 
 #[test]
