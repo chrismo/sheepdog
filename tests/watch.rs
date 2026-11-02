@@ -2520,6 +2520,16 @@ fn refresh_before_any_pass_status_still_says_so() {
     assert_has(&r.output, &["no pass yet"]);
 }
 
+/// A vacuum by hand isn't the job's pass: it mustn't hide an overdue job (#364).
+#[test]
+fn vacuum_before_any_pass_status_still_says_so_364() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[]);
+    sd.ok(&["vacuum"]);
+    let r = sd.run(&["status"]);
+    assert_has(&r.output, &["\n\nlast pass: none yet (settings.interval 300s)\n"]);
+}
+
 // @test "refresh: sd state failing is ⚠️ and exits non-zero"
 #[test]
 fn refresh_sd_state_failing_is_and_exits_non_zero() {
@@ -3735,9 +3745,9 @@ impl Sd {
         block.to_string()
     }
 
-    /// state/last-pass was written <secs> ago.
+    /// The job's last pass was <secs> ago: state/job-pass, its stamp.
     fn last_pass_aged(&self, secs: u64) {
-        let f = fs::File::options().write(true).open(self.tmp.join("state/last-pass")).unwrap();
+        let f = fs::File::options().write(true).open(self.tmp.join("state/job-pass")).unwrap();
         f.set_modified(std::time::SystemTime::now() - Duration::from_secs(secs)).unwrap();
     }
 }

@@ -188,8 +188,8 @@ steps.log holds each launched step's output, unchanged, between
   ==> <time> <repo> <branch>: sd act <verb>
   <== <time> <repo> <branch>: ran sd act <verb>: <how it ended> (<how long>)
 status reads what a silent job usually comes down to, writing nothing:
-  last pass: 3m ago (settings.interval 300s): overdue once two intervals
-    passed with no pass
+  last pass: 3m ago (settings.interval 300s): the job's pass, not a vacuum
+    by hand; overdue once two intervals passed with no pass
   autoRun on; off on 2 branches: <repo> <branch>, ... (the global, and
     the enrolled branches whose own setting differs)
   running: <repo> <branch> <step> (pid, since, deadline or run by hand),

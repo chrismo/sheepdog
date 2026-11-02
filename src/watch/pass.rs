@@ -996,6 +996,11 @@ impl Watch {
         self.drop_ambiguous(&self.glyphs);
         self.write_index(&self.glyphs);
         let _ = fs::write(format!("{}/last-pass", self.state), format!("last pass: {}\n{lines}", log::now()));
+        // The job's pass alone stamps job-pass, whose age status reads: a
+        // vacuum by hand writes last-pass too, and mustn't hide an overdue job (#364).
+        if self.dispatch {
+            let _ = fs::write(format!("{}/job-pass", self.state), "");
+        }
         self.summarize();
     }
 

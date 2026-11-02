@@ -35,7 +35,7 @@ fn block(state: &str) -> String {
     let on = config::get_global("settings.autoRun", false).is_ok_and(|v| v == "true");
     let overrides: Vec<String> =
         repos.iter().flat_map(|(name, repo)| enrolled(repo).into_iter().filter(|b| auto_run(repo, b) != on).map(move |b| format!("{name} {b}"))).collect();
-    let mut lines = vec![age_line(age_of(&format!("{state}/last-pass")), interval()), auto_run_line(on, &overrides)];
+    let mut lines = vec![age_line(age_of(&format!("{state}/job-pass")), interval()), auto_run_line(on, &overrides)];
     lines.extend(running_lines(&repos));
     lines.extend(limit_line(state));
     lines.extend(failure_lines(&repos));
