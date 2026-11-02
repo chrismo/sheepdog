@@ -127,10 +127,15 @@ const STEP_SETTINGS: &[(&str, &[&str])] = &[
     ("human", &["botLogin"]),
     ("read", &["botLogin", "botIgnore", "botIgnoreBody"]),
     ("budget", &["branchBudget"]),
-    // ship describes first (src/act/ship.rs)
-    ("open-pr", &["describePrompt"]),
-    ("ship-parent", &["describePrompt"]),
+    ("open-pr", SHIP),
+    ("ship-parent", SHIP),
 ];
+
+/// sd act ship, a run step with no verb in STEPS: it runs describe as an
+/// agent step under describe's gate (src/act/ship.rs, gates.rs), and the
+/// watcher launches it under autoRun. Not agentSteps: the watcher holds only
+/// agent steps to it.
+const SHIP: &[&str] = &["describePrompt", "stepTimeout", "stepBudget", "forkLimit", "branchBudget", "autoRun", "remote"];
 
 /// By the verb as STEPS names it: what sd act <verb> reads (src/act/<verb>.rs;
 /// editing.rs for implement, address and ci-fix; hold.rs for protectedPaths).
@@ -145,9 +150,10 @@ const VERB_SETTINGS: &[(&str, &[&str])] = &[
 ];
 
 /// Every agent step: its session's timeout and fork limit (src/act/step.rs),
-/// a claude step's cap (src/harness.rs), and how many the watcher runs at
+/// a claude step's cap (src/harness.rs), the branch's cap its gate's spend
+/// rule holds it to (gates::spend_rule), and how many the watcher runs at
 /// once (src/watch/pass.rs).
-const AGENT_SETTINGS: &[&str] = &["stepTimeout", "stepBudget", "forkLimit", "agentSteps"];
+const AGENT_SETTINGS: &[&str] = &["stepTimeout", "stepBudget", "forkLimit", "branchBudget", "agentSteps"];
 
 /// Every verb: the watcher launches it only under settings.autoRun
 /// (src/watch/pass.rs), and act::run points gh at settings.remote.

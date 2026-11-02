@@ -1247,6 +1247,14 @@ fn a_broken_config_leaves_the_settings_named_but_without_values() {
     assert_has(a["configError"].as_str().unwrap(), &["not a JSON object"]);
     let rounds = setting(&atlas_step(&a, "review-decide"), "settings.reviewRounds");
     assert_eq!((&rounds["value"], &rounds["layer"]), (&Value::Null, &Value::Null));
+    for key in ["ci-red", "bot", "open-pr", "ship-parent"] {
+        let paths: Vec<Value> = atlas_step(&a, key)["settings"].as_array().unwrap().iter().map(|s| s["path"].clone()).collect();
+        assert!(paths.contains(&json!("settings.branchBudget")), "{key}: {paths:?}");
+    }
+    let ship: Vec<Value> = atlas_step(&a, "open-pr")["settings"].as_array().unwrap().iter().map(|s| s["path"].clone()).collect();
+    for p in ["describePrompt", "stepTimeout", "stepBudget", "forkLimit", "branchBudget", "autoRun", "remote"] {
+        assert!(ship.contains(&json!(format!("settings.{p}"))), "open-pr has no {p}: {ship:?}");
+    }
     assert_eq!(rounds["set"], "sd config set --repo settings.reviewRounds <value>");
     let logins = setting(&atlas_step(&a, "read"), "settings.botLogin");
     assert_eq!(logins["set"], "sd config set --repo --json settings.botLogin <value>");
