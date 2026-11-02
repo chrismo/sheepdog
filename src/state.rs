@@ -1736,10 +1736,13 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
 // ── output ───────────────────────────────────────────────────────────────────
 
 /// The one-liner's CI slot: a glyph for the verdict, then the words, so
-/// "CI red" still greps (#75). blocked, inconclusive and none get no glyph.
+/// "CI red" still greps (#75). blocked, inconclusive and none get no glyph,
+/// nor does any verdict on an old head: it isn't HEAD's (O5).
 fn ci_item(s: &Value) -> String {
     let verdict = t(s, "ci.verdict");
+    let old = at(s, "ci.for_head") == &Value::Bool(false);
     let glyph = match verdict.as_str() {
+        _ if old => "",
         "green" => "✅ ",
         "red" => "🔴 ",
         "pending" => "⏳ ",
@@ -1749,7 +1752,7 @@ fn ci_item(s: &Value) -> String {
     format!(
         "{glyph}CI {verdict}{}{}",
         if failing.is_empty() { String::new() } else { format!(" ({})", sj(at(s, "ci.failing"), ", ")) },
-        if at(s, "ci.for_head") == &Value::Bool(false) { " on old head" } else { "" }
+        if old { " on old head" } else { "" }
     )
 }
 
@@ -1987,8 +1990,10 @@ mod tests {
         assert_eq!(ci_item(&ci("none", json!([]))), "CI none");
         assert_eq!(ci_item(&ci("blocked", json!([]))), "CI blocked");
         assert_eq!(ci_item(&ci("inconclusive", json!([]))), "CI inconclusive");
-        let old = json!({"ci": {"verdict": "green", "failing": [], "for_head": false}});
-        assert_eq!(ci_item(&old), "✅ CI green on old head");
+        // checks on a non-HEAD SHA give no verdict (O5): the words, no glyph
+        let old = |verdict: &str| json!({"ci": {"verdict": verdict, "failing": [], "for_head": false}});
+        assert_eq!(ci_item(&old("green")), "CI green on old head");
+        assert_eq!(ci_item(&old("red")), "CI red on old head");
     }
 
     #[test]
