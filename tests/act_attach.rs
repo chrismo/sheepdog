@@ -770,6 +770,7 @@ fn implement_refused_while_attached_nothing_runs() {
 #[test]
 fn describe_refused_while_attached() {
     let sd = sd();
+    nothing_ahead(&sd);
     let _sleeper = sd.live_lock();
     let r = sd.run(&["describe"]);
     assert_ne!(r.status, 0);
@@ -781,6 +782,7 @@ fn describe_refused_while_attached() {
 #[test]
 fn review_refused_while_attached_before_verify_runs() {
     let sd = sd();
+    nothing_ahead(&sd);
     let _sleeper = sd.live_lock();
     sd.write_global(r#"{"settings": {"verify": "touch verify-ran"}}"#);
     let r = sd.run(&["review"]);
