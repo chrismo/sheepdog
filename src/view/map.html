@@ -133,6 +133,7 @@ function tile(f, maxLines) {
 
 function render(m) {
   const open = $("sheet").hidden ? null : document.querySelector(".sq.on")?.dataset.p;
+  const expanded = !!document.querySelector("#sbody [data-more].all");
   const all = m.groups.flatMap(g => g.files);
   files = Object.fromEntries(all.map(f => [f.path, f]));
   const lines = all.reduce((n, f) => n + f.lines, 0);
@@ -149,7 +150,11 @@ function render(m) {
   const down = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
   const note = down + (m.cut ? `Some open issues may be left out: ${m.cut}. ` : "");
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
-  if (open) showFile(open);
+  if (open && !files[open]) hideFile();
+  else if (open) {
+    showFile(open);
+    if (expanded) document.querySelector("#sbody [data-more]")?.classList.add("all");
+  }
 }
 
 function bars(over) {

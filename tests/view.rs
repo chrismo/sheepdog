@@ -297,9 +297,10 @@ fn settled(s: &Server, path: &str) -> (u16, Value) {
     loop {
         let (code, _, body) = s.get(path);
         let v: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-        if v["refreshing"] != true || Instant::now() > end {
+        if v["refreshing"] != true {
             return (code, v);
         }
+        assert!(Instant::now() < end, "{path} still refreshing after 10s: {body}");
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -517,7 +518,7 @@ fn the_map_page_and_the_flock_link_to_each_other() {
 // refresh button asks.
 
 #[test]
-fn github_data_is_asked_for_again_only_once_it_s_a_minute_old() {
+fn fresh_github_data_isn_t_asked_for_again() {
     let sd = sd();
     cache(&sd, "sheepdog", "a", state("a", json!([])));
     fs::write(sd.tmp.join("history.json"), PR_HISTORY).unwrap();
