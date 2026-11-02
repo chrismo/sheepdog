@@ -130,10 +130,12 @@ Reports, for <branch> (default: the current one):
             removes it. After 3, NEXT hands the agent's steps to chrismo
             (#242)
   verify    the last failed settings.verify (refs/sheepdog/<b>/verify-red):
-            {sha (the commit it ran on), step (the verb that ran it), cmd,
-            at, at_head}; a pass removes it, null with none. While at_head,
-            NEXT's verify-red step stands in for push, open-pr, draft,
-            review, bot-trigger and ready, and sd act ship refuses (#325)
+            {sha (the commit it ran on, or a restack carried it to), step
+            (the verb that ran it), cmd, at, at_head}; a pass removes it,
+            null with none. at_head counts the heads a restack carried
+            it from too. While at_head, NEXT's verify-red step stands
+            in for push, open-pr, draft, review, bot-trigger and ready,
+            and sd act ship refuses (#325)
   fresh     false when GitHub's PR / parent-PR head differs from the local
             remote-tracking ref and isn't an older value of it (see lag),
             i.e. sync and push answers need a fetch;

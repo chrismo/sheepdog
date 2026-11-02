@@ -415,6 +415,65 @@ fn an_undone_restack_is_refused_unless_forced_with_nexts_redo_by_hand_395() {
     redone(&sd);
 }
 
+/// settings.verify fails, and sd act verify records it red at <b>'s HEAD.
+fn verify_red(sd: &Sd, b: &str) {
+    sd.verb_ok("config", &["set", "--global", "settings.verify", "false"]);
+    sd.git(&["switch", "-q", b]);
+    assert_ne!(sd.run(&["verify"]).status, 0);
+    assert!(sd.git(&["cat-file", "blob", &format!("refs/sheepdog/{b}/verify-red")]).contains(&sd.rev(b)));
+}
+
+/// sd state says verify is red at <b>'s HEAD, and NEXT offers it and no push.
+fn red_at_head(sd: &Sd, b: &str) {
+    let state = sd.exec(&sd.link("state"), &[], &["--json", b]).output;
+    assert_eq!(jq(&["-c", "[.verify.sha, .verify.at_head]"], &state), format!(r#"["{}",true]"#, sd.rev(b)), "{state}");
+    let keys = jq(&["-c", "[.next[].key]"], &state);
+    assert!(keys.contains(r#""verify-red""#) && !keys.contains(r#""push""#), "{keys}");
+}
+
+// A restack moves HEAD without running verify, so a red verify moves with it
+// to the new HEAD: left on the old one, sd state stopped counting it and NEXT
+// offered the push (#325).
+#[test]
+fn a_red_verify_moves_with_a_clean_restack_and_next_offers_no_push_325() {
+    let sd = sd();
+    verify_red(&sd, "feat");
+    sd.upstream("main", "b", "B", "upstream");
+    let before = sd.rev("feat");
+    assert_eq!(sd.run(&["restack"]).status, 0);
+    assert_ne!(sd.rev("feat"), before);
+    red_at_head(&sd, "feat");
+}
+
+// Reset back to the commit it failed on, the red counts there still: the
+// restack carried it on without taking it off (#325).
+#[test]
+fn a_red_verify_still_counts_on_the_old_head_after_a_restack_is_reset_away_325() {
+    let sd = sd();
+    verify_red(&sd, "feat");
+    sd.upstream("main", "b", "B", "upstream");
+    let before = sd.rev("feat");
+    assert_eq!(sd.run(&["restack"]).status, 0);
+    sd.git(&["reset", "-q", "--hard", &before]);
+    let state = sd.exec(&sd.link("state"), &[], &["--json", "feat"]).output;
+    assert_eq!(jq(&["-c", ".verify.at_head"], &state), "true", "{state}");
+}
+
+// The same for a restack by tree, which no agent resolves and so no verify
+// follows (#325).
+#[test]
+fn a_red_verify_moves_with_a_restack_by_tree_325() {
+    let sd = agent_sd();
+    let (a1, a_head) = sd.orphaned_pin();
+    sd.merged_pr("A", &a_head, &[&a1, &a_head]);
+    verify_red(&sd, "child");
+    let before = sd.rev("child");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_ne!(sd.rev("child"), before);
+    red_at_head(&sd, "child");
+}
+
 // ── retarget ─────────────────────────────────────────────────────────────────
 
 // @test "retarget: parent merged, PR still on it: base edited to main, sd-parent rewritten"
@@ -1488,6 +1547,24 @@ fn resolve_verify_runs_on_the_result_a_failure_keeps_the_rebased_branch_and_says
     assert_has(&r.output, &["verify failed"]);
     assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
     assert_eq!(sd.base_pin(), sd.rev("origin/main"));
+    red_at_head(&sd, "feat");
+}
+
+// A red verify is carried to the resolution before verify runs on it, so it
+// is judged there: this verify passes only while the record names HEAD, and
+// passing clears it (#325).
+#[test]
+fn resolve_a_red_verify_is_on_the_resolution_when_verify_runs_on_it_325() {
+    let sd = agent_sd();
+    let on_head = r#"git cat-file blob refs/sheepdog/feat/verify-red | grep -q "\"head\":\"$(git rev-parse HEAD)\"""#;
+    sd.verb_ok("config", &["set", "--global", "settings.verify", on_head]);
+    assert_ne!(sd.run(&["verify"]).status, 0);
+    assert!(sd.git(&["cat-file", "blob", "refs/sheepdog/feat/verify-red"]).contains(&sd.rev("feat")));
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/verify-red"]), None);
 }
 
 // @test "--resolve: more than 3 stops gives up and rolls back"
