@@ -133,6 +133,18 @@ pub fn patch_id(dir: &str, a: &str, b: &str) -> String {
     p.stdout.split(' ').next().unwrap_or("").trim_end_matches('\n').to_string()
 }
 
+/// (SHA, patch-id) for each commit git <log_args> (a log -p, --format=commit
+/// %H) lists, in its order; a commit with no diff has none. None when git
+/// fails.
+pub fn patch_ids(dir: &str, log_args: &[&str]) -> Option<Vec<(String, String)>> {
+    let patches = git(dir, log_args);
+    let o = git_input(dir, &["patch-id", "--stable"], Some(patches.stdout.as_bytes()));
+    if !(patches.ok && o.ok) {
+        return None;
+    }
+    Some(o.stdout.lines().filter_map(|l| l.split_once(' ')).map(|(id, sha)| (sha.to_string(), id.to_string())).collect())
+}
+
 pub fn show_ref(dir: &str, r: &str) -> bool {
     git_ok(dir, &["show-ref", "-q", "--verify", r])
 }

@@ -358,16 +358,17 @@ fn a_restack_that_would_rewrite_someone_elses_commits_is_refused_unless_forced_3
 }
 
 // Their commit's patch is on the target already (squash-merged alone): a
-// restack loses nothing of theirs, so it isn't held for them (#356). This
-// one comes out different, as main has part of the change.
+// restack loses nothing of theirs, so it isn't held for them (#356), and
+// the rebase drops it as already there (#406).
 #[test]
 fn someone_elses_commit_whose_patch_is_on_the_target_doesnt_hold_the_restack_356() {
     let sd = sd();
     sd.their_commit_taken();
     sd.upstream("main", "a", "A", "theirs (#1)");
     let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 0, "{}", r.output);
     assert_lacks(&r.output, "someone else");
-    assert_has(&r.output, &["came out different"]);
+    assert_has(&r.output, &["theirs: already on origin/main"]);
 }
 
 // A restack, then git's advice after a rejected plain push (pull --rebase
@@ -384,8 +385,8 @@ fn undone(sd: &Sd) {
 
 // Refused unless --force, naming NEXT's redo-by-hand step (#395). Soft: a
 // restack rewrites only the local branch, and push's Hard rule keeps the
-// copies off the remote. Forced, it runs as it did before the rule: the
-// copy makes the change come out different, so it rolls back.
+// copies off the remote. Forced, the rebase drops the copy as already on
+// main (#406), which is what the redo by hand does.
 #[test]
 fn an_undone_restack_is_refused_unless_forced_with_nexts_redo_by_hand_395() {
     let sd = sd();
@@ -397,16 +398,21 @@ fn an_undone_restack_is_refused_unless_forced_with_nexts_redo_by_hand_395() {
     let redo = jq(&["-r", r#"[.next[] | select(.key == "restack-undone") | .cmd][0]"#], &state);
     assert!(redo.starts_with("git rebase --onto origin/main "), "{state}");
     assert_has(&r.output, &["not restacking feat:", "feat's restack was undone: 1 of main's commits is a copy on it", &redo, "--force"]);
-    assert_eq!((sd.rev("HEAD"), sd.base_pin()), (before.clone(), pin.clone()));
-    let r = sd.run(&["restack", "--force"]);
-    assert_eq!(r.status, 1, "{}", r.output);
-    assert_has(&r.output, &["feat's change came out different on origin/main", "rolled back"]);
     assert_eq!((sd.rev("HEAD"), sd.base_pin()), (before, pin));
     // the way out it names redoes it
     sd.git(&["rebase", "-q", "--onto", "origin/main", redo.split(' ').nth(4).unwrap()]);
-    let state = sd.verb_ok("state", &["--json"]);
-    assert_eq!(jq(&["-c", "[.sync.undone, .sync.up_to_date]"], &state), "[0,true]", "{state}");
-    assert_eq!(sd.git(&["log", "--format=%s", "origin/main..feat"]), "feat");
+    let redone = |sd: &Sd| {
+        let state = sd.verb_ok("state", &["--json"]);
+        assert_eq!(jq(&["-c", "[.sync.undone, .sync.up_to_date]"], &state), "[0,true]", "{state}");
+        assert_eq!(sd.git(&["log", "--format=%s", "origin/main..feat"]), "feat");
+    };
+    redone(&sd);
+    let sd = self::sd();
+    undone(&sd);
+    let r = sd.run(&["restack", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["restacked feat onto origin/main (1 commit)", "upstream: already on origin/main"]);
+    redone(&sd);
 }
 
 // ── retarget ─────────────────────────────────────────────────────────────────
@@ -542,22 +548,51 @@ fn a_conflict_partway_through_is_rolled_back() {
     assert_eq!(sd.base_pin(), "");
 }
 
-// @test "a change that comes out different is rolled back"
+// A commit already on the target with the same diff (squash-merged alone
+// from another PR) is one git drops from the rebase as already applied. The
+// branch's diff shrinks by exactly that commit, so nothing of the branch is
+// lost: restack goes, naming what it dropped (#406).
 #[test]
-fn a_change_that_comes_out_different_is_rolled_back() {
+fn a_commit_already_on_the_target_is_dropped_and_named_406() {
     let sd = sd();
     // main picks up the same edit as feat's first commit, so the rebase drops it
     // and the branch's diff shrinks.
+    let first = sd.rev("HEAD");
     sd.edit("b", "B", "second");
+    sd.upstream("main", "g", "G", "upstream");
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["restacked feat onto origin/main (1 commit)", &format!("dropped {} feat: already on origin/main", &first[..7])]);
+    assert_lacks(&r.output, "came out different");
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+    assert_eq!(sd.git(&["log", "--format=%s", "origin/main..feat"]), "second");
+    assert_eq!(sd.base_pin(), sd.rev("origin/main"));
+}
+
+// A clean rebase whose commit comes out different (main has part of it, not
+// all) is rolled back, naming the way out: --force keeps the rebased result
+// (#406). Soft: it rewrites only the local branch, the old head stays named,
+// and the range-diff shows the difference first.
+#[test]
+fn a_change_that_comes_out_different_is_rolled_back_unless_forced_406() {
+    let sd = sd();
+    subst(&sd.cwd.join("file.txt"), &[("b", "B")]);
+    sd.git(&["commit", "-q", "--amend", "-a", "--no-edit"]);
     sd.upstream("main", "g", "G", "upstream");
     let before = sd.rev("HEAD");
     let r = sd.run(&["restack"]);
-    assert_eq!(r.status, 1);
-    assert_has(&r.output, &["came out different"]);
-    assert_has(&r.output, &["rolled back"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    let back = format!("rolled back to {}", &before[..7]);
+    assert_has(&r.output, &["feat's change came out different on origin/main", "git range-diff", &back, "sd act restack --force"]);
     assert_eq!(sd.rev("HEAD"), before);
     assert_eq!(sd.git(&["status", "--porcelain"]), "");
     assert_eq!(sd.base_pin(), "");
+    let r = sd.run(&["restack", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["warning: feat's change came out different on origin/main", "git range-diff", "restacked feat onto origin/main (1 commit)"]);
+    assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
+    assert!(sd.file_has("B") && sd.file_has("G"));
+    assert_eq!(sd.base_pin(), sd.rev("origin/main"));
 }
 
 // @test "uncommitted changes are refused"

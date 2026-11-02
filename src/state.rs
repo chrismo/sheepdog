@@ -1216,15 +1216,9 @@ fn is_noreply_of(login: &str, email: &str) -> bool {
 
 const PATCH_LOG: [&str; 5] = ["log", "-p", "--no-color", "--no-ext-diff", "--format=commit %H"];
 
-/// SHA → patch-id for the commits git <log_args> (a log -p) lists; a commit
-/// with no diff has none. None when git fails.
+/// git::patch_ids as SHA → patch-id.
 fn patch_ids(dir: &str, log_args: &[&str]) -> Option<HashMap<String, String>> {
-    let patches = git(dir, log_args);
-    let o = git::git_input(dir, &["patch-id", "--stable"], Some(patches.stdout.as_bytes()));
-    if !(patches.ok && o.ok) {
-        return None;
-    }
-    Some(o.stdout.lines().filter_map(|l| l.split_once(' ')).map(|(id, sha)| (sha.to_string(), id.to_string())).collect())
+    git::patch_ids(dir, log_args).map(|ids| ids.into_iter().collect())
 }
 
 /// sd state --json <branch>: its record, NEXT included, as seen from <dir>,

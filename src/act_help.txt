@@ -137,10 +137,11 @@ Verbs:
             tokens
   restack   rebase --onto the parent (the default branch once the parent
             merged), check the branch's own change came through unchanged,
-            else roll back; never pushes. When the old base isn't an
-            ancestor but HEAD fully holds the merged parent (sync.by_tree),
-            it goes by tree merge instead: one commit, committed by
-            whoever runs it. Once the branch lands on the
+            less any commit git dropped as already on the target (named),
+            else roll back, unless --force keeps it (#406); never pushes.
+            When the old base isn't an ancestor but HEAD fully holds the
+            merged parent (sync.by_tree), it goes by tree merge instead:
+            one commit, committed by whoever runs it. Once the branch lands on the
             default branch, sd-parent is rewritten to it, unless the PR
             still targets the parent (retarget does that) or can't be
             read. A conflict is
@@ -371,7 +372,8 @@ failed step did.
   restack, push, ship   run even if taken over
   restack         even past a predicted conflict (rolled back if the rebase
                   stops), a closed PR or parent, an unknown merge or
-                  conflict, a stored answer, or someone else's commits
+                  conflict, a stored answer, or someone else's commits;
+                  and keep a change that came out different
   ship            ship though verify is red at HEAD
   implement, review, describe   the same
   implement       run though the branch is already ahead of its target (or
