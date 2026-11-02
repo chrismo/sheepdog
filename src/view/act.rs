@@ -52,7 +52,7 @@ pub fn offered(s: &Value) -> Value {
 }
 
 /// The registered repo whose branches/ dir is <id>'s.
-fn repo_of(id: &str) -> Option<String> {
+pub(super) fn repo_of(id: &str) -> Option<String> {
     let dir = id.split_once('/')?.0;
     registered().into_iter().find(|r| repo_key(r) == dir)
 }

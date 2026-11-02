@@ -729,6 +729,14 @@ pub fn explain_settings(dir: &str) -> Result<Vec<Value>, Vec<String>> {
     Ok(v["keys"].as_array().cloned().unwrap_or_default())
 }
 
+/// Every settings key the typed tables define, as dotted paths: the keys
+/// sd view may set from the page (view/settings.rs, #396).
+pub fn settings_keys() -> Vec<String> {
+    let mut out = Vec::new();
+    key_paths(Ty::Settings, "settings", &mut out);
+    out
+}
+
 /// Every key the typed tables define, as dotted paths in table order.
 fn key_paths(ty: Ty, prefix: &str, out: &mut Vec<String>) {
     let fields = fields_of(ty);

@@ -60,5 +60,12 @@ Usage: sd view [--port <n>] [--no-open]
   leaves alone: one someone else wrote, or whose remote has their commits. The step is sd view's: Ctrl-C ends it as
   it would a hand-run sd act, and sd view's log says it was stopped.
 
+  The drill-in also shows the branch's settings (sd config explain), each
+  with the layer it comes from. settings.autoRun, reviewRounds and
+  stepBudget can be set there: the page runs sd config set --branch
+  <branch>, so the value goes through sd config's own checks and lands in
+  the branch's file. The rest, interval among them (global file only), it
+  shows.
+
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser
