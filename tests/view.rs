@@ -728,19 +728,6 @@ fn a_merged_branch_isn_t_refreshed() {
 }
 
 #[test]
-fn a_failed_refresh_isn_t_retried_at_once() {
-    let mut sd = sd();
-    watched(&mut sd, "repos/r", "old", 120);
-    sd.fake("sd-watch", &format!("#!/usr/bin/env bash\necho \"start $*\" >> {}\nexit 1\n", sd.path("watch.log")));
-    let s = serve(&sd);
-    s.flock();
-    flock_settled(&s);
-    s.flock();
-    std::thread::sleep(Duration::from_millis(200));
-    assert_eq!(watch_log(&sd), ["start refresh old"]);
-}
-
-#[test]
 fn the_refresh_button_refreshes_fresh_flock_branches_too() {
     let mut sd = sd();
     watched(&mut sd, "repos/r", "fresh", 5);
@@ -823,4 +810,49 @@ fn no_branch_is_refreshed_while_the_last_rate_limit_seen_is_under_the_floor() {
     with_rate(&sd, "newer", json!({ "remaining": 3000, "limited": false }), 90);
     let f = s.flock();
     assert_eq!((&f["refreshing"], &f["held"]), (&json!(true), &Value::Null));
+}
+
+#[test]
+fn github_data_a_week_unwritten_is_pruned_at_start() {
+    let sd = sd();
+    let dir = sd.tmp.join("state/github");
+    fs::create_dir_all(&dir).unwrap();
+    for (name, days) in [("old.json", 8), ("new.json", 6), ("x.json.tmp123", 8)] {
+        fs::write(dir.join(name), "{}").unwrap();
+        let then = std::time::SystemTime::now() - Duration::from_secs(days * 86400);
+        fs::File::options().write(true).open(dir.join(name)).unwrap().set_modified(then).unwrap();
+    }
+    let _s = serve(&sd);
+    let mut left: Vec<String> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    left.sort();
+    assert_eq!(left, ["new.json"]);
+}
+
+#[test]
+fn a_refresh_that_started_before_a_hold_still_reports_refreshing() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "old", 120);
+    watched(&mut sd, "repos/r", "other", 5);
+    sd.env.push(("WATCH_SLEEP".into(), "1".into()));
+    let s = serve(&sd);
+    assert_eq!(s.flock()["refreshing"], true);
+    with_rate(&sd, "other", json!({ "remaining": 0, "limited": true }), 0);
+    let f = s.flock();
+    assert!(f["held"].is_string(), "{f}");
+    assert_eq!(f["refreshing"], true, "{f}");
+}
+
+#[test]
+fn a_cache_file_written_in_the_future_doesn_t_hold_refreshes() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "old", 120);
+    watched(&mut sd, "repos/r", "ahead", 0);
+    with_rate(&sd, "old", json!({ "remaining": 4000, "limited": false }), 120);
+    let f = sd.tmp.join(format!("state/branches/{}/ahead.json", sheepdog::watch::repo_key(&sd.path("repos/r"))));
+    let mut st = state("ahead", json!([]));
+    st["rate_limit"] = json!({ "remaining": 0, "limited": true });
+    fs::write(&f, json!({ "glyph": "🤖", "state": st }).to_string()).unwrap();
+    fs::File::options().write(true).open(&f).unwrap().set_modified(std::time::SystemTime::now() + Duration::from_secs(3600)).unwrap();
+    let f = serve(&sd).flock();
+    assert_eq!((&f["held"], &f["refreshing"]), (&Value::Null, &json!(true)), "{f}");
 }

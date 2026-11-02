@@ -56,7 +56,9 @@ pub fn checked(state: &Path, c: &Cached) -> Option<String> {
 
 /// Why no refresh may start for GitHub's rate limit, as the pass says it.
 pub fn held(state: &Path, cached: &[Cached]) -> Option<String> {
-    let s = &cached.iter().filter_map(|c| Some((written(state, c)?, c.doc.as_ref()?))).max_by_key(|(w, _)| *w)?.1["state"];
+    let now = now_ms();
+    let freshest = cached.iter().filter_map(|c| Some((written(state, c).filter(|&w| w <= now)?, c.doc.as_ref()?)));
+    let s = &freshest.max_by_key(|(w, _)| *w)?.1["state"];
     let floor: f64 = config::get_global("settings.rateLimitFloor", false).ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
     let left = t(s, "rate_limit.remaining");
     if on(s, "rate_limit.limited") {
@@ -70,6 +72,10 @@ pub fn held(state: &Path, cached: &[Cached]) -> Option<String> {
 
 fn done(c: &Cached) -> bool {
     c.doc.as_ref().is_some_and(|d| matches!(t(&d["state"], "pr.state").as_str(), "MERGED" | "CLOSED"))
+}
+
+pub fn running() -> bool {
+    branches().running.is_some()
 }
 
 /// Starts the stalest branch's refresh unless one is running; whether one is.

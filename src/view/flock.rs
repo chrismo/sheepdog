@@ -205,7 +205,7 @@ pub fn flock(state: &Path) -> Value {
         })
         .collect();
     let held = super::refresh::held(state, &cached);
-    let refreshing = held.is_none() && super::refresh::refreshing(state, &cached);
+    let refreshing = if held.is_none() { super::refresh::refreshing(state, &cached) } else { super::refresh::running() };
     json!({"at": at, "branches": cards, "refreshing": refreshing, "held": held})
 }
 

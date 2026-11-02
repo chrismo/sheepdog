@@ -53,6 +53,13 @@ pub fn run(argv: &[String]) -> ExitCode {
         }
     }
     let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| die(format!("127.0.0.1:{port}: {e}")));
+    let state = state_dir();
+    cache::prune(Path::new(&state));
+    let pruning = state.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(3600));
+        cache::prune(Path::new(&pruning));
+    });
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let url = format!("http://127.0.0.1:{port}/");
     println!("sd view: {url} (Ctrl-C stops it)");
@@ -60,7 +67,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
         let _ = Command::new(opener).arg(&url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
-    let (state, token) = (state_dir(), guard::token());
+    let token = guard::token();
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
