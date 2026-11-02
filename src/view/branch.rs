@@ -102,7 +102,9 @@ pub(super) fn find(state: &Path, id: &str) -> Option<Cached> {
 
 /// None for an id the cache listing doesn't have. An unreadable file's
 /// card has null flow, next, owed and act. act is the step the drill-in's
-/// button runs (view/act.rs, #396), acting its key while it runs.
+/// button runs (view/act.rs, #396), acting its key while it runs, and
+/// settings the branch's settings.* with their layers (view/settings.rs),
+/// null when its repo isn't registered.
 pub fn detail(state: &Path, id: &str) -> Option<Value> {
     let c = find(state, id)?;
     let mut card = flock::card(&c);
@@ -118,6 +120,7 @@ pub fn detail(state: &Path, id: &str) -> Option<Value> {
         card["act"] = super::act::offered(s);
     }
     card["acting"] = super::act::running(id);
+    card["settings"] = super::act::repo_of(id).map_or(Value::Null, |repo| super::settings::list(&repo, &c.branch));
     Some(card)
 }
 

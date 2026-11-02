@@ -8,9 +8,11 @@
 //
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
 // rebind its name to 127.0.0.1. Writes go to POST /api/act (view/act.rs: a
-// branch's NEXT step, run as the watcher runs it) behind the guard
-// (view/guard.rs, #396): this run's token, which the page carries, and our
-// own Origin, as does POST /api/refresh, the pages' refresh button (#401).
+// branch's NEXT step, run as the watcher runs it) and POST /api/config
+// (view/settings.rs: one of a branch's settings, set as sd config sets it)
+// behind the guard (view/guard.rs, #396): this run's token, which the page
+// carries, and our own Origin, as does POST /api/refresh, the pages' refresh
+// button (#401).
 
 mod act;
 mod atlas;
@@ -21,6 +23,7 @@ mod guard;
 mod links;
 mod map;
 mod refresh;
+mod settings;
 mod timeline;
 
 use crate::config::state_dir;
@@ -122,8 +125,11 @@ fn read_request(r: &mut impl BufRead) -> Option<Request> {
     Some(req)
 }
 
+const WRITES: [&str; 3] = ["/api/act", "/api/config", "/api/refresh"];
+
 /// The guarded writes: /api/refresh makes GitHub data stale, /api/act runs
-/// a branch's NEXT step (view/act.rs).
+/// a branch's NEXT step (view/act.rs), /api/config sets one of its settings
+/// (view/settings.rs).
 fn write(route: &str, req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
     if req.method != "POST" {
         return ("405 Method Not Allowed", "text/plain", "a write is a POST\n".into());
@@ -131,11 +137,14 @@ fn write(route: &str, req: &Request, port: u16, token: &str, state: &Path) -> (&
     if let Some(why) = guard::refusal(req, port, token) {
         return ("403 Forbidden", "text/plain", why.into());
     }
-    if route == "/api/refresh" {
-        cache::force();
-        return ("200 OK", "text/plain", "GitHub data is stale: the next read fetches it again\n".into());
-    }
-    let (status, body) = act::run(state, &req.body);
+    let (status, body) = match route {
+        "/api/refresh" => {
+            cache::force();
+            ("200 OK", "GitHub data is stale: the next read fetches it again\n".into())
+        }
+        "/api/config" => settings::set(state, &req.body),
+        _ => act::run(state, &req.body),
+    };
     (status, "text/plain", body)
 }
 
@@ -145,7 +154,7 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")));
     }
     let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
-    if route == "/api/act" || route == "/api/refresh" {
+    if WRITES.contains(&route) {
         return write(route, req, port, token, state);
     }
     if req.method != "GET" {

@@ -54,8 +54,8 @@ h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font
 .now { font-size: 0.82rem; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, var(--cc) 12%, transparent); display: grid; gap: 4px; overflow-wrap: anywhere; }
 .now .cmd { display: flex; gap: 6px; align-items: center; }
 .now code { font-family: var(--f-mono); font-size: 0.74rem; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
-.copy { font: inherit; font-size: 0.7rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 3px; padding: 1px 6px; cursor: pointer; }
-.copy:focus-visible { outline: 2px solid var(--wait); }
+.copy, .setbtn { font: inherit; font-size: 0.7rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 3px; padding: 1px 6px; cursor: pointer; }
+.copy:focus-visible, .setbtn:focus-visible { outline: 2px solid var(--wait); }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; }
 .step { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; min-height: 22px; position: relative; font-size: 0.8rem; }
 .step::before { content: ""; position: absolute; left: 8px; top: -6px; height: 12px; width: 2px; background: var(--line); }
@@ -113,6 +113,20 @@ body:not(.drill) #detail { display: none; }
 .act:hover { background: color-mix(in srgb, var(--agent) 12%, transparent); }
 .act:disabled { opacity: 0.6; cursor: default; }
 .act:focus-visible { outline: 2px solid var(--wait); }
+.set { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 0.85rem; }
+.set li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; min-width: 0; }
+.set .k { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.set .v { color: var(--muted); font-family: var(--f-mono); font-size: 0.78rem; text-align: right; overflow-wrap: anywhere; max-width: 260px; }
+.set .v:empty::before { content: "—"; }
+.set .layer { font-family: var(--f-mono); font-size: 0.7rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; white-space: nowrap; }
+.set .layer.branch { color: var(--ink); border-color: var(--agent); }
+.set .edit { display: flex; gap: 6px; align-items: center; justify-self: end; }
+.set input[type=number] { font: inherit; font-family: var(--f-mono); font-size: 0.8rem; width: 5.5em; padding: 2px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink); }
+.set input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--agent); cursor: pointer; }
+details.more > summary { cursor: pointer; font-size: 0.8rem; color: var(--muted); }
+details.more[open] > summary { margin-bottom: 8px; }
+.setsay { min-height: 1.2em; }
+.setsay.bad { color: var(--red); }
 details.tl > summary { cursor: pointer; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 details.tl[open] > summary { margin-bottom: 10px; }
 .tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
@@ -238,6 +252,59 @@ function owedHtml(o) {
   return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
 }
 
+// Settings (#396): the server lists each settings.* key with its layer and
+// which the page may set; sd config checks the value, so the page only sends it.
+const NUM_STEP = { "settings.reviewRounds": "1", "settings.stepBudget": "any" };
+const showVal = v => v === null || v === undefined ? "" : Array.isArray(v) ? v.map(x => typeof x === "string" ? x : JSON.stringify(x)).join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v);
+function settingRow(k) {
+  const name = k.path.replace(/^settings\./, "");
+  const layer = `<span class="layer ${k.source === "branch" ? "branch" : ""}" title="the layer this value comes from">${esc(k.source)}</span>`;
+  let v;
+  if (!k.editable) v = `<span class="v">${esc(showVal(k.value))}</span>`;
+  else if (typeof k.value === "boolean") v = `<span class="edit"><input type="checkbox" data-set="${esc(k.path)}" aria-label="${esc(name)}"${k.value ? " checked" : ""}></span>`;
+  else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="setbtn" type="button" data-set="${esc(k.path)}">set</button></span>`;
+  return `<li><span class="k">${esc(name)}</span>${v}${layer}</li>`;
+}
+// The last set's word and whether "all settings" is open, per branch: the
+// drill-in is redrawn whole, so both are drawn from here, not left in the old DOM.
+let setNote = { id: "", text: "", bad: false }, moreOpen = { id: "", open: false };
+function settingsHtml(b) {
+  if (!b.settings) return `<div class="panel"><h3>Settings</h3><p class="none">Not read: the branch's repo isn't registered with sd watch, or sd config couldn't explain it.</p></div>`;
+  const edit = b.settings.filter(k => k.editable), rest = b.settings.filter(k => !k.editable);
+  const note = setNote.id === b.id ? setNote : { text: "", bad: false };
+  const open = moreOpen.id === b.id && moreOpen.open;
+  return `<div class="panel"><h3>Settings</h3>
+    <ul class="set">${edit.map(settingRow).join("")}</ul><p class="none setsay${note.bad ? " bad" : ""}">${esc(note.text)}</p>
+    <details class="more"${open ? " open" : ""}><summary>all ${b.settings.length} settings</summary><ul class="set">${rest.map(settingRow).join("")}</ul></details></div>`;
+}
+
+function sayNote(id, text, bad) {
+  setNote = { id, text, bad };
+  const say = document.querySelector(".setsay");
+  if (!say) return;
+  say.textContent = text;
+  say.classList.toggle("bad", bad);
+}
+
+async function setConfig(path, value) {
+  const id = openId();
+  if (!id) return;
+  sayNote(id, `setting ${path.replace(/^settings\./, "")}…`, false);
+  let r, text;
+  try {
+    r = await fetch("/api/config", { method: "POST", headers: { "X-Sd-Token": TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, path, value }) });
+    text = (await r.text()).trim();
+  } catch (e) {
+    text = "can't reach sd view";
+  }
+  if (openId() !== id) return;
+  sayNote(id, r?.ok ? text : r?.status === 403 ? "refused: reload the page" : text, !r?.ok);
+  // Redraw either way: a set shows its new value, a refused one puts the control back.
+  shown = "";
+  poll(true);
+}
+
 // The server says which step gets a button (act: {key, verb}) and whether it's running (acting).
 function actLine(b) {
   if (b.acting) return `<p class="actline"><button class="act" type="button" disabled>running…</button><span>sd act ${esc(b.act?.verb || b.acting)}, as the watcher would run it</span></p>`;
@@ -275,17 +342,23 @@ async function runStep(btn) {
   poll(true);
 }
 
-let shown = "";
+let shown = "", shownId = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
   if (key === shown && $("dmain").innerHTML) return;
+  // A redraw under a value being typed would lose it: the next poll draws it.
+  if (document.activeElement?.matches("#dmain input[type=number]")) return;
   shown = key;
+  const more = document.querySelector("#dmain details.more");
+  if (more) moreOpen = { id: shownId, open: more.open };
+  if (moreOpen.id !== b.id) moreOpen = { id: b.id, open: false };
+  shownId = b.id;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
       <div class="meta"><span>${prLink(b)}</span>${usd(b)}${checked(b)}</div></div>
     <div class="dgrid">
-      <div class="col"><div class="panel flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div></div>
+      <div class="col"><div class="panel flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div>${settingsHtml(b)}</div>
       <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}${actLine(b)}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
 }
@@ -460,11 +533,18 @@ document.addEventListener("click", async e => {
   if (e.target.closest("[data-refresh]")) { refreshGh().then(() => poll(true), () => {}); return; }
   const a = e.target.closest("[data-act]");
   if (a) { runStep(a); return; }
+  const st = e.target.closest("button[data-set]");
+  if (st) { setConfig(st.dataset.set, st.previousElementSibling.value); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card[data-id]");
   if (c) openCard(c);
 });
+document.addEventListener("change", e => {
+  const t = e.target;
+  if (t.matches?.("input[type=checkbox][data-set]")) setConfig(t.dataset.set, t.checked ? "true" : "false");
+});
 document.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.matches?.("input[data-path]")) { setConfig(e.target.dataset.path, e.target.value); e.target.blur(); return; }
   if (e.key === "Escape" && openId()) location.hash = "";
   else if (e.key === "Enter" && e.target.matches?.(".card[data-id]")) openCard(e.target);
 });

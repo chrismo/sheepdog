@@ -171,7 +171,7 @@ fn root_serves_the_page() {
     let (code, head, body) = serve(&sd).get("/");
     assert_eq!(code, 200, "{head}");
     assert_has(&head.to_lowercase(), &["content-type: text/html"]);
-    assert_has(&body, &["<title>", "data-act", "/api/act", "/api/flock"]);
+    assert_has(&body, &["<title>", "data-set", "/api/config", "data-act", "/api/act", "/api/flock"]);
 }
 
 #[test]
@@ -224,7 +224,8 @@ fn help_and_unknown_options() {
     let sd = sd();
     let r = sd.run(&["--help"]);
     assert_eq!(r.status, 0);
-    assert_has(&r.output, &["Usage: sd view", "--port", "--no-open", "button", "sd act", "watcher"]);
+    assert_has(&r.output, &["Usage: sd view", "--port", "--no-open", "button", "sd act", "watcher",
+                            "settings.autoRun", "reviewRounds", "stepBudget", "sd config"]);
     let r = sd.run(&["--frob"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["sd view: unknown option: --frob"]);
@@ -272,6 +273,8 @@ fn drilling_into_a_branch_serves_its_flow_next_and_owed() {
     assert_eq!(b["owed"]["failing"], json!(["cargo-test"]));
     assert_eq!(b["owed"]["question"]["text"], "which way?");
     assert_eq!(b["owed"]["threads"][0]["excerpt"], "rename it");
+    // /src/sheepdog isn't registered with sd watch: nowhere to read its settings.
+    assert_eq!(b["settings"], Value::Null);
 }
 
 #[test]
@@ -450,6 +453,7 @@ fn a_get_never_writes() {
     let mut sd = sd();
     watched(&mut sd, "repos/r", "feat", 5);
     acting(&mut sd);
+    configuring(&mut sd);
     let id = with_next(&sd, "feat", json!([{ "key": "review", "who": "agent", "say": "review it", "cmd": "sd act review" }]));
     let s = serve(&sd);
     let token = page_token(&s);
@@ -459,8 +463,12 @@ fn a_get_never_writes() {
     let path = format!("/api/act?id={}&key=review", id.replace('/', "%2F"));
     let (code, body) = write_to(&s, &path, "GET", Some(&ours), Some(&token));
     assert_eq!(code, 405, "{body}");
+    let path = format!("/api/config?id={}&path=settings.autoRun&value=true", id.replace('/', "%2F"));
+    let (code, body) = write_to(&s, &path, "GET", Some(&ours), Some(&token));
+    assert_eq!(code, 405, "{body}");
     std::thread::sleep(Duration::from_millis(200));
     assert!(act_log(&sd).is_empty(), "{:?}", act_log(&sd));
+    assert!(config_log(&sd).iter().all(|l| l.contains(" explain ")), "{:?}", config_log(&sd));
 }
 
 // Past the guard, the action reads the body: {} names no branch or step.
@@ -696,6 +704,145 @@ fn one_step_runs_at_a_time() {
     assert_eq!(act(&s, &other, "push").0, 200);
     acted(&s, &other);
     assert_eq!(act_log(&sd).len(), 4, "{:?}", act_log(&sd));
+}
+
+// The drill-in's settings (#396): every settings.* key with its value and the
+// layer it came from, read with `sd config explain --json --branch <b>` in the
+// branch's repo, and the few a branch tunes day to day set with `sd config set
+// --branch <b>`; sd config does the typing, so its refusal is the page's.
+const EXPLAIN: &str = r#"{"keys":[
+  {"path":"harness","value":"claude","source":"defaults","overrides":[]},
+  {"path":"settings.autoRun","value":true,"source":"branch","overrides":["defaults"]},
+  {"path":"settings.reviewRounds","value":3,"source":"defaults","overrides":[]},
+  {"path":"settings.verify","value":"cargo test","source":"repo","overrides":[]},
+  {"path":"settings.interval","value":300,"source":"defaults","overrides":[]}],
+ "warnings":[],"steps":{}}"#;
+
+/// A fake sd config (SHEEPDOG_CONFIG_PROGRAM) that logs "<cwd> <args>" to
+/// config.log; explain prints EXPLAIN, or fails saying explain.fail's text
+/// while that file is there, and set refuses the value x as sd config
+/// refuses a bad one.
+fn configuring(sd: &mut Sd) {
+    let log = sd.path("config.log");
+    let explain = sd.path("explain.json");
+    let fail = sd.path("explain.fail");
+    fs::write(&explain, EXPLAIN).unwrap();
+    sd.fake("sd-config", &format!(
+        "#!/usr/bin/env bash\necho \"$(pwd -P) $*\" >> {log}\n\
+         if [ \"$1\" = explain ]; then if [ -f {fail} ]; then cat {fail} >&2; exit 1; fi; cat {explain}; exit 0; fi\n\
+         if [ \"$6\" = x ]; then echo 'sd config: settings.reviewRounds: expected a whole number of 0 or more, got \"x\"' >&2; exit 1; fi\n"));
+    sd.env.push(("SHEEPDOG_CONFIG_PROGRAM".into(), sd.path("fakebin/sd-config")));
+}
+
+fn config_log(sd: &Sd) -> Vec<String> {
+    fs::read_to_string(sd.path("config.log")).unwrap_or_default().lines().map(str::to_string).collect()
+}
+
+// The drill-in reads a branch on every poll: a failing explain is logged when
+// its failure is new, not on each read.
+#[test]
+fn a_failing_explain_is_logged_once_till_its_failure_changes() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let log = sd.path("view.log");
+    let s = serve_logging(&sd, &log);
+    let fail = sd.path("explain.fail");
+    let explains = || fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("sd config explain")).map(str::to_string).collect::<Vec<_>>();
+    fs::write(&fail, "sd config: bad branch file\n").unwrap();
+    for _ in 0..3 {
+        assert_eq!(branch(&s, &id).1["settings"], Value::Null);
+    }
+    assert_eq!(explains().len(), 1, "{:?}", explains());
+    assert_has(&explains()[0], &["feat", "bad branch file"]);
+    fs::write(&fail, "sd config: worse branch file\n").unwrap();
+    branch(&s, &id);
+    branch(&s, &id);
+    assert_eq!(explains().len(), 2, "{:?}", explains());
+    fs::remove_file(&fail).unwrap();
+    assert!(branch(&s, &id).1["settings"].is_array());
+    fs::write(&fail, "sd config: worse branch file\n").unwrap();
+    branch(&s, &id);
+    assert_eq!(explains().len(), 3, "{:?}", explains());
+}
+
+/// POST /api/config {id, path, value} from our page, with the run's token.
+fn set_config(s: &Server, id: &str, path: &str, value: &str) -> (u16, String) {
+    let host = format!("127.0.0.1:{}", s.port);
+    let origin = format!("http://{host}");
+    let token = page_token(s);
+    let hs = [("Host", host.as_str()), ("Origin", origin.as_str()), ("X-Sd-Token", token.as_str()), ("Content-Type", "application/json")];
+    let (code, _, body) = s.send_body("POST", "/api/config", &hs, &json!({ "id": id, "path": path, "value": value }).to_string());
+    (code, body)
+}
+
+#[test]
+fn the_drill_in_shows_the_branch_s_settings_with_their_layers() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let s = serve(&sd);
+    let (code, b) = branch(&s, &id);
+    assert_eq!(code, 200, "{b}");
+    let paths: Vec<&str> = b["settings"].as_array().unwrap().iter().map(|k| k["path"].as_str().unwrap()).collect();
+    assert_eq!(paths, ["settings.autoRun", "settings.reviewRounds", "settings.verify", "settings.interval"]);
+    assert_eq!(b["settings"][0], json!({ "path": "settings.autoRun", "value": true, "source": "branch", "editable": true }));
+    assert_eq!(b["settings"][1], json!({ "path": "settings.reviewRounds", "value": 3, "source": "defaults", "editable": true }));
+    assert_eq!(b["settings"][2]["editable"], false);
+    assert_eq!(b["settings"][3]["editable"], false);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(config_log(&sd), [format!("{repo} explain --json --branch feat")]);
+}
+
+#[test]
+fn a_guarded_post_sets_a_setting_with_sd_config() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let s = serve(&sd);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    assert_eq!(write_to(&s, "/api/config", "POST", Some(&ours), None).0, 403);
+    assert_eq!(write_to(&s, "/api/config", "POST", Some("http://evil.example"), Some(&page_token(&s))).0, 403);
+    assert_eq!(write_to(&s, "/api/config", "GET", Some(&ours), Some(&page_token(&s))).0, 405);
+    assert!(config_log(&sd).is_empty(), "{:?}", config_log(&sd));
+    let (code, body) = set_config(&s, &id, "settings.reviewRounds", "5");
+    assert_eq!(code, 200, "{body}");
+    assert_has(&body, &["settings.reviewRounds", "5", "feat"]);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(config_log(&sd), [format!("{repo} set --branch feat -- settings.reviewRounds 5")]);
+    assert_eq!(set_config(&s, "nope/x", "settings.autoRun", "true").0, 404);
+}
+
+#[test]
+fn a_path_the_page_doesn_t_set_is_refused() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let s = serve(&sd);
+    for path in ["settings.verify", "settings.flags.skips", "settings.nope", "harness", "steps.review.harness", "settings.autoRun.x", "profile", ""] {
+        let (code, body) = set_config(&s, &id, path, "true");
+        assert_eq!(code, 400, "{path}: {body}");
+        if !path.is_empty() {
+            assert_has(&body, &[path]);
+        }
+    }
+    assert!(config_log(&sd).is_empty(), "{:?}", config_log(&sd));
+}
+
+#[test]
+fn a_bad_value_is_refused_with_sd_config_s_own_words() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let s = serve(&sd);
+    let (code, body) = set_config(&s, &id, "settings.reviewRounds", "x");
+    assert_eq!(code, 400, "{body}");
+    assert_has(&body, &["settings.reviewRounds: expected a whole number of 0 or more"]);
 }
 
 // The Map (#378) reads the checkout the binary was built in: here, this one.
