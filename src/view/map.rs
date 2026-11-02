@@ -196,7 +196,8 @@ fn sample(dir: &str, sha: &str, date: &str) -> Result<Value, String> {
     let fail = |o: &crate::proc::Out| format!("git: {}", o.stderr.trim());
     // git grep exits 1 for no match: no lines under src/ or tests/.
     let grep = git(dir, &["grep", "-c", "", sha, "--", "src", "tests"]);
-    if !grep.ok && !(grep.code == 1 && grep.stderr.trim().is_empty()) {
+    let no_match = grep.code == 1 && grep.stderr.trim().is_empty();
+    if !grep.ok && !no_match {
         return Err(fail(&grep));
     }
     let (src, tests) = tree_lines(&grep.stdout);
