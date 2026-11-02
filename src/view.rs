@@ -2,8 +2,9 @@
 // the Flock page, GET /api/flock its data from the watcher's cache; GET /map
 // the Map page (#378), GET /api/map its data from sheepdog's own source; GET
 // /atlas the Atlas page (#377), GET /api/atlas its data from the step table
-// and the gates. std's TcpListener, a thread per connection: a browser's idle
-// preconnect socket mustn't hold up the page.
+// and the gates; the three link into each other (view/links.rs, #375). std's
+// TcpListener, a thread per connection: a browser's idle preconnect socket
+// mustn't hold up the page.
 //
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
 // rebind its name to 127.0.0.1. Writes go to POST /api/act (view/act.rs: a
@@ -17,6 +18,7 @@ mod branch;
 mod cache;
 mod flock;
 mod guard;
+mod links;
 mod map;
 mod refresh;
 mod timeline;
@@ -154,9 +156,13 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
         "/map" => ("200 OK", "text/html; charset=utf-8", MAP_PAGE.replace("__SD_TOKEN__", token)),
         "/gh.js" => ("200 OK", "text/javascript; charset=utf-8", GH_JS.into()),
-        "/api/map" => ("200 OK", "application/json", map::map(state).to_string()),
+        "/api/map" => {
+            let mut m = map::map(state);
+            links::add_steps(&mut m);
+            ("200 OK", "application/json", m.to_string())
+        }
         "/atlas" => ("200 OK", "text/html; charset=utf-8", ATLAS_PAGE.replace("__SD_TOKEN__", token)),
-        "/api/atlas" => ("200 OK", "application/json", atlas::atlas().to_string()),
+        "/api/atlas" => ("200 OK", "application/json", atlas::atlas(state).to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();
             let found = match route {

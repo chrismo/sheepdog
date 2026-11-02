@@ -52,7 +52,7 @@ const PLACES: &[(&str, &str)] = &[
 ];
 
 /// The checkout the binary was built in: lib/'s parent.
-fn root() -> PathBuf {
+pub(super) fn root() -> PathBuf {
     crate::guidance::lib_dir().parent().map(Path::to_path_buf).unwrap_or_default()
 }
 

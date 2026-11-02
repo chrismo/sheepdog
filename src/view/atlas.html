@@ -86,6 +86,9 @@ h3 { margin: 0; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 
 .rules .clears, .rules .applies { grid-column: 2; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
 @media (max-width: 600px) { .rules { grid-template-columns: 1fr; } .rules .clears, .rules .applies { grid-column: 1; } }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.links { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.84rem; }
+.links a { font-family: var(--f-mono); font-size: 0.8rem; color: var(--ink); }
+.links .sub { font-size: 0.74rem; color: var(--muted); margin-left: 6px; }
 .settings { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr max-content max-content; gap: 4px 12px; font-size: 0.84rem; align-items: baseline; }
 .setting { display: contents; }
 .setting .path { font-family: var(--f-mono); font-size: 0.8rem; }
@@ -112,7 +115,7 @@ body.sheet footer { margin-bottom: 50vh; }
   </header>
   <section><h2>Checked before anything else<span class="n" id="nholds"></span></h2><div class="holds" id="holds"></div></section>
   <section><h2>Then, stage by stage<span class="n" id="nsteps"></span></h2><div id="stages"></div></section>
-  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a stage for its steps, a step for what stops its verb and the settings that tune it, with this repo's values (sd config explain).</footer>
+  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a stage for its steps, a step for the branches at it now, what stops its verb, the settings that tune it, with this repo's values (sd config explain), and its files in the Map.</footer>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script>
@@ -174,6 +177,13 @@ function settingsHtml(s) {
   return `<h3>Settings that tune it</h3>${err}<ul class="settings">${rows}</ul>`;
 }
 
+const link = (href, text) => `<a href="${href}">${esc(text)}</a>`;
+function branchesHtml(s) {
+  const at = s.branches.map(b => `<li>${link("/#b=" + encodeURIComponent(b.id), b.branch)}<span class="sub">${esc(b.repo)}</span></li>`).join("");
+  return `<h3>Branches at it now</h3>${at ? `<ul class="links">${at}</ul>` : `<p class="none">None: no branch in the Flock has this as its next step.</p>`}`;
+}
+const filesHtml = s => `<h3>In the code</h3><ul class="links">${s.files.map(p => `<li>${link("/map#p=" + encodeURIComponent(p), p)}</li>`).join("")}</ul>`;
+
 async function copy(btn) {
   try { await navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "copied"; }
   catch { btn.textContent = "can't copy"; }
@@ -188,9 +198,10 @@ function showStep(k) {
   document.querySelector(`[data-k="${CSS.escape(k)}"]`)?.classList.add("on");
   const where = stageOf(k) ? NAME[stageOf(k)] : "holds the whole line";
   $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))} · ${esc(where)}${s.glyph ? " · " + esc(s.glyph) : ""}</span></span>` +
-    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${rulesHtml(v)}${settingsHtml(s)}`;
+    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${branchesHtml(s)}${rulesHtml(v)}${settingsHtml(s)}${filesHtml(s)}`;
   $("sheet").hidden = false;
   document.body.classList.add("sheet");
+  if (arriving) document.querySelector(".on")?.scrollIntoView({ block: "center" });
 }
 
 function hideStep() {
@@ -199,7 +210,8 @@ function hideStep() {
   document.querySelectorAll(".on").forEach(e => e.classList.remove("on"));
 }
 
-// #s=<stage> opens a stage; #k=<key> opens a step and its stage.
+// #s=<stage> opens a stage; #k=<key> opens a step and its stage, scrolled to on arrival.
+let arriving = true;
 function hashed() {
   const m = location.hash.match(/^#(s|k)=(.+)$/);
   try { return m ? { [m[1]]: decodeURIComponent(m[2]) } : {}; } catch { return {}; }
@@ -213,6 +225,7 @@ function route() {
   document.querySelectorAll(".stage").forEach(b => b.classList.toggle("open", b.dataset.s === open));
   document.querySelectorAll(".steps").forEach(u => (u.hidden = u.dataset.s !== open));
   if (k) showStep(k); else hideStep();
+  arriving = false;
 }
 
 document.addEventListener("click", e => {

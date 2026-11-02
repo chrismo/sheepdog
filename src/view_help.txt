@@ -36,6 +36,12 @@ Usage: sd view [--port <n>] [--no-open]
   split (2026-10-13): lines in src/ and tests/, and functions over the cap.
   It reads the checkout sd was built from, whatever repo sd view runs in.
 
+  The three link into each other: a step in a branch's drill-in opens that
+  step in the Atlas; an Atlas step lists the branches whose next step it is
+  now, each opening its drill-in, and the files behind it (its verb's under
+  src/act/, its gate, the step table), each opening in the Map; a Map file
+  lists the Atlas steps that live in it.
+
   GitHub data is cached under <state>/github/ and served at once; the first
   read after it's a minute old fetches it again in the background, so with
   no page open nothing is asked. A file not fetched for a week is deleted.
