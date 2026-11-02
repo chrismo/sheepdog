@@ -2,8 +2,8 @@
 // served at once. Once it's FRESH_SECS old, or the page's refresh button made
 // everything stale, the request that sees it starts a fetch on a thread and
 // answers with what's there; the page asks again while "refreshing".
-// A failed fetch keeps the last data beside its error. Nothing prunes these
-// files yet: slice 2 of #401 has the watcher drop them with a branch.
+// A failed fetch keeps the last data beside its error. Every try rewrites its
+// file, so one PRUNE_DAYS unwritten is one no page has read since: prune drops it.
 
 use crate::time::utc;
 use serde_json::{json, Value};
@@ -15,6 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const FRESH_SECS: u64 = 60;
+const PRUNE_DAYS: u64 = 7;
 /// Each key's fetch running, one at a time, and when each was last tried: a
 /// try whose file couldn't be written still counts, or every read would
 /// start another.
@@ -58,6 +59,19 @@ pub fn gh_error(stderr: &str, what: &str) -> String {
         "" => format!("gh: no {what} in its answer"),
         e if e.starts_with("gh:") => e.to_string(),
         e => format!("gh: {e}"),
+    }
+}
+
+/// Removes <state>/github/'s files PRUNE_DAYS unwritten, a dead write's temp file included.
+pub fn prune(state: &Path) {
+    let horizon = std::time::Duration::from_secs(PRUNE_DAYS * 86400);
+    for e in fs::read_dir(state.join("github")).into_iter().flatten().flatten() {
+        let old = e.metadata().and_then(|m| m.modified()).ok().and_then(|m| m.elapsed().ok()).is_some_and(|age| age >= horizon);
+        if old {
+            if let Err(err) = fs::remove_file(e.path()) {
+                eprintln!("sd view: {}: {err}", e.path().display());
+            }
+        }
     }
 }
 
