@@ -1,16 +1,22 @@
 // The Atlas's data (#377): every NEXT step by stage from src/next/steps.rs
 // and each verb's gate rules from src/act/gates.rs, so the page can't drift
 // from the code, and the settings each step reads (steps::settings_of) with
-// this repo's value and layer from one sd config explain per request. No
-// branch state is read: each rule list comes off probes(), with a rule
-// worded by state listed once per wording, and refuses is ignored.
+// this repo's value and layer from one sd config explain per request, and
+// its links (view/links.rs, #375): the files behind it and the branches at
+// it now. No branch state is read for the rules: each rule list comes off
+// probes(), with a rule worded by state listed once per wording, and
+// refuses is ignored.
 
+use super::flock::{self, Cached};
+use super::links;
 use crate::act::gates::Gated;
 use crate::act::verbs::{Scope, Verb, VERBS};
 use crate::act::{Level, Rule};
 use crate::next::steps::{settings_of, Stage, StepDef, STEPS};
 use crate::next::Derived;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
+use std::path::Path;
 
 /// What --force does with a rule at <level>, as #377 words it.
 fn means(level: Level) -> &'static str {
@@ -32,9 +38,17 @@ fn declared(verb: &str) -> &str {
     VERBS.iter().find(|v| v.step() == verb).map_or(verb, |v| v.name)
 }
 
-fn step(d: &StepDef, traced: &[Value]) -> Value {
+/// The branches at each key, and whether the Map has a file.
+struct Links<'a> {
+    at: BTreeMap<String, Vec<Value>>,
+    exists: &'a dyn Fn(&str) -> bool,
+}
+
+fn step(d: &StepDef, traced: &[Value], links: &Links) -> Value {
     let settings: Vec<Value> = settings_of(d).into_iter().map(|k| setting(k, traced)).collect();
-    json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph, "settings": settings})
+    let branches = links.at.get(d.key).cloned().unwrap_or_default();
+    json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph,
+           "settings": settings, "files": links::files_of(d, links.exists), "branches": branches})
 }
 
 /// settings.<key> with this repo's value and layer (null when config can't
@@ -136,18 +150,22 @@ fn verb(v: &Verb) -> Value {
 /// verbs: [{name, agent, spends, checks: [id], rules: [{name, level, means,
 /// clears}] or null}], checks: [{id, name, level, means, clears, applies}],
 /// configError: what sd config said, or null}. A step is {key, who, label,
-/// meaning, verb, glyph, settings: [{path, value, layer, set}]}, its
-/// settings' values and layers from the repo sd view runs in.
-pub fn atlas() -> Value {
-    with_config(crate::config::explain_settings("."))
+/// meaning, verb, glyph, settings: [{path, value, layer, set}], files:
+/// [path], branches: [{id, repo, branch}]}, its settings' values and layers
+/// from the repo sd view runs in, its branches those of the watcher's cache
+/// under <state> whose NEXT first step it is.
+pub fn atlas(state: &Path) -> Value {
+    build(crate::config::explain_settings("."), &flock::cached(state))
 }
 
-fn with_config(explained: Result<Vec<Value>, Vec<String>>) -> Value {
+fn build(explained: Result<Vec<Value>, Vec<String>>, cached: &[Cached]) -> Value {
     let (traced, error) = match explained {
         Ok(t) => (t, Value::Null),
         Err(lines) => (vec![], json!(lines.join("\n"))),
     };
-    let step = |d: &StepDef| step(d, &traced);
+    let root = super::map::root();
+    let links = Links { at: links::branches_at(cached), exists: &|p| root.join(p).is_file() };
+    let step = |d: &StepDef| step(d, &traced, &links);
     let holds: Vec<Value> = STEPS.iter().filter(|d| d.stage == Stage::Hold).map(step).collect();
     let stages: Vec<Value> = Stage::FLOW
         .iter()
@@ -176,6 +194,10 @@ mod tests {
     /// global and repo files, and reading one can rewrite it (RENAMED).
     fn unconfigured() -> Value {
         with_config(Ok(vec![]))
+    }
+
+    fn with_config(explained: Result<Vec<Value>, Vec<String>>) -> Value {
+        build(explained, &[])
     }
 
     fn steps_in(a: &Value) -> Vec<&Value> {

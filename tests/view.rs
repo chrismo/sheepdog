@@ -1259,3 +1259,66 @@ fn a_broken_config_leaves_the_settings_named_but_without_values() {
     let logins = setting(&atlas_step(&a, "read"), "settings.botLogin");
     assert_eq!(logins["set"], "sd config set --repo --json settings.botLogin <value>");
 }
+
+// The links between the three pages (#375): a branch's NEXT step opens its
+// Atlas step, an Atlas step lists the branches at it now and the files behind
+// it in the Map, and a Map file lists the Atlas steps that live in it.
+
+fn atlas(s: &Server) -> Value {
+    let (code, _, body) = s.get("/api/atlas");
+    assert_eq!(code, 200, "{body}");
+    serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"))
+}
+
+#[test]
+fn an_atlas_step_lists_the_branches_whose_first_step_it_is() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "feat/x", state("feat/x", json!([
+        { "key": "review-fix", "who": "agent", "say": "fix 1 review finding", "cmd": "sd act implement" },
+        { "key": "ci-wait", "who": "wait", "say": "CI running", "cmd": null },
+    ])));
+    cache(&sd, "kinsite", "k", state("k", json!([{ "key": "ready", "who": "you", "say": "merge it", "cmd": null }])));
+    let s = serve(&sd);
+    let ids: Vec<String> = s.flock()["branches"].as_array().unwrap().iter().map(|b| b["id"].as_str().unwrap().to_string()).collect();
+    let a = atlas(&s);
+    assert_eq!(atlas_step(&a, "review-fix")["branches"], json!([{ "id": ids[1], "repo": "sheepdog", "branch": "feat/x" }]));
+    assert_eq!(atlas_step(&a, "ready")["branches"], json!([{ "id": ids[0], "repo": "kinsite", "branch": "k" }]));
+    assert_eq!(atlas_step(&a, "ci-wait")["branches"], json!([]));
+    assert_has(&s.get("/atlas").2, &["/#b="]);
+}
+
+#[test]
+fn an_atlas_step_lists_the_files_behind_it() {
+    let sd = sd();
+    let s = serve(&sd);
+    let a = atlas(&s);
+    assert_eq!(atlas_step(&a, "review-fix")["files"], json!(["src/act/implement.rs", "src/act/gates.rs", "src/next/steps.rs"]));
+    assert_eq!(atlas_step(&a, "conflict")["files"], json!(["src/act/restack.rs", "src/act/resolve.rs", "src/act/gates.rs", "src/next/steps.rs"]));
+    // trigger has no file of its own and no gate
+    assert_eq!(atlas_step(&a, "bot-trigger")["files"], json!(["src/next/steps.rs"]));
+    assert_eq!(atlas_step(&a, "ready")["files"], json!(["src/next/steps.rs"]));
+    assert_has(&s.get("/atlas").2, &["/map#p="]);
+}
+
+#[test]
+fn a_map_file_lists_the_atlas_steps_that_live_in_it() {
+    let sd = sd();
+    sd.fake("gh", common::GH_FAILS);
+    let s = serve(&sd);
+    let m = map(&s);
+    let steps = |p: &str| map_file(&m, p)["steps"].as_array().unwrap_or_else(|| panic!("no steps in {p}")).iter().map(|k| k.as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(steps("src/act/push.rs"), ["push"]);
+    assert!(steps("src/act/gates.rs").contains(&"review-fix".to_string()), "{:?}", steps("src/act/gates.rs"));
+    assert!(!steps("src/act/gates.rs").contains(&"ready".to_string()));
+    assert!(steps("src/next/steps.rs").contains(&"ready".to_string()));
+    assert_eq!(steps("src/view.rs"), Vec::<String>::new());
+    assert_has(&s.get("/map").2, &["/atlas#k="]);
+}
+
+#[test]
+fn the_drill_in_links_each_next_step_to_its_atlas_step() {
+    let sd = sd();
+    assert_has(&serve(&sd).get("/").2, &["/atlas#k="]);
+    let r = sd.run(&["--help"]);
+    assert_has(&r.output, &["The three link into each other", "lists the Atlas steps that live in it"]);
+}

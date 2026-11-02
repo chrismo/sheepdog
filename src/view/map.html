@@ -98,6 +98,9 @@ h2 .n { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .iss li { border-left: 3px solid var(--wait); padding-left: 8px; overflow-wrap: anywhere; }
 .iss a { color: var(--ink); }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.atl { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.8; }
+.atl a { font-family: var(--f-mono); font-size: 0.78rem; color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; text-decoration: none; margin-right: 2px; }
+.atl a:hover { border-color: var(--ink); }
 footer { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 body.sheet footer { margin-bottom: 40vh; }
 </style>
@@ -171,6 +174,7 @@ function render(m) {
     showFile(open);
     if (expanded) document.querySelector("#sbody [data-more]")?.classList.add("all");
   }
+  if (!routed) { routed = true; route(); }
 }
 
 // One series as a sparkline, each point a hover target naming its day and value.
@@ -222,7 +226,8 @@ function showFile(path) {
     <div class="big"><span><b>${fmt(f.lines)}</b>lines</span><span><b>${share}%</b>over the cap</span><span><b>${f.issues.length}</b>issues</span></div>
     ${f.head ? `<p class="head" data-more>${esc(f.head)}</p>` : ""}
     ${f.over.length ? `<ul class="bars">${bars(f.over)}</ul>` : ""}
-    ${iss ? `<ul class="iss">${iss}</ul>` : ""}`;
+    ${iss ? `<ul class="iss">${iss}</ul>` : ""}
+    ${f.steps?.length ? `<p class="atl">Atlas steps here: ${f.steps.map(k => `<a href="/atlas#k=${encodeURIComponent(k)}">${esc(k)}</a>`).join(" ")}</p>` : ""}`;
   $("sheet").hidden = false;
   document.body.classList.add("sheet");
 }
@@ -231,11 +236,28 @@ function hideFile() {
   $("sheet").hidden = true;
   document.body.classList.remove("sheet");
   document.querySelectorAll(".sq.on").forEach(e => e.classList.remove("on"));
+  if (location.hash) history.replaceState(null, "", location.pathname);
 }
+
+// #p=<path> opens that file's detail (the Atlas links here), its tile scrolled to.
+let routed = false;
+function route() {
+  const m = location.hash.match(/^#p=(.+)$/);
+  let p = null;
+  try { p = m && decodeURIComponent(m[1]); } catch { return; }
+  if (!p || !files[p]) return;
+  showFile(p);
+  document.querySelector(".sq.on")?.scrollIntoView({ block: "center" });
+}
+window.addEventListener("hashchange", route);
 
 document.addEventListener("click", e => {
   const sq = e.target.closest(".sq[data-p]");
-  if (sq) return showFile(sq.dataset.p);
+  if (sq) {
+    // the URL names the open file, so a reload or Back from its Atlas link reopens it
+    history.replaceState(null, "", `#p=${encodeURIComponent(sq.dataset.p)}`);
+    return showFile(sq.dataset.p);
+  }
   if (e.target.closest("[data-close]")) return hideFile();
   const more = e.target.closest("[data-more]");
   if (more) more.classList.toggle("all");
