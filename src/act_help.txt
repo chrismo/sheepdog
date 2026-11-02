@@ -184,7 +184,8 @@ Verbs:
             clean tree, by hand or inside a step, records its verdict
             against HEAD (refs/sheepdog/<b>/verify-red; sd state's verify):
             a pass removes it, and a failure stops counting once HEAD moves,
-            though its ref stays (#325)
+            though its ref stays; a restack moves it to the new HEAD, as
+            a rebase is no fix (#325)
   autofix   run settings.autofix (formatters, lint --fix) in the branch's
             worktree, zero tokens, and commit what it changed ("autofix:
             <command>"). Nothing to commit: says so. A failing command is

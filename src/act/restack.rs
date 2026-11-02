@@ -246,6 +246,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
         ));
     }
     must(pins::set(".", b, Pin::Base, &new_base));
+    crate::verify_red::carry(".", b, &old_head, &new_head);
     // only --force gets here past them: chrismo has looked (#356)
     if yes(Derived::new(&s).restack_foreign) {
         seen_authors(b, &s, "/sync/foreign_commits");
