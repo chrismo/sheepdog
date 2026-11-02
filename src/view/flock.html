@@ -396,7 +396,7 @@ async function poll(detail) {
   }
   const id = openId();
   if (detail && id) loadDetail(id);
-  if (detail && id && $("tl").open) loadTimeline(id);
+  if (detail && id && $("tl").open && !document.hidden) loadTimeline(id);
 }
 
 const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
