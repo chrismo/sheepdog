@@ -439,6 +439,20 @@ fn a_red_verify_moves_with_a_clean_restack_and_next_offers_no_push_325() {
     red_at_head(&sd, "feat");
 }
 
+// Reset back to the commit it failed on, the red counts there still: the
+// restack carried it on without taking it off (#325).
+#[test]
+fn a_red_verify_still_counts_on_the_old_head_after_a_restack_is_reset_away_325() {
+    let sd = sd();
+    verify_red(&sd, "feat");
+    sd.upstream("main", "b", "B", "upstream");
+    let before = sd.rev("feat");
+    assert_eq!(sd.run(&["restack"]).status, 0);
+    sd.git(&["reset", "-q", "--hard", &before]);
+    let state = sd.exec(&sd.link("state"), &[], &["--json", "feat"]).output;
+    assert_eq!(jq(&["-c", ".verify.at_head"], &state), "true", "{state}");
+}
+
 // The same for a restack by tree, which no agent resolves and so no verify
 // follows (#325).
 #[test]
@@ -1480,13 +1494,16 @@ fn resolve_verify_runs_on_the_result_a_failure_keeps_the_rebased_branch_and_says
     red_at_head(&sd, "feat");
 }
 
-// A red verify carried to the resolution is judged there: verify passing on
-// it clears the record (#325).
+// A red verify is carried to the resolution before verify runs on it, so it
+// is judged there: this verify passes only while the record names HEAD, and
+// passing clears it (#325).
 #[test]
-fn resolve_a_red_verify_carried_to_the_resolution_clears_when_verify_passes_on_it_325() {
+fn resolve_a_red_verify_is_on_the_resolution_when_verify_runs_on_it_325() {
     let sd = agent_sd();
-    sd.verb_ok("config", &["set", "--global", "settings.verify", "grep -qx GX file.txt"]);
+    let on_head = r#"git cat-file blob refs/sheepdog/feat/verify-red | grep -q "\"head\":\"$(git rev-parse HEAD)\"""#;
+    sd.verb_ok("config", &["set", "--global", "settings.verify", on_head]);
     assert_ne!(sd.run(&["verify"]).status, 0);
+    assert!(sd.git(&["cat-file", "blob", "refs/sheepdog/feat/verify-red"]).contains(&sd.rev("feat")));
     sd.upstream("main", "g", "X", "upstream");
     sd.resolver("GX");
     let r = sd.run(&["restack", "--resolve"]);
