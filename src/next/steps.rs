@@ -145,6 +145,9 @@ const VERB_SETTINGS: &[(&str, &[&str])] = &[
     ("ci-fix", &["ciFixPrompt", "verify", "autofix", "implementAllow", "protectedPaths"]),
     ("resolve", &["resolvePrompt", "verify", "implementAllow", "protectedPaths"]),
     ("review", &["reviewPrompt", "localReview", "verify"]),
+    // Plain restack: it stops on a conflict without running an agent
+    // (src/act/restack.rs), and NEXT offers --resolve as the conflict step,
+    // listed under resolve.
     ("restack", &["protectedPaths"]),
     ("trigger", &["botCommand"]),
 ];
