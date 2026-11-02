@@ -1926,10 +1926,13 @@ fn vacuum_an_unenroll_that_fails_is_said() {
     let git = sd.cwd.join(".git");
     let mode = fs::metadata(&git).unwrap().permissions().mode();
     fs::set_permissions(&git, fs::Permissions::from_mode(mode & !0o222)).unwrap();
-    let r = sd.run(&["vacuum"]);
+    let r = sd.run_env(&[CLOCK], &["vacuum"]);
     fs::set_permissions(&git, fs::Permissions::from_mode(mode | 0o200)).unwrap();
     assert_eq!(r.status, 0);
     assert_has(&r.output, &["repo  feat  couldn't unenroll: merged for 0s"]);
+    // git's error too carries the time (#364).
+    let logged: Vec<&str> = r.output.lines().filter(|l| !l.starts_with("repo  ")).collect();
+    assert!(!logged.is_empty() && logged.iter().all(|l| l.starts_with("2026-11-02 09:27:10 ")), "{}", r.output);
     assert!(sd.enrolled("feat"));
 }
 

@@ -622,7 +622,7 @@ impl Watch {
             let age = now - since;
             if !c.carry && (self.vacuum.is_some() || (self.vacuum_after > 0.0 && age as f64 >= self.vacuum_after)) {
                 if let Err(e) = bookkeeping::unenroll_in(repo, b) {
-                    eprint!("{e}");
+                    log::say(&e);
                     self.log(name, b, &format!("couldn't unenroll: {why} for {}", dur(age)));
                 } else {
                     unenrolled = Some(format!("unenrolled: {why} for {} (sd act enroll {b} to watch it again)", dur(age)));
