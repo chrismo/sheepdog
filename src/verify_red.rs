@@ -1,13 +1,14 @@
 // The verify record (#325): refs/sheepdog/<b>/verify-red, one line of JSON,
-// {head, step, cmd, at, carried?}: settings.verify failed with <head> checked out, run
+// {head, step, cmd, at}: settings.verify failed with <head> checked out, run
 // by <step> (implement, address, ci-fix, review, resolve, or verify by hand).
 // Every run on a clean tree writes it: a failure records the commit it ran
 // on, a pass removes it. Keyed on the commit, so sd state calls it at_head
 // only while HEAD is still that commit: a new commit leaves it standing on
-// an old one, which NEXT and ship ignore. A restack is no fix, so it carries
-// the record to the commit it lands on (carry), listing the head it left in
-// carried, so a reset back there is red again; a failure recorded over a
-// carried record keeps its carried.
+// an old one, which NEXT and ship ignore. A restack is no fix, so sd's
+// restack moves the record to the commit it lands on (carry). Only sd's: a
+// rebase or reset done by hand leaves it on the commit it was on, and so
+// does a --resolve that halts mid-rebase (an attached session), as that
+// rebase is finished by hand.
 
 use crate::git::git_out;
 use crate::pins::{self, Pin};
@@ -18,21 +19,13 @@ pub fn name(b: &str) -> String {
     pins::name(b, Pin::VerifyRed)
 }
 
-/// verify failed in <wt>: record its HEAD, keeping the heads an earlier
-/// record was carried from red; a failure to record it only warns.
+/// verify failed in <wt>: record its HEAD; a failure to record it only warns.
 pub fn record(wt: &str, b: &str, step: &str, cmd: &str) {
     let Some(head) = git_out(wt, &["rev-parse", "HEAD"]) else {
         eprintln!("sd: warning: couldn't read HEAD in {wt}, so the failed verify isn't recorded");
         return;
     };
-    let mut rec = json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0});
-    let old = pins::read(wt, b, Pin::VerifyRed).and_then(|s| serde_json::from_str::<Value>(&s).ok());
-    let mut kept = old.as_ref().map(carried).unwrap_or_default();
-    kept.retain(|c| *c != head);
-    if !kept.is_empty() {
-        rec["carried"] = json!(kept);
-    }
-    let rec = json::to_string(&rec) + "\n";
+    let rec = json::to_string(&json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0})) + "\n";
     if !pins::store(wt, b, Pin::VerifyRed, &rec, None).ok {
         eprintln!("sd: warning: couldn't record the failed verify on {b}, so NEXT won't show it");
     }
@@ -46,33 +39,17 @@ pub fn clear(wt: &str, b: &str) {
     }
 }
 
-/// The record counts on <sha>: its head, or one a restack carried it from
-/// (carried), so a reset back to that commit is still red.
-pub fn on(rec: &Value, sha: &str) -> bool {
-    rec.get("head").and_then(Value::as_str) == Some(sha) || carried(rec).iter().any(|c| c == sha)
-}
-
-fn carried(rec: &Value) -> Vec<String> {
-    let shas = rec.get("carried").and_then(Value::as_array);
-    shas.map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect()).unwrap_or_default()
-}
-
-/// A record on <from> moves to <to>, the rest of it kept and the head it
-/// left added to carried; one not on <from> stays put. A failure to move it
-/// only warns.
+/// A record on <from> moves to <to>, the rest of it kept; one on another
+/// commit stays put. A failure to move it only warns.
 pub fn carry(dir: &str, b: &str, from: &str, to: &str) {
     let was = pins::oid(dir, b, Pin::VerifyRed);
     let Some(mut rec) = pins::read(dir, b, Pin::VerifyRed).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else {
         return;
     };
-    if !on(&rec, from) {
+    if rec.get("head").and_then(Value::as_str) != Some(from) {
         return;
     }
-    let mut left = carried(&rec);
-    left.extend(rec.get("head").and_then(Value::as_str).map(String::from));
-    left.retain(|c| c != to);
     rec["head"] = json!(to);
-    rec["carried"] = json!(left);
     if !pins::store(dir, b, Pin::VerifyRed, &(json::to_string(&rec) + "\n"), Some(&was)).ok {
         eprintln!("sd: warning: couldn't move the failed verify on {b} to {}, so NEXT won't show it", &to[..to.len().min(7)]);
     }
@@ -82,7 +59,7 @@ pub fn carry(dir: &str, b: &str, from: &str, to: &str) {
 pub fn at_head(wt: &str, b: &str) -> Option<String> {
     let rec: Value = serde_json::from_str(&pins::read(wt, b, Pin::VerifyRed)?).ok()?;
     let head = git_out(wt, &["rev-parse", "HEAD"])?;
-    on(&rec, &head).then_some(head)
+    (rec.get("head")?.as_str()? == head).then_some(head)
 }
 
 #[cfg(test)]
@@ -107,14 +84,6 @@ mod tests {
         carry(&r.dir, "feat", &old, &new);
         let mut moved = before;
         moved["head"] = json!(new);
-        moved["carried"] = json!([old]);
         assert_eq!(rec(&r).unwrap(), moved);
-        // still red back on the commit it failed on (a reset undoing the restack)
-        assert_eq!(at_head(&r.dir, "feat"), Some(old.clone()));
-        // a restack from there moves it on again, both heads it left kept
-        let third = "3".repeat(40);
-        carry(&r.dir, "feat", &old, &third);
-        assert_eq!(rec(&r).unwrap()["head"], json!(third));
-        assert_eq!(rec(&r).unwrap()["carried"], json!([old, new]));
     }
 }

@@ -184,9 +184,7 @@ fn verify_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
     let rec = rec?;
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
     let (Some(h), Some(step), Some(cmd), Some(at)) = (s("head"), s("step"), s("cmd"), s("at")) else { return Err(()) };
-    let at_head = crate::verify_red::on(&rec, head);
-    let sha = if at_head { head } else { h };
-    Ok(Some(json!({"sha": sha, "step": step, "cmd": cmd, "at": at, "at_head": at_head})))
+    Ok(Some(json!({"sha": h, "step": step, "cmd": cmd, "at": at, "at_head": h == head})))
 }
 
 // ── GitHub ───────────────────────────────────────────────────────────────────
