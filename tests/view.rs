@@ -757,10 +757,10 @@ fn the_drill_in_shows_the_branch_s_settings_with_their_layers() {
     assert_eq!(code, 200, "{b}");
     let paths: Vec<&str> = b["settings"].as_array().unwrap().iter().map(|k| k["path"].as_str().unwrap()).collect();
     assert_eq!(paths, ["settings.autoRun", "settings.reviewRounds", "settings.verify", "settings.interval"]);
-    assert_eq!(b["settings"][0], json!({ "path": "settings.autoRun", "value": true, "source": "branch", "edit": true }));
-    assert_eq!(b["settings"][1], json!({ "path": "settings.reviewRounds", "value": 3, "source": "defaults", "edit": true }));
-    assert_eq!(b["settings"][2]["edit"], false);
-    assert_eq!(b["settings"][3]["edit"], false);
+    assert_eq!(b["settings"][0], json!({ "path": "settings.autoRun", "value": true, "source": "branch", "editable": true }));
+    assert_eq!(b["settings"][1], json!({ "path": "settings.reviewRounds", "value": 3, "source": "defaults", "editable": true }));
+    assert_eq!(b["settings"][2]["editable"], false);
+    assert_eq!(b["settings"][3]["editable"], false);
     let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
     assert_eq!(config_log(&sd), [format!("{repo} explain --json --branch feat")]);
 }

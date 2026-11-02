@@ -42,7 +42,7 @@ pub fn list(repo: &str, branch: &str) -> Value {
     let keys = at(&v, "keys").as_array().cloned().unwrap_or_default();
     let rows = keys.iter().filter(|k| t(k, "path").starts_with("settings.")).map(|k| {
         let path = t(k, "path");
-        json!({"path": path, "value": at(k, "value"), "source": at(k, "source"), "edit": EDITABLE.contains(&path.as_str())})
+        json!({"path": path, "value": at(k, "value"), "source": at(k, "source"), "editable": EDITABLE.contains(&path.as_str())})
     });
     Value::Array(rows.collect())
 }

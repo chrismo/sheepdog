@@ -260,14 +260,14 @@ function settingRow(k) {
   const name = k.path.replace(/^settings\./, "");
   const layer = `<span class="layer ${k.source === "branch" ? "branch" : ""}" title="the layer this value comes from">${esc(k.source)}</span>`;
   let v;
-  if (!k.edit) v = `<span class="v">${esc(showVal(k.value))}</span>`;
+  if (!k.editable) v = `<span class="v">${esc(showVal(k.value))}</span>`;
   else if (typeof k.value === "boolean") v = `<span class="edit"><input type="checkbox" data-set="${esc(k.path)}" aria-label="${esc(name)}"${k.value ? " checked" : ""}></span>`;
   else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="copy" type="button" data-set="${esc(k.path)}">set</button></span>`;
   return `<li><span class="k">${esc(name)}</span>${v}${layer}</li>`;
 }
 function settingsHtml(b) {
   if (!b.settings) return `<div class="panel"><h3>Settings</h3><p class="none">Not read: the branch's repo isn't registered with sd watch, or sd config couldn't explain it.</p></div>`;
-  const edit = b.settings.filter(k => k.edit), rest = b.settings.filter(k => !k.edit);
+  const edit = b.settings.filter(k => k.editable), rest = b.settings.filter(k => !k.editable);
   return `<div class="panel"><h3>Settings</h3>
     <ul class="set">${edit.map(settingRow).join("")}</ul><p class="none setsay"></p>
     <details class="more"><summary>all ${b.settings.length} settings</summary><ul class="set">${rest.map(settingRow).join("")}</ul></details></div>`;
