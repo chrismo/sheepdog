@@ -308,17 +308,20 @@ function tlSvg(ev) {
   return `<svg viewBox="0 -2 ${W} ${y0 - FOLD + 14}" role="img" aria-label="The branch's timeline: agent steps, commits, CI and the PR, top to bottom">${s}</svg>`;
 }
 
-let tlAgain;
+// Only the latest load draws and retries, for the branch still open.
+let tlAgain, tlSeq = 0;
 async function loadTimeline(id) {
   clearTimeout(tlAgain);
+  const mine = ++tlSeq, current = () => mine === tlSeq && openId() === id;
   const body = $("tlbody");
   if (!body.innerHTML) body.innerHTML = `<p class="none">asking GitHub…</p>`;
   try {
     const r = await fetch(`/api/timeline?id=${encodeURIComponent(id)}`, { cache: "no-store" });
-    if (openId() !== id) return;
+    if (!current()) return;
     if (r.status === 404) { body.innerHTML = `<p class="none">${esc(id)} isn't in the watcher's cache any more.</p>`; return; }
     if (!r.ok) throw new Error(r.status);
     const t = await r.json();
+    if (!current()) return;
     const ev = tlEvents(t);
     const cut = t.github?.total ? `<p class="none">The last ${t.github.commits.length} of ${t.github.total} commits: the earlier ones aren't drawn.</p>` : "";
     const pr = t.github || t.error || t.refreshing || t.fetched;
@@ -327,7 +330,7 @@ async function loadTimeline(id) {
     body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
     if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id && !document.hidden) loadTimeline(id); }, 1000);
   } catch (e) {
-    if (openId() === id) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
+    if (current()) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }
 }
 
