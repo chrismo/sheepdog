@@ -688,3 +688,27 @@ fn accept_runs_while_another_step_holds_the_marker_and_is_refused_while_attached
     assert_has(&r.output, &["attached", "--force"]);
     assert_eq!(sd.pin("accepted"), "");
 }
+
+// As for every gated agent verb, act::run checks the sd-lock only once the
+// gate lets the verb run: with no base, accept's Hard rule answers first,
+// attached or not, and --force doesn't pass it.
+#[test]
+fn accept_with_no_base_is_refused_for_it_before_the_attached_check_even_forced_377() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent", "main"]);
+    sd.write("p.txt", "p\n");
+    sd.git(&["add", "p.txt"]);
+    sd.git(&["commit", "-qm", "parent"]);
+    sd.git(&["push", "-q", "origin", "parent"]);
+    sd.git(&["switch", "-q", "feat"]);
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    let attach = Holder::new();
+    sd.git(&["config", "branch.feat.sd-lock", &lock_by(attach.pid())]);
+    for args in [&["review", "--accept"][..], &["review", "--accept", "--force"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}");
+        assert_has(&r.output, &["no base"]);
+        assert_lacks(&r.output, "attached");
+        assert_eq!(sd.pin("accepted"), "");
+    }
+}

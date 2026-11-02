@@ -154,7 +154,7 @@ function rulesHtml(v) {
     : `<p class="none">sd act ${esc(v.name)} has no gate in gates.rs: it runs when NEXT offers it, after the checks below.</p>`;
   const shared = checks.length ? `<ul class="rules">${checks.map(c => rule(c) + `<li class="applies">applies to ${esc(c.applies)}</li>`).join("")}</ul>`
     : `<p class="none">None: sd act ${esc(v.name)} writes nothing the running marker guards, and runs no agent.</p>`;
-  return `<h3>What stops sd act ${esc(v.name)}</h3>${gate}<h3>Checked before its gate</h3>${shared}`;
+  return `<h3>What stops sd act ${esc(v.name)}</h3>${gate}<h3>Also checked</h3>${shared}`;
 }
 
 function showStep(k) {

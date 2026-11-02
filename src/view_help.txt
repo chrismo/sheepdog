@@ -19,9 +19,10 @@ Usage: sd view [--port <n>] [--no-open]
   attached, question, budget, failed, errors, stale, gh-wait, foreign). A
   stage opens into its steps; a step into its verb's gate (src/act/gates.rs):
   each rule's level as what --force does with it (force can't, force passes,
-  warns, nothing to do, setting holds) and what clears it, then what every verb checks
-  before its gate: the running marker (force can't) and an attached session
-  (force passes). It reads no state.
+  warns, nothing to do, setting holds) and what clears it, then what else
+  is checked: the running marker before the gate (force can't), and an
+  attached session once the gate lets the verb run, or first for a verb with
+  no gate (force passes). It reads no state.
 
   The Map (/map, linked from the Flock and the Atlas) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's

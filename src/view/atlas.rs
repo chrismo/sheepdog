@@ -34,15 +34,16 @@ fn step(d: &StepDef) -> Value {
     json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph})
 }
 
-/// What act::run checks before a verb's own gate (src/act/mod.rs): the
-/// running marker for a verb that writes the branch (running::idle, no
-/// --force), and the sd-lock for an agent step (attached_check, --force
-/// runs anyway).
+/// What act::run checks besides a verb's own gate (src/act/mod.rs): the
+/// running marker for a verb that writes the branch, before the gate
+/// (running::idle, no --force), and the sd-lock for an agent step
+/// (attached_check, --force runs anyway): first for an ungated one, but
+/// armed for a gated one, so it runs only once enforce says Go.
 const CHECKS: [(&str, &str, Level, &str, &str); 2] = [
     ("running", "another step holds the branch's running marker (<git dir>/sheepdog/running/<branch>)", Level::Hard,
-     "it ends; if it's hung, kill its pid or remove the marker", "every verb that writes the worktree, the branch or its remote"),
+     "it ends; if it's hung, kill its pid or remove the marker", "every verb that writes the worktree, the branch or its remote, before its gate"),
     ("attached", "the branch is attached: its session is open interactively (branch.<b>.sd-lock)", Level::Soft,
-     "exit that session, or sd act <verb> --force", "every agent step"),
+     "exit that session, or sd act <verb> --force", "every agent step: once its gate lets it run, or first if it has no gate"),
 ];
 
 fn checks_of(v: &Verb) -> Vec<&'static str> {
