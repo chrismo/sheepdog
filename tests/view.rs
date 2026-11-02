@@ -80,7 +80,8 @@ fn cache(sd: &Sd, repo: &str, branch: &str, state: Value) {
 fn state(branch: &str, next: Value) -> Value {
     json!({
         "branch": branch,
-        "pr": { "number": 7, "url": "https://github.com/o/r/pull/7", "draft": false },
+        "viewer": "chrismo",
+        "pr": { "number": 7, "url": "https://github.com/o/r/pull/7", "draft": false, "author": "chrismo" },
         "sync": { "ahead": 2, "behind": 0, "conflict": false },
         "push": { "ahead": 0, "dirty": false },
         "ci": { "verdict": "green" },
@@ -640,6 +641,32 @@ fn chrismo_s_and_waiting_steps_have_no_button_and_are_refused() {
         let (code, body) = act(&s, &id, key);
         assert_eq!(code, 409, "{key}: {body}");
         assert_has(&body, &[key]);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(act_log(&sd).is_empty(), "{:?}", act_log(&sd));
+}
+
+// The watcher's dispatch gate (pass.rs may_dispatch) holds for the button
+// too: no step on a PR someone else wrote, or whose remote has their commits.
+#[test]
+fn a_pr_autorun_wouldn_t_touch_has_no_button_and_is_refused() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let dir = sheepdog::watch::repo_key(&sd.path("repos/r"));
+    let f = sd.tmp.join(format!("state/branches/{dir}/feat.json"));
+    let s = serve(&sd);
+    let theirs = |st: &mut Value| st["pr"]["author"] = json!("someone");
+    let pushed = |st: &mut Value| st["push"] = json!({ "ahead": 0, "dirty": false, "remote_ours": false, "theirs": 1 });
+    for edit in [&theirs as &dyn Fn(&mut Value), &pushed] {
+        let mut st = state("feat", json!([{ "key": "push", "who": "run", "say": "push", "cmd": "sd act push" }]));
+        edit(&mut st);
+        fs::write(&f, json!({ "glyph": "🤖", "state": st }).to_string()).unwrap();
+        let id = format!("{dir}/feat");
+        assert_eq!(branch(&s, &id).1["act"], Value::Null, "{st}");
+        let (code, body) = act(&s, &id, "push");
+        assert_eq!(code, 409, "{body}");
+        assert_has(&body, &["push", "autoRun"]);
     }
     std::thread::sleep(Duration::from_millis(200));
     assert!(act_log(&sd).is_empty(), "{:?}", act_log(&sd));

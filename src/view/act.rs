@@ -10,7 +10,7 @@ use super::branch::find;
 use super::refresh;
 use crate::proc;
 use crate::val::{at, t};
-use crate::watch::{act_args, dispatch_verb, registered, repo_key, sd_verb, step_secs, watch_timeout};
+use crate::watch::{act_args, dispatch_verb, may_dispatch, registered, repo_key, sd_verb, step_secs, watch_timeout};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -41,11 +41,11 @@ pub fn running(id: &str) -> Value {
     acting().as_ref().filter(|a| a.id == id).map_or(Value::Null, |a| json!(a.key))
 }
 
-/// {key, verb} for NEXT's first step when sd act runs it, else null: the
-/// drill-in's button, labelled with the verb.
+/// {key, verb} for NEXT's first step when autoRun would run it, else null:
+/// the drill-in's button, labelled with the verb.
 pub fn offered(s: &Value) -> Value {
     let Some(first) = at(s, "next").get(0) else { return Value::Null };
-    match dispatch_verb(first) {
+    match dispatch_verb(first).filter(|_| may_dispatch(s, &t(first, "key"))) {
         Some(step) => json!({"key": at(first, "key"), "verb": act_args(step).join(" ")}),
         None => Value::Null,
     }
@@ -65,11 +65,17 @@ fn step_for(s: &Value, key: &str) -> Result<&'static str, String> {
         let now = if now.is_empty() { "nothing".to_string() } else { now };
         return Err(format!("NEXT's first step is {now} now, not {key}: the page is behind\n"));
     }
-    dispatch_verb(first).ok_or_else(|| match t(first, "who").as_str() {
+    let step = dispatch_verb(first).ok_or_else(|| match t(first, "who").as_str() {
         "you" => format!("{key} is your step: sd act doesn't run it\n"),
         "wait" => format!("{key} is a wait: nothing to run\n"),
         _ => format!("{key} has no sd act verb\n"),
-    })
+    })?;
+    if !may_dispatch(s, key) {
+        return Err(format!(
+            "{key}: autoRun doesn't run steps on this PR (someone else wrote it, or pushed to it): run sd act by hand if you mean to\n"
+        ));
+    }
+    Ok(step)
 }
 
 /// POST /api/act's body {id, key}: the status line and the body.
@@ -132,7 +138,18 @@ mod tests {
     use super::*;
 
     fn next(key: &str, who: &str) -> Value {
-        json!({"next": [{"key": key, "who": who}, {"key": "ci-wait", "who": "wait"}]})
+        json!({"viewer": "me", "pr": {"author": "me"}, "next": [{"key": key, "who": who}, {"key": "ci-wait", "who": "wait"}]})
+    }
+
+    #[test]
+    fn a_pr_someone_else_wrote_gets_no_button_and_is_refused() {
+        let mut s = next("push", "run");
+        s["pr"]["author"] = json!("them");
+        assert_eq!(offered(&s), Value::Null);
+        assert_eq!(
+            step_for(&s, "push"),
+            Err("push: autoRun doesn't run steps on this PR (someone else wrote it, or pushed to it): run sd act by hand if you mean to\n".into())
+        );
     }
 
     #[test]

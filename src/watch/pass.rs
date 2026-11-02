@@ -141,8 +141,9 @@ pub(crate) fn sd_verb(verb: &'static str, seam: &str) -> (String, Vec<&'static s
 /// which replace it; not keyed on sd-mode, which #266 deletes. fetch passes
 /// whoever wrote the PR: only a followed PR's NEXT has it, sd act fetch
 /// refuses any other branch, and it takes only the author's pushes, refusing
-/// when the branch has commits of its own (#250).
-fn may_dispatch(s: &Value, key: &str) -> bool {
+/// when the branch has commits of its own (#250). The Flock's drill-in
+/// holds to it too (view/act.rs).
+pub(crate) fn may_dispatch(s: &Value, key: &str) -> bool {
     if key == "fetch" {
         return true;
     }
