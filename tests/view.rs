@@ -772,6 +772,11 @@ fn a_guarded_post_sets_a_setting_with_sd_config() {
     configuring(&mut sd);
     let id = with_next(&sd, "feat", json!([]));
     let s = serve(&sd);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    assert_eq!(write_to(&s, "/api/config", "POST", Some(&ours), None).0, 403);
+    assert_eq!(write_to(&s, "/api/config", "POST", Some("http://evil.example"), Some(&page_token(&s))).0, 403);
+    assert_eq!(write_to(&s, "/api/config", "GET", Some(&ours), Some(&page_token(&s))).0, 405);
+    assert!(config_log(&sd).is_empty(), "{:?}", config_log(&sd));
     let (code, body) = set_config(&s, &id, "settings.reviewRounds", "5");
     assert_eq!(code, 200, "{body}");
     assert_has(&body, &["settings.reviewRounds", "5", "feat"]);
