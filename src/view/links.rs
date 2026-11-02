@@ -15,8 +15,8 @@ const TABLE: &str = "src/next/steps.rs";
 
 /// The files behind <d>: its verb's, derived from the verb's name (each
 /// word as src/act/<word>.rs, - as _: restack --resolve is restack.rs and
-/// resolve.rs) where <exists> says the Map has it; gates.rs when the verb
-/// has a gate; and the step table, which declares every step.
+/// resolve.rs); gates.rs when the verb has a gate; and the step table, which
+/// declares every step. Each only where <exists> says the Map has it.
 pub fn files_of(d: &StepDef, exists: &dyn Fn(&str) -> bool) -> Vec<String> {
     let mut out = vec![];
     if let Some(v) = d.verb.and_then(|step| VERBS.iter().find(|v| v.step() == step)) {
@@ -26,11 +26,13 @@ pub fn files_of(d: &StepDef, exists: &dyn Fn(&str) -> bool) -> Vec<String> {
                 out.push(f);
             }
         }
-        if v.gate.is_some() {
+        if v.gate.is_some() && exists(GATES) {
             out.push(GATES.into());
         }
     }
-    out.push(TABLE.into());
+    if exists(TABLE) {
+        out.push(TABLE.into());
+    }
     out
 }
 
@@ -70,7 +72,7 @@ mod tests {
     use super::*;
     use crate::next::steps::find;
 
-    const HAVE: [&str; 4] = ["src/act/implement.rs", "src/act/restack.rs", "src/act/resolve.rs", "src/act/push.rs"];
+    const HAVE: [&str; 6] = ["src/act/implement.rs", "src/act/restack.rs", "src/act/resolve.rs", "src/act/push.rs", GATES, TABLE];
     fn have(p: &str) -> bool {
         HAVE.contains(&p)
     }
@@ -84,7 +86,13 @@ mod tests {
         // trigger has no file the Map lists and no gate; ready has no verb
         assert_eq!(files("bot-trigger"), [TABLE]);
         assert_eq!(files("ready"), [TABLE]);
-        assert_eq!(files_of(find("ci-red").unwrap(), &|p| p == "src/act/ci_fix.rs"), ["src/act/ci_fix.rs", GATES, TABLE]);
+        assert_eq!(files_of(find("ci-red").unwrap(), &|p| p == "src/act/ci_fix.rs" || p == GATES || p == TABLE), ["src/act/ci_fix.rs", GATES, TABLE]);
+    }
+
+    #[test]
+    fn a_checkout_with_no_src_gives_a_step_no_files() {
+        // the Map's empty case: no link the Map would ignore
+        assert!(files_of(find("conflict").unwrap(), &|_| false).is_empty());
     }
 
     #[test]
