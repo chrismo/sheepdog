@@ -90,8 +90,6 @@ h2 .n { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .iss a { color: var(--ink); }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
 footer { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
-.ghline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-.refresh { font: inherit; font-size: 0.78rem; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.1rem 0.5rem; cursor: pointer; }
 body.sheet footer { margin-bottom: 40vh; }
 </style>
 </head>
@@ -112,24 +110,11 @@ body.sheet footer { margin-bottom: 40vh; }
   <footer id="foot"></footer>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
+<script src="/gh.js"></script>
 <script>
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const $ = id => document.getElementById(id);
 const fmt = n => Number(n).toLocaleString();
-const TOKEN = document.querySelector('meta[name="sd-token"]').content;
-const ago = iso => {
-  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
-};
-const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : "Not asked GitHub yet"}` +
-  `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
-async function refreshGh() {
-  const r = await fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
-  if (!r.ok) {
-    document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = `refused (${r.status}): reload the page`));
-    throw new Error(r.status);
-  }
-}
 const CAP = { too_many_lines: 100, cognitive_complexity: 25 };
 const LABEL = { too_many_lines: "lines", cognitive_complexity: "complexity" };
 const MAX_SIDE = 140, MIN_SIDE = 12;
@@ -147,6 +132,7 @@ function tile(f, maxLines) {
 }
 
 function render(m) {
+  const open = $("sheet").hidden ? null : document.querySelector(".sq.on")?.dataset.p;
   const all = m.groups.flatMap(g => g.files);
   files = Object.fromEntries(all.map(f => [f.path, f]));
   const lines = all.reduce((n, f) => n + f.lines, 0);
@@ -163,6 +149,7 @@ function render(m) {
   const down = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
   const note = down + (m.cut ? `Some open issues may be left out: ${m.cut}. ` : "");
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
+  if (open) showFile(open);
 }
 
 function bars(over) {

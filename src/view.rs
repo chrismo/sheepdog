@@ -27,6 +27,7 @@ use std::time::Duration;
 const HELP: &str = include_str!("view_help.txt");
 const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
+const GH_JS: &str = include_str!("view/gh.js");
 const PORT: u16 = 7377;
 
 fn die(msg: impl std::fmt::Display) -> ! {
@@ -128,6 +129,7 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.replace("__SD_TOKEN__", token)),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
         "/map" => ("200 OK", "text/html; charset=utf-8", MAP_PAGE.replace("__SD_TOKEN__", token)),
+        "/gh.js" => ("200 OK", "text/javascript; charset=utf-8", GH_JS.into()),
         "/api/map" => ("200 OK", "application/json", map::map(state).to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();

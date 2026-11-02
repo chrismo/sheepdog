@@ -113,8 +113,6 @@ details.tl[open] > summary { margin-bottom: 10px; }
 .tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
 .tl text { font-family: var(--f-body); }
 footer { font-size: 0.78rem; color: var(--muted); }
-.ghline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-.refresh { font: inherit; font-size: 0.78rem; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.1rem 0.5rem; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -136,22 +134,9 @@ footer { font-size: 0.78rem; color: var(--muted); }
   <section id="detail" hidden><div id="dmain"></div><details class="panel tl" id="tl"><summary>Timeline</summary><div id="tlbody"></div></details></section>
   <footer id="foot"></footer>
 </div>
+<script src="/gh.js"></script>
 <script>
 const POLL_MS = 30000;
-const TOKEN = document.querySelector('meta[name="sd-token"]').content;
-const ago = iso => {
-  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
-};
-const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : "Not asked GitHub yet"}` +
-  `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
-async function refreshGh() {
-  const r = await fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
-  if (!r.ok) {
-    document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = `refused (${r.status}): reload the page`));
-    throw new Error(r.status);
-  }
-}
 const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
 const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
 const GROUPS = [["you", "Needs you"], ["agent", "Agent next"], ["run", "sheepdog next"], ["wait", "Waiting"]];
@@ -245,14 +230,11 @@ function owedHtml(o) {
   return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
 }
 
-let shown = "", tlKey = "";
+let shown = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
   if (key === shown && $("dmain").innerHTML) return;
   shown = key;
-  const k = JSON.stringify([b.pr, b.stages, b.usd]);
-  if ($("tl").open && k !== tlKey) loadTimeline(openId());
-  tlKey = k;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>

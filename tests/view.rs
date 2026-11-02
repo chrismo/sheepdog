@@ -615,6 +615,10 @@ fn the_map_page_carries_the_run_s_token() {
     let sd = sd();
     let s = serve(&sd);
     let token = page_token(&s);
-    assert_has(&s.get("/map").2, &[&format!(r#"<meta name="sd-token" content="{token}">"#), "/api/refresh"]);
-    assert_has(&s.get("/").2, &["/api/refresh"]);
+    assert_has(&s.get("/map").2, &[&format!(r#"<meta name="sd-token" content="{token}">"#), r#"<script src="/gh.js">"#]);
+    assert_has(&s.get("/").2, &[r#"<script src="/gh.js">"#]);
+    let (code, head, js) = s.get("/gh.js");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: text/javascript"]);
+    assert_has(&js, &["sd-token", "/api/refresh", "X-Sd-Token"]);
 }
