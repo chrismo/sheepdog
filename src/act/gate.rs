@@ -84,7 +84,8 @@ pub fn warnings(rules: &[Rule]) -> Vec<String> {
 }
 
 /// The check act::run arms for an agent verb (#341): enforce runs it on Go,
-/// so a verb with nothing to do reports Done, attached or not.
+/// so a verb with nothing to do reports Done, attached or not. The first
+/// enforce to reach Run takes it, so it must be the verb's own gate's.
 static ARMED: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 pub fn arm(check: impl FnOnce() + Send + 'static) {

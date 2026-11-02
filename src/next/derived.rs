@@ -467,8 +467,8 @@ impl Derived {
         // chrismo's answer, stored while its step's gate refused (#326)
         self.stored = at_head && !j.nul("question.answer");
         // the fields address's and ci-fix's gates read are set by now; their
-        // spend rule is left out, as in offer: it is Hard and would outrank a
-        // Done, and NEXT's budget step holds for it (#341)
+        // spend rule is left out, as in offer: NEXT's budget step holds for
+        // it, and it would hide their Soft reasons (#341)
         let unspent = Derived { budget_unread: false, over_budget: false, ..self.clone() };
         self.addr_moot = self.asking == "address" && matches!(crate::act::gates::address(&unspent), crate::act::Gate::Done(_));
         let ci = crate::act::gates::ci_fix(&unspent);
