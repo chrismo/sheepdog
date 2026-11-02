@@ -2551,7 +2551,7 @@ fn status_a_later_pass_restamps_the_jobs_last_pass_364() {
     sd.pass();
     sd.last_pass_aged(660);
     sd.pass();
-    assert_has(&sd.status_block(), &["last pass: 0s ago (settings.interval 300s)\n"]);
+    assert_has(&sd.status_block(), &["job's last pass: 0s ago (settings.interval 300s)\n"]);
 }
 
 /// A vacuum by hand isn't the job's pass: it mustn't hide an overdue job (#364).
@@ -2561,7 +2561,7 @@ fn vacuum_before_any_pass_status_still_says_so_364() {
     sd.ps_fixture("feat", &[]);
     sd.ok(&["vacuum"]);
     let r = sd.run(&["status"]);
-    assert_has(&r.output, &["\n\nlast pass: none yet (settings.interval 300s)\n"]);
+    assert_has(&r.output, &["\n\njob's last pass: none yet (settings.interval 300s)\n"]);
 }
 
 // @test "refresh: sd state failing is ⚠️ and exits non-zero"
@@ -3836,7 +3836,7 @@ fn status_adds_the_jobs_diagnosis_after_the_pass_364() {
     sd.ps_fixture("feat", &[]);
     sd.pass();
     let block = sd.status_block();
-    assert_has(&block, &["last pass: 0s ago (settings.interval 300s)\n"]);
+    assert_has(&block, &["job's last pass: 0s ago (settings.interval 300s)\n"]);
     assert_has(&block, &["autoRun off; no branch turns it on\n"]);
     assert_has(&block, &["running: none\n"]);
     assert_lacks(&block, "usage limit");
@@ -3866,7 +3866,7 @@ fn status_says_what_holds_the_job_back_overdue_overrides_leases_a_limit_failures
     sheepdog::failed::record_in(&sd.path("repo"), "other", "review", "sd", "boom");
     let block = sd.status_block();
     unsafe { libc::kill(held as i32, libc::SIGKILL) };
-    assert_has(&block, &["last pass: 11m ago, overdue (settings.interval 300s, two of them with no pass)\n"]);
+    assert_has(&block, &["job's last pass: 11m ago, overdue (settings.interval 300s, two of them with no pass)\n"]);
     assert_has(&block, &["autoRun on; off on 1 branch: repo other\n"]);
     assert_has(&block, &[&format!("running: repo feat implement (pid {held}, since 20"), ", deadline 20"]);
     assert_has(&block, &["usage limit: till 20", "Z, claude: You've hit your session limit\n"]);
@@ -3879,5 +3879,5 @@ fn status_with_no_launchctl_says_launchd_isnt_here_and_before_any_pass_still_dia
     let sd = sd();
     let r = sd.run(&["status"]);
     assert_eq!(r.status, 0);
-    assert_has(&r.output, &["no pass yet\n\n", "last pass: none yet (settings.interval 300s)\n", "launchd: not here (no launchctl)\n"]);
+    assert_has(&r.output, &["no pass yet\n\n", "job's last pass: none yet (settings.interval 300s)\n", "launchd: not here (no launchctl)\n"]);
 }

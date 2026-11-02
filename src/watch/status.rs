@@ -58,9 +58,9 @@ fn interval() -> Option<i64> {
 fn age_line(age: Option<i64>, interval: Option<i64>) -> String {
     let iv = interval.map_or("unreadable".to_string(), |i| format!("{i}s"));
     match age {
-        None => format!("last pass: none yet (settings.interval {iv})"),
-        Some(a) if interval.is_some_and(|i| a > 2 * i) => format!("last pass: {} ago, overdue (settings.interval {iv}, two of them with no pass)", dur(a)),
-        Some(a) => format!("last pass: {} ago (settings.interval {iv})", dur(a)),
+        None => format!("job's last pass: none yet (settings.interval {iv})"),
+        Some(a) if interval.is_some_and(|i| a > 2 * i) => format!("job's last pass: {} ago, overdue (settings.interval {iv}, two of them with no pass)", dur(a)),
+        Some(a) => format!("job's last pass: {} ago (settings.interval {iv})", dur(a)),
     }
 }
 
@@ -167,11 +167,11 @@ mod tests {
 
     #[test]
     fn age_line_is_overdue_past_two_intervals() {
-        assert_eq!(age_line(None, Some(300)), "last pass: none yet (settings.interval 300s)");
-        assert_eq!(age_line(Some(0), Some(300)), "last pass: 0s ago (settings.interval 300s)");
-        assert_eq!(age_line(Some(600), Some(300)), "last pass: 10m ago (settings.interval 300s)");
-        assert_eq!(age_line(Some(601), Some(300)), "last pass: 10m ago, overdue (settings.interval 300s, two of them with no pass)");
-        assert_eq!(age_line(Some(5), None), "last pass: 5s ago (settings.interval unreadable)");
+        assert_eq!(age_line(None, Some(300)), "job's last pass: none yet (settings.interval 300s)");
+        assert_eq!(age_line(Some(0), Some(300)), "job's last pass: 0s ago (settings.interval 300s)");
+        assert_eq!(age_line(Some(600), Some(300)), "job's last pass: 10m ago (settings.interval 300s)");
+        assert_eq!(age_line(Some(601), Some(300)), "job's last pass: 10m ago, overdue (settings.interval 300s, two of them with no pass)");
+        assert_eq!(age_line(Some(5), None), "job's last pass: 5s ago (settings.interval unreadable)");
     }
 
     #[test]
