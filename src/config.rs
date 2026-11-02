@@ -714,6 +714,12 @@ pub fn global_only(key: &str) -> bool {
     GLOBAL_ONLY.iter().any(|(k, _)| *k == key)
 }
 
+/// Whether settings.<key> holds a list or object, which sd config set takes
+/// only as --json.
+pub fn takes_json(key: &str) -> bool {
+    fields_of(Ty::Settings).iter().any(|(k, ty)| *k == key && matches!(ty, Ty::List | Ty::Obj(_)))
+}
+
 /// Every settings key with its value and the layer it came from in <dir>'s
 /// repo (the global and repo files, no branch), as `sd config explain --json
 /// --no-branch settings` traces them: [{path, value, source, overrides}].

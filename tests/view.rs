@@ -1248,4 +1248,6 @@ fn a_broken_config_leaves_the_settings_named_but_without_values() {
     let rounds = setting(&atlas_step(&a, "review-decide"), "settings.reviewRounds");
     assert_eq!((&rounds["value"], &rounds["layer"]), (&Value::Null, &Value::Null));
     assert_eq!(rounds["set"], "sd config set --repo settings.reviewRounds <value>");
+    let logins = setting(&atlas_step(&a, "read"), "settings.botLogin");
+    assert_eq!(logins["set"], "sd config set --repo --json settings.botLogin <value>");
 }

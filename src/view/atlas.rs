@@ -49,14 +49,16 @@ fn setting(key: &str, traced: &[Value]) -> Value {
 
 /// sd config set for settings.<key> at <value>, as sd config --help has it:
 /// --global for a global-file-only key, else --repo; a string quoted for the
-/// shell, a list or object as --json, and <value> where there is none.
+/// shell, --json for a list or object key (by its type, so an unset one too),
+/// and <value> where there is none.
 fn set_command(key: &str, value: &Value) -> String {
     let scope = if crate::config::global_only(key) { "--global" } else { "--repo" };
-    let (json, v) = match value {
-        Value::Null => ("", "<value>".to_string()),
-        Value::String(s) => ("", quoted(s)),
-        Value::Array(_) | Value::Object(_) => (" --json", quoted(&value.to_string())),
-        v => ("", v.to_string()),
+    let json = if crate::config::takes_json(key) { " --json" } else { "" };
+    let v = match value {
+        Value::Null => "<value>".to_string(),
+        Value::String(s) => quoted(s),
+        Value::Array(_) | Value::Object(_) => quoted(&value.to_string()),
+        v => v.to_string(),
     };
     format!("sd config set {scope}{json} settings.{key} {v}")
 }
@@ -312,7 +314,7 @@ mod tests {
         assert_eq!(t(&of("read", "settings.botLogin"), "set"), r#"sd config set --repo --json settings.botLogin '["marge"]'"#);
         assert_eq!(t(&of("ci-red", "settings.agentSteps"), "set"), "sd config set --global settings.agentSteps 2");
         let unset = of("ci-config", "settings.protectedPaths");
-        assert_eq!((&unset["value"], &unset["layer"], &unset["set"]), (&Value::Null, &json!("unset"), &json!("sd config set --repo settings.protectedPaths <value>")));
+        assert_eq!((&unset["value"], &unset["layer"], &unset["set"]), (&Value::Null, &json!("unset"), &json!("sd config set --repo --json settings.protectedPaths <value>")));
         let paths: Vec<String> = find("ci-red")["settings"].as_array().unwrap().iter().map(|s| t(s, "path")).collect();
         assert_eq!(paths.iter().map(|p| p.strip_prefix("settings.").unwrap()).collect::<Vec<_>>(), settings_of(crate::next::steps::find("ci-red").unwrap()));
         assert_eq!(find("ready")["settings"], json!([]));
