@@ -121,6 +121,7 @@ footer { font-size: 0.78rem; color: var(--muted); }
     <div class="nav"><span class="eyebrow" id="eyebrow">loading…</span><a href="/map">Map →</a></div>
     <h1>Your PRs</h1>
     <div class="summary" id="summary"></div>
+    <div id="fresh"></div>
     <div class="legend">
       <span><i style="--lc:var(--you)"></i>you</span>
       <span><i style="--lc:var(--agent)"></i>agent</span>
@@ -147,6 +148,7 @@ const $ = id => document.getElementById(id);
 const copyBtn = cmd => `<span class="cmd"><code>${esc(cmd)}</code><button class="copy" type="button" data-cmd="${esc(cmd)}">copy</button></span>`;
 const prLink = b => b.pr ? `<a href="${esc(b.pr.url)}" target="_blank" rel="noopener">#${esc(b.pr.number)}</a>${b.pr.draft ? " draft" : ""}` : "no PR";
 const usd = b => typeof b.usd === "number" ? `<span>$${b.usd.toFixed(2)}</span>` : "";
+const checked = b => b.checked ? `<span>checked ${ago(b.checked)} ago</span>` : "";
 
 function card(b) {
   const L = b.lead;
@@ -157,7 +159,7 @@ function card(b) {
       `<span class="mk"></span><span class="lab">${NAME[s.stage] || esc(s.stage)}</span><span class="st">${esc(s.text)}</span></li>`;
   }).join("");
   return `<article class="card" style="--cc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
-    <div><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span><span>${prLink(b)}</span>${usd(b)}</div></div>
+    <div><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span><span>${prLink(b)}</span>${usd(b)}${checked(b)}</div></div>
     <div class="now"><span>${esc(L.say)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
     <ol class="steps">${rows}</ol>
   </article>`;
@@ -178,8 +180,9 @@ function render(f) {
     return `<section class="group"><h2 style="--gc:${color(w)}"><span class="dot"></span>${name}<span class="n">${list.length}</span></h2>` +
       `<div class="cards">${list.map(card).join("")}</div></section>`;
   }).join("") : `<p class="empty">No cached branches yet: enroll one (sd act enroll), and let sd watch make a pass.</p>`;
+  $("fresh").innerHTML = bs.length ? `<p class="none ghline">${f.refreshing ? "Checking a branch a minute old…" : "A branch is checked again once it's a minute old"} ${refreshBtn()}</p>` : "";
   $("foot").textContent =
-    `sd watch's last pass: ${f.at || "none yet"}. Read at ${new Date().toLocaleTimeString()}, again every ${POLL_MS / 1000}s. The lit stages are each branch's NEXT steps.`;
+    `sd watch's last pass: ${f.at || "none yet"}. While this page is open, a branch a minute old is checked again, one at a time. The lit stages are each branch's NEXT steps.`;
 }
 
 const FLOW = {
@@ -238,7 +241,7 @@ function renderDetail(b) {
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span>${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)} · ${esc(x.key)}</span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>← all branches</button>
     <div class="dhead"><div class="eyebrow" id="deyebrow">${esc(b.repo)}</div><h1>${esc(b.branch)}</h1>
-      <div class="meta"><span>${prLink(b)}</span>${usd(b)}</div></div>
+      <div class="meta"><span>${prLink(b)}</span>${usd(b)}${checked(b)}</div></div>
     <div class="dgrid">
       <div class="col"><div class="panel flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div></div>
       <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
@@ -309,7 +312,7 @@ function tlSvg(ev) {
 }
 
 // Only the latest load draws and retries, for the branch still open.
-let tlAgain, tlSeq = 0;
+let tlAgain, tlSeq = 0, tlDrawn = "";
 async function loadTimeline(id) {
   clearTimeout(tlAgain);
   const mine = ++tlSeq, current = () => mine === tlSeq && openId() === id;
@@ -327,7 +330,11 @@ async function loadTimeline(id) {
     const pr = t.github || t.error || t.refreshing || t.fetched;
     const down = t.error ? `<p class="none">GitHub didn't answer${t.github ? ", so its part is the last answer" : ", so this is the agent's steps only"} (${esc(t.error)})</p>` : "";
     const note = cut + down + (pr ? ghLine(t) : `<p class="none">No PR yet: the agent's steps only.</p>`);
-    body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
+    const svg = ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`;
+    // Redrawn only when it changed: a redraw loses the hover and the scroll.
+    if (!body.querySelector(".tlsvg")) { body.innerHTML = `<div class="tlnote"></div><div class="tlsvg"></div>`; tlDrawn = ""; }
+    body.querySelector(".tlnote").innerHTML = note;
+    if (svg !== tlDrawn) { body.querySelector(".tlsvg").innerHTML = svg; tlDrawn = svg; }
     if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id && !document.hidden) loadTimeline(id); }, 1000);
   } catch (e) {
     if (current()) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
@@ -369,19 +376,30 @@ function route() {
   if (id) { $("dmain").innerHTML = ""; shown = ""; $("tl").open = false; $("tlbody").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
+// Only the latest poll schedules the next: one polling chain, stopped while hidden.
+let again, seq = 0;
 async function poll(detail) {
+  clearTimeout(again);
+  if (document.hidden) return;
+  const mine = ++seq;
+  let refreshing = false;
   try {
     const r = await fetch("/api/flock", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    render(await r.json());
+    const f = await r.json();
+    if (mine !== seq) return;
+    render(f);
+    refreshing = f.refreshing;
   } catch (e) {
+    if (mine !== seq) return;
     const eb = $("eyebrow");
     eb.classList.add("stale");
     eb.textContent = `can't reach sd view (${e.message}): showing the last read`;
   }
   const id = openId();
   if (detail && id) loadDetail(id);
-  if (detail && id && $("tl").open && !document.hidden) loadTimeline(id);
+  if (detail && id && $("tl").open) loadTimeline(id);
+  again = setTimeout(() => poll(true), refreshing ? 2000 : POLL_MS);
 }
 
 const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
@@ -397,7 +415,7 @@ document.addEventListener("click", async e => {
     return;
   }
   if (e.target.closest("[data-back]")) { location.hash = ""; return; }
-  if (e.target.closest("[data-refresh]")) { const id = openId(); refreshGh().then(() => id && loadTimeline(id), () => {}); return; }
+  if (e.target.closest("[data-refresh]")) { refreshGh().then(() => poll(true), () => {}); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card[data-id]");
   if (c) openCard(c);
@@ -408,10 +426,9 @@ document.addEventListener("keydown", e => {
 });
 $("tl").addEventListener("toggle", () => { if ($("tl").open && openId()) loadTimeline(openId()); });
 window.addEventListener("hashchange", route);
-document.addEventListener("visibilitychange", () => { if (!document.hidden && $("tl").open && openId()) loadTimeline(openId()); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(true); });
 route();
 poll(false);
-setInterval(() => poll(true), POLL_MS);
 </script>
 </body>
 </html>

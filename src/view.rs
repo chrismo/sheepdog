@@ -14,6 +14,7 @@ mod cache;
 mod flock;
 mod guard;
 mod map;
+mod refresh;
 mod timeline;
 
 use crate::config::state_dir;

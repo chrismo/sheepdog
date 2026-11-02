@@ -259,6 +259,7 @@ impl Sd {
             "GH_REPO",
             "SHEEPDOG_STATE_FIXTURES",
             "SHEEPDOG_STATE_PROGRAM",
+            "SHEEPDOG_WATCH_PROGRAM",
         ] {
             c.env_remove(v);
         }

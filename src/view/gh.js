@@ -9,12 +9,23 @@ const ago = iso => {
   const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
   return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h`;
 };
+// A refusal is this page's stale token: it stays on every button the page draws.
+let refused = "";
+const refreshBtn = () => `<button class="refresh" type="button" data-refresh>${refused || "refresh"}</button>`;
 const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : d.error ? "No answer from GitHub yet" : "Not asked GitHub yet"}` +
-  `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
+  `${d.refreshing ? " · asking GitHub…" : ""} ${refreshBtn()}</p>`;
 async function refreshGh() {
-  const r = await fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
+  const say = text => document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = text));
+  let r;
+  try {
+    r = await fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
+  } catch (e) {
+    say("can't reach sd view");
+    throw e;
+  }
   if (!r.ok) {
-    document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = `refused (${r.status}): reload the page`));
+    refused = `refused (${r.status}): reload the page`;
+    say(refused);
     throw new Error(r.status);
   }
 }

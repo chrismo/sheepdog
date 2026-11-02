@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{assert_has, spawn, Sd};
+use common::{assert_has, assert_match, spawn, Sd};
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -131,7 +131,7 @@ fn api_flock_serves_each_cached_branch() {
 fn no_pass_yet_serves_no_branches() {
     let sd = sd();
     let f = serve(&sd).flock();
-    assert_eq!(f, json!({ "at": null, "branches": [] }));
+    assert_eq!(f, json!({ "at": null, "branches": [], "refreshing": false }));
 }
 
 #[test]
@@ -622,4 +622,142 @@ fn the_map_page_carries_the_run_s_token() {
     assert_eq!(code, 200, "{head}");
     assert_has(&head.to_lowercase(), &["content-type: text/javascript"]);
     assert_has(&js, &["sd-token", "/api/refresh", "X-Sd-Token"]);
+}
+
+/// A registered repo at <dir> (under the temp dir), its watcher cache file for
+/// <branch> written <secs_ago> ago, and a fake sd watch, which logs
+/// "start <cwd> <args>" and "end <branch>" to watch.log and rewrites the file.
+fn watched(sd: &mut Sd, dir: &str, branch: &str, secs_ago: u64) {
+    let repo = sd.path(dir);
+    fs::create_dir_all(&repo).unwrap();
+    if !sd.git_try(&["config", "--global", "--get-all", "sheepdog.repo"]).unwrap_or_default().lines().any(|r| r == repo) {
+        sd.git(&["config", "--global", "--add", "sheepdog.repo", &repo]);
+    }
+    let f = sd.tmp.join(format!("state/branches/{}/{branch}.json", sheepdog::watch::repo_key(&repo)));
+    fs::create_dir_all(f.parent().unwrap()).unwrap();
+    fs::write(&f, json!({ "glyph": "🤖", "state": state(branch, json!([])) }).to_string()).unwrap();
+    let then = std::time::SystemTime::now() - Duration::from_secs(secs_ago);
+    fs::File::options().write(true).open(&f).unwrap().set_modified(then).unwrap();
+    let log = sd.path("watch.log");
+    sd.fake("sd-watch", &format!(
+        "#!/usr/bin/env bash\necho \"start $(pwd -P) $*\" >> {log}\nsleep \"${{WATCH_SLEEP:-0}}\"\n\
+         find \"$SHEEPDOG_STATE_DIR/branches\" -name \"$2.json\" -exec touch {{}} +\necho \"end $2\" >> {log}\n"));
+    if !sd.env.iter().any(|(k, _)| k == "SHEEPDOG_WATCH_PROGRAM") {
+        sd.env.push(("SHEEPDOG_WATCH_PROGRAM".into(), sd.path("fakebin/sd-watch")));
+    }
+}
+
+fn watch_log(sd: &Sd) -> Vec<String> {
+    fs::read_to_string(sd.path("watch.log")).unwrap_or_default().lines().map(str::to_string).collect()
+}
+
+/// /api/flock once nothing is refreshing; panics after 10s.
+fn flock_settled(s: &Server) -> Value {
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let f = s.flock();
+        if f["refreshing"] == false {
+            return f;
+        }
+        assert!(Instant::now() < end, "still refreshing: {f}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn a_flock_branch_a_minute_old_is_refreshed_in_its_repo() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "old", 120);
+    let s = serve(&sd);
+    assert_eq!(s.flock()["refreshing"], true);
+    flock_settled(&s);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap();
+    assert_eq!(watch_log(&sd), [format!("start {} refresh old", repo.display()), "end old".into()]);
+}
+
+#[test]
+fn a_fresh_flock_branch_isn_t_refreshed() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "fresh", 5);
+    let s = serve(&sd);
+    assert_eq!(s.flock()["refreshing"], false);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(watch_log(&sd).is_empty(), "{:?}", watch_log(&sd));
+}
+
+#[test]
+fn flock_branches_are_refreshed_one_at_a_time_stalest_first() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "older", 300);
+    watched(&mut sd, "repos/r", "old", 120);
+    sd.env.push(("WATCH_SLEEP".into(), "0.3".into()));
+    let s = serve(&sd);
+    let end = Instant::now() + Duration::from_secs(10);
+    while watch_log(&sd).len() < 4 && Instant::now() < end {
+        s.flock();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let log: Vec<String> = watch_log(&sd).iter().map(|l| l.split(' ').next_back().unwrap().to_string()).collect();
+    assert_eq!(log, ["older", "older", "old", "old"], "{:?}", watch_log(&sd));
+}
+
+#[test]
+fn a_branch_in_an_unregistered_repo_isn_t_refreshed() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "fresh", 5);
+    cache(&sd, "elsewhere", "old", state("old", json!([])));
+    let f = sd.tmp.join(format!("state/branches/{}/old.json", sheepdog::watch::repo_key("/src/elsewhere")));
+    fs::File::options().write(true).open(f).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(120)).unwrap();
+    let s = serve(&sd);
+    assert_eq!(s.flock()["refreshing"], false);
+    assert!(watch_log(&sd).is_empty());
+}
+
+#[test]
+fn a_merged_branch_isn_t_refreshed() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "done", 120);
+    let f = sd.tmp.join(format!("state/branches/{}/done.json", sheepdog::watch::repo_key(&sd.path("repos/r"))));
+    let mut st = state("done", json!([]));
+    st["pr"]["state"] = json!("MERGED");
+    fs::write(&f, json!({ "glyph": "🏁", "state": st }).to_string()).unwrap();
+    fs::File::options().write(true).open(&f).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(120)).unwrap();
+    let s = serve(&sd);
+    assert_eq!(s.flock()["refreshing"], false);
+    assert!(watch_log(&sd).is_empty());
+}
+
+#[test]
+fn a_refresh_that_fails_waits_a_minute_like_any_other() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "old", 120);
+    sd.fake("sd-watch", &format!("#!/usr/bin/env bash\necho \"start $*\" >> {}\nexit 1\n", sd.path("watch.log")));
+    let s = serve(&sd);
+    s.flock();
+    flock_settled(&s);
+    s.flock();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(watch_log(&sd), ["start refresh old"]);
+}
+
+#[test]
+fn the_refresh_button_refreshes_fresh_flock_branches_too() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "fresh", 5);
+    let s = serve(&sd);
+    assert_eq!(s.flock()["refreshing"], false);
+    let ours = format!("http://127.0.0.1:{}", s.port);
+    assert_eq!(write_to(&s, "/api/refresh", "POST", Some(&ours), Some(&page_token(&s))).0, 200);
+    assert_eq!(s.flock()["refreshing"], true);
+    flock_settled(&s);
+    assert_eq!(watch_log(&sd).len(), 2, "{:?}", watch_log(&sd));
+}
+
+#[test]
+fn each_flock_card_says_when_its_branch_was_checked() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "fresh", 5);
+    let f = serve(&sd).flock();
+    let checked = f["branches"][0]["checked"].as_str().unwrap_or_else(|| panic!("{f}"));
+    assert_match(checked, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$");
 }

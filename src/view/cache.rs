@@ -26,7 +26,7 @@ static KEYS: Mutex<Keys> = Mutex::new(Keys { running: BTreeSet::new(), tried: BT
 /// When the refresh button was last pressed, in ms: a fetch tried before then is stale.
 static FORCED: AtomicU64 = AtomicU64::new(0);
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
@@ -46,6 +46,10 @@ impl Drop for Running {
 
 pub fn force() {
     FORCED.store(now_ms(), Ordering::Relaxed);
+}
+
+pub(super) fn forced() -> u64 {
+    FORCED.load(Ordering::Relaxed)
 }
 
 /// gh's stderr as "gh: …", with one "gh:"; <what> names the answer that held nothing.
@@ -99,7 +103,7 @@ where
     });
 }
 
-fn stale(tried: u64, now: u64, forced: u64) -> bool {
+pub(super) fn stale(tried: u64, now: u64, forced: u64) -> bool {
     tried > now || now - tried >= FRESH_SECS * 1000 || tried < forced
 }
 
@@ -118,7 +122,7 @@ where
     let now = now_ms();
     // A file's try ahead of the clock that can't be rewritten would start a fetch every read.
     let tried = doc["tried"].as_u64().filter(|&t| t <= now).unwrap_or(0).max(last);
-    let refreshing = if stale(tried, now, FORCED.load(Ordering::Relaxed)) {
+    let refreshing = if stale(tried, now, forced()) {
         start(key, f, doc.clone(), fetch);
         true
     } else {
