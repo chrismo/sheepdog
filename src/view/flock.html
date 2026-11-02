@@ -246,22 +246,29 @@ function actLine(b) {
 }
 
 async function runStep(btn) {
-  const id = openId(), say = btn.nextElementSibling;
+  const id = openId(), say = btn.nextElementSibling, label = btn.textContent;
   if (!id) return;
   btn.disabled = true;
   btn.textContent = "starting…";
+  // A refusal other than a stale token's leaves the button usable: the card
+  // isn't redrawn till its JSON changes, and a 409's cause can pass.
+  const refused = why => { btn.disabled = false; btn.textContent = label; say.textContent = why; };
   let r;
   try {
     r = await fetch("/api/act", { method: "POST", headers: { "X-Sd-Token": TOKEN, "Content-Type": "application/json" },
       body: JSON.stringify({ id, key: btn.dataset.act }) });
   } catch (e) {
-    btn.textContent = "can't reach sd view";
+    refused("can't reach sd view");
     return;
   }
   const text = (await r.text()).trim();
-  if (!r.ok) {
-    btn.textContent = r.status === 403 ? "refused: reload the page" : "not run";
+  if (r.status === 403) {
+    btn.textContent = "refused: reload the page";
     say.textContent = text;
+    return;
+  }
+  if (!r.ok) {
+    refused(`not run: ${text}`);
     return;
   }
   shown = "";
