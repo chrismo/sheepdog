@@ -11,8 +11,6 @@ src/act/ship.rs  ship  too_many_lines  113
 src/config.rs  cli  too_many_lines  105
 src/config.rs  explain  too_many_lines  131
 src/harness.rs  agent  too_many_lines  115
-src/next.rs  offer  cognitive_complexity  84  # #335 splits it
-src/next.rs  offer  too_many_lines  494  # #335 splits it
 src/state.rs  assemble  cognitive_complexity  27
 src/state.rs  assemble  too_many_lines  230
 src/state.rs  flags_json  too_many_lines  115
