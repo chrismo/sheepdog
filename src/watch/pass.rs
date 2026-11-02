@@ -999,7 +999,7 @@ impl Watch {
         // The job's pass alone stamps job-pass, whose age status reads: a
         // vacuum by hand writes last-pass too, and mustn't hide an overdue job (#364).
         if self.dispatch {
-            let _ = fs::write(format!("{}/job-pass", self.state), "");
+            let _ = fs::write(format!("{}/job-pass", self.state), format!("{}\n", log::now()));
         }
         self.summarize();
     }

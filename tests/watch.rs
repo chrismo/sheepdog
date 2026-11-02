@@ -2520,6 +2520,17 @@ fn refresh_before_any_pass_status_still_says_so() {
     assert_has(&r.output, &["no pass yet"]);
 }
 
+/// Each of the job's passes restamps it, not just the first (#364).
+#[test]
+fn status_a_later_pass_restamps_the_jobs_last_pass_364() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[]);
+    sd.pass();
+    sd.last_pass_aged(660);
+    sd.pass();
+    assert_has(&sd.status_block(), &["last pass: 0s ago (settings.interval 300s)\n"]);
+}
+
 /// A vacuum by hand isn't the job's pass: it mustn't hide an overdue job (#364).
 #[test]
 fn vacuum_before_any_pass_status_still_says_so_364() {
