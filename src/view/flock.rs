@@ -189,12 +189,24 @@ pub fn card(c: &Cached) -> Value {
            "usd": at(s, "spend.usd"), "lead": lead, "stages": stages(s)})
 }
 
-/// GET /api/flock: {at: the last pass's time or null, branches: [card]}.
+/// GET /api/flock: {at: the last pass's time or null, branches: [card with
+/// checked], refreshing, held: why no branch is checked, or null}.
 pub fn flock(state: &Path) -> Value {
     let at = fs::read_to_string(state.join("last-pass"))
         .ok()
         .and_then(|s| s.lines().next().and_then(|l| l.strip_prefix("last pass: ")).map(str::to_string));
-    json!({"at": at, "branches": cached(state).iter().map(card).collect::<Vec<_>>()})
+    let cached = cached(state);
+    let cards: Vec<Value> = cached
+        .iter()
+        .map(|c| {
+            let mut card = card(c);
+            card["checked"] = json!(super::refresh::checked(state, c));
+            card
+        })
+        .collect();
+    let held = super::refresh::held(state, &cached);
+    let refreshing = held.is_none() && super::refresh::refreshing(state, &cached);
+    json!({"at": at, "branches": cards, "refreshing": refreshing, "held": held})
 }
 
 #[cfg(test)]

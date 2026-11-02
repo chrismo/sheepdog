@@ -116,7 +116,7 @@ const GRACE: u64 = 60;
 /// <verb>. In a debug build (cargo test's) with <seam> set, that program
 /// instead, run as sd-<verb> is: the suite fakes sd state and sd act with
 /// it. A release build, the one installed, never reads it.
-fn sd_verb(verb: &'static str, seam: &str) -> (String, Vec<&'static str>) {
+pub(crate) fn sd_verb(verb: &'static str, seam: &str) -> (String, Vec<&'static str>) {
     let fake = if cfg!(debug_assertions) { std::env::var(seam).ok() } else { None };
     match fake {
         Some(p) if !p.is_empty() => (p, vec![]),
@@ -277,7 +277,7 @@ fn remote_of(repo: &str) -> Option<String> {
     r.map_err(config_lines).ok()
 }
 
-fn registered() -> Vec<String> {
+pub(crate) fn registered() -> Vec<String> {
     git(".", &["config", "--global", "--get-all", "sheepdog.repo"]).stdout.lines().map(str::to_string).collect()
 }
 

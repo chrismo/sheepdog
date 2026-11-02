@@ -3,7 +3,7 @@
 
 mod pass;
 
-pub(crate) use pass::json_files;
+pub(crate) use pass::{json_files, registered, sd_verb};
 pub use pass::repo_key;
 
 use crate::config::{self, state_dir};
