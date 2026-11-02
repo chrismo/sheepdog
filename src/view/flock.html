@@ -408,6 +408,7 @@ document.addEventListener("keydown", e => {
 });
 $("tl").addEventListener("toggle", () => { if ($("tl").open && openId()) loadTimeline(openId()); });
 window.addEventListener("hashchange", route);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && $("tl").open && openId()) loadTimeline(openId()); });
 route();
 poll(false);
 setInterval(() => poll(true), POLL_MS);

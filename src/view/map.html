@@ -151,6 +151,7 @@ function render(m) {
   const note = down + (m.cut ? `Some open issues may be left out: ${m.cut}. ` : "");
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
   if (open && !files[open]) hideFile();
+  else if (open && JSON.stringify(files[open]) === sheetKey) document.querySelector(`.sq[data-p="${CSS.escape(open)}"]`)?.classList.add("on");
   else if (open) {
     showFile(open);
     if (expanded) document.querySelector("#sbody [data-more]")?.classList.add("all");
@@ -165,9 +166,11 @@ function bars(over) {
   }).join("");
 }
 
+let sheetKey = "";
 function showFile(path) {
   const f = files[path];
   if (!f) return;
+  sheetKey = JSON.stringify(f);
   document.querySelectorAll(".sq.on").forEach(e => e.classList.remove("on"));
   document.querySelector(`.sq[data-p="${CSS.escape(path)}"]`)?.classList.add("on");
   const share = Math.round(Math.min(1, f.over_lines / Math.max(f.lines, 1)) * 100);
