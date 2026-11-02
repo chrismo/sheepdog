@@ -713,6 +713,20 @@ fn glyph_waiting_on_a_required_review_is_never() {
     assert_eq!(sd.notified(), "");
 }
 
+// @test "status: a waiting branch's row says what it waits on, in sd state's words, then its PR's URL (#317)"
+#[test]
+fn status_a_waiting_branchs_row_says_what_it_waits_on_in_sd_states_words_then_its_prs_url_317() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[r#".pr.url = "https://example/pr/7" | .pr.merge_state = "BLOCKED" | .pr.review_decision = "REVIEW_REQUIRED" | .pr.review_requests = ["alice"]"#]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t⏳\twaiting on review from alice\thttps://example/pr/7"]);
+    let r = sd.run(&["status"]);
+    assert_has(&r.output, &["repo  feat  ⏳  waiting on review from alice  https://example/pr/7"]);
+    sd.ps_fixture("feat", &[r#".pr.url = "https://example/pr/7" | .ci.verdict = "pending" | .ci.pending = ["test"] | .bot = {command: "/review-bot", timeout: 3600} | .review.bot = {status: "covered", replied: false, waited: 60}"#]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t⏳\twaiting on the review bot (/review-bot); CI running\thttps://example/pr/7"]);
+}
+
 // @test "glyph: GitHub blocking the merge for another reason is ❌ and notified once, never ✅ (#326)"
 #[test]
 fn glyph_github_blocking_the_merge_for_another_reason_is_and_notified_once_never_326() {
