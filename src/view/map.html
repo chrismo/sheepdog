@@ -138,7 +138,9 @@ function render(m) {
   files = Object.fromEntries(all.map(f => [f.path, f]));
   const lines = all.reduce((n, f) => n + f.lines, 0);
   const maxLines = Math.max(1, ...all.map(f => f.lines));
-  $("eyebrow").textContent = `${all.length} files · src/`;
+  const eb = $("eyebrow");
+  eb.classList.remove("stale");
+  eb.textContent = `${all.length} files · src/`;
   const chips = [[fmt(lines), "lines", "--ink"], [m.ratchet, "over the cap", "--agent"]];
   if (m.issues !== null) chips.push([m.issues, "open issues", "--wait"]);
   $("summary").innerHTML = chips.map(([n, what, c]) => `<span class="sum" style="--sc:var(${c})"><b>${n}</b>${what}</span>`).join("");

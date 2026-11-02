@@ -100,7 +100,7 @@ where
 }
 
 fn stale(tried: u64, now: u64, forced: u64) -> bool {
-    now.saturating_sub(tried) >= FRESH_SECS * 1000 || tried < forced
+    tried > now || now - tried >= FRESH_SECS * 1000 || tried < forced
 }
 
 /// <key>'s cached answer: {data, error, fetched (UTC, or null), refreshing}.
@@ -144,6 +144,7 @@ mod tests {
         assert!(stale(999, 2_000, 1_000));
         assert!(!stale(1_000, 2_000, 1_000), "a refresh in the fetch's own ms");
         assert!(stale(0, 60_000, 0), "never tried");
+        assert!(stale(5_000, 2_000, 0), "tried in the future: a clock moved, or the state dir was copied");
     }
 
     #[test]
