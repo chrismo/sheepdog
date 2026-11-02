@@ -86,6 +86,14 @@ h3 { margin: 0; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 
 .rules .clears, .rules .applies { grid-column: 2; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
 @media (max-width: 600px) { .rules { grid-template-columns: 1fr; } .rules .clears, .rules .applies { grid-column: 1; } }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.settings { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr max-content max-content; gap: 4px 12px; font-size: 0.84rem; align-items: baseline; }
+.setting { display: contents; }
+.setting .path { font-family: var(--f-mono); font-size: 0.8rem; }
+.setting .val { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
+.setting .layer { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+.copy { font: inherit; font-size: 0.74rem; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; cursor: pointer; white-space: nowrap; }
+.copy:hover { color: var(--ink); border-color: var(--ink); }
+@media (max-width: 600px) { .settings { grid-template-columns: 1fr max-content; } .setting .val { grid-column: 1 / -1; } }
 footer { font-size: 0.78rem; color: var(--muted); }
 body.sheet footer { margin-bottom: 50vh; }
 </style>
@@ -104,7 +112,7 @@ body.sheet footer { margin-bottom: 50vh; }
   </header>
   <section><h2>Checked before anything else<span class="n" id="nholds"></span></h2><div class="holds" id="holds"></div></section>
   <section><h2>Then, stage by stage<span class="n" id="nsteps"></span></h2><div id="stages"></div></section>
-  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a stage for its steps, a step for what stops its verb.</footer>
+  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a stage for its steps, a step for what stops its verb and the settings that tune it, with this repo's values (sd config explain).</footer>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script>
@@ -157,6 +165,21 @@ function rulesHtml(v) {
   return `<h3>What stops sd act ${esc(v.name)}</h3>${gate}<h3>Also checked</h3>${shared}`;
 }
 
+function settingsHtml(s) {
+  if (!s.settings.length) return "";
+  const shown = x => x.value === null ? (x.layer === "unset" ? "unset" : "?") : JSON.stringify(x.value);
+  const rows = s.settings.map(x => `<li class="setting"><code class="path">${esc(x.path)}</code><span class="val">${esc(shown(x))}</span>` +
+    `<span class="layer">${esc(x.layer ?? "")}</span><button class="copy" type="button" data-copy="${esc(x.set)}" title="${esc(x.set)}">copy</button></li>`).join("");
+  const err = data.configError ? `<p class="none">sd config: ${esc(data.configError)}</p>` : "";
+  return `<h3>Settings that tune it</h3>${err}<ul class="settings">${rows}</ul>`;
+}
+
+async function copy(btn) {
+  try { await navigator.clipboard.writeText(btn.dataset.copy); btn.textContent = "copied"; }
+  catch { btn.textContent = "can't copy"; }
+  setTimeout(() => { btn.textContent = "copy"; }, 1500);
+}
+
 function showStep(k) {
   const s = findStep(k);
   if (!s) return hideStep();
@@ -165,7 +188,7 @@ function showStep(k) {
   document.querySelector(`[data-k="${CSS.escape(k)}"]`)?.classList.add("on");
   const where = stageOf(k) ? NAME[stageOf(k)] : "holds the whole line";
   $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))} · ${esc(where)}${s.glyph ? " · " + esc(s.glyph) : ""}</span></span>` +
-    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${rulesHtml(v)}`;
+    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${rulesHtml(v)}${settingsHtml(s)}`;
   $("sheet").hidden = false;
   document.body.classList.add("sheet");
 }
@@ -193,6 +216,8 @@ function route() {
 }
 
 document.addEventListener("click", e => {
+  const c = e.target.closest("[data-copy]");
+  if (c) return copy(c);
   const st = e.target.closest(".stage[data-s]");
   if (st) return go("s", st.classList.contains("open") ? null : st.dataset.s);
   const k = e.target.closest("[data-k]");

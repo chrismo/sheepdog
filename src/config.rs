@@ -702,6 +702,27 @@ fn show(b: &str, no_branch: bool) -> Res<String> {
     Ok(serde_json::to_string_pretty(&all).expect("a Value serializes") + "\n")
 }
 
+/// The settings keys the typed tables define, without "settings.": what sd
+/// config set accepts under settings (the Atlas's step settings are checked
+/// against it, #377).
+pub fn setting_names() -> Vec<&'static str> {
+    fields_of(Ty::Settings).into_iter().map(|(k, _)| k).collect()
+}
+
+/// Whether settings.<key> is a global-file-only key.
+pub fn global_only(key: &str) -> bool {
+    GLOBAL_ONLY.iter().any(|(k, _)| *k == key)
+}
+
+/// Every settings key with its value and the layer it came from in <dir>'s
+/// repo (the global and repo files, no branch), as `sd config explain --json
+/// --no-branch settings` traces them: [{path, value, source, overrides}].
+pub fn explain_settings(dir: &str) -> Result<Vec<Value>, Vec<String>> {
+    let out = stderr_lines(explain(dir, "settings", "", true, true))?;
+    let v: Value = serde_json::from_str(&out).map_err(|e| vec![e.to_string()])?;
+    Ok(v["keys"].as_array().cloned().unwrap_or_default())
+}
+
 /// Every key the typed tables define, as dotted paths in table order.
 fn key_paths(ty: Ty, prefix: &str, out: &mut Vec<String>) {
     let fields = fields_of(ty);
