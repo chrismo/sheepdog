@@ -214,8 +214,10 @@ fn sample(dir: &str, sha: &str, date: &str) -> Result<Value, String> {
         }
         show.stdout
     };
+    // As build counts the chip: functions in src/ files present at the sample.
+    let src_files: BTreeSet<&str> = grep.stdout.lines().filter_map(|l| l.split(':').nth(1)).filter(|p| p.starts_with("src/")).collect();
     let list = ratchet(&text);
-    let fns: BTreeSet<_> = list.iter().map(|(f, o)| (f, t(o, "fn"))).collect();
+    let fns: BTreeSet<_> = list.iter().filter(|(f, _)| src_files.contains(f.as_str())).map(|(f, o)| (f, t(o, "fn"))).collect();
     Ok(json!({"sha": sha, "date": date, "src": src, "tests": tests, "ratchet": fns.len()}))
 }
 
@@ -357,14 +359,16 @@ mod tests {
         };
         day("2026-10-12", &[("src/a.rs", "x\n")]);
         day("2026-10-13", &[("src/a.rs", "x\n".repeat(10).as_str()), ("tests/t.rs", "y\n".repeat(4).as_str())]);
-        day("2026-10-15", &[("tests/lint-ratchet.txt", RATCHET), ("src/state.rs", "z\n".repeat(5).as_str())]);
+        day("2026-10-15", &[("tests/lint-ratchet.txt", RATCHET), ("src/state.rs", "z\n".repeat(5).as_str()), ("src/act/push.rs", "p\n")]);
         day("2026-10-15", &[("src/state.rs", "z\n".repeat(6).as_str())]);
         let head = r.git(&["rev-parse", "HEAD"]);
         let t = trend(Path::new(&r.dir)).unwrap();
         let point = |i: usize| (t[i]["date"].as_str().unwrap().to_string(), t[i]["src"].as_u64().unwrap(), t[i]["tests"].as_u64().unwrap(), t[i]["ratchet"].as_u64().unwrap());
         assert_eq!(t.as_array().unwrap().len(), 2, "the day before the split isn't sampled: {t}");
         assert_eq!(point(0), ("2026-10-13".into(), 10, 4, 0));
-        assert_eq!(point(1), ("2026-10-15".into(), 16, 4 + RATCHET.lines().count() as u64, 3));
+        // As the Map's ratchet chip counts: functions in src/ files in the
+        // tree, so not tests/t.rs's, nor src/b.rs's (not in the tree).
+        assert_eq!(point(1), ("2026-10-15".into(), 17, 4 + RATCHET.lines().count() as u64, 2));
         assert_eq!(t[1]["sha"], head);
     }
 
