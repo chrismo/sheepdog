@@ -48,7 +48,11 @@ Glyphs: ❌ needs chrismo   ⚠️ state unknown   🔧 work for later   ⏳ wai
         ✅ ready to merge  🏁 merged          🚫 closed           🤖 an agent step running
 
 Notified, once per NEXT step (src/next/steps.rs) entered (again only after it clears):
-  ci-red ci-blocked conflict human foreign foreign-authors parent-closed restack-undone:
+  ci-red conflict: ❌ CI is red on HEAD, or the restack conflicts, until
+    chrismo, or an agent chrismo starts (sd act ci-fix, restack --resolve),
+    deals with it. Under autoRun the loop runs that step itself, and the
+    pass says nothing while it has it (#302; the paragraph below)
+  ci-blocked human foreign foreign-authors parent-closed restack-undone:
     ❌ the PR is stuck or wrong
     until chrismo, or an agent chrismo starts, deals with it
   bot-silent: ❌ the review bot hasn't answered within settings.botTimeout
@@ -97,6 +101,14 @@ Any other step of chrismo's that's first in NEXT notifies too, as ❌, except
 those below: a step notifies when the branch is stuck until chrismo acts,
 and stays quiet for an end state (its glyph shows it) and while sd state
 isn't sure yet.
+With settings.autoRun (Dispatch, below), a first step the loop has is 🔧,
+not ❌, and isn't notified (#302): one the pass launches, or holds for
+settings.agentSteps, a lease on the branch or a usage limit, runs with
+nobody asked. A refresh, a vacuum, or a pass the rate limit stops launches
+nothing but is as quiet about a step the job's next pass will launch. It
+notifies once the loop can't run it: the gate refuses the PR, three agent
+steps failed in a row (failed), settings.agentSteps is 0 (an agent step), a
+launch fails, or NEXT gives it to chrismo. With autoRun off nothing changes.
 Not notified:
   closed: chrismo closed it
   errors stale gh-wait: ⚠️ sd state can't be sure, so what was notified
@@ -154,7 +166,8 @@ launched, and the pass line says why, while settings.agentSteps (default 2;
 or while a usage limit holds: an agent step that stops on its harness's
 limit, launched or run by hand, writes limit in SHEEPDOG_STATE_DIR, and no
 agent step starts before its reset (an hour, when the harness gave none).
-Mechanical steps run either way.
+Mechanical steps run either way. A step launched or held isn't notified or
+❌ (Notified, above).
 The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
 ship-parent, open-pr) stay chrismo's.
 
