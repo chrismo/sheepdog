@@ -54,8 +54,8 @@ h2 .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font
 .now { font-size: 0.82rem; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, var(--cc) 12%, transparent); display: grid; gap: 4px; overflow-wrap: anywhere; }
 .now .cmd { display: flex; gap: 6px; align-items: center; }
 .now code { font-family: var(--f-mono); font-size: 0.74rem; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
-.copy { font: inherit; font-size: 0.7rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 3px; padding: 1px 6px; cursor: pointer; }
-.copy:focus-visible { outline: 2px solid var(--wait); }
+.copy, .setbtn { font: inherit; font-size: 0.7rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 3px; padding: 1px 6px; cursor: pointer; }
+.copy:focus-visible, .setbtn:focus-visible { outline: 2px solid var(--wait); }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; }
 .step { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: center; min-height: 22px; position: relative; font-size: 0.8rem; }
 .step::before { content: ""; position: absolute; left: 8px; top: -6px; height: 12px; width: 2px; background: var(--line); }
@@ -262,7 +262,7 @@ function settingRow(k) {
   let v;
   if (!k.editable) v = `<span class="v">${esc(showVal(k.value))}</span>`;
   else if (typeof k.value === "boolean") v = `<span class="edit"><input type="checkbox" data-set="${esc(k.path)}" aria-label="${esc(name)}"${k.value ? " checked" : ""}></span>`;
-  else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="copy" type="button" data-set="${esc(k.path)}">set</button></span>`;
+  else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="setbtn" type="button" data-set="${esc(k.path)}">set</button></span>`;
   return `<li><span class="k">${esc(name)}</span>${v}${layer}</li>`;
 }
 // The last set's word and whether "all settings" is open, per branch: the
