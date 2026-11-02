@@ -104,9 +104,11 @@ isn't sure yet.
 With settings.autoRun (Dispatch, below), a first step the loop has is 🔧,
 not ❌, and isn't notified (#302): one the pass launches, or holds for
 settings.agentSteps, a lease on the branch or a usage limit, runs with
-nobody asked. It notifies once the loop can't run it: the gate refuses the
-PR, three agent steps failed in a row (failed), a launch fails, or NEXT
-gives it to chrismo. With autoRun off nothing changes.
+nobody asked. A refresh, a vacuum, or a pass the rate limit stops launches
+nothing but is as quiet about a step the job's next pass will launch. It
+notifies once the loop can't run it: the gate refuses the PR, three agent
+steps failed in a row (failed), settings.agentSteps is 0 (an agent step), a
+launch fails, or NEXT gives it to chrismo. With autoRun off nothing changes.
 Not notified:
   closed: chrismo closed it
   errors stale gh-wait: ⚠️ sd state can't be sure, so what was notified

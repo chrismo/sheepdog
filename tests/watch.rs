@@ -3781,6 +3781,55 @@ fn notify_under_autorun_a_step_queued_behind_the_cap_waits_quietly_till_the_loop
     end_orphan(held);
 }
 
+// A refresh launches nothing, but the job's next pass will: the step is the
+// loop's on a refresh too, so the glyph holds and nothing notifies.
+#[test]
+fn notify_under_autorun_a_refresh_between_passes_keeps_the_loop_s_step_quiet_302() {
+    let sd = sd();
+    sd.dispatching();
+    sd.first_agent_step("feat", "ci-red");
+    sd.ok(&["refresh"]);
+    assert_eq!((sd.glyph("repo"), sd.notified()), ("🔧".into(), String::new()), "before the job's pass");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act ci-fix"]);
+    sd.ok(&["refresh"]);
+    assert_eq!((sd.glyph("repo"), sd.notified()), ("🔧".into(), String::new()), "while it runs");
+    sd.settle("feat");
+    let _ = sd.acts();
+    sd.ok(&["refresh"]);
+    sd.pass();
+    sd.settle("feat");
+    sd.ok(&["refresh"]);
+    assert_eq!((sd.glyph("repo"), sd.notified()), ("🔧".into(), String::new()), "after it ran");
+}
+
+#[test]
+fn notify_under_autorun_a_step_the_rate_limit_holds_back_stays_quiet_302() {
+    let sd = sd();
+    sd.dispatching();
+    sd.ps_fixture("feat", &[
+        r#".viewer = "me" | .pr.author = "me" | .next = [{key: "ci-red", who: "agent", say: "say ci-red", cmd: "sd act x"}]"#,
+        r#".rate_limit = {cost: 2, remaining: 100, reset_at: "2026-10-16T13:00:00Z", limited: false}"#,
+    ]);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+    assert_eq!((sd.glyph("repo"), sd.notified()), ("🔧".into(), String::new()));
+}
+
+// settings.agentSteps 0: the loop runs no agent step, so it's chrismo's.
+#[test]
+fn notify_under_autorun_with_agentsteps_0_an_agent_step_is_chrismo_s_302() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":0}}"#);
+    sd.first_agent_step("feat", "ci-red");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t❌\tsay ci-red\nrepo\tfeat\t-\tnot launching sd act ci-fix: settings.agentSteps 0"]);
+    sd.ok(&["refresh"]);
+    sd.pass();
+    assert_eq!(sd.glyph("repo"), "❌");
+    assert_eq!(sd.notified(), "repo feat|say ci-red");
+}
+
 // ── the job is diagnosable (#364) ───────────────────────────────────────────
 
 /// A pass at a fixed clock: SHEEPDOG_WATCH_CLOCK, a debug build's seam.

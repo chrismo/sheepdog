@@ -167,12 +167,14 @@ fn runnable(s: &Value) -> Option<(&str, &'static str)> {
 
 /// What a pass does about the branch's first NEXT step (#302). Launch,
 /// Wait and Hold are the loop's: it runs the step with nobody asked, so the
-/// pass neither notifies nor ❌s it. Leave is the policy's: the step is
-/// chrismo's, or waits for them.
+/// pass neither notifies nor ❌s it. Leave and Off are the policy's: the
+/// step is chrismo's, or waits for them.
 #[derive(Debug, PartialEq)]
 enum Plan {
     /// Nothing: no step a pass runs, autoRun off, or the gate refused.
     Leave,
+    /// Never agent step <step>: settings.agentSteps 0.
+    Off(&'static str),
     /// Launch sd act <step> now.
     Launch(&'static str),
     /// A step runs on the branch already, or its session is attached.
@@ -181,13 +183,23 @@ enum Plan {
     Hold(&'static str, String),
 }
 
+impl Plan {
+    /// The loop has the step: it runs it, now or once it can.
+    fn taken(&self) -> bool {
+        matches!(self, Plan::Launch(_) | Plan::Wait | Plan::Hold(..))
+    }
+}
+
 /// <enabled>: the branch's settings.autoRun; <busy>: a step runs on the
-/// branch or its session is attached; <held>: why an agent step can't
-/// start now, if it can't.
-fn plan(s: &Value, enabled: bool, busy: bool, held: impl FnOnce() -> Option<String>) -> Plan {
+/// branch or its session is attached; <agents>: settings.agentSteps isn't
+/// 0; <held>: why an agent step can't start now, if it can't.
+fn plan(s: &Value, enabled: bool, busy: bool, agents: bool, held: impl FnOnce() -> Option<String>) -> Plan {
     let Some((key, step)) = runnable(s) else { return Plan::Leave };
     if !enabled || !may_dispatch(s, key) {
         return Plan::Leave;
+    }
+    if !agents && AGENT_STEPS.contains(&step) {
+        return Plan::Off(step);
     }
     if busy {
         return Plan::Wait;
@@ -641,7 +653,7 @@ impl Watch {
         let ended = self.end_on_a_dead_pr(repo, name, b, &s);
         // Dispatch before notify (#302): a step the loop has isn't notified.
         let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
-        let d = if stop.is_none() { self.dispatch(repo, name, b, &s) } else { Dispatched::default() };
+        let d = self.dispatch(repo, name, b, &s, stop.is_none());
         let c = classify(&s, d.taken);
 
         let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
@@ -769,21 +781,29 @@ impl Watch {
     /// Launch the branch's first NEXT step when it's one a pass runs: one
     /// attempt, under the watch timeout, waiting only till its lease is
     /// taken. Its output goes to steps.log in the state dir; its pass line
-    /// to stderr, the job's log. Only the job's pass, and not while sd
-    /// state reports errors or is unsure.
-    fn dispatch(&mut self, repo: &str, name: &str, b: &str, s: &Value) -> Dispatched {
+    /// to stderr, the job's log. Not while sd state reports errors or is
+    /// unsure. Only the job's pass launches, and not while the rate limit
+    /// stops it (<launch> false); a refresh, a vacuum or a stopped pass
+    /// still works out whether the loop has the step (#302), so the next
+    /// job's pass launching it doesn't notify it first.
+    fn dispatch(&mut self, repo: &str, name: &str, b: &str, s: &Value, launch: bool) -> Dispatched {
         let errors = at(s, "errors").as_array().is_some_and(|e| !e.is_empty());
-        if !self.dispatch || errors || carries(s) {
+        if errors || carries(s) {
             return Dispatched::default();
         }
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
         let busy = !at(s, "session.running").is_null()
             || on(s, "session.locked")
             || running::lease(repo, b).is_some_and(|l| l.live);
+        let plan = plan(s, auto_run(repo, b), busy, self.agent_steps > 0, || self.held());
+        let taken = plan.taken();
+        if !launch || !self.dispatch {
+            return Dispatched { line: String::new(), taken };
+        }
         let verb = |step| act_args(step).join(" ");
-        let (msg, taken) = match plan(s, auto_run(repo, b), busy, || self.held()) {
-            Plan::Leave => return Dispatched::default(),
-            Plan::Wait => return Dispatched { line: String::new(), taken: true },
+        let (msg, taken) = match plan {
+            Plan::Leave | Plan::Wait => return Dispatched { line: String::new(), taken },
+            Plan::Off(step) => (format!("not launching sd act {}: settings.agentSteps 0", verb(step)), false),
             Plan::Hold(step, why) => (format!("not launching sd act {}: {why}", verb(step)), true),
             Plan::Launch(step) => match self.launch(repo, step, b) {
                 Ok(()) => {
@@ -802,9 +822,6 @@ impl Watch {
     /// already running, in any registered repo, launched or run by hand
     /// (#350), or a usage limit till its reset (crate::limit).
     fn held(&self) -> Option<String> {
-        if self.agent_steps == 0 {
-            return Some("settings.agentSteps 0".into());
-        }
         let running = agents_running();
         if running >= self.agent_steps {
             let n = if running == 1 { "1 agent step".into() } else { format!("{running} agent steps") };
@@ -1204,6 +1221,7 @@ pub fn refresh(argv: &[String]) -> ExitCode {
         Ok(line) => line,
     };
     w.vacuum_after = global_num("settings.vacuumAfter");
+    w.agent_steps = global_num("settings.agentSteps") as u64;
     if let Some(line) = fetched {
         println!("{}", show(&line));
     }
@@ -1368,19 +1386,24 @@ mod tests {
         let mine = |k: &str, who: &str| json!({"viewer": "me", "pr": {"author": "me"}, "push": {"remote_ours": true}, "next": [step(k, who), step("ci-wait", "wait")]});
         let free = || None;
         let cap = || Some("1 agent step running, settings.agentSteps 1".to_string());
-        assert_eq!(plan(&mine("conflict", "agent"), true, false, free), Plan::Launch("resolve"));
-        assert_eq!(plan(&mine("ci-red", "agent"), true, false, free), Plan::Launch("ci-fix"));
-        assert_eq!(plan(&mine("ci-red", "agent"), true, false, cap), Plan::Hold("ci-fix", "1 agent step running, settings.agentSteps 1".into()));
-        assert_eq!(plan(&mine("ci-red", "agent"), true, true, cap), Plan::Wait, "a lease on the branch");
-        assert_eq!(plan(&mine("push", "run"), true, false, cap), Plan::Launch("push"), "mechanical steps run past the cap");
+        assert_eq!(plan(&mine("conflict", "agent"), true, false, true, free), Plan::Launch("resolve"));
+        assert_eq!(plan(&mine("ci-red", "agent"), true, false, true, free), Plan::Launch("ci-fix"));
+        assert_eq!(plan(&mine("ci-red", "agent"), true, false, true, cap), Plan::Hold("ci-fix", "1 agent step running, settings.agentSteps 1".into()));
+        assert_eq!(plan(&mine("ci-red", "agent"), true, true, true, cap), Plan::Wait, "a lease on the branch");
+        assert_eq!(plan(&mine("push", "run"), true, false, true, cap), Plan::Launch("push"), "mechanical steps run past the cap");
+        assert_eq!(plan(&mine("ci-red", "agent"), true, false, false, free), Plan::Off("ci-fix"), "settings.agentSteps 0");
+        assert_eq!(plan(&mine("ci-red", "agent"), true, true, false, free), Plan::Off("ci-fix"), "settings.agentSteps 0, busy or not");
+        assert_eq!(plan(&mine("push", "run"), true, false, false, free), Plan::Launch("push"), "settings.agentSteps 0 leaves mechanical steps");
         let mut theirs = mine("conflict", "agent");
         theirs["pr"]["author"] = json!("them");
-        assert_eq!(plan(&theirs, true, false, free), Plan::Leave, "the gate refused");
-        assert_eq!(plan(&mine("conflict", "you"), true, false, free), Plan::Leave, "chrismo's");
-        assert_eq!(plan(&mine("failed", "you"), true, false, free), Plan::Leave, "failed out");
-        assert_eq!(plan(&mine("push", "agent"), true, false, free), Plan::Leave, "as the one it is");
-        assert_eq!(plan(&mine("conflict", "agent"), false, false, free), Plan::Leave, "autoRun off");
-        assert_eq!(plan(&json!({}), true, false, free), Plan::Leave);
+        assert_eq!(plan(&theirs, true, false, true, free), Plan::Leave, "the gate refused");
+        assert_eq!(plan(&mine("conflict", "you"), true, false, true, free), Plan::Leave, "chrismo's");
+        assert_eq!(plan(&mine("failed", "you"), true, false, true, free), Plan::Leave, "failed out");
+        assert_eq!(plan(&mine("push", "agent"), true, false, true, free), Plan::Leave, "as the one it is");
+        assert_eq!(plan(&mine("conflict", "agent"), false, false, true, free), Plan::Leave, "autoRun off");
+        assert_eq!(plan(&json!({}), true, false, true, free), Plan::Leave);
+        let taken: Vec<bool> = [Plan::Leave, Plan::Off("ci-fix"), Plan::Launch("ci-fix"), Plan::Wait, Plan::Hold("ci-fix", String::new())].iter().map(Plan::taken).collect();
+        assert_eq!(taken, [false, false, true, true, true]);
     }
 
     fn glyph(steps: &[Value]) -> &'static str {
