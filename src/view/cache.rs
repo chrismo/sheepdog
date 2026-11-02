@@ -118,11 +118,23 @@ where
 }
 
 pub(super) fn stale(tried: u64, now: u64, forced: u64) -> bool {
-    tried > now || now - tried >= FRESH_SECS * 1000 || tried < forced
+    stale_for(tried, now, forced, FRESH_SECS)
+}
+
+fn stale_for(tried: u64, now: u64, forced: u64, fresh_secs: u64) -> bool {
+    tried > now || now - tried >= fresh_secs * 1000 || tried < forced
 }
 
 /// <key>'s cached answer: {data, error, fetched (UTC, or null), refreshing}.
 pub fn get<F>(state: &Path, key: &str, fetch: F) -> Value
+where
+    F: FnOnce() -> Result<Value, String> + Send + 'static,
+{
+    get_for(state, key, FRESH_SECS, fetch)
+}
+
+/// get, with the answer fresh for <fresh_secs> instead of FRESH_SECS.
+pub fn get_for<F>(state: &Path, key: &str, fresh_secs: u64, fetch: F) -> Value
 where
     F: FnOnce() -> Result<Value, String> + Send + 'static,
 {
@@ -136,7 +148,7 @@ where
     let now = now_ms();
     // A file's try ahead of the clock that can't be rewritten would start a fetch every read.
     let tried = doc["tried"].as_u64().filter(|&t| t <= now).unwrap_or(0).max(last);
-    let refreshing = if stale(tried, now, forced()) {
+    let refreshing = if stale_for(tried, now, forced(), fresh_secs) {
         start(key, f, doc.clone(), fetch);
         true
     } else {

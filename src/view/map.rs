@@ -1,10 +1,14 @@
 // The Map's data (#378): sheepdog's own src/, each file sized by its lines,
-// grouped by module, with the functions tests/lint-ratchet.txt holds over
-// clippy's cap and the open issues that name it (through view/cache.rs). Read
+// grouped by the stage it serves (STAGES), with the functions
+// tests/lint-ratchet.txt holds over clippy's cap and the open issues that
+// name it (through view/cache.rs); and the trend, one sample a day of src/
+// and tests/ lines and ratchet functions from git log, cached by HEAD. Read
 // from the checkout the binary was built in, whatever repo sd view runs from.
 
 use super::cache;
+use crate::act::verbs::VERBS;
 use crate::gh;
+use crate::git::git;
 use crate::val::t;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -15,6 +19,37 @@ use std::path::{Path, PathBuf};
 const GH_SECS: u64 = 20;
 /// The most open issues one gh call lists; a list this long may be cut off.
 const ISSUE_LIMIT: usize = 500;
+/// The trend's first day: the split from agent-rig.
+const SPLIT: &str = "2026-10-13";
+/// Keyed by HEAD, a trend can't change; the hour only bounds a page left open.
+const TREND_FRESH_SECS: u64 = 3600;
+
+/// The stages a file serves, in the order the page draws them. "pages" is
+/// sd view (N2); the issue's list has no stage for it.
+const STAGES: [&str; 9] = ["watch loop", "observe", "decide", "act", "agent steps", "records", "settings", "pages", "plumbing"];
+
+/// Where a file serves, by its path or its directory (ending in /). A verb's
+/// file (src/act/<verb>.rs) is placed by its declaration in VERBS instead:
+/// act, or agent steps. A file neither places lands in plumbing, and
+/// every_file_under_src_has_a_stage names it.
+const PLACES: &[(&str, &str)] = &[
+    ("src/watch.rs", "watch loop"), ("src/watch/", "watch loop"), ("src/watch_help.txt", "watch loop"),
+    ("src/state.rs", "observe"), ("src/state_help.txt", "observe"),
+    ("src/next.rs", "decide"), ("src/next/", "decide"), ("src/act/gate.rs", "decide"), ("src/act/gates.rs", "decide"),
+    ("src/act/mod.rs", "act"), ("src/act_help.txt", "act"), ("src/act/verbs.rs", "act"), ("src/act/bookkeeping.rs", "act"),
+    ("src/act/commands.rs", "act"), ("src/act/github.rs", "act"), ("src/act/hold.rs", "act"),
+    ("src/act/resolve.rs", "agent steps"), ("src/act/editing.rs", "agent steps"), ("src/act/step.rs", "agent steps"),
+    ("src/harness.rs", "agent steps"), ("src/harness/", "agent steps"), ("src/harness_help.txt", "agent steps"),
+    ("src/guidance.rs", "agent steps"), ("src/rules.rs", "agent steps"), ("src/stray.rs", "agent steps"),
+    ("src/review_local.rs", "agent steps"), ("src/review_local_help.txt", "agent steps"),
+    ("src/pins.rs", "records"), ("src/decisions.rs", "records"), ("src/failed.rs", "records"), ("src/verify_red.rs", "records"),
+    ("src/usage.rs", "records"), ("src/running.rs", "records"), ("src/limit.rs", "records"),
+    ("src/config.rs", "settings"),
+    ("src/view.rs", "pages"), ("src/view/", "pages"), ("src/view_help.txt", "pages"),
+    ("src/main.rs", "plumbing"), ("src/lib.rs", "plumbing"), ("src/sd_help.txt", "plumbing"), ("src/gh.rs", "plumbing"),
+    ("src/git.rs", "plumbing"), ("src/proc.rs", "plumbing"), ("src/json.rs", "plumbing"), ("src/val.rs", "plumbing"),
+    ("src/time.rs", "plumbing"), ("src/test_support.rs", "plumbing"),
+];
 
 /// The checkout the binary was built in: lib/'s parent.
 fn root() -> PathBuf {
@@ -49,15 +84,18 @@ fn ratchet(text: &str) -> Vec<(String, Value)> {
         .collect()
 }
 
-/// <path>'s module: src/<m>/… and src/<m>.rs (or <m>_help.txt) beside a
-/// src/<m>/ are <m>; the rest are "src".
-fn module(path: &str, dirs: &BTreeSet<&str>) -> String {
-    let rest = path.strip_prefix("src/").unwrap_or(path);
-    if let Some((m, _)) = rest.split_once('/') {
-        return m.to_string();
-    }
-    let stem = rest.strip_suffix(".rs").or_else(|| rest.strip_suffix("_help.txt")).unwrap_or(rest);
-    if dirs.contains(stem) { stem } else { "src" }.to_string()
+/// The stage <path> serves, or None when neither VERBS nor PLACES places it.
+/// Only a bare verb names a file: "restack --resolve" is resolve.rs's.
+fn stage(path: &str) -> Option<&'static str> {
+    let verb = VERBS.iter().filter(|v| !v.name.contains(' ')).find(|v| path == format!("src/act/{}.rs", v.name.replace('-', "_")));
+    verb.map(|v| if v.agent { "agent steps" } else { "act" })
+        .or_else(|| PLACES.iter().find(|(k, _)| *k == path || (k.ends_with('/') && path.starts_with(k))).map(|(_, s)| *s))
+}
+
+/// The files that fall through to plumbing.
+#[cfg(test)]
+fn unplaced(files: &[(String, String)]) -> Vec<String> {
+    files.iter().filter(|(p, _)| stage(p).is_none()).map(|(p, _)| p.clone()).collect()
 }
 
 fn header(text: &str) -> String {
@@ -90,29 +128,85 @@ fn file(path: &str, text: &str, over: Vec<Value>, issues: &[Value]) -> Value {
            "issues": naming(issues, path)})
 }
 
-/// Groups and files, largest first. issues is None until gh has answered once.
+/// A group per stage with files, in STAGES' order, each group's files
+/// largest first. issues is None until gh has answered once.
 fn build(files: &[(String, String)], ratchet_text: &str, issues: Option<&[Value]>) -> Value {
     let over = ratchet(ratchet_text);
-    let dirs: BTreeSet<&str> = files.iter().filter_map(|(p, _)| Some(p.strip_prefix("src/")?.split_once('/')?.0)).collect();
     let list = issues.unwrap_or_default();
-    let mut groups: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut groups: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     for (path, text) in files {
         let mine = over.iter().filter(|(f, _)| f == path).map(|(_, o)| o.clone()).collect();
-        groups.entry(module(path, &dirs)).or_default().push(file(path, text, mine, list));
+        groups.entry(stage(path).unwrap_or("plumbing")).or_default().push(file(path, text, mine, list));
     }
     let lines = |f: &Value| f["lines"].as_u64().unwrap_or(0);
-    let mut groups: Vec<Value> = groups
-        .into_iter()
-        .map(|(name, mut fs)| {
+    let groups: Vec<Value> = STAGES
+        .iter()
+        .filter_map(|name| {
+            let mut fs = groups.remove(name)?;
             fs.sort_by_key(|f| std::cmp::Reverse(lines(f)));
-            json!({"name": name, "lines": fs.iter().map(lines).sum::<u64>(), "files": fs})
+            Some(json!({"name": name, "lines": fs.iter().map(lines).sum::<u64>(), "files": fs}))
         })
         .collect();
-    groups.sort_by_key(|g| std::cmp::Reverse(lines(g)));
     // Functions, not lines: one over both caps is listed twice.
     let fns: BTreeSet<_> = over.iter().filter(|(f, _)| files.iter().any(|(p, _)| p == f)).map(|(f, o)| (f, t(o, "fn"))).collect();
     let cut = issues.filter(|l| l.len() >= ISSUE_LIMIT).map(|l| format!("gh lists {ISSUE_LIMIT} at most, and gave {}", l.len()));
     json!({"groups": groups, "ratchet": fns.len(), "issues": issues.map(<[Value]>::len), "cut": cut})
+}
+
+/// "<sha> <date>" lines, newest first, to the newest commit of each day
+/// from SPLIT on, oldest first.
+fn samples(log: &str) -> Vec<(&str, &str)> {
+    let mut seen = BTreeSet::new();
+    let mut out: Vec<(&str, &str)> = log
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .filter(|(_, date)| *date >= SPLIT && seen.insert(*date))
+        .collect();
+    out.sort_by_key(|(_, date)| *date);
+    out
+}
+
+/// git grep -c's "<sha>:<path>:<count>" lines summed as (src/, tests/) lines.
+fn tree_lines(out: &str) -> (u64, u64) {
+    out.lines().filter_map(|l| l.rsplit_once(':')).fold((0, 0), |(s, t), (path, n)| {
+        let n: u64 = n.parse().unwrap_or(0);
+        let path = path.split_once(':').map_or(path, |(_, p)| p);
+        (s + if path.starts_with("src/") { n } else { 0 }, t + if path.starts_with("tests/") { n } else { 0 })
+    })
+}
+
+/// The trend's points, oldest first: {sha, date, src, tests, ratchet} for
+/// the newest first-parent commit of each day since SPLIT. Counted in git's
+/// objects (git grep -c, git show), nothing checked out.
+fn trend(root: &Path) -> Result<Value, String> {
+    // Not --since: git reads a bare date at the current time of day.
+    let dir = root.to_string_lossy();
+    let log = git(&dir, &["log", "--first-parent", "--format=%H %cs", "HEAD"]);
+    if !log.ok {
+        return Err(format!("git: {}", log.stderr.trim()));
+    }
+    let points = samples(&log.stdout)
+        .into_iter()
+        .map(|(sha, date)| {
+            let (src, tests) = tree_lines(&git(&dir, &["grep", "-c", "", sha, "--", "src", "tests"]).stdout);
+            let list = ratchet(&git(&dir, &["show", &format!("{sha}:tests/lint-ratchet.txt")]).stdout);
+            let fns: BTreeSet<_> = list.iter().map(|(f, o)| (f, t(o, "fn"))).collect();
+            json!({"sha": sha, "date": date, "src": src, "tests": tests, "ratchet": fns.len()})
+        })
+        .collect();
+    Ok(Value::Array(points))
+}
+
+/// The trend, cached by the checkout's HEAD: {points, error, fetched, refreshing}.
+fn cached_trend(state: &Path, root: &Path) -> Value {
+    let head = git(&root.to_string_lossy(), &["rev-parse", "HEAD"]);
+    if !head.ok {
+        return json!({"points": [], "error": format!("git: {}", head.stderr.trim()), "fetched": null, "refreshing": false});
+    }
+    let key = format!("trend-{}-{}", crate::watch::repo_key(&root.to_string_lossy()), head.stdout.trim());
+    let from = root.to_path_buf();
+    let got = cache::get_for(state, &key, TREND_FRESH_SECS, move || trend(&from));
+    json!({"points": got["data"].as_array().cloned().unwrap_or_default(), "error": got["error"], "fetched": got["fetched"], "refreshing": got["refreshing"]})
 }
 
 pub fn map(state: &Path) -> Value {
@@ -125,6 +219,7 @@ pub fn map(state: &Path) -> Value {
     for k in ["error", "fetched", "refreshing"] {
         m[k] = got[k].clone();
     }
+    m["trend"] = cached_trend(state, &root);
     m["root"] = json!(root.display().to_string());
     m
 }
@@ -134,9 +229,9 @@ mod tests {
     use super::*;
 
     const RATCHET: &str = "# file  fn  lint  score\n\
-        src/act/a.rs  run  too_many_lines  140\n\
-        src/act/a.rs  run  cognitive_complexity  30  # #335 splits it\n\
-        src/b.rs  big  too_many_lines  120\n\
+        src/act/push.rs  run  too_many_lines  140\n\
+        src/act/push.rs  run  cognitive_complexity  30  # #335 splits it\n\
+        src/state.rs  big  too_many_lines  120\n\
         tests/t.rs  long  too_many_lines  110\n\
         \n\
         torn line\n\
@@ -144,8 +239,8 @@ mod tests {
 
     fn fixture() -> Vec<(String, String)> {
         let lines = |n: usize| "x\n".repeat(n);
-        [("src/act.rs", format!("// The act verbs.\n// All of them.\n{}", lines(8))), ("src/act/a.rs", lines(200)),
-         ("src/act_help.txt", lines(3)), ("src/b.rs", lines(150)), ("src/c.rs", lines(1))]
+        [("src/act/mod.rs", format!("// The act verbs.\n// All of them.\n{}", lines(8))), ("src/act/push.rs", lines(200)),
+         ("src/act_help.txt", lines(3)), ("src/state.rs", lines(150)), ("src/c.rs", lines(1)), ("src/act/implement.rs", lines(9))]
             .into_iter()
             .map(|(p, t)| (p.to_string(), t))
             .collect()
@@ -159,38 +254,109 @@ mod tests {
     fn ratchet_lines_are_read_and_comments_and_torn_lines_skipped() {
         let r = ratchet(RATCHET);
         assert_eq!(r, [
-            ("src/act/a.rs".into(), json!({"fn": "run", "lint": "too_many_lines", "score": 140})),
-            ("src/act/a.rs".into(), json!({"fn": "run", "lint": "cognitive_complexity", "score": 30})),
-            ("src/b.rs".into(), json!({"fn": "big", "lint": "too_many_lines", "score": 120})),
+            ("src/act/push.rs".into(), json!({"fn": "run", "lint": "too_many_lines", "score": 140})),
+            ("src/act/push.rs".into(), json!({"fn": "run", "lint": "cognitive_complexity", "score": 30})),
+            ("src/state.rs".into(), json!({"fn": "big", "lint": "too_many_lines", "score": 120})),
             ("tests/t.rs".into(), json!({"fn": "long", "lint": "too_many_lines", "score": 110})),
         ]);
     }
 
     #[test]
-    fn a_file_s_module_is_its_directory_or_the_directory_beside_it() {
-        let dirs = BTreeSet::from(["act", "view"]);
-        let m = |p| module(p, &dirs);
-        assert_eq!([m("src/act/a.rs"), m("src/act.rs"), m("src/act_help.txt"), m("src/view/x.html")], ["act", "act", "act", "view"]);
-        assert_eq!([m("src/b.rs"), m("src/state_help.txt"), m("src/actx.rs")], ["src", "src", "src"]);
+    fn a_verb_s_file_is_act_or_agent_steps_by_its_declaration() {
+        assert_eq!(stage("src/act/push.rs"), Some("act"));
+        assert_eq!(stage("src/act/start.rs"), Some("act"));
+        assert_eq!(stage("src/act/implement.rs"), Some("agent steps"));
+        assert_eq!(stage("src/act/ci_fix.rs"), Some("agent steps"));
+        assert_eq!(stage("src/act/restack.rs"), Some("act"), "restack --resolve's agent flag is resolve.rs's, not restack.rs's");
+        assert_eq!(stage("src/act/resolve.rs"), Some("agent steps"));
     }
 
     #[test]
-    fn the_map_groups_files_by_module_largest_first() {
+    fn a_file_s_stage_is_its_path_s_or_its_directory_s_table_entry() {
+        assert_eq!([stage("src/watch/pass.rs"), stage("src/watch.rs"), stage("src/state.rs"), stage("src/next/steps.rs")],
+                   [Some("watch loop"), Some("watch loop"), Some("observe"), Some("decide")]);
+        assert_eq!([stage("src/pins.rs"), stage("src/config.rs"), stage("src/view/map.rs"), stage("src/gh.rs")],
+                   [Some("records"), Some("settings"), Some("pages"), Some("plumbing")]);
+        assert_eq!([stage("src/zzz.rs"), stage("src/act/zzz.rs"), stage("src/nextx.rs")], [None, None, None]);
+    }
+
+    #[test]
+    fn the_map_groups_files_by_stage_in_the_issue_s_order_largest_file_first() {
         let m = build(&fixture(), "", Some(&[]));
         let names: Vec<_> = m["groups"].as_array().unwrap().iter().map(|g| (g["name"].as_str().unwrap(), g["lines"].as_u64().unwrap())).collect();
-        assert_eq!(names, [("act", 213), ("src", 151)]);
-        let act: Vec<_> = m["groups"][0]["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
-        assert_eq!(act, ["src/act/a.rs", "src/act.rs", "src/act_help.txt"]);
-        assert_eq!(file(&m, "src/act.rs")["lines"], 10);
-        assert_eq!(file(&m, "src/act.rs")["head"], "The act verbs. All of them.");
+        assert_eq!(names, [("observe", 150), ("act", 213), ("agent steps", 9), ("plumbing", 1)]);
+        let act: Vec<_> = m["groups"][1]["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
+        assert_eq!(act, ["src/act/push.rs", "src/act/mod.rs", "src/act_help.txt"]);
+        assert_eq!(file(&m, "src/act/mod.rs")["lines"], 10);
+        assert_eq!(file(&m, "src/act/mod.rs")["head"], "The act verbs. All of them.");
+    }
+
+    #[test]
+    fn a_file_the_table_doesn_t_place_lands_in_plumbing_and_is_listed() {
+        let m = build(&fixture(), "", Some(&[]));
+        assert_eq!(m["groups"][3]["files"][0]["path"], "src/c.rs");
+        assert_eq!(unplaced(&fixture()), ["src/c.rs"]);
+    }
+
+    /// Fails naming the files PLACES and VERBS don't place: add each to PLACES.
+    #[test]
+    fn every_file_under_src_has_a_stage() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        assert_eq!(unplaced(&sources(root)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn one_sample_a_day_since_the_split_oldest_first() {
+        let log = "c1 2026-10-20\nc2 2026-10-20\nc3 2026-10-19\nc4 2026-10-20\nc5 2026-10-13\nc6 2026-10-13\nc7 2026-10-12\n";
+        assert_eq!(samples(log), [("c5", "2026-10-13"), ("c3", "2026-10-19"), ("c1", "2026-10-20")]);
+        assert_eq!(samples("torn\n\n"), []);
+    }
+
+    #[test]
+    fn a_sample_s_lines_are_summed_per_tree() {
+        let out = "sha:src/a.rs:100\nsha:src/act/b.rs:20\nsha:tests/t.rs:7\nsha:tests/lint-ratchet.txt:3\nnot a count\n";
+        assert_eq!(tree_lines(out), (120, 10));
+        assert_eq!(tree_lines(""), (0, 0));
+    }
+
+    #[test]
+    fn the_trend_is_sampled_from_a_repo_s_first_parent_history() {
+        let r = crate::test_support::Repo::new();
+        r.git(&["checkout", "-q", "--orphan", "t"]);
+        let day = |d: &str, files: &[(&str, &str)]| {
+            for (p, text) in files {
+                let f = Path::new(&r.dir).join(p);
+                fs::create_dir_all(f.parent().unwrap()).unwrap();
+                fs::write(f, text).unwrap();
+            }
+            r.git(&["add", "-A"]);
+            let o = crate::git::Git::new(&r.dir, &["commit", "-qm", d, "--allow-empty"]).env("GIT_COMMITTER_DATE", format!("{d}T12:00:00Z")).run();
+            assert!(o.ok, "{}", o.stderr);
+        };
+        day("2026-10-12", &[("src/a.rs", "x\n")]);
+        day("2026-10-13", &[("src/a.rs", "x\n".repeat(10).as_str()), ("tests/t.rs", "y\n".repeat(4).as_str())]);
+        day("2026-10-15", &[("tests/lint-ratchet.txt", RATCHET), ("src/state.rs", "z\n".repeat(5).as_str())]);
+        day("2026-10-15", &[("src/state.rs", "z\n".repeat(6).as_str())]);
+        let head = r.git(&["rev-parse", "HEAD"]);
+        let t = trend(Path::new(&r.dir)).unwrap();
+        let point = |i: usize| (t[i]["date"].as_str().unwrap().to_string(), t[i]["src"].as_u64().unwrap(), t[i]["tests"].as_u64().unwrap(), t[i]["ratchet"].as_u64().unwrap());
+        assert_eq!(t.as_array().unwrap().len(), 2, "the day before the split isn't sampled: {t}");
+        assert_eq!(point(0), ("2026-10-13".into(), 10, 4, 0));
+        assert_eq!(point(1), ("2026-10-15".into(), 16, 4 + RATCHET.lines().count() as u64, 3));
+        assert_eq!(t[1]["sha"], head);
+    }
+
+    #[test]
+    fn a_checkout_that_isn_t_a_repo_has_no_trend() {
+        assert!(trend(Path::new("/")).is_err());
     }
 
     #[test]
     fn a_file_s_lines_over_the_cap_are_its_too_many_lines_scores() {
         let m = build(&fixture(), RATCHET, Some(&[]));
-        assert_eq!(file(&m, "src/act/a.rs")["over_lines"], 140);
-        assert_eq!(file(&m, "src/act/a.rs")["over"].as_array().unwrap().len(), 2);
-        assert_eq!(file(&m, "src/b.rs")["over_lines"], 120);
+        assert_eq!(file(&m, "src/act/push.rs")["over_lines"], 140);
+        assert_eq!(file(&m, "src/act/push.rs")["over"].as_array().unwrap().len(), 2);
+        assert_eq!(file(&m, "src/state.rs")["over_lines"], 120);
         assert_eq!((&file(&m, "src/c.rs")["over_lines"], &file(&m, "src/c.rs")["over"]), (&json!(0), &json!([])));
     }
 
@@ -203,13 +369,13 @@ mod tests {
     #[test]
     fn an_issue_counts_for_each_file_its_title_or_body_names() {
         let issues = vec![
-            json!({"number": 1, "title": "split src/b.rs", "url": "u1", "body": "and src/act/a.rs"}),
-            json!({"number": 2, "title": "t", "url": "u2", "body": "src/act/a.rs again; act.rs alone doesn't count"}),
+            json!({"number": 1, "title": "split src/state.rs", "url": "u1", "body": "and src/act/push.rs"}),
+            json!({"number": 2, "title": "t", "url": "u2", "body": "src/act/push.rs again; mod.rs alone doesn't count"}),
         ];
         let m = build(&fixture(), "", Some(&issues));
         let nums = |p| file(&m, p)["issues"].as_array().unwrap().iter().map(|i| i["number"].as_u64().unwrap()).collect::<Vec<_>>();
-        assert_eq!([nums("src/act/a.rs"), nums("src/b.rs"), nums("src/act.rs")], [vec![1, 2], vec![1], vec![]]);
-        assert_eq!(file(&m, "src/b.rs")["issues"][0], json!({"number": 1, "title": "split src/b.rs", "url": "u1"}));
+        assert_eq!([nums("src/act/push.rs"), nums("src/state.rs"), nums("src/act/mod.rs")], [vec![1, 2], vec![1], vec![]]);
+        assert_eq!(file(&m, "src/state.rs")["issues"][0], json!({"number": 1, "title": "split src/state.rs", "url": "u1"}));
         assert_eq!((&m["issues"], &m["cut"]), (&json!(2), &Value::Null));
     }
 
@@ -225,7 +391,7 @@ mod tests {
     #[test]
     fn without_the_issue_list_files_name_none() {
         let m = build(&fixture(), "", None);
-        assert_eq!(file(&m, "src/b.rs")["issues"], json!([]));
+        assert_eq!(file(&m, "src/state.rs")["issues"], json!([]));
         assert_eq!((&m["issues"], &m["cut"]), (&Value::Null, &Value::Null));
     }
 }

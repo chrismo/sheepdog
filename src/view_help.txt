@@ -14,8 +14,11 @@ Usage: sd view [--port <n>] [--no-open]
   The Map (/map, linked from the Flock) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's
   cap (tests/lint-ratchet.txt), and the open issues that name it (one gh
-  issue list). It reads the checkout sd was built from, whatever repo sd
-  view runs in.
+  issue list). Files are grouped by the stage they serve: watch loop,
+  observe, decide, act, agent steps, records, settings, pages, plumbing. A
+  trend strip above them samples the last commit of each day since the
+  split (2026-10-13): lines in src/ and tests/, and functions over the cap.
+  It reads the checkout sd was built from, whatever repo sd view runs in.
 
   GitHub data is cached under <state>/github/ and served at once; the first
   read after it's a minute old fetches it again in the background, so with
