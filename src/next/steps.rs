@@ -96,6 +96,72 @@ pub const STEPS: &[StepDef] = &[
         .at(Merge, "author", "chrismo's review of a followed PR's HEAD is in: the author's turn"),
 ];
 
+/// The settings a step reads (#377), for the Atlas, in the order its panel
+/// shows them: its own, then its verb's, then what every agent step reads,
+/// then what every verb does. Each is checked against config's typed list.
+pub fn settings_of(d: &StepDef) -> Vec<&'static str> {
+    let listed = |table: &[(&str, &'static [&'static str])], k: Option<&str>| table.iter().find(|(key, _)| Some(*key) == k).map_or(&[][..], |(_, s)| *s);
+    let mut out = listed(STEP_SETTINGS, Some(d.key)).to_vec();
+    out.extend(listed(VERB_SETTINGS, d.verb));
+    if d.who.contains(&"agent") {
+        out.extend(AGENT_SETTINGS);
+    }
+    if d.verb.is_some() {
+        out.extend(VERB_SHARED);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    out.retain(|s| seen.insert(*s));
+    out
+}
+
+/// By key: what decides a step of chrismo's or a wait (src/state.rs reads
+/// them for NEXT), and the prompt a step's verb reads for this step alone.
+const STEP_SETTINGS: &[(&str, &[&str])] = &[
+    ("implement", &["implementPrompt"]),
+    ("review-fix", &["reviewFixPrompt", "reviewRounds"]),
+    ("review-decide", &["reviewRounds"]),
+    ("verify-red", &["verify"]),
+    ("ci-config", &["protectedPaths"]),
+    ("bot-wait", &["botTimeout"]),
+    ("bot-silent", &["botTimeout"]),
+    ("human", &["botLogin"]),
+    ("read", &["botLogin", "botIgnore", "botIgnoreBody"]),
+    ("budget", &["branchBudget"]),
+    ("open-pr", SHIP),
+    ("ship-parent", SHIP),
+];
+
+/// sd act ship, a run step with no verb in STEPS: it runs describe as an
+/// agent step under describe's gate (src/act/ship.rs, gates.rs), and the
+/// watcher launches it under autoRun. Not agentSteps: the watcher holds only
+/// agent steps to it.
+const SHIP: &[&str] = &["describePrompt", "stepTimeout", "stepBudget", "forkLimit", "branchBudget", "autoRun", "remote"];
+
+/// By the verb as STEPS names it: what sd act <verb> reads (src/act/<verb>.rs;
+/// editing.rs for implement, address and ci-fix; hold.rs for protectedPaths).
+const VERB_SETTINGS: &[(&str, &[&str])] = &[
+    ("implement", &["reviewRounds", "verify", "autofix", "implementAllow", "protectedPaths"]),
+    ("address", &["addressPrompt", "replyPrefix", "botLogin", "verify", "autofix", "implementAllow", "protectedPaths"]),
+    ("ci-fix", &["ciFixPrompt", "verify", "autofix", "implementAllow", "protectedPaths"]),
+    ("resolve", &["resolvePrompt", "verify", "implementAllow", "protectedPaths"]),
+    ("review", &["reviewPrompt", "localReview", "verify"]),
+    // Plain restack: it stops on a conflict without running an agent
+    // (src/act/restack.rs), and NEXT offers --resolve as the conflict step,
+    // listed under resolve.
+    ("restack", &["protectedPaths"]),
+    ("trigger", &["botCommand"]),
+];
+
+/// Every agent step: its session's timeout and fork limit (src/act/step.rs),
+/// a claude step's cap (src/harness.rs), the branch's cap its gate's spend
+/// rule holds it to (gates::spend_rule), and how many the watcher runs at
+/// once (src/watch/pass.rs).
+const AGENT_SETTINGS: &[&str] = &["stepTimeout", "stepBudget", "forkLimit", "branchBudget", "agentSteps"];
+
+/// Every verb: the watcher launches it only under settings.autoRun
+/// (src/watch/pass.rs), and act::run points gh at settings.remote.
+const VERB_SHARED: &[&str] = &["autoRun", "remote"];
+
 const YOU: &[&str] = &["you"];
 const AGENT: &[&str] = &["agent"];
 const RUN: &[&str] = &["run"];
@@ -316,5 +382,20 @@ mod tests {
         let holds: BTreeSet<&str> = STEPS.iter().filter(|d| d.stage == Stage::Hold).map(|d| d.key).collect();
         assert_eq!(holds, HOLDS.into_iter().collect());
         assert_eq!(Stage::FLOW.map(Stage::name), ["build", "push", "ci", "review", "bot", "threads", "merge"]);
+    }
+
+    #[test]
+    fn every_setting_a_step_reads_is_in_configs_typed_list_377() {
+        let known = crate::config::setting_names();
+        for d in STEPS {
+            for s in settings_of(d) {
+                assert!(known.contains(&s), "{}: settings.{s} isn't in config's typed list", d.key);
+            }
+        }
+        let of = |k: &str| settings_of(find(k).unwrap());
+        assert!(of("review-fix").contains(&"reviewRounds") && of("review-fix").contains(&"stepBudget"), "{:?}", of("review-fix"));
+        assert!(of("bot-trigger").contains(&"botCommand") && !of("bot-trigger").contains(&"stepBudget"), "{:?}", of("bot-trigger"));
+        assert!(of("conflict").contains(&"resolvePrompt"), "{:?}", of("conflict"));
+        assert_eq!(of("ready"), Vec::<&str>::new());
     }
 }

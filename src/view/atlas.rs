@@ -1,12 +1,14 @@
 // The Atlas's data (#377): every NEXT step by stage from src/next/steps.rs
 // and each verb's gate rules from src/act/gates.rs, so the page can't drift
-// from the code. No state is read: each rule list comes off probes(), with
-// a rule worded by state listed once per wording, and refuses is ignored.
+// from the code, and the settings each step reads (steps::settings_of) with
+// this repo's value and layer from one sd config explain per request. No
+// branch state is read: each rule list comes off probes(), with a rule
+// worded by state listed once per wording, and refuses is ignored.
 
 use crate::act::gates::Gated;
 use crate::act::verbs::{Scope, Verb, VERBS};
 use crate::act::{Level, Rule};
-use crate::next::steps::{Stage, StepDef, STEPS};
+use crate::next::steps::{settings_of, Stage, StepDef, STEPS};
 use crate::next::Derived;
 use serde_json::{json, Value};
 
@@ -30,8 +32,43 @@ fn declared(verb: &str) -> &str {
     VERBS.iter().find(|v| v.step() == verb).map_or(verb, |v| v.name)
 }
 
-fn step(d: &StepDef) -> Value {
-    json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph})
+fn step(d: &StepDef, traced: &[Value]) -> Value {
+    let settings: Vec<Value> = settings_of(d).into_iter().map(|k| setting(k, traced)).collect();
+    json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph, "settings": settings})
+}
+
+/// settings.<key> with this repo's value and layer (null when config can't
+/// be read) and the sd config set command for it.
+fn setting(key: &str, traced: &[Value]) -> Value {
+    let path = format!("settings.{key}");
+    let found = traced.iter().find(|t| t["path"] == path);
+    let value = found.map_or(Value::Null, |t| t["value"].clone());
+    let layer = found.map_or(Value::Null, |t| t["source"].clone());
+    json!({"path": path, "value": value, "layer": layer, "set": set_command(key, &value)})
+}
+
+/// sd config set for settings.<key> at <value>, as sd config --help has it:
+/// --global for a global-file-only key, else --repo; a string quoted for the
+/// shell, --json for a list or object key (by its type, so an unset one too),
+/// and <value> where there is none.
+fn set_command(key: &str, value: &Value) -> String {
+    let scope = if crate::config::global_only(key) { "--global" } else { "--repo" };
+    let json = if crate::config::takes_json(key) { " --json" } else { "" };
+    let v = match value {
+        Value::Null => "<value>".to_string(),
+        Value::String(s) => quoted(s),
+        Value::Array(_) | Value::Object(_) => quoted(&value.to_string()),
+        v => v.to_string(),
+    };
+    format!("sd config set {scope}{json} settings.{key} {v}")
+}
+
+/// <s> as one shell word: bare when it needs no quoting, else in single quotes.
+fn quoted(s: &str) -> String {
+    if !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"@%+=:,./-_".contains(&c)) {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 /// What act::run checks besides a verb's own gate (src/act/mod.rs): the
@@ -97,9 +134,20 @@ fn verb(v: &Verb) -> Value {
 
 /// GET /api/atlas: {holds: [step], stages: [{stage, steps: [step]}],
 /// verbs: [{name, agent, spends, checks: [id], rules: [{name, level, means,
-/// clears}] or null}], checks: [{id, name, level, means, clears, applies}]}.
-/// A step is {key, who, label, meaning, verb, glyph}.
+/// clears}] or null}], checks: [{id, name, level, means, clears, applies}],
+/// configError: what sd config said, or null}. A step is {key, who, label,
+/// meaning, verb, glyph, settings: [{path, value, layer, set}]}, its
+/// settings' values and layers from the repo sd view runs in.
 pub fn atlas() -> Value {
+    with_config(crate::config::explain_settings("."))
+}
+
+fn with_config(explained: Result<Vec<Value>, Vec<String>>) -> Value {
+    let (traced, error) = match explained {
+        Ok(t) => (t, Value::Null),
+        Err(lines) => (vec![], json!(lines.join("\n"))),
+    };
+    let step = |d: &StepDef| step(d, &traced);
     let holds: Vec<Value> = STEPS.iter().filter(|d| d.stage == Stage::Hold).map(step).collect();
     let stages: Vec<Value> = Stage::FLOW
         .iter()
@@ -111,7 +159,7 @@ pub fn atlas() -> Value {
             json!({"id": id, "name": name, "level": format!("{level:?}"), "means": means(*level), "clears": clears, "applies": applies})
         })
         .collect();
-    json!({"holds": holds, "stages": stages, "verbs": VERBS.iter().map(verb).collect::<Vec<_>>(), "checks": checks})
+    json!({"holds": holds, "stages": stages, "verbs": VERBS.iter().map(verb).collect::<Vec<_>>(), "checks": checks, "configError": error})
 }
 
 #[cfg(test)]
@@ -123,6 +171,12 @@ mod tests {
     use crate::next::steps::{Stage, STEPS};
     use crate::next::Derived;
     use crate::val::t;
+
+    /// The Atlas without reading any config file: atlas() reads the real
+    /// global and repo files, and reading one can rewrite it (RENAMED).
+    fn unconfigured() -> Value {
+        with_config(Ok(vec![]))
+    }
 
     fn steps_in(a: &Value) -> Vec<&Value> {
         let held = a["holds"].as_array().into_iter().flatten();
@@ -139,7 +193,7 @@ mod tests {
 
     #[test]
     fn every_steps_key_is_in_the_atlas_once_with_its_who_meaning_and_verb() {
-        let a = atlas();
+        let a = unconfigured();
         let listed = steps_in(&a);
         assert_eq!(listed.len(), STEPS.len());
         for d in STEPS {
@@ -156,7 +210,7 @@ mod tests {
 
     #[test]
     fn the_holds_come_first_and_the_stages_are_the_flocks_seven_in_order() {
-        let a = atlas();
+        let a = unconfigured();
         let holds: Vec<&str> = a["holds"].as_array().unwrap().iter().map(|s| s["key"].as_str().unwrap()).collect();
         assert!(holds.contains(&"running") && holds.contains(&"question") && !holds.contains(&"push"), "{holds:?}");
         let stages: Vec<String> = a["stages"].as_array().unwrap().iter().map(|s| t(s, "stage")).collect();
@@ -172,7 +226,7 @@ mod tests {
 
     #[test]
     fn every_gated_verb_lists_its_rules_at_their_levels_in_source_order_and_the_ungated_none() {
-        let a = atlas();
+        let a = unconfigured();
         for v in VERBS {
             let got = verb(&a, v.name);
             match &v.gate {
@@ -196,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_rule_whose_name_or_clears_depends_on_state_is_listed_in_each_wording() {
-        let a = atlas();
+        let a = unconfigured();
         let names = |v| listed(verb(&a, v)).into_iter().map(|r| r.0).collect::<Vec<_>>();
         let address = names("address");
         for n in [addr::UNPUSHED, addr::REMOTE_MORE, addr::DIVERGED] {
@@ -214,7 +268,7 @@ mod tests {
 
     #[test]
     fn every_rule_a_generated_state_gives_is_in_the_atlas() {
-        let a = atlas();
+        let a = unconfigured();
         check("the Atlas lists the rule", |d| {
             for v in VERBS {
                 let Some(g) = &v.gate else { continue };
@@ -232,7 +286,7 @@ mod tests {
 
     #[test]
     fn levels_are_rendered_as_what_force_does() {
-        let a = atlas();
+        let a = unconfigured();
         let push = verb(&a, "push");
         let undone = rule(push, "not pushing: the restack was undone: some of the target's commits are copies here, and pushing would publish them (if they aren't, git push by hand)");
         assert_eq!((t(undone, "level"), t(undone, "means")), ("Hard".into(), "force can't".into()));
@@ -245,9 +299,55 @@ mod tests {
         assert_eq!(t(rule(verb(&a, "review --accept"), rvw::NO_BASE), "means"), "force can't");
     }
 
+    fn traced(path: &str, value: Value, source: &str) -> Value {
+        json!({"path": path, "value": value, "source": source, "overrides": []})
+    }
+
+    #[test]
+    fn each_step_lists_its_settings_with_the_traced_value_layer_and_set_command() {
+        let a = with_config(Ok(vec![
+            traced("settings.reviewRounds", json!(5), "repo"),
+            traced("settings.botCommand", json!("@bot review"), "global"),
+            traced("settings.botLogin", json!(["marge"]), "defaults"),
+            traced("settings.agentSteps", json!(2), "defaults"),
+            traced("settings.protectedPaths", Value::Null, "unset"),
+        ]));
+        assert_eq!(a["configError"], Value::Null);
+        let find = |k: &str| steps_in(&a).into_iter().find(|s| s["key"] == k).unwrap().clone();
+        let of = |k: &str, path: &str| find(k)["settings"].as_array().unwrap().iter().find(|s| s["path"] == path).cloned().unwrap_or_else(|| panic!("{k} has no {path}"));
+        assert_eq!(of("review-fix", "settings.reviewRounds"), json!({"path": "settings.reviewRounds", "value": 5, "layer": "repo", "set": "sd config set --repo settings.reviewRounds 5"}));
+        assert_eq!(t(&of("bot-trigger", "settings.botCommand"), "set"), "sd config set --repo settings.botCommand '@bot review'");
+        assert_eq!(t(&of("read", "settings.botLogin"), "set"), r#"sd config set --repo --json settings.botLogin '["marge"]'"#);
+        assert_eq!(t(&of("ci-red", "settings.agentSteps"), "set"), "sd config set --global settings.agentSteps 2");
+        let unset = of("ci-config", "settings.protectedPaths");
+        assert_eq!((&unset["value"], &unset["layer"], &unset["set"]), (&Value::Null, &json!("unset"), &json!("sd config set --repo --json settings.protectedPaths <value>")));
+        let paths: Vec<String> = find("ci-red")["settings"].as_array().unwrap().iter().map(|s| t(s, "path")).collect();
+        assert_eq!(paths.iter().map(|p| p.strip_prefix("settings.").unwrap()).collect::<Vec<_>>(), settings_of(crate::next::steps::find("ci-red").unwrap()));
+        assert_eq!(find("ready")["settings"], json!([]));
+    }
+
+    #[test]
+    fn a_config_that_cant_be_read_names_the_settings_without_values() {
+        let a = with_config(Err(vec!["x.json: not a JSON object".into()]));
+        assert_eq!(a["configError"], "x.json: not a JSON object");
+        let s = &steps_in(&a).into_iter().find(|s| s["key"] == "budget").unwrap()["settings"][0];
+        assert_eq!((&s["path"], &s["value"], &s["layer"]), (&json!("settings.branchBudget"), &Value::Null, &Value::Null));
+    }
+
+    #[test]
+    fn a_value_is_quoted_for_the_shell_only_when_it_needs_it() {
+        assert_eq!(quoted("cargo"), "cargo");
+        assert_eq!(quoted("./scripts/ci.sh"), "./scripts/ci.sh");
+        assert_eq!(quoted("make -C app test"), "'make -C app test'");
+        assert_eq!(quoted("it's"), r"'it'\''s'");
+        assert_eq!(quoted(""), "''");
+        assert_eq!(set_command("autoRun", &json!(true)), "sd config set --repo settings.autoRun true");
+        assert_eq!(set_command("interval", &json!(300)), "sd config set --global settings.interval 300");
+    }
+
     #[test]
     fn the_shared_checks_apply_by_the_verbs_declaration() {
-        let a = atlas();
+        let a = unconfigured();
         let ids: Vec<&str> = a["checks"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["running", "attached"]);
         let running = &a["checks"][0];

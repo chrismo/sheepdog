@@ -22,7 +22,10 @@ Usage: sd view [--port <n>] [--no-open]
   warns, nothing to do, setting holds) and what clears it, then what else
   is checked: the running marker before the gate (force can't), and an
   attached session once the gate lets the verb run, or first for a verb with
-  no gate (force passes). It reads no state.
+  no gate (force passes). The step's panel also lists the settings it reads,
+  each with this repo's value and the layer it comes from (sd config
+  explain) and a copy button for the sd config set command that changes it.
+  It reads no branch's state: only the repo's config.
 
   The Map (/map, linked from the Flock and the Atlas) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's

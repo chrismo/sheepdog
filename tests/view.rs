@@ -1195,3 +1195,67 @@ fn the_map_page_draws_the_stages_and_the_trend() {
     let s = serve(&sd);
     assert_has(&s.get("/map").2, &["trend", "<svg"]);
 }
+
+// A step's settings (#377): the keys its verb reads, each with this repo's
+// value and the layer it comes from (sd config explain) and the sd config
+// set command that changes it.
+
+fn atlas_step(a: &Value, key: &str) -> Value {
+    a["holds"].as_array().unwrap().iter().chain(a["stages"].as_array().unwrap().iter().flat_map(|s| s["steps"].as_array().unwrap()))
+        .find(|s| s["key"] == key).unwrap_or_else(|| panic!("no {key} in {a}")).clone()
+}
+
+fn setting(step: &Value, path: &str) -> Value {
+    step["settings"].as_array().unwrap_or_else(|| panic!("no settings in {step}")).iter().find(|s| s["path"] == path)
+        .unwrap_or_else(|| panic!("no {path} in {step}")).clone()
+}
+
+#[test]
+fn a_step_s_settings_come_with_this_repo_s_value_its_layer_and_the_set_command() {
+    let sd = sd();
+    sd.write_global(r#"{"settings": {"reviewRounds": 5, "botCommand": "@bot review"}}"#);
+    let s = serve(&sd);
+    let (code, _, body) = s.get("/api/atlas");
+    assert_eq!(code, 200, "{body}");
+    let a: Value = serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"));
+    assert_eq!(a["configError"], Value::Null);
+    let decide = atlas_step(&a, "review-decide");
+    assert_eq!(
+        setting(&decide, "settings.reviewRounds"),
+        json!({"path": "settings.reviewRounds", "value": 5, "layer": "global", "set": "sd config set --repo settings.reviewRounds 5"})
+    );
+    let trigger = atlas_step(&a, "bot-trigger");
+    assert_eq!(
+        setting(&trigger, "settings.botCommand"),
+        json!({"path": "settings.botCommand", "value": "@bot review", "layer": "global", "set": "sd config set --repo settings.botCommand '@bot review'"})
+    );
+    let silent = atlas_step(&a, "bot-silent");
+    assert_eq!(setting(&silent, "settings.botTimeout")["layer"], "defaults");
+    assert_eq!(setting(&silent, "settings.botTimeout")["value"], 3600);
+    assert_eq!(atlas_step(&a, "ready")["settings"], json!([]));
+    assert_has(&s.get("/atlas").2, &["data-copy", "Settings that tune it"]);
+}
+
+#[test]
+fn a_broken_config_leaves_the_settings_named_but_without_values() {
+    let sd = sd();
+    sd.write_global("not json");
+    let s = serve(&sd);
+    let (code, _, body) = s.get("/api/atlas");
+    assert_eq!(code, 200, "{body}");
+    let a: Value = serde_json::from_str(&body).unwrap();
+    assert_has(a["configError"].as_str().unwrap(), &["not a JSON object"]);
+    let rounds = setting(&atlas_step(&a, "review-decide"), "settings.reviewRounds");
+    assert_eq!((&rounds["value"], &rounds["layer"]), (&Value::Null, &Value::Null));
+    for key in ["ci-red", "bot", "open-pr", "ship-parent"] {
+        let paths: Vec<Value> = atlas_step(&a, key)["settings"].as_array().unwrap().iter().map(|s| s["path"].clone()).collect();
+        assert!(paths.contains(&json!("settings.branchBudget")), "{key}: {paths:?}");
+    }
+    let ship: Vec<Value> = atlas_step(&a, "open-pr")["settings"].as_array().unwrap().iter().map(|s| s["path"].clone()).collect();
+    for p in ["describePrompt", "stepTimeout", "stepBudget", "forkLimit", "branchBudget", "autoRun", "remote"] {
+        assert!(ship.contains(&json!(format!("settings.{p}"))), "open-pr has no {p}: {ship:?}");
+    }
+    assert_eq!(rounds["set"], "sd config set --repo settings.reviewRounds <value>");
+    let logins = setting(&atlas_step(&a, "read"), "settings.botLogin");
+    assert_eq!(logins["set"], "sd config set --repo --json settings.botLogin <value>");
+}
