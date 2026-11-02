@@ -82,6 +82,9 @@ fn sd() -> Sd {
         ("PS_FIXTURES".to_string(), sd.path("ps")),
         ("SHEEPDOG_STATE_PROGRAM".to_string(), sd.path("fakebin/sd-state")),
         ("SHEEPDOG_ACT_PROGRAM".to_string(), sd.path("fakebin/sd-act")),
+        // status's launchctl print: never the host's job. Missing until a test
+        // fakes launchctl, so status says launchd is not here.
+        ("SHEEPDOG_WATCH_LAUNCHCTL".to_string(), sd.path("fakebin/launchctl")),
     ];
     sd.env = env;
     fs::create_dir(sd.tmp.join("ps")).unwrap();
@@ -3827,7 +3830,7 @@ fn status_says_what_holds_the_job_back_overdue_overrides_leases_a_limit_failures
 #[test]
 fn status_with_no_launchctl_says_launchd_isnt_here_and_before_any_pass_still_diagnoses_364() {
     let sd = sd();
-    let r = sd.run_env(&[("SHEEPDOG_WATCH_LAUNCHCTL", "no-such-launchctl")], &["status"]);
+    let r = sd.run(&["status"]);
     assert_eq!(r.status, 0);
     assert_has(&r.output, &["no pass yet\n\n", "last pass: none yet (settings.interval 300s)\n", "launchd: not here (no launchctl)\n"]);
 }

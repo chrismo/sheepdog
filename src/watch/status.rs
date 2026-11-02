@@ -116,7 +116,8 @@ fn failure_lines(repos: &[(String, String)]) -> Vec<String> {
 
 /// launchctl print's answer for the job: whether it succeeded, and its
 /// output; None with no launchctl to run. In a debug build
-/// SHEEPDOG_WATCH_LAUNCHCTL names the program, for the test that has none.
+/// SHEEPDOG_WATCH_LAUNCHCTL names the program, so tests never read the
+/// host's job.
 fn launchctl_print() -> Option<(bool, String)> {
     let seam = if cfg!(debug_assertions) { std::env::var("SHEEPDOG_WATCH_LAUNCHCTL").ok() } else { None };
     let prog = seam.filter(|p| !p.is_empty()).unwrap_or_else(|| "launchctl".into());
