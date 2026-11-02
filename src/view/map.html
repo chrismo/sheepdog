@@ -46,6 +46,15 @@ h2 .n { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .legend .k { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; margin-right: 5px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); position: relative; }
 .legend .k.h { background: repeating-linear-gradient(45deg, var(--agent) 0 2px, var(--surface) 2px 5px); border-color: var(--agent); }
 .legend .k.i { border: 0; border-radius: 50%; background: var(--wait); }
+#trend { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 4px; }
+.tile .lbl, .tile .d, .tnote { font-size: 0.78rem; color: var(--muted); }
+.tile b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+.tile svg { width: 100%; height: 44px; display: block; overflow: visible; }
+.tile path { fill: none; stroke: var(--sc); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.tile .hit { fill: transparent; }
+.tile .hit:hover { fill: var(--line); opacity: 0.5; }
+.tnote { grid-column: 1 / -1; margin: 0; }
 #groups { display: grid; gap: 26px; }
 .group { display: grid; gap: 10px; }
 .tiles { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
@@ -106,6 +115,7 @@ body.sheet footer { margin-bottom: 40vh; }
       <span><i class="k i"></i>open issues naming it</span>
     </div>
   </header>
+  <section id="trend" aria-label="trend"></section>
   <div id="groups"></div>
   <footer id="foot"></footer>
 </div>
@@ -119,6 +129,8 @@ const CAP = { too_many_lines: 100, cognitive_complexity: 25 };
 const LABEL = { too_many_lines: "lines", cognitive_complexity: "complexity" };
 const MAX_SIDE = 140, MIN_SIDE = 12;
 let files = {};
+// The trend's series: the point's key, its name, its color token.
+const SERIES = [["src", "lines in src/", "--ink"], ["tests", "lines in tests/", "--wait"], ["ratchet", "functions over the cap", "--agent"]];
 
 function tile(f, maxLines) {
   const s = Math.max(MIN_SIDE, Math.round(MAX_SIDE * Math.sqrt(f.lines / maxLines)));
@@ -149,6 +161,7 @@ function render(m) {
     `<div class="tiles">${g.files.map(f => tile(f, maxLines)).join("")}</div></section>`).join("")
     : `<p class="none">No source here: sd runs from ${esc(m.root)}, which has no src/.</p>`;
   $("gh").innerHTML = ghLine(m);
+  renderTrend(m.trend);
   const down = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
   const note = down + (m.cut ? `Some open issues may be left out: ${m.cut}. ` : "");
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
@@ -158,6 +171,34 @@ function render(m) {
     showFile(open);
     if (expanded) document.querySelector("#sbody [data-more]")?.classList.add("all");
   }
+}
+
+// One series as a sparkline, each point a hover target naming its day and value.
+function spark(points, key) {
+  const W = 200, H = 44, n = points.length, step = W / Math.max(n - 1, 1);
+  const max = Math.max(1, ...points.map(p => p[key]));
+  const x = i => (n > 1 ? i * step : W).toFixed(1), y = v => (H - 2 - (v / max) * (H - 4)).toFixed(1);
+  const d = points.map((p, i) => `${i ? "L" : "M"}${x(i)} ${y(p[key])}`).join(" ");
+  const hits = points.map((p, i) => `<rect class="hit" x="${(x(i) - step / 2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${H}">` +
+    `<title>${esc(p.date)} · ${fmt(p[key])}</title></rect>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${fmt(points[0][key])} to ${fmt(points[n - 1][key])}"><path d="${d}"/>${hits}</svg>`;
+}
+
+function trendTile(points, [key, what, c]) {
+  const first = points[0], last = points[points.length - 1], d = last[key] - first[key];
+  const delta = d ? `${d > 0 ? "+" : "−"}${fmt(Math.abs(d))} since ${esc(first.date)}` : `flat since ${esc(first.date)}`;
+  return `<div class="tile" style="--sc:var(${c})"><span class="lbl">${what}</span><b>${fmt(last[key])}</b>${spark(points, key)}<span class="d">${delta}</span></div>`;
+}
+
+function renderTrend(t) {
+  const el = $("trend");
+  if (!t.points.length) {
+    el.innerHTML = `<p class="none">${t.error ? `No trend: ${esc(t.error)}` : "Sampling git history…"}</p>`;
+    return;
+  }
+  const note = [`${t.points.length} days, the last commit of each since ${esc(t.points[0].date)}`, t.fetched && `sampled ${ago(t.fetched)} ago`,
+    t.refreshing && "sampling again…", t.error && esc(t.error)].filter(Boolean).join(" · ");
+  el.innerHTML = SERIES.map(s => trendTile(t.points, s)).join("") + `<p class="tnote">${note}</p>`;
 }
 
 function bars(over) {
@@ -214,7 +255,7 @@ async function load() {
     const m = await r.json();
     if (mine !== seq) return;
     render(m);
-    again = setTimeout(load, m.refreshing ? 1000 : 60000);
+    again = setTimeout(load, m.refreshing || m.trend.refreshing ? 1000 : 60000);
   } catch (e) {
     if (mine !== seq) return;
     const eb = $("eyebrow");

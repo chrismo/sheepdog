@@ -1109,3 +1109,56 @@ fn a_cache_file_written_in_the_future_doesn_t_hold_refreshes() {
     let f = serve(&sd).flock();
     assert_eq!((&f["held"], &f["refreshing"]), (&Value::Null, &json!(true)), "{f}");
 }
+
+// The Map's stages and trend (#378, slice 2).
+
+#[test]
+fn api_map_groups_files_by_stage_and_carries_a_trend() {
+    let sd = sd();
+    sd.fake("gh", "#!/usr/bin/env bash\necho '[]'\n");
+    let s = serve(&sd);
+    let mut m = map(&s);
+    let end = Instant::now() + Duration::from_secs(20);
+    while m["trend"]["refreshing"] == true {
+        assert!(Instant::now() < end, "trend still refreshing after 20s: {m}");
+        std::thread::sleep(Duration::from_millis(50));
+        m = map(&s);
+    }
+    let names: Vec<&str> = m["groups"].as_array().unwrap().iter().map(|g| g["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["watch loop", "observe", "decide", "act", "agent steps", "records", "settings", "pages", "plumbing"]);
+    let group = |p: &str| m["groups"].as_array().unwrap().iter().find(|g| g["files"].as_array().unwrap().iter().any(|f| f["path"] == p)).unwrap()["name"].clone();
+    assert_eq!([group("src/state.rs"), group("src/act/push.rs"), group("src/act/implement.rs"), group("src/view/map.rs")], ["observe", "act", "agent steps", "pages"]);
+    let t = &m["trend"];
+    let root = env!("CARGO_MANIFEST_DIR");
+    // CI's checkout has no .git: the trend then says so and has no points
+    // (the unit tests in src/view/map.rs cover the trend on a built repo).
+    if !std::path::Path::new(root).join(".git").exists() {
+        assert_eq!(t["points"], serde_json::json!([]), "{t}");
+        assert!(t["error"].as_str().unwrap().contains("not a git repository"), "{t}");
+        return;
+    }
+    assert_eq!((&t["error"], t["fetched"].is_string()), (&Value::Null, true), "{t}");
+    let points = t["points"].as_array().unwrap();
+    assert!(points.len() >= 2, "{t}");
+    let head = String::from_utf8(std::process::Command::new("git").args(["-C", root, "rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
+    assert_eq!(points.last().unwrap()["sha"], head.trim());
+    let dates: Vec<&str> = points.iter().map(|p| p["date"].as_str().unwrap()).collect();
+    let mut sorted = dates.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(dates, sorted, "one point a day, oldest first");
+    assert!(dates[0] >= "2026-10-13");
+    for p in points {
+        assert!(p["src"].is_u64() && p["tests"].is_u64() && p["ratchet"].is_u64(), "{p}");
+    }
+    assert!(points.last().unwrap()["src"].as_u64().unwrap() > 1000);
+    let cached = fs::read_dir(sd.tmp.join("state/github")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("trend-"));
+    assert!(cached, "the trend is cached under <state>/github/");
+}
+
+#[test]
+fn the_map_page_draws_the_stages_and_the_trend() {
+    let sd = sd();
+    let s = serve(&sd);
+    assert_has(&s.get("/map").2, &["trend", "<svg"]);
+}
