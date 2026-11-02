@@ -781,13 +781,13 @@ fn a_guarded_post_sets_a_setting_with_sd_config() {
 }
 
 #[test]
-fn a_path_outside_the_typed_settings_is_refused() {
+fn a_path_the_page_doesn_t_set_is_refused() {
     let mut sd = sd();
     watched(&mut sd, "repos/r", "feat", 5);
     configuring(&mut sd);
     let id = with_next(&sd, "feat", json!([]));
     let s = serve(&sd);
-    for path in ["settings.nope", "harness", "steps.review.harness", "settings.autoRun.x", "profile", ""] {
+    for path in ["settings.verify", "settings.flags.skips", "settings.nope", "harness", "steps.review.harness", "settings.autoRun.x", "profile", ""] {
         let (code, body) = set_config(&s, &id, path, "true");
         assert_eq!(code, 400, "{path}: {body}");
         if !path.is_empty() {

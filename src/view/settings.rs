@@ -2,13 +2,11 @@
 // settings.* key with its value and the layer it came from, from `sd config
 // explain --json --branch <b>` in the branch's repo, and POST /api/config
 // {id, path, value} runs `sd config set --branch <b> -- <path> <value>`
-// there. Only a settings key the typed tables define (config.rs) is set,
-// and sd config does the typing: its refusal is the page's, as a 400. The
-// page sets the few a branch tunes day to day (EDITABLE) and shows the rest.
+// there. Only the few a branch tunes day to day (EDITABLE) are set; the page
+// shows the rest. sd config does the typing: its refusal is the page's, as a 400.
 
 use super::act::repo_of;
 use super::branch::find;
-use crate::config;
 use crate::proc;
 use crate::val::{at, t};
 use crate::watch::sd_verb;
@@ -20,9 +18,10 @@ const SECS: u64 = 30;
 /// What the page sets; interval is global-file only, so the page shows it.
 pub const EDITABLE: [&str; 3] = ["settings.autoRun", "settings.reviewRounds", "settings.stepBudget"];
 
-/// <path> is a settings key the typed tables define.
+/// <path> is one the page sets. The API reaches no further than the page:
+/// settings.verify is a command the pipeline runs, so it stays sd config's.
 pub fn allowed(path: &str) -> bool {
-    config::settings_keys().iter().any(|k| k == path)
+    EDITABLE.contains(&path)
 }
 
 fn sd_config(repo: &str, args: &[&str]) -> proc::Out {
@@ -55,7 +54,7 @@ pub fn set(state: &Path, body: &str) -> (&'static str, String) {
         return ("400 Bad Request", "the body names the branch id, the setting's path and its value\n".into());
     }
     if !allowed(&path) {
-        return ("400 Bad Request", format!("{path} isn't a settings key sd config knows\n"));
+        return ("400 Bad Request", format!("{path} isn't one sd view sets; use sd config set\n"));
     }
     let Some(c) = find(state, &id) else { return ("404 Not Found", "no such branch in the watcher's cache\n".into()) };
     let Some(repo) = repo_of(&id) else { return ("409 Conflict", format!("{}'s repo isn't registered with sd watch\n", c.branch)) };
@@ -72,13 +71,17 @@ pub fn set(state: &Path, body: &str) -> (&'static str, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config;
 
     #[test]
-    fn only_a_typed_settings_key_may_be_set() {
-        for k in EDITABLE.iter().chain(&["settings.interval", "settings.verify", "settings.flags.skips", "settings.botLogin"]) {
+    fn only_a_key_the_page_sets_may_be_set() {
+        let typed = config::settings_keys();
+        for k in EDITABLE {
             assert!(allowed(k), "{k}");
+            assert!(typed.iter().any(|t| t == k), "{k} isn't a typed settings key");
         }
-        for k in ["", "settings", "settings.", "settings.nope", "settings.autoRun.x", "harness", "steps.review.harness",
+        for k in ["settings.interval", "settings.verify", "settings.flags.skips", "settings.botLogin",
+                  "", "settings", "settings.", "settings.nope", "settings.autoRun.x", "harness", "steps.review.harness",
                   "profile", "profiles.x.settings.autoRun", "Settings.autoRun", "settings.autorun"] {
             assert!(!allowed(k), "{k}");
         }
