@@ -122,8 +122,8 @@ pub fn map(state: &Path) -> Value {
     let got = cache::get(state, &key, move || open_issues(&from).map(Value::Array));
     let ratchet_text = fs::read_to_string(root.join("tests/lint-ratchet.txt")).unwrap_or_default();
     let mut m = build(&sources(&root), &ratchet_text, got["data"].as_array().map(Vec::as_slice));
-    if !got["error"].is_null() {
-        m["error"] = got["error"].clone();
+    if let Some(e) = got["error"].as_str() {
+        m["error"] = json!(m["error"].as_str().map_or(e.to_string(), |full| format!("{e}; {full}")));
     }
     for k in ["fetched", "refreshing"] {
         m[k] = got[k].clone();

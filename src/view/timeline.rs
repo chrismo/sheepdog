@@ -73,7 +73,7 @@ pub fn timeline(c: &super::flock::Cached, usage: &str, state: &Path) -> Value {
     let url = c.doc.as_ref().map(|d| t(d, "state.pr.url")).unwrap_or_default();
     let gh = match pr_ref(&url) {
         Some((host, owner, repo, n)) => {
-            let key = format!("pr-{host}-{owner}-{repo}-{n}");
+            let key = format!("pr/{host}/{owner}/{repo}/{n}");
             let [host, owner, repo, n] = [host, owner, repo, n].map(String::from);
             cache::get(state, &key, move || github(&host, &owner, &repo, &n))
         }

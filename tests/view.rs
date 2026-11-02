@@ -570,6 +570,16 @@ fn a_failed_fetch_keeps_the_last_data_and_says_why() {
 }
 
 #[test]
+fn a_failed_fetch_of_a_full_list_still_says_it_may_be_cut_off() {
+    let sd = sd();
+    let full: Vec<Value> = (0..500).map(|i| json!({ "number": i, "title": "t", "url": "u", "body": "" })).collect();
+    cached_issues(&sd, 61, json!(full));
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'rate limit exceeded' >&2\nexit 1\n");
+    let m = map(&serve(&sd));
+    assert_eq!(m["error"], "gh: rate limit exceeded; gh lists 500 at most, and gave 500");
+}
+
+#[test]
 fn the_refresh_button_makes_cached_github_data_stale() {
     let sd = sd();
     cached_issues(&sd, 0, json!([]));
