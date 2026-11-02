@@ -172,6 +172,12 @@ mod tests {
     use crate::next::Derived;
     use crate::val::t;
 
+    /// The Atlas without reading any config file: atlas() reads the real
+    /// global and repo files, and reading one can rewrite it (RENAMED).
+    fn unconfigured() -> Value {
+        with_config(Ok(vec![]))
+    }
+
     fn steps_in(a: &Value) -> Vec<&Value> {
         let held = a["holds"].as_array().into_iter().flatten();
         held.chain(a["stages"].as_array().into_iter().flatten().flat_map(|s| s["steps"].as_array().into_iter().flatten())).collect()
@@ -187,7 +193,7 @@ mod tests {
 
     #[test]
     fn every_steps_key_is_in_the_atlas_once_with_its_who_meaning_and_verb() {
-        let a = atlas();
+        let a = unconfigured();
         let listed = steps_in(&a);
         assert_eq!(listed.len(), STEPS.len());
         for d in STEPS {
@@ -204,7 +210,7 @@ mod tests {
 
     #[test]
     fn the_holds_come_first_and_the_stages_are_the_flocks_seven_in_order() {
-        let a = atlas();
+        let a = unconfigured();
         let holds: Vec<&str> = a["holds"].as_array().unwrap().iter().map(|s| s["key"].as_str().unwrap()).collect();
         assert!(holds.contains(&"running") && holds.contains(&"question") && !holds.contains(&"push"), "{holds:?}");
         let stages: Vec<String> = a["stages"].as_array().unwrap().iter().map(|s| t(s, "stage")).collect();
@@ -220,7 +226,7 @@ mod tests {
 
     #[test]
     fn every_gated_verb_lists_its_rules_at_their_levels_in_source_order_and_the_ungated_none() {
-        let a = atlas();
+        let a = unconfigured();
         for v in VERBS {
             let got = verb(&a, v.name);
             match &v.gate {
@@ -244,7 +250,7 @@ mod tests {
 
     #[test]
     fn a_rule_whose_name_or_clears_depends_on_state_is_listed_in_each_wording() {
-        let a = atlas();
+        let a = unconfigured();
         let names = |v| listed(verb(&a, v)).into_iter().map(|r| r.0).collect::<Vec<_>>();
         let address = names("address");
         for n in [addr::UNPUSHED, addr::REMOTE_MORE, addr::DIVERGED] {
@@ -262,7 +268,7 @@ mod tests {
 
     #[test]
     fn every_rule_a_generated_state_gives_is_in_the_atlas() {
-        let a = atlas();
+        let a = unconfigured();
         check("the Atlas lists the rule", |d| {
             for v in VERBS {
                 let Some(g) = &v.gate else { continue };
@@ -280,7 +286,7 @@ mod tests {
 
     #[test]
     fn levels_are_rendered_as_what_force_does() {
-        let a = atlas();
+        let a = unconfigured();
         let push = verb(&a, "push");
         let undone = rule(push, "not pushing: the restack was undone: some of the target's commits are copies here, and pushing would publish them (if they aren't, git push by hand)");
         assert_eq!((t(undone, "level"), t(undone, "means")), ("Hard".into(), "force can't".into()));
@@ -341,7 +347,7 @@ mod tests {
 
     #[test]
     fn the_shared_checks_apply_by_the_verbs_declaration() {
-        let a = atlas();
+        let a = unconfigured();
         let ids: Vec<&str> = a["checks"].as_array().unwrap().iter().map(|c| c["id"].as_str().unwrap()).collect();
         assert_eq!(ids, ["running", "attached"]);
         let running = &a["checks"][0];
