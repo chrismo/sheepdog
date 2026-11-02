@@ -6,65 +6,94 @@
 /// Every NEXT key, in next.rs's AUTHOR order; a held agent step's
 /// stand-ins and a followed PR's own steps (#250) come last. bot and
 /// answer, listed in two places as address's gate lets them, are here at
-/// the first.
+/// the first. Each sits in a Flock stage, or holds the whole line (Hold),
+/// with the word a lit stage shows and a line on what it means (#377).
 pub const STEPS: &[StepDef] = &[
-    s("default", YOU, Stuck, None, None),
-    s("running", WAIT, Turn, Some("🤖"), None),
-    s("merged", RUN, Acts, Some("🏁"), None),
-    s("closed", YOU, Never, Some("🚫"), None),
-    s("errors", YOU, Unsure, None, None),
-    s("stale", RUN, Unsure, None, None),
-    s("gh-wait", WAIT, Unsure, None, None),
-    s("attached", WAIT, Turn, None, None),
-    s("foreign", YOU, Stuck, None, None),
-    s("human", YOU, Stuck, None, None),
-    s("question", YOU, Stuck, None, None),
-    s("restack-undone", YOU, Stuck, None, None),
-    s("ship-parent", RUN, Turn, None, None),
-    s("conflict", &["agent", "you"], Stuck, None, Some("resolve")),
-    s("behind", &["run", "wait", "you"], Turn, None, Some("restack")),
-    s("dirty", YOU, Stuck, None, None),
-    s("ci-red", AGENT, Stuck, None, Some("ci-fix")),
-    s("ci-blocked", YOU, Stuck, None, None),
+    s("default", YOU, Stuck, None, None)
+        .at(Build, "start", "on the default branch, or a branch that is its own base: start a branch"),
+    s("running", WAIT, Turn, Some("🤖"), None)
+        .at(Hold, "running", "an agent step is running on the branch; it hides every other step until it ends"),
+    s("merged", RUN, Acts, Some("🏁"), None)
+        .at(Merge, "merged", "the PR merged: drop the branch's pins and enrollment, remove its worktree and delete it"),
+    s("closed", YOU, Never, Some("🚫"), None).at(Merge, "closed", "the PR was closed without merging"),
+    s("errors", YOU, Unsure, None, None).at(Hold, "errors", "sd state reported errors, so the steps below it may be wrong"),
+    s("stale", RUN, Unsure, None, None).at(Hold, "stale", "GitHub is ahead of the remote refs: a fetch comes first"),
+    s("gh-wait", WAIT, Unsure, None, None)
+        .at(Hold, "gh-wait", "GitHub hasn't seen the push yet, so the steps below it may be wrong"),
+    s("attached", WAIT, Turn, None, None)
+        .at(Hold, "attached", "the branch's session is open interactively; agent steps wait until it exits"),
+    s("foreign", YOU, Stuck, None, None)
+        .at(Hold, "foreign", "the remote has commits this copy never had: take or drop them before anything pushes"),
+    s("human", YOU, Stuck, None, None).at(Threads, "reply", "a human's review item is owed a reply, which chrismo writes"),
+    s("question", YOU, Stuck, None, None)
+        .at(Hold, "question", "an agent step needs chrismo's answer, or gave up; nothing reruns it until chrismo answers, edits or acks"),
+    s("restack-undone", YOU, Stuck, None, None)
+        .at(Push, "restack undone", "the restack was undone: some of the target's commits are copies here, so nothing pushes until it's redone"),
+    s("ship-parent", RUN, Turn, None, None).at(Push, "ship parent", "the parent branch isn't on the remote yet: ship it first"),
+    s("conflict", &["agent", "you"], Stuck, None, Some("resolve"))
+        .at(Push, "conflict", "the restack would conflict: an agent resolves it (restack --resolve), or chrismo by hand"),
+    s("behind", &["run", "wait", "you"], Turn, None, Some("restack")).at(Push, "behind", "behind the target: restack onto it"),
+    s("dirty", YOU, Stuck, None, None)
+        .at(Build, "uncommitted", "uncommitted edits hold up a step that refuses them, and nothing says whose they are"),
+    s("ci-red", AGENT, Stuck, None, Some("ci-fix")).at(Ci, "fix", "CI is red at HEAD: an agent diagnoses and fixes it (ci-fix)"),
+    s("ci-blocked", YOU, Stuck, None, None).at(Ci, "blocked", "CI's checks wait to be started or approved on GitHub"),
     // chrismo's when address's gate refuses with nothing ahead (#326)
-    s("bot", &["agent", "you"], Turn, None, Some("address")),
-    s("read", YOU, Stuck, None, None),
-    s("take", YOU, Turn, None, None),
-    s("reset-dirty", YOU, Turn, None, None),
-    s("nothing-dirty", YOU, Turn, None, None),
-    s("implement", AGENT, Turn, None, Some("implement")),
-    s("nothing", YOU, Stuck, None, None),
-    s("verify-red", YOU, Stuck, None, None),
-    s("foreign-authors", YOU, Stuck, None, None),
-    s("ci-config", YOU, Stuck, None, None),
-    s("push", RUN, Turn, None, Some("push")),
-    s("answer", &["wait", "you"], Turn, None, None),
-    s("open-pr", RUN, Turn, None, None),
-    s("draft", RUN, Turn, None, None),
-    s("review-fix", AGENT, Turn, None, Some("implement")),
-    s("review-decide", YOU, Stuck, None, None),
-    s("review", AGENT, Turn, None, Some("review")),
-    s("review-held", YOU, Stuck, None, None),
-    s("bot-trigger", RUN, Turn, None, Some("trigger")),
-    s("ci-rerun", RUN, Turn, None, None),
-    s("bot-wait", WAIT, Turn, None, None),
-    s("bot-silent", YOU, Stuck, None, None),
-    s("ci-wait", WAIT, Turn, None, None),
-    s("parent-closed", YOU, Stuck, None, None),
-    s("retarget", RUN, Turn, None, Some("retarget")),
-    s("review-wait", WAIT, Turn, None, None),
-    s("parent-wait", WAIT, Turn, None, None),
-    s("ready", YOU, Acts, Some("✅"), None),
-    s("merge-wait", WAIT, Turn, None, None),
-    s("blocked", YOU, Turn, None, None),
+    s("bot", &["agent", "you"], Turn, None, Some("address"))
+        .at(Threads, "address", "the review bot's items are owed a reply: an agent addresses them, or chrismo once address's gate refuses"),
+    s("read", YOU, Stuck, None, None)
+        .at(Threads, "read", "info-only bot items to read, shown once nothing else moves without chrismo"),
+    s("take", YOU, Turn, None, None)
+        .at(Push, "take back", "the remote's commits were reset away here and chrismo is mid-change: commit, take them back or drop them"),
+    s("reset-dirty", YOU, Turn, None, None)
+        .at(Build, "reset away", "pushed commits were reset away and edits sit on top: chrismo's to commit, take back or drop"),
+    s("nothing-dirty", YOU, Turn, None, None)
+        .at(Build, "nothing to ship", "uncommitted edits on a branch chrismo hasn't committed to yet"),
+    s("implement", AGENT, Turn, None, Some("implement")).at(Build, "implement", "an agent builds the branch's recorded task"),
+    s("nothing", YOU, Stuck, None, None)
+        .at(Build, "nothing to ship", "nothing ahead of the base and no task to implement: commit, or record a task"),
+    s("verify-red", YOU, Stuck, None, None)
+        .at(Ci, "verify", "settings.verify failed on HEAD, so nothing pushes or ships it until it passes or a new commit replaces HEAD"),
+    s("foreign-authors", YOU, Stuck, None, None)
+        .at(Push, "others' commits", "the push would remove commits someone else made from the remote: look at them first"),
+    s("ci-config", YOU, Stuck, None, None)
+        .at(Ci, "set up CI", "an agent step's commit changed CI config, held unpushed until chrismo reviews it and pushes"),
+    s("push", RUN, Turn, None, Some("push")).at(Push, "push", "push the branch's commits to the remote"),
+    s("answer", &["wait", "you"], Turn, None, None)
+        .at(Threads, "answer", "chrismo's stored answer waits for the asking step to run again"),
+    s("open-pr", RUN, Turn, None, None).at(Push, "open PR", "open the PR (sd act ship)"),
+    s("draft", RUN, Turn, None, None).at(Merge, "mark ready", "the PR is a draft: mark it ready for review"),
+    s("review-fix", AGENT, Turn, None, Some("implement"))
+        .at(Review, "fix", "review findings stand at HEAD: an agent fixes them (implement), under settings.reviewRounds"),
+    s("review-decide", YOU, Stuck, None, None)
+        .at(Review, "decide", "the findings stand after settings.reviewRounds rounds, or the agent declined them: chrismo fixes them or accepts HEAD"),
+    s("review", AGENT, Turn, None, Some("review")).at(Review, "queued", "an agent reviews the change since the last review (A8)"),
+    s("review-held", YOU, Stuck, None, None)
+        .at(Review, "held", "a Hard rule of review's gate holds the review back: no base, or a worktree not known clean"),
+    s("bot-trigger", RUN, Turn, None, Some("trigger")).at(Bot, "ask", "ask the review bot to look at HEAD (settings.botCommand)"),
+    s("ci-rerun", RUN, Turn, None, None).at(Ci, "rerun", "CI was cancelled: rerun it"),
+    s("bot-wait", WAIT, Turn, None, None).at(Bot, "waiting", "waiting for the review bot's answer"),
+    s("bot-silent", YOU, Stuck, None, None).at(Bot, "silent", "the review bot hasn't answered within settings.botTimeout"),
+    s("ci-wait", WAIT, Turn, None, None).at(Ci, "running", "waiting for CI on HEAD"),
+    s("parent-closed", YOU, Stuck, None, None)
+        .at(Merge, "parent closed", "the parent PR was closed without merging: point the branch at what it targets now"),
+    s("retarget", RUN, Turn, None, Some("retarget")).at(Push, "retarget", "the parent merged: retarget the PR at the parent's target"),
+    s("review-wait", WAIT, Turn, None, None).at(Review, "waiting", "waiting for GitHub's required review"),
+    s("parent-wait", WAIT, Turn, None, None).at(Merge, "after parent", "waiting for the parent PR to merge"),
+    s("ready", YOU, Acts, Some("✅"), None).at(Merge, "ready", "green, reviewed and in sync: chrismo merges"),
+    s("merge-wait", WAIT, Turn, None, None).at(Merge, "merging", "GitHub is recomputing the merge state after the base moved"),
+    s("blocked", YOU, Turn, None, None).at(Merge, "blocked", "GitHub's branch rules hold the merge until chrismo sees why"),
     // in place of the agent steps: spend past the budget, or failed in a row
-    s("budget", YOU, Stuck, None, None),
-    s("failed", YOU, Stuck, None, None),
+    s("budget", YOU, Stuck, None, None)
+        .at(Hold, "budget", "the branch's steps have spent past settings.branchBudget, or a cost is unknown: no agent step runs until chrismo raises it or takes over"),
+    s("failed", YOU, Stuck, None, None)
+        .at(Hold, "failed", "3 agent steps failed in a row: none runs until chrismo fixes what fails and reruns the last one"),
     // a followed PR's (#250)
-    s("yours", YOU, Stuck, None, None),
-    s("fetch", RUN, Turn, None, Some("fetch")),
-    s("submit", YOU, Stuck, None, None),
-    s("author-wait", WAIT, Turn, None, None),
+    s("yours", YOU, Stuck, None, None)
+        .at(Review, "yours", "a followed PR's branch has commits of chrismo's the PR doesn't: move them to a branch of your own"),
+    s("fetch", RUN, Turn, None, Some("fetch")).at(Push, "fetch", "a followed PR's author pushed: fetch it"),
+    s("submit", YOU, Stuck, None, None).at(Review, "submit", "the review of a followed PR's HEAD is chrismo's to submit on GitHub"),
+    s("author-wait", WAIT, Turn, None, None)
+        .at(Merge, "author", "chrismo's review of a followed PR's HEAD is in: the author's turn"),
 ];
 
 const YOU: &[&str] = &["you"];
@@ -72,6 +101,17 @@ const AGENT: &[&str] = &["agent"];
 const RUN: &[&str] = &["run"];
 const WAIT: &[&str] = &["wait"];
 use Notify::{Acts, Never, Stuck, Turn, Unsure};
+use Stage::{Bot, Build, Ci, Hold, Merge, Push, Review, Threads};
+
+/// A step before its place: at() makes the StepDef, so an entry without a
+/// stage, label and meaning doesn't compile.
+struct Row {
+    key: &'static str,
+    who: &'static [&'static str],
+    notify: Notify,
+    glyph: Option<&'static str>,
+    verb: Option<&'static str>,
+}
 
 const fn s(
     key: &'static str,
@@ -79,8 +119,15 @@ const fn s(
     notify: Notify,
     glyph: Option<&'static str>,
     verb: Option<&'static str>,
-) -> StepDef {
-    StepDef { key, who, notify, glyph, verb }
+) -> Row {
+    Row { key, who, notify, glyph, verb }
+}
+
+impl Row {
+    const fn at(self, stage: Stage, label: &'static str, meaning: &'static str) -> StepDef {
+        let Row { key, who, notify, glyph, verb } = self;
+        StepDef { key, who, notify, glyph, verb, stage, label, meaning }
+    }
 }
 
 /// How sd watch notifies a step (src/watch_help.txt, "Notified").
@@ -100,6 +147,38 @@ pub enum Notify {
     Never,
 }
 
+/// Where a step sits in a PR's life: the Flock's seven stages (#376), or
+/// Hold, a step that stops the whole line and lights none of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stage {
+    Hold,
+    Build,
+    Push,
+    Ci,
+    Review,
+    Bot,
+    Threads,
+    Merge,
+}
+
+impl Stage {
+    /// The seven stages a PR moves through, in order.
+    pub const FLOW: [Stage; 7] = [Build, Push, Ci, Review, Bot, Threads, Merge];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Hold => "hold",
+            Build => "build",
+            Push => "push",
+            Ci => "ci",
+            Review => "review",
+            Bot => "bot",
+            Threads => "threads",
+            Merge => "merge",
+        }
+    }
+}
+
 pub struct StepDef {
     pub key: &'static str,
     /// Who NEXT can give it to: you, agent, run or wait.
@@ -113,6 +192,11 @@ pub struct StepDef {
     /// worktree), draft, ci-rerun, and ship-parent and open-pr, which may
     /// spend tokens describing.
     pub verb: Option<&'static str>,
+    pub stage: Stage,
+    /// The word a Flock stage lit by this step shows.
+    pub label: &'static str,
+    /// One line on what the step means (src/view_help.txt's Atlas, #377).
+    pub meaning: &'static str,
 }
 
 /// const, so def! can check a key when it compiles.
@@ -218,5 +302,19 @@ mod tests {
         }
         assert!(find("ci-red").is_some_and(|d| d.key == "ci-red"));
         assert!(find("ci-re").is_none() && find("nope").is_none());
+    }
+
+    /// The steps that hold the whole line (#377): listed first in the Atlas.
+    const HOLDS: [&str; 9] = ["attached", "budget", "errors", "failed", "foreign", "gh-wait", "question", "running", "stale"];
+
+    #[test]
+    fn every_step_has_a_stage_a_label_and_a_meaning_377() {
+        for d in STEPS {
+            assert!(!d.meaning.is_empty() && !d.label.is_empty(), "{}", d.key);
+            assert!(d.stage == Stage::Hold || Stage::FLOW.contains(&d.stage), "{}", d.key);
+        }
+        let holds: BTreeSet<&str> = STEPS.iter().filter(|d| d.stage == Stage::Hold).map(|d| d.key).collect();
+        assert_eq!(holds, HOLDS.into_iter().collect());
+        assert_eq!(Stage::FLOW.map(Stage::name), ["build", "push", "ci", "review", "bot", "threads", "merge"]);
     }
 }

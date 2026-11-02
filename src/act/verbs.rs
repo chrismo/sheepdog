@@ -35,8 +35,8 @@ const fn v(name: &'static str, scope: Scope, agent: bool, spends: bool, doing: &
     Verb { name, scope, agent, spends, doing, gate: None }
 }
 
-const fn gated(v: Verb, offered: fn(&[serde_json::Value]) -> bool, gate: fn(&crate::next::Derived) -> super::Gate) -> Verb {
-    Verb { gate: Some(Gated { offered, gate }), ..v }
+const fn gated(v: Verb, offered: fn(&[serde_json::Value]) -> bool, rules: fn(&crate::next::Derived) -> Vec<super::gate::Rule>) -> Verb {
+    Verb { gate: Some(Gated { offered, rules }), ..v }
 }
 
 use Scope::{None as Nothing, Remote, Worktree};
@@ -44,7 +44,7 @@ use Scope::{None as Nothing, Remote, Worktree};
 pub const VERBS: &[Verb] = &[
     // its sd act implement is a verb of its own
     v("start", Nothing, false, true, ""),
-    gated(v("implement", Worktree, true, true, ""), |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"), gates::implement),
+    gated(v("implement", Worktree, true, true, ""), |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"), gates::implement_rules),
     v("follow", Nothing, false, false, ""),
     v("fetch", Worktree, false, false, "fetching"),
     v("enroll", Nothing, false, false, ""),
@@ -52,22 +52,22 @@ pub const VERBS: &[Verb] = &[
     v("forget", Nothing, false, false, ""),
     v("unregister", Nothing, false, false, ""),
     // NEXT lists address behind the steps that clear its gate (#326): only a first step runs
-    gated(v("address", Worktree, true, true, ""), |steps| steps.first().is_some_and(|s| s["key"] == "bot" && s["who"] == "agent"), gates::address),
+    gated(v("address", Worktree, true, true, ""), |steps| steps.first().is_some_and(|s| s["key"] == "bot" && s["who"] == "agent"), gates::address_rules),
     v("ack", Nothing, false, false, ""),
     // act::run takes the declaration of the verb it resumes
     v("answer", Worktree, true, true, ""),
-    gated(v("restack", Worktree, false, false, "restacking"), |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), gates::restack),
-    gated(v("restack --resolve", Worktree, true, true, "restacking"), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), gates::restack_resolve),
+    gated(v("restack", Worktree, false, false, "restacking"), |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), |d| gates::restack_rules(d, false)),
+    gated(v("restack --resolve", Worktree, true, true, "restacking"), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), |d| gates::restack_rules(d, true)),
     v("retarget", Nothing, false, false, ""),
-    gated(v("push", Remote, false, false, "pushing"), |steps| steps.iter().any(|s| s["key"] == "push"), gates::push),
+    gated(v("push", Remote, false, false, "pushing"), |steps| steps.iter().any(|s| s["key"] == "push"), gates::push_rules),
     v("verify", Worktree, false, false, "running verify"),
     v("autofix", Worktree, false, false, "running autofix"),
-    gated(v("ci-fix", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "ci-red"), gates::ci_fix),
-    gated(v("review", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gates::review),
+    gated(v("ci-fix", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "ci-red"), gates::ci_fix_rules),
+    gated(v("review", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gates::review_rules),
     // reads no worktree; refused while attached, as review is
     v("review --accept", Nothing, true, false, ""),
     // NEXT never offers it: ship runs it
-    gated(v("describe", Nothing, true, true, ""), |_| false, gates::describe),
+    gated(v("describe", Nothing, true, true, ""), |_| false, gates::describe_rules),
     // describes unless a description is stored (its gate is describe's)
     v("ship", Remote, true, true, "shipping"),
     v("trigger", Nothing, false, false, ""),

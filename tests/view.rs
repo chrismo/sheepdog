@@ -761,6 +761,39 @@ fn the_map_page_and_the_flock_link_to_each_other() {
     assert_has(&s.get("/").2, &["href=\"/map\""]);
 }
 
+// The Atlas (#377): every NEXT step by stage and each verb's gate rules,
+// generated from the code; no state is read.
+
+#[test]
+fn the_atlas_page_serves_the_stages_and_each_verbs_rules() {
+    let sd = sd();
+    let s = serve(&sd);
+    let (code, head, body) = s.get("/atlas");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: text/html"]);
+    assert_has(&body, &[&format!(r#"<meta name="sd-token" content="{}">"#, page_token(&s)), "<title>", "/api/atlas"]);
+    let (code, head, body) = s.get("/api/atlas");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: application/json"]);
+    let a: Value = serde_json::from_str(&body).unwrap_or_else(|e| panic!("{e}: {body}"));
+    let stages: Vec<&str> = a["stages"].as_array().unwrap().iter().map(|x| x["stage"].as_str().unwrap()).collect();
+    assert_eq!(stages, ["build", "push", "ci", "review", "bot", "threads", "merge"]);
+    assert!(a["holds"].as_array().unwrap().iter().any(|x| x["key"] == "running"), "{}", a["holds"]);
+    let push = a["verbs"].as_array().unwrap().iter().find(|v| v["name"] == "push").unwrap();
+    let closed = push["rules"].as_array().unwrap().iter().find(|r| r["name"] == "the PR is merged or closed").unwrap();
+    assert_eq!((&closed["level"], &closed["means"]), (&json!("Soft"), &json!("force passes")));
+    assert_eq!(push["checks"], json!(["running"]));
+}
+
+#[test]
+fn the_three_pages_link_to_each_other() {
+    let sd = sd();
+    let s = serve(&sd);
+    assert_has(&s.get("/").2, &["href=\"/atlas\"", "href=\"/map\""]);
+    assert_has(&s.get("/map").2, &["href=\"/\"", "href=\"/atlas\""]);
+    assert_has(&s.get("/atlas").2, &["href=\"/\"", "href=\"/map\""]);
+}
+
 // GitHub data is cached under <state>/github/ (#401): served at once, and
 // fetched again in the background once it's a minute old or the page's
 // refresh button asks.
