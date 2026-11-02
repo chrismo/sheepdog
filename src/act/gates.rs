@@ -15,7 +15,7 @@ pub struct Gated {
     /// Whether NEXT's steps offer the verb, by key and who only.
     pub offered: fn(&[Value]) -> bool,
     /// Every rule of the verb's gate on a state, in source order; the Atlas
-    /// (src/view/atlas.rs, #377) lists them off Derived::default().
+    /// (src/view/atlas.rs, #377) lists them in every wording its probes give.
     pub rules: fn(&Derived) -> Vec<Rule>,
 }
 
