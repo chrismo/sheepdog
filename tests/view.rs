@@ -881,10 +881,17 @@ fn api_map_groups_files_by_stage_and_carries_a_trend() {
     let group = |p: &str| m["groups"].as_array().unwrap().iter().find(|g| g["files"].as_array().unwrap().iter().any(|f| f["path"] == p)).unwrap()["name"].clone();
     assert_eq!([group("src/state.rs"), group("src/act/push.rs"), group("src/act/implement.rs"), group("src/view/map.rs")], ["observe", "act", "agent steps", "pages"]);
     let t = &m["trend"];
+    let root = env!("CARGO_MANIFEST_DIR");
+    // CI's checkout has no .git: the trend then says so and has no points
+    // (the unit tests in src/view/map.rs cover the trend on a built repo).
+    if !std::path::Path::new(root).join(".git").exists() {
+        assert_eq!(t["points"], serde_json::json!([]), "{t}");
+        assert!(t["error"].as_str().unwrap().contains("not a git repository"), "{t}");
+        return;
+    }
     assert_eq!((&t["error"], t["fetched"].is_string()), (&Value::Null, true), "{t}");
     let points = t["points"].as_array().unwrap();
     assert!(points.len() >= 2, "{t}");
-    let root = env!("CARGO_MANIFEST_DIR");
     let head = String::from_utf8(std::process::Command::new("git").args(["-C", root, "rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
     assert_eq!(points.last().unwrap()["sha"], head.trim());
     let dates: Vec<&str> = points.iter().map(|p| p["date"].as_str().unwrap()).collect();
