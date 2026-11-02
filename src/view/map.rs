@@ -30,7 +30,7 @@ const STAGES: [&str; 9] = ["watch loop", "observe", "decide", "act", "agent step
 
 /// Where a file serves, by its path or its directory (ending in /). A verb's
 /// file (src/act/<verb>.rs) is placed by its declaration in VERBS instead:
-/// act, or agent steps. A file neither places lands in plumbing, and
+/// agent steps if it spends tokens, else act. A file neither places lands in plumbing, and
 /// every_file_under_src_has_a_stage names it.
 const PLACES: &[(&str, &str)] = &[
     ("src/watch.rs", "watch loop"), ("src/watch/", "watch loop"), ("src/watch_help.txt", "watch loop"),
@@ -88,7 +88,8 @@ fn ratchet(text: &str) -> Vec<(String, Value)> {
 /// Only a bare verb names a file: "restack --resolve" is resolve.rs's.
 fn stage(path: &str) -> Option<&'static str> {
     let verb = VERBS.iter().filter(|v| !v.name.contains(' ')).find(|v| path == format!("src/act/{}.rs", v.name.replace('-', "_")));
-    verb.map(|v| if v.agent { "agent steps" } else { "act" })
+    // spends, not agent (refused while attached): start runs an agent as ship does.
+    verb.map(|v| if v.spends { "agent steps" } else { "act" })
         .or_else(|| PLACES.iter().find(|(k, _)| *k == path || (k.ends_with('/') && path.starts_with(k))).map(|(_, s)| *s))
 }
 
@@ -257,6 +258,7 @@ mod tests {
         src/act/push.rs  run  cognitive_complexity  30  # #335 splits it\n\
         src/state.rs  big  too_many_lines  120\n\
         tests/t.rs  long  too_many_lines  110\n\
+        src/gone.rs  old  too_many_lines  105\n\
         \n\
         torn line\n\
         src/b.rs  x  too_many_lines  NaN\n";
@@ -282,14 +284,16 @@ mod tests {
             ("src/act/push.rs".into(), json!({"fn": "run", "lint": "cognitive_complexity", "score": 30})),
             ("src/state.rs".into(), json!({"fn": "big", "lint": "too_many_lines", "score": 120})),
             ("tests/t.rs".into(), json!({"fn": "long", "lint": "too_many_lines", "score": 110})),
+            ("src/gone.rs".into(), json!({"fn": "old", "lint": "too_many_lines", "score": 105})),
         ]);
     }
 
     #[test]
     fn a_verb_s_file_is_act_or_agent_steps_by_its_declaration() {
         assert_eq!(stage("src/act/push.rs"), Some("act"));
-        assert_eq!(stage("src/act/start.rs"), Some("act"));
         assert_eq!(stage("src/act/implement.rs"), Some("agent steps"));
+        assert_eq!(stage("src/act/start.rs"), stage("src/act/ship.rs"), "both run implement or describe");
+        assert_eq!(stage("src/act/start.rs"), Some("agent steps"));
         assert_eq!(stage("src/act/ci_fix.rs"), Some("agent steps"));
         assert_eq!(stage("src/act/restack.rs"), Some("act"), "restack --resolve's agent flag is resolve.rs's, not restack.rs's");
         assert_eq!(stage("src/act/resolve.rs"), Some("agent steps"));
@@ -367,7 +371,7 @@ mod tests {
         assert_eq!(t.as_array().unwrap().len(), 2, "the day before the split isn't sampled: {t}");
         assert_eq!(point(0), ("2026-10-13".into(), 10, 4, 0));
         // As the Map's ratchet chip counts: functions in src/ files in the
-        // tree, so not tests/t.rs's, nor src/b.rs's (not in the tree).
+        // tree: not tests/t.rs's (not src/), nor src/gone.rs's (not in the tree).
         assert_eq!(point(1), ("2026-10-15".into(), 17, 4 + RATCHET.lines().count() as u64, 2));
         assert_eq!(t[1]["sha"], head);
     }
