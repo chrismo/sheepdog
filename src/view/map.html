@@ -253,7 +253,11 @@ window.addEventListener("hashchange", route);
 
 document.addEventListener("click", e => {
   const sq = e.target.closest(".sq[data-p]");
-  if (sq) return showFile(sq.dataset.p);
+  if (sq) {
+    // the URL names the open file, so a reload or Back from its Atlas link reopens it
+    history.replaceState(null, "", `#p=${encodeURIComponent(sq.dataset.p)}`);
+    return showFile(sq.dataset.p);
+  }
   if (e.target.closest("[data-close]")) return hideFile();
   const more = e.target.closest("[data-more]");
   if (more) more.classList.toggle("all");
