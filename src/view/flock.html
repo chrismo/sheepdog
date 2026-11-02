@@ -145,7 +145,13 @@ const ago = iso => {
 };
 const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : "Not asked GitHub yet"}` +
   `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
-const refreshGh = () => fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
+async function refreshGh() {
+  const r = await fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
+  if (!r.ok) {
+    document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = `refused (${r.status}): reload the page`));
+    throw new Error(r.status);
+  }
+}
 const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
 const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
 const GROUPS = [["you", "Needs you"], ["agent", "Agent next"], ["run", "sheepdog next"], ["wait", "Waiting"]];
@@ -406,7 +412,7 @@ document.addEventListener("click", async e => {
     return;
   }
   if (e.target.closest("[data-back]")) { location.hash = ""; return; }
-  if (e.target.closest("[data-refresh]")) { const id = openId(); refreshGh().then(() => id && loadTimeline(id)); return; }
+  if (e.target.closest("[data-refresh]")) { const id = openId(); refreshGh().then(() => id && loadTimeline(id), () => {}); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card[data-id]");
   if (c) openCard(c);

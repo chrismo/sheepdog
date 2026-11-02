@@ -123,7 +123,13 @@ const ago = iso => {
 };
 const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : "Not asked GitHub yet"}` +
   `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
-const refreshGh = () => fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
+async function refreshGh() {
+  const r = await fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
+  if (!r.ok) {
+    document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = `refused (${r.status}): reload the page`));
+    throw new Error(r.status);
+  }
+}
 const CAP = { too_many_lines: 100, cognitive_complexity: 25 };
 const LABEL = { too_many_lines: "lines", cognitive_complexity: "complexity" };
 const MAX_SIDE = 140, MIN_SIDE = 12;
@@ -194,7 +200,7 @@ document.addEventListener("click", e => {
   if (e.target.closest("[data-close]")) return hideFile();
   const more = e.target.closest("[data-more]");
   if (more) more.classList.toggle("all");
-  if (e.target.closest("[data-refresh]")) refreshGh().then(load);
+  if (e.target.closest("[data-refresh]")) refreshGh().then(load, () => {});
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideFile(); });
 

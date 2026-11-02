@@ -2,7 +2,8 @@
 // served at once. Once it's FRESH_SECS old, or the page's refresh button made
 // everything stale, the request that sees it starts a fetch on a thread and
 // answers with what's there; the page asks again while "refreshing".
-// A failed fetch keeps the last data beside its error.
+// A failed fetch keeps the last data beside its error. Nothing prunes these
+// files yet: slice 2 of #401 has the watcher drop them with a branch.
 
 use crate::time::utc;
 use serde_json::{json, Value};
@@ -25,6 +26,16 @@ fn now_ms() -> u64 {
 
 fn fetching() -> MutexGuard<'static, BTreeSet<String>> {
     FETCHING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Frees its key when the fetch ends, even by a panic, which would
+/// otherwise leave the key "refreshing" for the life of the server.
+struct Running(String);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        fetching().remove(&self.0);
+    }
 }
 
 pub fn force() {
@@ -62,15 +73,15 @@ where
     if !fetching().insert(key.to_string()) {
         return;
     }
-    let key = key.to_string();
+    let running = Running(key.to_string());
     std::thread::spawn(move || {
+        let _running = running;
         let tried = now_ms();
         let doc = match fetch() {
             Ok(data) => json!({"tried": tried, "at": tried, "data": data, "error": null}),
             Err(e) => json!({"tried": tried, "at": old["at"], "data": old["data"], "error": e}),
         };
         write(&f, &doc);
-        fetching().remove(&key);
     });
 }
 
@@ -112,6 +123,19 @@ mod tests {
         assert!(stale(999, 2_000, 1_000));
         assert!(!stale(1_000, 2_000, 1_000), "a refresh in the fetch's own ms");
         assert!(stale(0, 60_000, 0), "never tried");
+    }
+
+    #[test]
+    fn a_fetch_that_panics_lets_the_next_one_start() {
+        let dir = std::env::temp_dir().join(format!("sd-cache-test-{}", std::process::id()));
+        let key = "panics";
+        get(&dir, key, || panic!("a bug in the fetch"));
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while fetching().contains(key) && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!fetching().contains(key));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
