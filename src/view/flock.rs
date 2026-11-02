@@ -190,7 +190,7 @@ pub fn card(c: &Cached) -> Value {
 }
 
 /// GET /api/flock: {at: the last pass's time or null, branches: [card with
-/// checked], refreshing}.
+/// checked], refreshing, held: why no branch is checked, or null}.
 pub fn flock(state: &Path) -> Value {
     let at = fs::read_to_string(state.join("last-pass"))
         .ok()
@@ -204,7 +204,9 @@ pub fn flock(state: &Path) -> Value {
             card
         })
         .collect();
-    json!({"at": at, "branches": cards, "refreshing": super::refresh::refreshing(state, &cached)})
+    let held = super::refresh::held(state, &cached);
+    let refreshing = held.is_none() && super::refresh::refreshing(state, &cached);
+    json!({"at": at, "branches": cards, "refreshing": refreshing, "held": held})
 }
 
 #[cfg(test)]

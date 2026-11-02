@@ -2,14 +2,17 @@
 // /api/flock starts `sd watch refresh <branch>` in its repo on the stalest
 // branch whose cache file is a minute old, or older than the refresh button,
 // one branch at a time. A refresh counts as tried when it starts; one that
-// fails (a branch deleted or unenrolled since) waits until the watcher
-// rewrites the file it left as it was.
+// fails, for any reason, waits until the watcher rewrites the file it left as
+// it was. None starts while the rate limit the freshest file saw is under
+// settings.rateLimitFloor, as the pass stops then; a pass that finds the quota
+// back writes a file that lifts it.
 
 use super::cache::{forced, now_ms, stale};
 use super::flock::Cached;
+use crate::config;
 use crate::proc;
 use crate::time::utc;
-use crate::val::t;
+use crate::val::{on, t};
 use crate::watch::{registered, repo_key, sd_verb};
 use std::collections::BTreeMap;
 use std::fs;
@@ -51,6 +54,20 @@ pub fn checked(state: &Path, c: &Cached) -> Option<String> {
     written(state, c).map(|ms| utc((ms / 1000) as i64))
 }
 
+/// Why no refresh may start for GitHub's rate limit, as the pass says it.
+pub fn held(state: &Path, cached: &[Cached]) -> Option<String> {
+    let s = &cached.iter().filter_map(|c| Some((written(state, c)?, c.doc.as_ref()?))).max_by_key(|(w, _)| *w)?.1["state"];
+    let floor: f64 = config::get_global("settings.rateLimitFloor", false).ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let left = t(s, "rate_limit.remaining");
+    if on(s, "rate_limit.limited") {
+        Some("GitHub refused a call for the rate limit: no branch is checked until the watcher's pass finds the quota back".into())
+    } else if left.parse::<f64>().is_ok_and(|n| n < floor) {
+        Some(format!("GitHub rate limit: {left} points left, under settings.rateLimitFloor ({floor}): no branch is checked until the watcher's pass finds the quota back"))
+    } else {
+        None
+    }
+}
+
 fn done(c: &Cached) -> bool {
     c.doc.as_ref().is_some_and(|d| matches!(t(&d["state"], "pr.state").as_str(), "MERGED" | "CLOSED"))
 }
@@ -88,7 +105,9 @@ pub fn refreshing(state: &Path, cached: &[Cached]) -> bool {
         if out.ok {
             branches().failed.remove(&id);
         } else {
-            eprintln!("sd view: sd watch refresh {branch} in {repo}: {}", out.stderr.lines().next().unwrap_or("failed"));
+            // Its fetch failure is on stdout.
+            let why = out.stderr.lines().chain(out.stdout.lines()).next().unwrap_or("failed").to_string();
+            eprintln!("sd view: sd watch refresh {branch} in {repo}: {why}");
             branches().failed.insert(id, w);
         }
     });

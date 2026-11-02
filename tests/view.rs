@@ -131,7 +131,7 @@ fn api_flock_serves_each_cached_branch() {
 fn no_pass_yet_serves_no_branches() {
     let sd = sd();
     let f = serve(&sd).flock();
-    assert_eq!(f, json!({ "at": null, "branches": [], "refreshing": false }));
+    assert_eq!(f, json!({ "at": null, "branches": [], "refreshing": false, "held": null }));
 }
 
 #[test]
@@ -728,7 +728,7 @@ fn a_merged_branch_isn_t_refreshed() {
 }
 
 #[test]
-fn a_refresh_that_fails_waits_a_minute_like_any_other() {
+fn a_failed_refresh_isn_t_retried_at_once() {
     let mut sd = sd();
     watched(&mut sd, "repos/r", "old", 120);
     sd.fake("sd-watch", &format!("#!/usr/bin/env bash\necho \"start $*\" >> {}\nexit 1\n", sd.path("watch.log")));
@@ -793,4 +793,34 @@ fn a_branch_whose_refresh_failed_waits_for_the_watcher_to_rewrite_it() {
     assert_eq!(s.flock()["refreshing"], true);
     flock_settled(&s);
     assert_eq!(watch_log(&sd), ["start refresh gone", "start refresh gone"]);
+}
+
+/// <branch>'s cache file in repos/r, rewritten with the rate limit sd state saw, <secs_ago> ago.
+fn with_rate(sd: &Sd, branch: &str, rate: Value, secs_ago: u64) {
+    let f = sd.tmp.join(format!("state/branches/{}/{branch}.json", sheepdog::watch::repo_key(&sd.path("repos/r"))));
+    let mut st = state(branch, json!([]));
+    st["rate_limit"] = rate;
+    fs::write(&f, json!({ "glyph": "🤖", "state": st }).to_string()).unwrap();
+    let then = std::time::SystemTime::now() - Duration::from_secs(secs_ago);
+    fs::File::options().write(true).open(&f).unwrap().set_modified(then).unwrap();
+}
+
+#[test]
+fn no_branch_is_refreshed_while_the_last_rate_limit_seen_is_under_the_floor() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "old", 120);
+    watched(&mut sd, "repos/r", "newer", 90);
+    with_rate(&sd, "old", json!({ "remaining": 4000, "limited": false }), 120);
+    with_rate(&sd, "newer", json!({ "remaining": 100, "limited": false }), 90);
+    let s = serve(&sd);
+    let f = s.flock();
+    assert_eq!(f["refreshing"], false);
+    assert_has(f["held"].as_str().unwrap_or_else(|| panic!("{f}")), &["GitHub rate limit", "100 points left", "settings.rateLimitFloor (250)"]);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(watch_log(&sd).is_empty(), "{:?}", watch_log(&sd));
+    with_rate(&sd, "newer", json!({ "remaining": 0, "limited": true }), 90);
+    assert_has(s.flock()["held"].as_str().unwrap(), &["GitHub refused a call for the rate limit"]);
+    with_rate(&sd, "newer", json!({ "remaining": 3000, "limited": false }), 90);
+    let f = s.flock();
+    assert_eq!((&f["refreshing"], &f["held"]), (&json!(true), &Value::Null));
 }
