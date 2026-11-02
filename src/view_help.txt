@@ -6,17 +6,20 @@ Usage: sd view [--port <n>] [--no-open]
   Starts a local server on 127.0.0.1, prints its URL and opens it in the
   browser, then serves until Ctrl-C. The page reads the state each sd watch
   pass caches, and asks again every 30s. It shows the last pass's time: with
-  the watcher stopped, that time stops moving. A branch's timeline asks
-  GitHub (gh) for its PR's commits, CI and merge when it's opened. It only
-  reads; nothing on it acts yet. A branch is there from its first pass, and
-  stays until the watcher drops its cache: after it's unenrolled, or once
-  its merge is notified.
+  the watcher stopped, that time stops moving. A branch's timeline has its
+  PR's commits, CI and merge from GitHub (gh). Nothing on it acts yet. A
+  branch is there from its first pass, and stays until the watcher drops its
+  cache: after it's unenrolled, or once its merge is notified.
 
   The Map (/map, linked from the Flock) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's
   cap (tests/lint-ratchet.txt), and the open issues that name it (one gh
   issue list). It reads the checkout sd was built from, whatever repo sd
   view runs in.
+
+  GitHub data is cached under <state>/github/, served at once, and asked
+  for again in the background once it's a minute old; each page shows its
+  age and has a refresh button.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

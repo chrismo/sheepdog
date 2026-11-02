@@ -113,6 +113,8 @@ details.tl[open] > summary { margin-bottom: 10px; }
 .tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
 .tl text { font-family: var(--f-body); }
 footer { font-size: 0.78rem; color: var(--muted); }
+.ghline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.refresh { font: inherit; font-size: 0.78rem; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.1rem 0.5rem; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -136,6 +138,14 @@ footer { font-size: 0.78rem; color: var(--muted); }
 </div>
 <script>
 const POLL_MS = 30000;
+const TOKEN = document.querySelector('meta[name="sd-token"]').content;
+const ago = iso => {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+};
+const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : "Not asked GitHub yet"}` +
+  `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
+const refreshGh = () => fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
 const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
 const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
 const GROUPS = [["you", "Needs you"], ["agent", "Agent next"], ["run", "sheepdog next"], ["wait", "Waiting"]];
@@ -310,7 +320,9 @@ function tlSvg(ev) {
   return `<svg viewBox="0 -2 ${W} ${y0 - FOLD + 14}" role="img" aria-label="The branch's timeline: agent steps, commits, CI and the PR, top to bottom">${s}</svg>`;
 }
 
+let tlAgain;
 async function loadTimeline(id) {
+  clearTimeout(tlAgain);
   const body = $("tlbody");
   if (!body.innerHTML) body.innerHTML = `<p class="none">asking GitHub…</p>`;
   try {
@@ -321,8 +333,11 @@ async function loadTimeline(id) {
     const t = await r.json();
     const ev = tlEvents(t);
     const cut = t.github?.total ? `<p class="none">The last ${t.github.commits.length} of ${t.github.total} commits: the earlier ones aren't drawn.</p>` : "";
-    const note = cut + (t.error ? `<p class="none">GitHub didn't answer, so this is the agent's steps only (${esc(t.error)})</p>` : t.github ? "" : `<p class="none">No PR yet: the agent's steps only.</p>`);
+    const pr = t.github || t.error || t.refreshing || t.fetched;
+    const down = t.error ? `<p class="none">GitHub didn't answer${t.github ? ", so its part is the last answer" : ", so this is the agent's steps only"} (${esc(t.error)})</p>` : "";
+    const note = cut + down + (pr ? ghLine(t) : `<p class="none">No PR yet: the agent's steps only.</p>`);
     body.innerHTML = note + (ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`);
+    if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id) loadTimeline(id); }, 1000);
   } catch (e) {
     if (openId() === id) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;
   }
@@ -375,6 +390,7 @@ async function poll(detail) {
   }
   const id = openId();
   if (detail && id) loadDetail(id);
+  if (detail && id && $("tl").open) loadTimeline(id);
 }
 
 const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
@@ -390,6 +406,7 @@ document.addEventListener("click", async e => {
     return;
   }
   if (e.target.closest("[data-back]")) { location.hash = ""; return; }
+  if (e.target.closest("[data-refresh]")) { const id = openId(); refreshGh().then(() => id && loadTimeline(id)); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card[data-id]");
   if (c) openCard(c);

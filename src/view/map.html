@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="sd-token" content="__SD_TOKEN__">
 <title>sheepdog map</title>
 <style>
 :root {
@@ -89,6 +90,8 @@ h2 .n { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .iss a { color: var(--ink); }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
 footer { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+.ghline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.refresh { font: inherit; font-size: 0.78rem; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.1rem 0.5rem; cursor: pointer; }
 body.sheet footer { margin-bottom: 40vh; }
 </style>
 </head>
@@ -98,6 +101,7 @@ body.sheet footer { margin-bottom: 40vh; }
     <div class="nav"><a href="/">← Flock</a><span class="eyebrow" id="eyebrow">loading…</span></div>
     <h1>The code</h1>
     <div class="summary" id="summary"></div>
+    <div id="gh"></div>
     <div class="legend">
       <span><i class="k"></i>a file: area is lines</span>
       <span><i class="k h"></i>in functions over the cap</span>
@@ -112,6 +116,14 @@ body.sheet footer { margin-bottom: 40vh; }
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const $ = id => document.getElementById(id);
 const fmt = n => Number(n).toLocaleString();
+const TOKEN = document.querySelector('meta[name="sd-token"]').content;
+const ago = iso => {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${Math.round(s / 3600)}h`;
+};
+const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : "Not asked GitHub yet"}` +
+  `${d.refreshing ? " · asking GitHub…" : ""} <button class="refresh" type="button" data-refresh>refresh</button></p>`;
+const refreshGh = () => fetch("/api/refresh", { method: "POST", headers: { "X-Sd-Token": TOKEN } });
 const CAP = { too_many_lines: 100, cognitive_complexity: 25 };
 const LABEL = { too_many_lines: "lines", cognitive_complexity: "complexity" };
 const MAX_SIDE = 140, MIN_SIDE = 12;
@@ -141,6 +153,7 @@ function render(m) {
     `<section class="group"><h2>${esc(g.name)}<span class="n">${fmt(g.lines)}</span></h2>` +
     `<div class="tiles">${g.files.map(f => tile(f, maxLines)).join("")}</div></section>`).join("")
     : `<p class="none">No source here: sd runs from ${esc(m.root)}, which has no src/.</p>`;
+  $("gh").innerHTML = ghLine(m);
   const note = m.error ? `Open issues left out: ${m.error}. ` : "";
   $("foot").textContent = `${note}Read from ${m.root}. Tap a file for its functions over the cap and its issues.`;
 }
@@ -181,20 +194,27 @@ document.addEventListener("click", e => {
   if (e.target.closest("[data-close]")) return hideFile();
   const more = e.target.closest("[data-more]");
   if (more) more.classList.toggle("all");
+  if (e.target.closest("[data-refresh]")) refreshGh().then(load);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideFile(); });
 
-(async () => {
+let again;
+async function load() {
+  clearTimeout(again);
   try {
     const r = await fetch("/api/map", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
-    render(await r.json());
+    const m = await r.json();
+    render(m);
+    again = setTimeout(load, m.refreshing ? 1000 : 60000);
   } catch (e) {
     const eb = $("eyebrow");
     eb.classList.add("stale");
     eb.textContent = `can't reach sd view (${e.message})`;
+    again = setTimeout(load, 60000);
   }
-})();
+}
+load();
 </script>
 </body>
 </html>

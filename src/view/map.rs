@@ -1,8 +1,9 @@
 // The Map's data (#378): sheepdog's own src/, each file sized by its lines,
 // grouped by module, with the functions tests/lint-ratchet.txt holds over
-// clippy's cap and the open issues that name it. Read from the checkout the
-// binary was built in, whatever repo sd view runs from.
+// clippy's cap and the open issues that name it (through view/cache.rs). Read
+// from the checkout the binary was built in, whatever repo sd view runs from.
 
+use super::cache;
 use crate::gh;
 use crate::val::t;
 use serde_json::{json, Value};
@@ -10,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// gh runs inside the request: a stalled one mustn't leave the page waiting.
+/// A stalled gh mustn't hold the next fetch up for long.
 const GH_SECS: u64 = 20;
 /// The most open issues one gh call lists; a list this long may be cut off.
 const ISSUE_LIMIT: usize = 500;
@@ -79,8 +80,7 @@ fn open_issues(root: &Path) -> Result<Vec<Value>, String> {
     let out = gh::call_in(&root.to_string_lossy(), None, &args, GH_SECS);
     match serde_json::from_str::<Value>(&out.stdout) {
         Ok(Value::Array(list)) if out.ok() => Ok(list),
-        _ if out.stderr.trim().is_empty() => Err("gh: no issue list in its answer".into()),
-        _ => Err(format!("gh: {}", out.stderr.trim())),
+        _ => Err(cache::gh_error(&out.stderr, "issue list")),
     }
 }
 
@@ -90,11 +90,11 @@ fn file(path: &str, text: &str, over: Vec<Value>, issues: &[Value]) -> Value {
            "issues": naming(issues, path)})
 }
 
-/// Groups and files, largest first.
-fn build(files: &[(String, String)], ratchet_text: &str, issues: &Result<Vec<Value>, String>) -> Value {
+/// Groups and files, largest first. issues is None until gh has answered once.
+fn build(files: &[(String, String)], ratchet_text: &str, issues: Option<&[Value]>) -> Value {
     let over = ratchet(ratchet_text);
     let dirs: BTreeSet<&str> = files.iter().filter_map(|(p, _)| Some(p.strip_prefix("src/")?.split_once('/')?.0)).collect();
-    let list = issues.as_deref().unwrap_or_default();
+    let list = issues.unwrap_or_default();
     let mut groups: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for (path, text) in files {
         let mine = over.iter().filter(|(f, _)| f == path).map(|(_, o)| o.clone()).collect();
@@ -111,18 +111,23 @@ fn build(files: &[(String, String)], ratchet_text: &str, issues: &Result<Vec<Val
     groups.sort_by_key(|g| std::cmp::Reverse(lines(g)));
     // Functions, not lines: one over both caps is listed twice.
     let fns: BTreeSet<_> = over.iter().filter(|(f, _)| files.iter().any(|(p, _)| p == f)).map(|(f, o)| (f, t(o, "fn"))).collect();
-    let error = match issues {
-        Err(e) => Some(e.clone()),
-        Ok(l) if l.len() >= ISSUE_LIMIT => Some(format!("gh lists {ISSUE_LIMIT} at most, and gave {}", l.len())),
-        Ok(_) => None,
-    };
-    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.as_ref().ok().map(Vec::len), "error": error})
+    let error = issues.filter(|l| l.len() >= ISSUE_LIMIT).map(|l| format!("gh lists {ISSUE_LIMIT} at most, and gave {}", l.len()));
+    json!({"groups": groups, "ratchet": fns.len(), "issues": issues.map(<[Value]>::len), "error": error})
 }
 
-pub fn map() -> Value {
+pub fn map(state: &Path) -> Value {
     let root = root();
+    let key = format!("issues-{}", crate::watch::repo_key(&root.to_string_lossy()));
+    let from = root.clone();
+    let got = cache::get(state, &key, move || open_issues(&from).map(Value::Array));
     let ratchet_text = fs::read_to_string(root.join("tests/lint-ratchet.txt")).unwrap_or_default();
-    let mut m = build(&sources(&root), &ratchet_text, &open_issues(&root));
+    let mut m = build(&sources(&root), &ratchet_text, got["data"].as_array().map(Vec::as_slice));
+    if !got["error"].is_null() {
+        m["error"] = got["error"].clone();
+    }
+    for k in ["fetched", "refreshing"] {
+        m[k] = got[k].clone();
+    }
     m["root"] = json!(root.display().to_string());
     m
 }
@@ -174,7 +179,7 @@ mod tests {
 
     #[test]
     fn the_map_groups_files_by_module_largest_first() {
-        let m = build(&fixture(), "", &Ok(vec![]));
+        let m = build(&fixture(), "", Some(&[]));
         let names: Vec<_> = m["groups"].as_array().unwrap().iter().map(|g| (g["name"].as_str().unwrap(), g["lines"].as_u64().unwrap())).collect();
         assert_eq!(names, [("act", 213), ("src", 151)]);
         let act: Vec<_> = m["groups"][0]["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect();
@@ -185,7 +190,7 @@ mod tests {
 
     #[test]
     fn a_file_s_lines_over_the_cap_are_its_too_many_lines_scores() {
-        let m = build(&fixture(), RATCHET, &Ok(vec![]));
+        let m = build(&fixture(), RATCHET, Some(&[]));
         assert_eq!(file(&m, "src/act/a.rs")["over_lines"], 140);
         assert_eq!(file(&m, "src/act/a.rs")["over"].as_array().unwrap().len(), 2);
         assert_eq!(file(&m, "src/b.rs")["over_lines"], 120);
@@ -194,7 +199,7 @@ mod tests {
 
     #[test]
     fn the_ratchet_count_is_functions_in_the_mapped_files_not_lines() {
-        let m = build(&fixture(), RATCHET, &Ok(vec![]));
+        let m = build(&fixture(), RATCHET, Some(&[]));
         assert_eq!(m["ratchet"], 2);
     }
 
@@ -204,7 +209,7 @@ mod tests {
             json!({"number": 1, "title": "split src/b.rs", "url": "u1", "body": "and src/act/a.rs"}),
             json!({"number": 2, "title": "t", "url": "u2", "body": "src/act/a.rs again; act.rs alone doesn't count"}),
         ];
-        let m = build(&fixture(), "", &Ok(issues));
+        let m = build(&fixture(), "", Some(&issues));
         let nums = |p| file(&m, p)["issues"].as_array().unwrap().iter().map(|i| i["number"].as_u64().unwrap()).collect::<Vec<_>>();
         assert_eq!([nums("src/act/a.rs"), nums("src/b.rs"), nums("src/act.rs")], [vec![1, 2], vec![1], vec![]]);
         assert_eq!(file(&m, "src/b.rs")["issues"][0], json!({"number": 1, "title": "split src/b.rs", "url": "u1"}));
@@ -214,16 +219,16 @@ mod tests {
     #[test]
     fn a_full_issue_list_says_some_may_be_left_out() {
         let list = |n: u64| (0..n).map(|i| json!({"number": i, "title": "t", "url": "u", "body": ""})).collect::<Vec<_>>();
-        let m = build(&fixture(), "", &Ok(list(ISSUE_LIMIT as u64)));
+        let m = build(&fixture(), "", Some(&list(ISSUE_LIMIT as u64)));
         assert_eq!(m["issues"], ISSUE_LIMIT);
         assert_eq!(m["error"], format!("gh lists {ISSUE_LIMIT} at most, and gave {ISSUE_LIMIT}"));
-        assert_eq!(build(&fixture(), "", &Ok(list(ISSUE_LIMIT as u64 - 1)))["error"], Value::Null);
+        assert_eq!(build(&fixture(), "", Some(&list(ISSUE_LIMIT as u64 - 1)))["error"], Value::Null);
     }
 
     #[test]
-    fn without_the_issue_list_files_name_none_and_the_error_says_why() {
-        let m = build(&fixture(), "", &Err("gh: down".into()));
+    fn without_the_issue_list_files_name_none() {
+        let m = build(&fixture(), "", None);
         assert_eq!(file(&m, "src/b.rs")["issues"], json!([]));
-        assert_eq!((&m["issues"], &m["error"]), (&Value::Null, &json!("gh: down")));
+        assert_eq!((&m["issues"], &m["error"]), (&Value::Null, &Value::Null));
     }
 }

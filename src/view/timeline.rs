@@ -1,12 +1,13 @@
 // A branch's timeline (#376): its agent steps from usage.sup, and its PR's
-// commits, CI and merge from GitHub, asked on demand.
+// commits, CI and merge from GitHub, through view/cache.rs.
 
-use super::branch;
+use super::{branch, cache};
 use crate::gh;
 use crate::val::{at, t};
 use serde_json::{json, Value};
+use std::path::Path;
 
-/// gh runs inside the request: a stalled one mustn't leave the page waiting.
+/// A stalled gh mustn't hold the next fetch up for long.
 const GH_SECS: u64 = 20;
 
 /// Checks past 50 on a commit aren't drawn, and nothing says so.
@@ -57,24 +58,29 @@ fn pr_ref(url: &str) -> Option<(&str, &str, &str, &str)> {
     }
 }
 
-/// (history, error): both null without a PR.
-fn github(url: &str) -> (Value, Value) {
-    let Some((host, owner, repo, n)) = pr_ref(url) else { return (Value::Null, Value::Null) };
+fn github(host: &str, owner: &str, repo: &str, n: &str) -> Result<Value, String> {
     let (q, o, r, num) = (format!("query={QUERY}"), format!("owner={owner}"), format!("repo={repo}"), format!("number={n}"));
     let out = gh::call(&["api", "graphql", "--hostname", host, "-f", &q, "-f", &o, "-f", &r, "-F", &num], GH_SECS);
     let pr = serde_json::from_str::<Value>(&out.stdout).ok().map(|v| at(&v, "data.repository.pullRequest").clone());
     match pr {
-        Some(pr) if out.ok() && pr.is_object() => (history(&pr), Value::Null),
-        _ if out.stderr.trim().is_empty() => (Value::Null, json!("gh: no PR in its answer")),
-        _ => (Value::Null, json!(format!("gh: {}", out.stderr.trim()))),
+        Some(pr) if out.ok() && pr.is_object() => Ok(history(&pr)),
+        _ => Err(cache::gh_error(&out.stderr, "PR")),
     }
 }
 
-pub fn timeline(c: &super::flock::Cached, usage: &str) -> Value {
+pub fn timeline(c: &super::flock::Cached, usage: &str, state: &Path) -> Value {
     let repo_dir = c.id.split_once('/').map_or("", |(d, _)| d);
     let url = c.doc.as_ref().map(|d| t(d, "state.pr.url")).unwrap_or_default();
-    let (gh, error) = github(&url);
-    json!({"agent": agent(usage, repo_dir, &c.branch), "github": gh, "error": error})
+    let gh = match pr_ref(&url) {
+        Some((host, owner, repo, n)) => {
+            let key = format!("pr-{host}-{owner}-{repo}-{n}");
+            let [host, owner, repo, n] = [host, owner, repo, n].map(String::from);
+            cache::get(state, &key, move || github(&host, &owner, &repo, &n))
+        }
+        None => json!({"data": null, "error": null, "fetched": null, "refreshing": false}),
+    };
+    json!({"agent": agent(usage, repo_dir, &c.branch), "github": gh["data"], "error": gh["error"],
+           "fetched": gh["fetched"], "refreshing": gh["refreshing"]})
 }
 
 #[cfg(test)]
