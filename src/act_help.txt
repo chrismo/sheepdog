@@ -141,21 +141,21 @@ Verbs:
             else roll back, unless --force keeps it (#406); never pushes.
             When the old base isn't an ancestor but HEAD fully holds the
             merged parent (sync.by_tree), it goes by tree merge instead:
-            one commit, committed by whoever runs it. Once the branch lands on the
-            default branch, sd-parent is rewritten to it, unless the PR
-            still targets the parent (retarget does that) or can't be
-            read. A conflict is
-            refused, or with --resolve handed to the agent (J1): it edits
-            the conflicting files in the branch's session, the pipeline
-            adds and continues, up to 3 stops, printing the agent's summary
-            of each; an agent that finds the replayed commit already on the
-            target rolls it back as a wrong base. A resolved rebase skips the
-            unchanged-change check (a resolution changes the diff), so its
-            result is unreviewed: verify runs, and sd state's NEXT says
-            when to review it. Refuses, --force or not, with no base, a
-            tree restack that would conflict, or the merged parent's
-            commits in what it would replay (or those unlisted). Refuses,
-            unless --force, a closed PR or parent, the parent's merge or a
+            one commit, committed by whoever runs it. Once the branch
+            lands on the default branch, sd-parent is rewritten to it,
+            unless the PR still targets the parent (retarget does that) or
+            can't be read. A conflict is refused, or with --resolve handed
+            to the agent (J1): it edits the conflicting files in the
+            branch's session, the pipeline adds and continues, up to 3
+            stops, printing the agent's summary of each; an agent that
+            finds the replayed commit already on the target rolls it back
+            as a wrong base. A resolved rebase skips the unchanged-change
+            check (a resolution changes the diff), so its result is
+            unreviewed: verify runs, and sd state's NEXT says when to
+            review it. Refuses, --force or not, with no base, a tree
+            restack that would conflict, or the merged parent's commits in
+            what it would replay (or those unlisted). Refuses, unless
+            --force, a closed PR or parent, the parent's merge or a
             conflict unknown, a stored answer it would drop, an undone
             restack (redo it by hand, as NEXT says, #395), and commits
             someone else made that it would rewrite, or ones it can't

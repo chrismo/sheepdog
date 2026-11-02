@@ -583,7 +583,8 @@ fn a_change_that_comes_out_different_is_rolled_back_unless_forced_406() {
     let r = sd.run(&["restack"]);
     assert_eq!(r.status, 1, "{}", r.output);
     let back = format!("rolled back to {}", &before[..7]);
-    assert_has(&r.output, &["feat's change came out different on origin/main", "git range-diff", &back, "sd act restack --force"]);
+    assert_has(&r.output, &["not restacking feat:", "feat's change came out different on origin/main", "git range-diff", "(--force to run anyway)", &back]);
+    assert_eq!(r.output.matches("--force").count(), 1, "{}", r.output);
     assert_eq!(sd.rev("HEAD"), before);
     assert_eq!(sd.git(&["status", "--porcelain"]), "");
     assert_eq!(sd.base_pin(), "");
@@ -593,6 +594,26 @@ fn a_change_that_comes_out_different_is_rolled_back_unless_forced_406() {
     assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
     assert!(sd.file_has("B") && sd.file_has("G"));
     assert_eq!(sd.base_pin(), sd.rev("origin/main"));
+}
+
+// One commit already on the target and another that comes out different:
+// the drop accounts for only part of the change, so the restack rolls back
+// unless forced, naming nothing as dropped (#406).
+#[test]
+fn a_dropped_commit_beside_one_that_comes_out_different_still_rolls_back_406() {
+    let sd = sd();
+    sd.edit("b", "B", "second");
+    subst(&sd.cwd.join("file.txt"), &[("e", "E")]);
+    sd.git(&["commit", "-q", "--amend", "-a", "--no-edit"]);
+    sd.upstream("main", "g", "G", "upstream");
+    sd.upstream("main", "e", "E", "part");
+    let before = sd.rev("HEAD");
+    let r = sd.run(&["restack"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["feat's change came out different on origin/main", &format!("rolled back to {}", &before[..7])]);
+    assert_lacks(&r.output, "dropped");
+    assert_eq!(sd.rev("HEAD"), before);
+    assert_eq!(sd.base_pin(), "");
 }
 
 // @test "uncommitted changes are refused"

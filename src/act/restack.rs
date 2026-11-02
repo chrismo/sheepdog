@@ -297,8 +297,8 @@ fn came_through(r: &Rebase, new_base: &str, new_head: &str, before: &str, force:
     if !force {
         must(git(r.wt, &["reset", "--quiet", "--hard", old_head]));
     }
-    let left = format!("rolled back to {}; sd act restack --force keeps the rebased result", short(old_head, 7));
-    let _ = enforce_leaving(Gate::Soft(vec![why]), force, &format!("keeping {b}'s restack"), &left);
+    let left = format!("rolled back to {}", short(old_head, 7));
+    let _ = enforce_leaving(Gate::Soft(vec![why]), force, &format!("restacking {b}"), &left);
     vec![]
 }
 
