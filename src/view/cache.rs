@@ -115,8 +115,10 @@ where
     };
     let f = file(state, key);
     let doc = fs::read_to_string(&f).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok()).unwrap_or(Value::Null);
-    let tried = doc["tried"].as_u64().unwrap_or(0).max(last);
-    let refreshing = if stale(tried, now_ms(), FORCED.load(Ordering::Relaxed)) {
+    let now = now_ms();
+    // A file's try ahead of the clock that can't be rewritten would start a fetch every read.
+    let tried = doc["tried"].as_u64().filter(|&t| t <= now).unwrap_or(0).max(last);
+    let refreshing = if stale(tried, now, FORCED.load(Ordering::Relaxed)) {
         start(key, f, doc.clone(), fetch);
         true
     } else {
@@ -186,5 +188,30 @@ mod tests {
         assert_eq!(ask()["refreshing"], false);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let _ = fs::remove_file(state);
+    }
+
+    #[test]
+    fn a_future_try_in_a_file_that_can_t_be_rewritten_is_fetched_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let state = std::env::temp_dir().join(format!("sd-cache-test-future-{}", std::process::id()));
+        let f = file(&state, "future");
+        fs::create_dir_all(f.parent().unwrap()).unwrap();
+        fs::write(&f, json!({"tried": now_ms() + 3_600_000, "at": 1, "data": "old", "error": null}).to_string()).unwrap();
+        fs::set_permissions(f.parent().unwrap(), fs::Permissions::from_mode(0o555)).unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let ask = || {
+            let c = calls.clone();
+            get(&state, "future", move || Ok(json!(c.fetch_add(1, Ordering::SeqCst))))
+        };
+        assert_eq!(ask()["refreshing"], true);
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while keys().running.contains("future") && std::time::Instant::now() < end {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let again = ask();
+        fs::set_permissions(f.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+        let _ = fs::remove_dir_all(&state);
+        assert_eq!(again["refreshing"], false);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
