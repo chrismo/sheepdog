@@ -12,13 +12,15 @@ use super::push::seen_authors;
 use super::resolve::{resolve_conflicts, Halt, Rebase};
 use super::bookkeeping::parent_write;
 use super::step::{question_gate, resolve_gave_up, spend_worded};
+use super::gate::enforce_leaving;
 use super::{die, enforce, no_base_why, plural, state_json, Args, Gate, Go};
-use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, rev, show_ref, worktree_for, Git};
+use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, patch_ids, rev, show_ref, worktree_for, Git};
 use crate::next::{yes, Derived};
 use crate::pins::{self, Pin};
 use crate::proc;
 use crate::val::{at, sj, t, text};
 use serde_json::Value;
+use std::collections::HashSet;
 
 fn short(s: &str, n: usize) -> &str {
     s.get(..n).unwrap_or(s)
@@ -198,6 +200,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     let old_head = rev(".", &format!("refs/heads/{b}"));
     let before = patch_id(".", &old_base, &old_head);
     let by_tree = crate::val::on(&s, "sync.by_tree");
+    let r = Rebase { b, wt: &wt, old_base: &old_base, old_head: &old_head, onto: &onto };
     let mut resolved = false;
     if by_tree {
         restack_by_tree(&wt, b, &old_base, &old_head, &new_base, &onto);
@@ -214,7 +217,6 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
                 short(&new_base, 12)
             ));
         }
-        let r = Rebase { b, wt: &wt, old_base: &old_base, old_head: &old_head, onto: &onto };
         // Under the running marker across every stop and continue, not only
         // each agent run (#170): act::run holds it for restack --resolve.
         let resolved_by = resolve_conflicts(&r, &a.harness).inspect_err(|h| {
@@ -233,18 +235,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     let new_head = rev(".", &format!("refs/heads/{b}"));
     // A resolution changes the branch's diff by definition, so the check only
     // applies to a clean rebase; a resolved one goes through verify and review.
-    if !resolved && patch_id(".", &new_base, &new_head) != before {
-        must(git(&wt, &["reset", "--quiet", "--hard", &old_head]));
-        die(format!(
-            "{b}'s change came out different on {onto} (part of it may be there already); rolled back to {}. \
-             Compare: git range-diff {}..{} {}..{}",
-            short(&old_head, 7),
-            short(&old_base, 12),
-            short(&old_head, 12),
-            short(&new_base, 12),
-            short(&new_head, 12)
-        ));
-    }
+    let dropped = if resolved { vec![] } else { came_through(&r, &new_base, &new_head, &before, a.force) };
     must(pins::set(".", b, Pin::Base, &new_base));
     // only --force gets here past them: chrismo has looked (#356)
     if yes(Derived::new(&s).restack_foreign) {
@@ -258,6 +249,9 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     let n = count(".", &[&format!("{new_base}..{new_head}")]);
     let via = if by_tree { " by tree" } else { "" };
     println!("restacked {b} onto {onto}{via} ({}); not pushed: {how}", plural(n as usize, "commit"));
+    for line in dropped {
+        println!("{line}");
+    }
     if by_tree {
         println!("{b}'s commits are now one, committed by you; the old ones are at {}", short(&old_head, 7));
     }
@@ -274,6 +268,58 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
             ));
         }
     }
+}
+
+/// A git log -p whose patch-ids ignore context, as patch_id's do.
+const LOG_U0: [&str; 6] = ["log", "-p", "-U0", "--no-color", "--no-ext-diff", "--format=commit %H"];
+
+/// After <r>'s clean rebase onto <new_base>, now at <new_head>: <r.b>'s own
+/// change (patch-id <before>) must come through unchanged, less the commits
+/// git dropped as already on the target (#406); those, a line naming each.
+/// Anything else different is Soft: rolled back, unless --force keeps it.
+fn came_through(r: &Rebase, new_base: &str, new_head: &str, before: &str, force: bool) -> Vec<String> {
+    if patch_id(".", new_base, new_head) == before {
+        return vec![];
+    }
+    let dropped = already_there(r, new_base, new_head);
+    if !dropped.is_empty() {
+        return dropped;
+    }
+    let (b, old_head) = (r.b, r.old_head);
+    let why = format!(
+        "{b}'s change came out different on {} (part of it may be there already). Compare: git range-diff {}..{} {}..{}",
+        r.onto,
+        short(r.old_base, 12),
+        short(old_head, 12),
+        short(new_base, 12),
+        short(new_head, 12)
+    );
+    if !force {
+        must(git(r.wt, &["reset", "--quiet", "--hard", old_head]));
+    }
+    let left = format!("rolled back to {}", short(old_head, 7));
+    let _ = enforce_leaving(Gate::Soft(vec![why]), force, &format!("restacking {b}"), &left);
+    vec![]
+}
+
+/// The commits of <r> the rebase onto <new_base> left out as already on the
+/// target (their patch-id is there), named, when the rest came through
+/// unchanged; else none.
+fn already_there(r: &Rebase, new_base: &str, new_head: &str) -> Vec<String> {
+    let ids = |range: &[&str]| patch_ids(".", &[&LOG_U0[..], range].concat()).unwrap_or_default();
+    let landed: HashSet<String> = ids(&[new_base, "--not", r.old_head]).into_iter().map(|(_, id)| id).collect();
+    let old = ids(&[&format!("{}..{}", r.old_base, r.old_head)]);
+    let (gone, kept): (Vec<_>, Vec<_>) = old.into_iter().partition(|(_, id)| landed.contains(id));
+    let now = ids(&[&format!("{new_base}..{new_head}")]).into_iter().map(|(_, id)| id);
+    if gone.is_empty() || kept.into_iter().map(|(_, id)| id).ne(now) {
+        return vec![];
+    }
+    gone.into_iter()
+        .map(|(sha, _)| {
+            let subject = git_out(".", &["log", "-1", "--format=%s", &sha]).unwrap_or_default();
+            format!("dropped {} {subject}: already on {}", short(&sha, 7), r.onto)
+        })
+        .collect()
 }
 
 /// <old_base>..<old_head>'s change as one commit on <new_base>, for an old
