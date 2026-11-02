@@ -3679,3 +3679,155 @@ fn dispatch_an_agent_step_launched_earlier_in_the_pass_counts_toward_the_cap_269
     let launched = if pass.contains("feat\t-\tlaunched") { "feat" } else { "other" };
     sd.settle(launched);
 }
+
+// ── the job is diagnosable (#364) ───────────────────────────────────────────
+
+/// A pass at a fixed clock: SHEEPDOG_WATCH_CLOCK, a debug build's seam.
+const CLOCK: (&str, &str) = ("SHEEPDOG_WATCH_CLOCK", "2026-11-02 09:27:10");
+
+/// launchctl print's answer for a loaded job, as macOS 26 prints it, cut
+/// to the lines status reads.
+const LAUNCHCTL_LOADED: &str = r#"#!/usr/bin/env bash
+echo "$*" >> "$PS_FIXTURES/launchctl"
+cat <<'EOT'
+gui/501/com.sheepdog.watch = {
+	active count = 0
+	path = /h/Library/LaunchAgents/com.sheepdog.watch.plist
+	type = LaunchAgent
+	state = not running
+
+	program = /h/.local/bin/sd
+	arguments = {
+		/h/.local/bin/sd
+		watch
+	}
+
+	runs = 510
+	last exit code = 0
+
+	run interval = 300 seconds
+	job state = exited
+}
+EOT
+"#;
+
+const LAUNCHCTL_NOT_LOADED: &str = r#"#!/usr/bin/env bash
+echo "$*" >> "$PS_FIXTURES/launchctl"
+echo "Bad request." >&2
+echo 'Could not find service "com.sheepdog.watch" in domain for user gui: 501' >&2
+exit 113
+"#;
+
+impl Sd {
+    /// The status block after the pass's lines: what follows the blank line.
+    fn status_block(&self) -> String {
+        let r = self.run(&["status"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_lacks(&r.output, "\t");
+        let (pass, block) = r.output.split_once("\n\n").unwrap_or_else(|| panic!("no block after the pass:\n{}", r.output));
+        assert!(pass.starts_with("last pass: ") || pass == "no pass yet", "{pass}");
+        block.to_string()
+    }
+
+    /// state/last-pass was written <secs> ago.
+    fn last_pass_aged(&self, secs: u64) {
+        let f = fs::File::options().write(true).open(self.tmp.join("state/last-pass")).unwrap();
+        f.set_modified(std::time::SystemTime::now() - Duration::from_secs(secs)).unwrap();
+    }
+}
+
+#[test]
+fn log_every_line_a_pass_writes_carries_the_time_and_one_summary_line_closes_a_quiet_pass_364() {
+    let sd = sd();
+    sd.quiet("feat");
+    let r = sd.pass_run(&[CLOCK]);
+    assert_eq!(r.status, 0);
+    assert_eq!(r.stderr, "2026-11-02 09:27:10 pass: 1 branch, autoRun off, 0 launched, agent steps 0/2");
+    assert_has(&sd.last_pass(), &["last pass: 2026-11-02 09:27:10\n"]);
+}
+
+#[test]
+fn log_the_summary_counts_launches_and_the_branches_overriding_autorun_364() {
+    let sd = sd();
+    sd.dispatching();
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.branch_cfg("other", r#"{"settings":{"autoRun":false}}"#);
+    sd.quiet("other");
+    sd.first_step("feat", "push", &[]);
+    let r = sd.pass_run(&[CLOCK]);
+    assert_eq!(r.status, 0);
+    assert_eq!(
+        r.stderr,
+        "2026-11-02 09:27:10 repo  feat  -  launched sd act push\n\
+         2026-11-02 09:27:10 pass: 2 branches, autoRun on (1 branch off), 1 launched, agent steps 0/2"
+    );
+    sd.settle("feat");
+    let _ = sd.acts();
+}
+
+#[test]
+fn log_a_launched_steps_output_sits_between_a_header_and_an_end_line_in_steps_log_364() {
+    let sd = sd();
+    sd.dispatching();
+    sd.first_step("feat", "push", &[]);
+    sd.pass_env(&[CLOCK]);
+    sd.settle("feat");
+    let _ = sd.acts();
+    let log = sd.steps_log();
+    assert_has(&log, &["==> 2026-11-02 09:27:10 repo feat: sd act push\n", "did push\n", "<== 2026-11-02 09:27:10 repo feat: ran sd act push: ok ("]);
+    assert_match(&log, r"ran sd act push: ok \(\ds\)$");
+}
+
+#[test]
+fn status_adds_the_jobs_diagnosis_after_the_pass_364() {
+    let sd = sd();
+    sd.fake("launchctl", LAUNCHCTL_LOADED);
+    sd.ps_fixture("feat", &[]);
+    sd.pass();
+    let block = sd.status_block();
+    assert_has(&block, &["last pass: 0s ago (settings.interval 300s)\n"]);
+    assert_has(&block, &["autoRun off; no branch turns it on\n"]);
+    assert_has(&block, &["running: none\n"]);
+    assert_lacks(&block, "usage limit");
+    assert_lacks(&block, "failures");
+    assert_has(&block, &["launchd: com.sheepdog.watch loaded, state not running, 510 runs, last exit 0, every 300 seconds; program /h/.local/bin/sd\n"]);
+    assert_has(&block, &[&format!("logs: {0}/launchd.log, {0}/steps.log", sd.path("state"))]);
+    assert_eq!(sd.launchctl(), format!("print gui/{}/com.sheepdog.watch", uid()));
+    let r = sd.run(&["status"]);
+    assert_has(&r.output, &["repo  feat  ✅"]);
+}
+
+#[test]
+fn status_says_what_holds_the_job_back_overdue_overrides_leases_a_limit_failures_364() {
+    let sd = sd();
+    sd.fake("launchctl", LAUNCHCTL_NOT_LOADED);
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"interval":300}}"#);
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.branch_cfg("other", r#"{"settings":{"autoRun":false}}"#);
+    sd.ps_fixture("feat", &[]);
+    sd.ps_fixture("other", &[]);
+    sd.pass();
+    sd.last_pass_aged(660);
+    let held = orphan("sleep 30");
+    sd.lease_for("feat", "implement", held, 600);
+    sd.limit(600);
+    sheepdog::failed::record_in(&sd.path("repo"), "other", "review", "sd", "boom");
+    let block = sd.status_block();
+    unsafe { libc::kill(held as i32, libc::SIGKILL) };
+    assert_has(&block, &["last pass: 11m ago, overdue (settings.interval 300s, two of them with no pass)\n"]);
+    assert_has(&block, &["autoRun on; off on 1 branch: repo other\n"]);
+    assert_has(&block, &[&format!("running: repo feat implement (pid {held}, since 20"), ", deadline 20"]);
+    assert_has(&block, &["usage limit: till 20", "Z, claude: You've hit your session limit\n"]);
+    assert_has(&block, &["failures: repo other review failed 1 in a row (holds at 3): boom\n"]);
+    assert_has(&block, &["launchd: com.sheepdog.watch not loaded: Could not find service \"com.sheepdog.watch\" in domain for user gui: 501 (sd watch install)\n"]);
+}
+
+#[test]
+fn status_with_no_launchctl_says_launchd_isnt_here_and_before_any_pass_still_diagnoses_364() {
+    let sd = sd();
+    let r = sd.run_env(&[("SHEEPDOG_WATCH_LAUNCHCTL", "no-such-launchctl")], &["status"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.output, &["no pass yet\n\n", "last pass: none yet (settings.interval 300s)\n", "launchd: not here (no launchctl)\n"]);
+}
