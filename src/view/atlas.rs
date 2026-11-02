@@ -12,7 +12,7 @@ use super::links;
 use crate::act::gates::Gated;
 use crate::act::verbs::{Scope, Verb, VERBS};
 use crate::act::{Level, Rule};
-use crate::next::steps::{settings_of, Stage, StepDef, STEPS};
+use crate::next::steps::{settings_of, HoldKind, Stage, StepDef, STEPS};
 use crate::next::Derived;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -48,6 +48,7 @@ fn step(d: &StepDef, traced: &[Value], links: &Links) -> Value {
     let settings: Vec<Value> = settings_of(d).into_iter().map(|k| setting(k, traced)).collect();
     let branches = links.at.get(d.key).cloned().unwrap_or_default();
     json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph,
+           "path": d.path, "when": d.when, "waits": d.who[0], "hold": d.hold.map(HoldKind::name),
            "settings": settings, "files": links::files_of(d, links.exists), "branches": branches})
 }
 
@@ -150,10 +151,14 @@ fn verb(v: &Verb) -> Value {
 /// verbs: [{name, agent, spends, checks: [id], rules: [{name, level, means,
 /// clears}] or null}], checks: [{id, name, level, means, clears, applies}],
 /// configError: what sd config said, or null}. A step is {key, who, label,
-/// meaning, verb, glyph, settings: [{path, value, layer, set}], files:
-/// [path], branches: [{id, repo, branch}]}, its settings' values and layers
-/// from the repo sd view runs in, its branches those of the watcher's cache
-/// under <state> whose NEXT first step it is.
+/// meaning, verb, glyph, path, when, waits, hold, settings: [{path, value,
+/// layer, set}], files: [path], branches: [{id, repo, branch}]}: path its
+/// place on the stage's happy path or null for an exception (StepDef::path),
+/// when the condition a path step is taken under or null for one always
+/// taken (path_if), waits the first actor in who, hold what a Hold step does
+/// to the list (busy, unsure, top, standin) or null; its settings' values and
+/// layers from the repo sd view runs in, its branches those of the watcher's
+/// cache under <state> whose NEXT first step it is.
 pub fn atlas(state: &Path) -> Value {
     build(crate::config::explain_settings("."), &flock::cached(state))
 }
@@ -228,6 +233,71 @@ mod tests {
         assert_eq!(conflict["verb"], "restack --resolve");
         assert_eq!(listed.iter().find(|s| s["key"] == "ci-red").unwrap()["verb"], "ci-fix");
         assert_eq!(listed.iter().find(|s| s["key"] == "ready").unwrap()["verb"], Value::Null);
+    }
+
+    /// The happy path is declared on each step's row, never in the page:
+    /// a stage's path steps are numbered 1..n in the order they happen,
+    /// and every other step is an exception with the actor it waits on.
+    #[test]
+    fn each_stages_happy_path_is_numbered_from_one_and_the_rest_are_exceptions() {
+        let a = unconfigured();
+        let path = |stage: &str| -> Vec<String> {
+            let st = a["stages"].as_array().unwrap().iter().find(|s| s["stage"] == stage).unwrap();
+            let mut on: Vec<(u64, String)> =
+                st["steps"].as_array().unwrap().iter().filter_map(|s| s["path"].as_u64().map(|n| (n, t(s, "key")))).collect();
+            on.sort();
+            for (i, (n, k)) in on.iter().enumerate() {
+                assert_eq!(*n as usize, i + 1, "{stage}: {k} out of sequence in {on:?}");
+            }
+            on.into_iter().map(|x| x.1).collect()
+        };
+        assert_eq!(path("build"), ["implement"]);
+        assert_eq!(path("push"), ["behind", "push", "open-pr", "retarget"]);
+        assert_eq!(path("ci"), ["ci-wait"]);
+        assert_eq!(path("review"), ["review", "review-fix"]);
+        assert_eq!(path("bot"), ["bot-trigger", "bot-wait"]);
+        assert_eq!(path("threads"), ["bot"]);
+        assert_eq!(path("merge"), ["draft", "ready", "merged"]);
+        let on: usize = a["stages"].as_array().unwrap().iter().map(|s| path(s["stage"].as_str().unwrap()).len()).sum();
+        assert_eq!(on, 14);
+        for s in steps_in(&a) {
+            assert!(s.get("path").is_some(), "{s}");
+            assert!(["you", "agent", "run", "wait"].contains(&s["waits"].as_str().unwrap()), "{s}");
+        }
+        assert!(a["holds"].as_array().unwrap().iter().all(|s| s["path"].is_null()), "a hold is never on the path");
+        let when = |k: &str| steps_in(&a).into_iter().find(|s| s["key"] == k).unwrap()["when"].clone();
+        assert_eq!(when("behind"), "the target moved");
+        assert_eq!(when("retarget"), "the parent merged");
+        assert_eq!(when("push"), Value::Null, "always taken");
+        assert!(steps_in(&a).iter().all(|s| s["path"].is_u64() || s["when"].is_null()), "when is only for a path step");
+    }
+
+    /// The nine steps above the stages do four different things in NEXT's
+    /// list, declared on each row (StepDef::hold) so the page names them:
+    /// busy collapses the list to itself, unsure warns above it, top sits
+    /// above it by whose move, standin replaces the agent steps.
+    #[test]
+    fn each_hold_declares_what_it_does_to_the_list_and_no_stage_step_does() {
+        let a = unconfigured();
+        let hold = |k: &str| t(a["holds"].as_array().unwrap().iter().find(|s| s["key"] == k).unwrap(), "hold");
+        assert_eq!(hold("running"), "busy");
+        assert_eq!(hold("errors"), "unsure");
+        assert_eq!(hold("stale"), "unsure");
+        assert_eq!(hold("gh-wait"), "unsure");
+        assert_eq!(hold("attached"), "top");
+        assert_eq!(hold("foreign"), "top");
+        assert_eq!(hold("question"), "top");
+        assert_eq!(hold("budget"), "standin");
+        assert_eq!(hold("failed"), "standin");
+        // atlas.html lays the holds out by these four; any other drops off the page
+        for s in a["holds"].as_array().unwrap() {
+            assert!(["busy", "unsure", "top", "standin"].contains(&t(s, "hold").as_str()), "{s}");
+        }
+        for st in a["stages"].as_array().unwrap() {
+            for s in st["steps"].as_array().unwrap() {
+                assert!(s["hold"].is_null(), "{s}");
+            }
+        }
     }
 
     #[test]
