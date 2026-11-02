@@ -3823,7 +3823,7 @@ fn notify_under_autorun_with_agentsteps_0_an_agent_step_is_chrismo_s_302() {
     sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":0}}"#);
     sd.first_agent_step("feat", "ci-red");
     sd.pass();
-    assert_has(&sd.last_pass(), &["repo\tfeat\t❌\tsay ci-red\nrepo\tfeat\t-\tnot launching sd act ci-fix: settings.agentSteps 0"]);
+    assert_has(&sd.last_pass(), &["repo\tfeat\t❌\tsay ci-red\t\nrepo\tfeat\t-\tnot launching sd act ci-fix: settings.agentSteps 0"]);
     sd.ok(&["refresh"]);
     sd.pass();
     assert_eq!(sd.glyph("repo"), "❌");
