@@ -185,16 +185,37 @@ fn trend(root: &Path) -> Result<Value, String> {
     if !log.ok {
         return Err(format!("git: {}", log.stderr.trim()));
     }
-    let points = samples(&log.stdout)
-        .into_iter()
-        .map(|(sha, date)| {
-            let (src, tests) = tree_lines(&git(&dir, &["grep", "-c", "", sha, "--", "src", "tests"]).stdout);
-            let list = ratchet(&git(&dir, &["show", &format!("{sha}:tests/lint-ratchet.txt")]).stdout);
-            let fns: BTreeSet<_> = list.iter().map(|(f, o)| (f, t(o, "fn"))).collect();
-            json!({"sha": sha, "date": date, "src": src, "tests": tests, "ratchet": fns.len()})
-        })
-        .collect();
+    let points = samples(&log.stdout).into_iter().map(|(sha, date)| sample(&dir, sha, date)).collect::<Result<_, _>>()?;
     Ok(Value::Array(points))
+}
+
+/// One trend point. A git failure (an object missing from a partial or
+/// shallow clone) is an error, not a day of zeros; no lint-ratchet.txt at
+/// the commit is a real 0.
+fn sample(dir: &str, sha: &str, date: &str) -> Result<Value, String> {
+    let fail = |o: &crate::proc::Out| format!("git: {}", o.stderr.trim());
+    // git grep exits 1 for no match: no lines under src/ or tests/.
+    let grep = git(dir, &["grep", "-c", "", sha, "--", "src", "tests"]);
+    if !grep.ok && !(grep.code == 1 && grep.stderr.trim().is_empty()) {
+        return Err(fail(&grep));
+    }
+    let (src, tests) = tree_lines(&grep.stdout);
+    let listed = git(dir, &["ls-tree", "--name-only", sha, "--", "tests/lint-ratchet.txt"]);
+    if !listed.ok {
+        return Err(fail(&listed));
+    }
+    let text = if listed.stdout.trim().is_empty() {
+        String::new()
+    } else {
+        let show = git(dir, &["show", &format!("{sha}:tests/lint-ratchet.txt")]);
+        if !show.ok {
+            return Err(fail(&show));
+        }
+        show.stdout
+    };
+    let list = ratchet(&text);
+    let fns: BTreeSet<_> = list.iter().map(|(f, o)| (f, t(o, "fn"))).collect();
+    Ok(json!({"sha": sha, "date": date, "src": src, "tests": tests, "ratchet": fns.len()}))
 }
 
 /// The trend, cached by the checkout's HEAD: {points, error, fetched, refreshing}.
@@ -344,6 +365,24 @@ mod tests {
         assert_eq!(point(0), ("2026-10-13".into(), 10, 4, 0));
         assert_eq!(point(1), ("2026-10-15".into(), 16, 4 + RATCHET.lines().count() as u64, 3));
         assert_eq!(t[1]["sha"], head);
+    }
+
+    #[test]
+    fn a_sample_whose_objects_are_missing_fails_the_trend_not_counts_zero() {
+        let r = crate::test_support::Repo::new();
+        r.git(&["checkout", "-q", "--orphan", "t"]);
+        for (d, text) in [("2026-10-13", "only on the thirteenth\n"), ("2026-10-14", "x\n")] {
+            fs::create_dir_all(Path::new(&r.dir).join("src")).unwrap();
+            fs::write(Path::new(&r.dir).join("src/a.rs"), text).unwrap();
+            r.git(&["add", "-A"]);
+            let o = crate::git::Git::new(&r.dir, &["commit", "-qm", d]).env("GIT_COMMITTER_DATE", format!("{d}T12:00:00Z")).run();
+            assert!(o.ok, "{}", o.stderr);
+        }
+        let blob = r.git(&["rev-parse", "HEAD~1:src/a.rs"]);
+        let git_dir = r.git(&["rev-parse", "--absolute-git-dir"]);
+        fs::remove_file(Path::new(&git_dir).join("objects").join(&blob[..2]).join(&blob[2..])).unwrap();
+        let e = trend(Path::new(&r.dir)).unwrap_err();
+        assert!(e.starts_with("git:"), "{e}");
     }
 
     #[test]
