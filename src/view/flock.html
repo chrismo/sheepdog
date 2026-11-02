@@ -108,6 +108,11 @@ body:not(.drill) #detail { display: none; }
 .list .cmd { display: flex; gap: 6px; align-items: center; }
 .list code { font-family: var(--f-mono); font-size: 0.74rem; border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; overflow-wrap: anywhere; }
 .none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.actline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 0.82rem; color: var(--muted); }
+.act { font: inherit; font-size: 0.85rem; font-weight: 600; color: var(--agent); background: none; border: 1.5px solid var(--agent); border-radius: 6px; padding: 3px 12px; cursor: pointer; }
+.act:hover { background: color-mix(in srgb, var(--agent) 12%, transparent); }
+.act:disabled { opacity: 0.6; cursor: default; }
+.act:focus-visible { outline: 2px solid var(--wait); }
 details.tl > summary { cursor: pointer; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 details.tl[open] > summary { margin-bottom: 10px; }
 .tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
@@ -233,6 +238,43 @@ function owedHtml(o) {
   return parts.map(([h, items]) => `<div class="panel"><h3>${h}</h3><ul class="list">${items.join("")}</ul></div>`).join("");
 }
 
+// The server says which step gets a button (act: {key, verb}) and whether it's running (acting).
+function actLine(b) {
+  if (b.acting) return `<p class="actline"><button class="act" type="button" disabled>running…</button><span>sd act ${esc(b.act?.verb || b.acting)}, as the watcher would run it</span></p>`;
+  if (!b.act) return "";
+  return `<p class="actline"><button class="act" type="button" data-act="${esc(b.act.key)}">run sd act ${esc(b.act.verb)}</button><span>the same sd act the watcher runs</span></p>`;
+}
+
+async function runStep(btn) {
+  const id = openId(), say = btn.nextElementSibling, label = btn.textContent;
+  if (!id) return;
+  btn.disabled = true;
+  btn.textContent = "starting…";
+  // A refusal other than a stale token's leaves the button usable: the card
+  // isn't redrawn till its JSON changes, and a 409's cause can pass.
+  const refused = why => { btn.disabled = false; btn.textContent = label; say.textContent = why; };
+  let r;
+  try {
+    r = await fetch("/api/act", { method: "POST", headers: { "X-Sd-Token": TOKEN, "Content-Type": "application/json" },
+      body: JSON.stringify({ id, key: btn.dataset.act }) });
+  } catch (e) {
+    refused("can't reach sd view");
+    return;
+  }
+  const text = (await r.text()).trim();
+  if (r.status === 403) {
+    btn.textContent = "refused: reload the page";
+    say.textContent = text;
+    return;
+  }
+  if (!r.ok) {
+    refused(`not run: ${text}`);
+    return;
+  }
+  shown = "";
+  poll(true);
+}
+
 let shown = "";
 function renderDetail(b) {
   const key = JSON.stringify(b);
@@ -244,7 +286,7 @@ function renderDetail(b) {
       <div class="meta"><span>${prLink(b)}</span>${usd(b)}${checked(b)}</div></div>
     <div class="dgrid">
       <div class="col"><div class="panel flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div></div>
-      <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
+      <div class="col"><div class="panel"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}${actLine(b)}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
 }
 
@@ -382,14 +424,14 @@ async function poll(detail) {
   clearTimeout(again);
   if (document.hidden) return;
   const mine = ++seq;
-  let refreshing = false;
+  let soon = false;
   try {
     const r = await fetch("/api/flock", { cache: "no-store" });
     if (!r.ok) throw new Error(r.status);
     const f = await r.json();
     if (mine !== seq) return;
     render(f);
-    refreshing = f.refreshing;
+    soon = f.refreshing || f.branches.some(b => b.acting);
   } catch (e) {
     if (mine !== seq) return;
     const eb = $("eyebrow");
@@ -399,7 +441,7 @@ async function poll(detail) {
   const id = openId();
   if (detail && id) loadDetail(id);
   if (detail && id && $("tl").open) loadTimeline(id);
-  again = setTimeout(() => poll(true), refreshing ? 2000 : POLL_MS);
+  again = setTimeout(() => poll(true), soon ? 2000 : POLL_MS);
 }
 
 const openCard = el => { location.hash = "b=" + encodeURIComponent(el.dataset.id); };
@@ -416,6 +458,8 @@ document.addEventListener("click", async e => {
   }
   if (e.target.closest("[data-back]")) { location.hash = ""; return; }
   if (e.target.closest("[data-refresh]")) { refreshGh().then(() => poll(true), () => {}); return; }
+  const a = e.target.closest("[data-act]");
+  if (a) { runStep(a); return; }
   if (e.target.closest("a")) return;
   const c = e.target.closest(".card[data-id]");
   if (c) openCard(c);

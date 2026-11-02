@@ -101,22 +101,23 @@ pub(super) fn find(state: &Path, id: &str) -> Option<Cached> {
 }
 
 /// None for an id the cache listing doesn't have. An unreadable file's
-/// card has null flow, next and owed.
+/// card has null flow, next, owed and act. act is the step the drill-in's
+/// button runs (view/act.rs, #396), acting its key while it runs.
 pub fn detail(state: &Path, id: &str) -> Option<Value> {
     let c = find(state, id)?;
     let mut card = flock::card(&c);
-    let (flow_, next, owed_) = match &c.doc {
-        None => (Value::Null, Value::Null, Value::Null),
-        Some(d) => {
-            let s = at(d, "state");
-            let usage = usage(state);
-            let repo_dir = id.split_once('/').map_or("", |(d, _)| d);
-            (flow(s, &usage, repo_dir, &c.branch), at(s, "next").clone(), owed(s))
-        }
-    };
-    card["flow"] = flow_;
-    card["next"] = next;
-    card["owed"] = owed_;
+    for k in ["flow", "next", "owed", "act"] {
+        card[k] = Value::Null;
+    }
+    if let Some(d) = &c.doc {
+        let s = at(d, "state");
+        let repo_dir = id.split_once('/').map_or("", |(d, _)| d);
+        card["flow"] = flow(s, &usage(state), repo_dir, &c.branch);
+        card["next"] = at(s, "next").clone();
+        card["owed"] = owed(s);
+        card["act"] = super::act::offered(s);
+    }
+    card["acting"] = super::act::running(id);
     Some(card)
 }
 

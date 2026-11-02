@@ -13,6 +13,8 @@ pub struct Request {
     pub host: String,
     pub origin: Option<String>,
     pub token: Option<String>,
+    /// A POST's body, as far as Content-Length says and the read allows.
+    pub body: String,
 }
 
 pub fn token() -> String {

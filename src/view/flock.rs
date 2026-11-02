@@ -190,7 +190,8 @@ pub fn card(c: &Cached) -> Value {
 }
 
 /// GET /api/flock: {at: the last pass's time or null, branches: [card with
-/// checked], refreshing, held: why no branch is checked, or null}.
+/// checked, and acting: the key of the step the page is running on it, or
+/// null], refreshing, held: why no branch is checked, or null}.
 pub fn flock(state: &Path) -> Value {
     let at = fs::read_to_string(state.join("last-pass"))
         .ok()
@@ -201,6 +202,7 @@ pub fn flock(state: &Path) -> Value {
         .map(|c| {
             let mut card = card(c);
             card["checked"] = json!(super::refresh::checked(state, c));
+            card["acting"] = super::act::running(&c.id);
             card
         })
         .collect();
