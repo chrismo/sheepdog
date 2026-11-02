@@ -14,7 +14,15 @@ use serde_json::Value;
 pub struct Gated {
     /// Whether NEXT's steps offer the verb, by key and who only.
     pub offered: fn(&[Value]) -> bool,
-    pub gate: fn(&Derived) -> Gate,
+    /// Every rule of the verb's gate on a state, in source order; the Atlas
+    /// (src/view/atlas.rs, #377) lists them in every wording its probes give.
+    pub rules: fn(&Derived) -> Vec<Rule>,
+}
+
+impl Gated {
+    pub fn gate(&self, d: &Derived) -> Gate {
+        judge(&(self.rules)(d))
+    }
 }
 
 /// Every spending verb's gate's rule (#371, #349). Limit: it enforces a
@@ -33,6 +41,10 @@ pub fn spend(d: &Derived) -> Gate {
 
 /// sd act describe, and ship's describe.
 pub fn describe(d: &Derived) -> Gate {
+    judge(&describe_rules(d))
+}
+
+pub fn describe_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         budget_unread, over_budget,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
@@ -48,7 +60,7 @@ pub fn describe(d: &Derived) -> Gate {
         dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
         rv_submitted: _, rv_local: _,
     } = d;
-    judge(&[spend_rule(*budget_unread, *over_budget)])
+    vec![spend_rule(*budget_unread, *over_budget)]
 }
 
 /// sd act push. What's on the remote is push_branch's to judge, after its
@@ -56,6 +68,10 @@ pub fn describe(d: &Derived) -> Gate {
 /// ship, address and ci-fix call push_branch directly, so FOREIGN_AUTHORS
 /// (#356) doesn't hold their pushes yet (#386).
 pub fn push(d: &Derived) -> Gate {
+    judge(&push_rules(d))
+}
+
+pub fn push_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         open, verify_red, undone, parent_unpushed, foreign_authors,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
@@ -71,7 +87,7 @@ pub fn push(d: &Derived) -> Gate {
     } = d;
     // NEXT offers no push while one of these refuses: each is chrismo's
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
-    judge(&[
+    vec![
         // Hard, so a --force meant for another refusal can't publish the
         // copies; if the guess is wrong, git push by hand still works.
         rule("not pushing: the restack was undone: some of the target's commits are copies here, and pushing would publish them \
@@ -81,7 +97,7 @@ pub fn push(d: &Derived) -> Gate {
         rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
         rule(FOREIGN_AUTHORS, Level::Soft, yes(*foreign_authors), "look at them, then sd act push --force"),
         rule(AUTHORS_UNKNOWN, Level::Soft, foreign_authors.is_none(), "git config user.email <yours>, or look at them, then sd act push --force"),
-    ])
+    ]
 }
 
 pub const FOREIGN_AUTHORS: &str =
@@ -119,7 +135,7 @@ pub fn address_warnings(d: &Derived) -> Vec<String> {
     warnings(&address_rules(d))
 }
 
-fn address_rules(d: &Derived) -> [Rule; 12] {
+pub fn address_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
         unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
@@ -142,7 +158,7 @@ fn address_rules(d: &Derived) -> [Rule; 12] {
     };
     // only ci-fix's NEXT reads yours (#355)
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
-    [
+    vec![
         rule(addr::NO_PR, Level::Hard, *pr_null, "sd act ship"),
         rule(addr::CLOSED, Level::Hard, *merged || *closed, "reopen it, or start a new branch"),
         rule(addr::UNREAD, Level::Hard, owed_bot.is_none(), "sd state's errors say why"),
@@ -186,6 +202,10 @@ pub fn implement_fixes(d: &Derived) -> bool {
 /// a review-fix round below settings.reviewRounds. Its question and a dirty
 /// worktree are step.rs's, as for every agent step.
 pub fn implement(d: &Derived) -> Gate {
+    judge(&implement_rules(d))
+}
+
+pub fn implement_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         open, errors, tasked, behind_remote, ahead_target, fix_due, asking,
         fixing: _, findings_declined: _,
@@ -205,7 +225,7 @@ pub fn implement(d: &Derived) -> Gate {
     let unasked = task && asking != "implement";
     // only ci-fix's NEXT reads yours (#355)
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
-    judge(&[
+    vec![
         rule(imp::NO_TASK, Level::Hard, task && !tasked, "git config branch.<b>.sd-task \"<task>\""),
         rule(imp::CAPPED, Level::Hard, !task && !fix_due, "raise settings.reviewRounds, fix them by hand, or sd act review --accept"),
         rule(imp::CLOSED, Level::Soft, !open, "reopen it, or start a new branch"),
@@ -214,7 +234,7 @@ pub fn implement(d: &Derived) -> Gate {
         rule(imp::AHEAD, Level::Soft, unasked && yes(*ahead_target), "sd act implement --force"),
         rule(imp::REMOTE_MORE, Level::Soft, unasked && *behind_remote, "take or drop them, as sd state's NEXT says"),
         spend_rule(*budget_unread, *over_budget),
-    ])
+    ]
 }
 
 /// sd act ci-fix: CI red at HEAD, with nothing to push first.
@@ -340,7 +360,7 @@ pub fn findings_clear(d: &Derived) -> &'static str {
     }
 }
 
-fn review_rules(d: &Derived) -> [Rule; 12] {
+pub fn review_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending,
         rv_yours, rv_fetch, rv_current, rv_submitted, rv_local,
@@ -363,7 +383,7 @@ fn review_rules(d: &Derived) -> [Rule; 12] {
     };
     // only ci-fix's NEXT reads yours (#355)
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
-    [
+    vec![
         rule(rvw::UNSEEN, Level::Hard, push_dirty.is_none(), "check the branch out in a worktree"),
         rule(rvw::DIRTY, Level::Hard, yes(*push_dirty), "commit or discard them"),
         rule(rvw::NO_BASE, Level::Hard, *old_base_null, "sd state's errors say why, or ship the parent first"),
@@ -381,6 +401,10 @@ fn review_rules(d: &Derived) -> [Rule; 12] {
 
 /// sd act review --accept pins HEAD against its base and reads no worktree.
 pub fn accept(d: &Derived) -> Gate {
+    judge(&accept_rules(d))
+}
+
+pub fn accept_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         old_base_null,
         own_base: _, running: _, reviewer: _, pr_null: _, open: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
@@ -395,13 +419,13 @@ pub fn accept(d: &Derived) -> Gate {
         resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _,
         rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
-    judge(&[Rule {
+    vec![Rule {
         name: rvw::NO_BASE,
         level: Level::Hard,
         refuses: *old_base_null,
         clears: "sd state's errors say why, or ship the parent first",
         yours: true,
-    }])
+    }]
 }
 
 /// restack's reasons; restack::said puts each in the record's words.
@@ -436,7 +460,7 @@ pub fn restack_resolve(d: &Derived) -> Gate {
 
 /// restack's rules: Hard only where --force can't help, or would replay a
 /// merged parent's commits.
-pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 15] {
+pub fn restack_rules(d: &Derived, resolve: bool) -> Vec<Rule> {
     let Derived {
         open, up_to_date, old_base_null, sync_conflict, by_tree, parent_merged, parent_abandoned, merge_unknown, replays,
         restack_foreign, answer_pending, undone,
@@ -457,7 +481,7 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> [Rule; 15] {
     let (conflict, tree) = (behind && yes(*sync_conflict), yes(*by_tree));
     // only ci-fix's NEXT reads yours (#355)
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
-    [
+    vec![
         rule(rs::NO_BASE, Level::Hard, up_to_date.is_none() || (behind && *old_base_null), "sd state's errors say why"),
         rule(rs::REPLAYS_UNKNOWN, Level::Hard, after_merge && replays.is_none(), "sd state's errors say why"),
         rule(rs::WRONG_BASE, Level::Hard, after_merge && yes(*replays) && !tree, "rebase past them by hand (sd act restack says how)"),
@@ -484,7 +508,7 @@ pub fn parity(d: &Derived, steps: &[Value]) -> Vec<String> {
     let mut off: Vec<String> = steps.iter().filter_map(registry_miss).collect();
     off.extend(super::verbs::VERBS.iter().filter_map(|v| {
         let g = v.gate.as_ref().filter(|g| (g.offered)(steps))?;
-        match (g.gate)(d) {
+        match g.gate(d) {
             gate if gate.runs() => None,
             gate => Some(format!("NEXT offers {} while its gate says {gate:?}", v.name)),
         }
@@ -972,7 +996,7 @@ mod tests {
 
     /// Generated states for <v>'s gate: Hard or Done past the budget or with
     /// spend unread, and never the spend rule otherwise.
-    fn spend_holds(v: &crate::act::verbs::Verb, gate: fn(&Derived) -> Gate) {
+    fn spend_holds(v: &crate::act::verbs::Verb, gate: impl Fn(&Derived) -> Gate) {
         check(&format!("{}'s spend rule", v.name), |d| match (gate(d), d.budget_unread || d.over_budget) {
             (Gate::Hard(_) | Gate::Done(_), true) => Ok(()),
             (g, true) => Err(format!("{} runs past the budget: {g:?}", v.name)),
@@ -985,7 +1009,7 @@ mod tests {
     fn no_spending_verbs_gate_runs_past_the_budget_even_forced_341() {
         for v in crate::act::verbs::VERBS.iter().filter(|v| v.spends) {
             if let Some(g) = &v.gate {
-                spend_holds(v, g.gate);
+                spend_holds(v, |d| g.gate(d));
             }
         }
     }

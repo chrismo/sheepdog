@@ -1,8 +1,9 @@
 // sd view [--port <n>] [--no-open] (src/view_help.txt, #375, #376): GET / is
 // the Flock page, GET /api/flock its data from the watcher's cache; GET /map
-// the Map page (#378), GET /api/map its data from sheepdog's own source. std's
-// TcpListener, a thread per connection: a browser's idle preconnect socket
-// mustn't hold up the page.
+// the Map page (#378), GET /api/map its data from sheepdog's own source; GET
+// /atlas the Atlas page (#377), GET /api/atlas its data from the step table
+// and the gates. std's TcpListener, a thread per connection: a browser's idle
+// preconnect socket mustn't hold up the page.
 //
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
 // rebind its name to 127.0.0.1. Writes go to POST /api/act (view/act.rs: a
@@ -11,6 +12,7 @@
 // own Origin, as does POST /api/refresh, the pages' refresh button (#401).
 
 mod act;
+mod atlas;
 mod branch;
 mod cache;
 mod flock;
@@ -30,6 +32,7 @@ use std::time::Duration;
 const HELP: &str = include_str!("view_help.txt");
 const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
+const ATLAS_PAGE: &str = include_str!("view/atlas.html");
 const GH_JS: &str = include_str!("view/gh.js");
 const PORT: u16 = 7377;
 const BODY_MAX: usize = 4096;
@@ -152,6 +155,8 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         "/map" => ("200 OK", "text/html; charset=utf-8", MAP_PAGE.replace("__SD_TOKEN__", token)),
         "/gh.js" => ("200 OK", "text/javascript; charset=utf-8", GH_JS.into()),
         "/api/map" => ("200 OK", "application/json", map::map(state).to_string()),
+        "/atlas" => ("200 OK", "text/html; charset=utf-8", ATLAS_PAGE.replace("__SD_TOKEN__", token)),
+        "/api/atlas" => ("200 OK", "application/json", atlas::atlas().to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();
             let found = match route {

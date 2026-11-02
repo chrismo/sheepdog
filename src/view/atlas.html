@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="sd-token" content="__SD_TOKEN__">
+<title>sheepdog atlas</title>
+<style>
+:root {
+  --bg: #eef1f3; --surface: #ffffff; --ink: #17212a; --muted: #5a6670; --line: #d3dade;
+  --you: #a87414; --agent: #b0532b; --run: #4c7d36; --wait: #3d6fa8; --red: #c2412d; --done: #7d8a93;
+  --f-body: "Atkinson Hyperlegible", "Avenir Next", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
+    --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
+  --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.4; }
+.wrap {
+  max-width: 900px; margin: 0 auto; display: grid; gap: 22px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+}
+h1 { font-size: clamp(1.7rem, 4.5vw, 2.4rem); letter-spacing: -0.02em; margin: 0; line-height: 1.1; }
+h2 { font-size: 0.74rem; margin: 0; font-family: var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; display: flex; gap: 8px; align-items: baseline; }
+h2 .n { color: var(--muted); }
+.eyebrow { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.eyebrow.stale { color: var(--red); }
+.nav { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.nav a { font-size: 0.88rem; color: var(--muted); text-decoration: none; }
+.nav a:hover { color: var(--ink); }
+#top { display: grid; gap: 10px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); align-items: center; }
+.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; background: var(--lc); }
+section { display: grid; gap: 10px; }
+.holds { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+button.row, button.hold, button.stage { font: inherit; color: inherit; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line); }
+button.row:focus-visible, button.hold:focus-visible, button.stage:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
+.hold { border-left: 4px solid var(--wc) !important; border-radius: 6px; padding: 8px 10px; display: grid; gap: 2px; }
+.hold.on, .row.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.key { font-family: var(--f-mono); font-size: 0.86rem; font-weight: 600; }
+.mean { font-size: 0.8rem; color: var(--muted); }
+#stages { display: grid; gap: 0; }
+.stage { width: 100%; display: grid; grid-template-columns: 24px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 8px; position: relative; }
+.stage + .stage, .steps + .stage { margin-top: 10px; }
+.stage::before { content: ""; position: absolute; left: 25px; top: -11px; height: 10px; width: 2px; background: var(--line); }
+.stage:first-child::before { display: none; }
+.stage .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); justify-self: center; }
+.stage.open .dot { border-color: var(--ink); background: var(--ink); }
+.stage .name { font-weight: 700; display: flex; gap: 10px; align-items: baseline; }
+.stage .name .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font-weight: 400; }
+.strip { display: flex; height: 8px; width: min(220px, 36vw); border-radius: 4px; overflow: hidden; background: var(--line); }
+.strip i { display: block; height: 100%; width: var(--w); background: var(--c); }
+.steps { list-style: none; margin: 0; padding: 0 0 0 36px; display: grid; gap: 6px; margin-top: 6px; }
+.steps[hidden] { display: none; }
+.row { width: 100%; display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: baseline; padding: 7px 10px; border-radius: 6px; }
+.row .who { width: 10px; height: 10px; border-radius: 50%; background: var(--wc); align-self: center; }
+.row .verb { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+.row .mean { display: block; }
+#sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; max-height: 70vh; overflow-y: auto; z-index: 5;
+  background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
+  padding: 14px max(16px, env(safe-area-inset-right, 0px)) max(18px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+#sheet[hidden] { display: none; }
+.sbody { max-width: 900px; margin: 0 auto; display: grid; gap: 14px; }
+.shead { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.shead b { font-family: var(--f-mono); font-size: 1.05rem; overflow-wrap: anywhere; }
+.shead .sub { font-size: 0.8rem; color: var(--muted); margin-left: 10px; }
+.x { font: inherit; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px; }
+.sheet-mean { margin: 0; font-size: 0.92rem; }
+h3 { margin: 0; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+.rules { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 0.84rem; align-items: baseline; }
+.rule { display: contents; }
+.lv { font-family: var(--f-mono); font-size: 0.7rem; padding: 2px 7px; border-radius: 999px; border: 1.5px solid var(--lc); color: var(--lc); white-space: nowrap; justify-self: start; }
+.lv.Hard, .lv.Limit { background: var(--lc); color: var(--surface); }
+.rules .clears, .rules .applies { grid-column: 2; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
+@media (max-width: 600px) { .rules { grid-template-columns: 1fr; } .rules .clears, .rules .applies { grid-column: 1; } }
+.none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+footer { font-size: 0.78rem; color: var(--muted); }
+body.sheet footer { margin-bottom: 50vh; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header id="top">
+    <div class="nav"><span><a href="/">← Flock</a> · <a href="/map">Map →</a></span><span class="eyebrow" id="eyebrow">loading…</span></div>
+    <h1>The workflow</h1>
+    <div class="legend">
+      <span><i style="--lc:var(--you)"></i>you</span>
+      <span><i style="--lc:var(--agent)"></i>agent</span>
+      <span><i style="--lc:var(--run)"></i>sheepdog</span>
+      <span><i style="--lc:var(--wait)"></i>waiting</span>
+    </div>
+  </header>
+  <section><h2>Checked before anything else<span class="n" id="nholds"></span></h2><div class="holds" id="holds"></div></section>
+  <section><h2>Then, stage by stage<span class="n" id="nsteps"></span></h2><div id="stages"></div></section>
+  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a stage for its steps, a step for what stops its verb.</footer>
+</div>
+<aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
+<script>
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const $ = id => document.getElementById(id);
+const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
+const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
+const LEVEL = { Hard: "--red", Limit: "--red", Soft: "--you", Warn: "--wait", Done: "--done" };
+const color = who => `var(${WHO[who] || "--wait"})`;
+let data = null, drawn = "";
+
+const row = s => `<li><button class="row" type="button" data-k="${esc(s.key)}" style="--wc:${color(s.who[0])}">` +
+  `<span class="who" title="${esc(s.who.join(", "))}"></span><span><span class="key">${esc(s.key)}</span><span class="mean">${esc(s.meaning)}</span></span>` +
+  `<span class="verb">${s.verb ? "sd act " + esc(s.verb) : esc(s.who.join(" / "))}</span></button></li>`;
+
+function strip(steps) {
+  const n = {};
+  steps.forEach(s => (n[s.who[0]] = (n[s.who[0]] || 0) + 1));
+  return Object.keys(WHO).filter(w => n[w]).map(w => `<i style="--w:${(n[w] / steps.length * 100).toFixed(1)}%;--c:${color(w)}" title="${n[w]} ${w}"></i>`).join("");
+}
+
+function render(a) {
+  data = a;
+  $("nholds").textContent = a.holds.length;
+  const all = a.stages.reduce((n, s) => n + s.steps.length, 0);
+  $("nsteps").textContent = `${all} steps`;
+  $("eyebrow").classList.remove("stale");
+  $("eyebrow").textContent = `${a.holds.length + all} steps · ${a.stages.length} stages · ${a.verbs.filter(v => v.rules).length} gates`;
+  $("holds").innerHTML = a.holds.map(s => `<button class="hold" type="button" data-k="${esc(s.key)}" style="--wc:${color(s.who[0])}">` +
+    `<span class="key">${esc(s.key)}</span><span class="mean">${esc(s.meaning)}</span></button>`).join("");
+  $("stages").innerHTML = a.stages.map(s =>
+    `<button class="stage" type="button" data-s="${esc(s.stage)}"><span class="dot"></span>` +
+    `<span class="name">${NAME[s.stage] || esc(s.stage)}<span class="n">${s.steps.length} step${s.steps.length === 1 ? "" : "s"}</span></span>` +
+    `<span class="strip">${strip(s.steps)}</span></button><ul class="steps" data-s="${esc(s.stage)}" hidden>${s.steps.map(row).join("")}</ul>`).join("");
+  route();
+}
+
+const findStep = k => [...data.holds, ...data.stages.flatMap(s => s.steps)].find(s => s.key === k);
+const stageOf = k => data.stages.find(s => s.steps.some(x => x.key === k))?.stage;
+
+function rulesHtml(v) {
+  if (!v) return `<p class="none">No verb: chrismo's step, or a wait. Nothing to gate.</p>`;
+  const checks = v.checks.map(id => data.checks.find(c => c.id === id)).filter(Boolean);
+  const rule = r => `<li class="rule"><span class="lv ${esc(r.level)}" style="--lc:var(${LEVEL[r.level] || "--muted"})">${esc(r.means)}</span>` +
+    `<span>${esc(r.name)}</span>${r.clears ? `<span class="clears">clears: ${esc(r.clears)}</span>` : ""}</li>`;
+  const gate = v.rules ? `<ul class="rules">${v.rules.map(rule).join("")}</ul>`
+    : `<p class="none">sd act ${esc(v.name)} has no gate in gates.rs: it runs when NEXT offers it, after the checks below.</p>`;
+  const shared = checks.length ? `<ul class="rules">${checks.map(c => rule(c) + `<li class="applies">applies to ${esc(c.applies)}</li>`).join("")}</ul>`
+    : `<p class="none">None: sd act ${esc(v.name)} writes nothing the running marker guards, and runs no agent.</p>`;
+  return `<h3>What stops sd act ${esc(v.name)}</h3>${gate}<h3>Also checked</h3>${shared}`;
+}
+
+function showStep(k) {
+  const s = findStep(k);
+  if (!s) return hideStep();
+  const v = s.verb ? data.verbs.find(v => v.name === s.verb) : null;
+  document.querySelectorAll(".on").forEach(e => e.classList.remove("on"));
+  document.querySelector(`[data-k="${CSS.escape(k)}"]`)?.classList.add("on");
+  const where = stageOf(k) ? NAME[stageOf(k)] : "holds the whole line";
+  $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))} · ${esc(where)}${s.glyph ? " · " + esc(s.glyph) : ""}</span></span>` +
+    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${rulesHtml(v)}`;
+  $("sheet").hidden = false;
+  document.body.classList.add("sheet");
+}
+
+function hideStep() {
+  $("sheet").hidden = true;
+  document.body.classList.remove("sheet");
+  document.querySelectorAll(".on").forEach(e => e.classList.remove("on"));
+}
+
+// #s=<stage> opens a stage; #k=<key> opens a step and its stage.
+function hashed() {
+  const m = location.hash.match(/^#(s|k)=(.+)$/);
+  try { return m ? { [m[1]]: decodeURIComponent(m[2]) } : {}; } catch { return {}; }
+}
+const go = (kind, v) => { location.hash = v ? `${kind}=${encodeURIComponent(v)}` : ""; };
+
+function route() {
+  if (!data) return;
+  const { s, k } = hashed();
+  const open = k ? stageOf(k) : s;
+  document.querySelectorAll(".stage").forEach(b => b.classList.toggle("open", b.dataset.s === open));
+  document.querySelectorAll(".steps").forEach(u => (u.hidden = u.dataset.s !== open));
+  if (k) showStep(k); else hideStep();
+}
+
+document.addEventListener("click", e => {
+  const st = e.target.closest(".stage[data-s]");
+  if (st) return go("s", st.classList.contains("open") ? null : st.dataset.s);
+  const k = e.target.closest("[data-k]");
+  if (k) return go("k", k.dataset.k);
+  if (e.target.closest("[data-close]")) go("s", stageOf(hashed().k));
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("sheet").hidden) go("s", stageOf(hashed().k)); });
+window.addEventListener("hashchange", route);
+
+// Only the latest load schedules the next: one polling chain, stopped while hidden.
+let again, seq = 0;
+async function load() {
+  clearTimeout(again);
+  if (document.hidden) return;
+  const mine = ++seq;
+  try {
+    const r = await fetch("/api/atlas", { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const text = await r.text();
+    if (mine !== seq) return;
+    if (text !== drawn) { drawn = text; render(JSON.parse(text)); }
+    again = setTimeout(load, 60000);
+  } catch (e) {
+    if (mine !== seq) return;
+    $("eyebrow").classList.add("stale");
+    $("eyebrow").textContent = `can't reach sd view (${e.message})`;
+    again = setTimeout(load, 60000);
+  }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+load();
+</script>
+</body>
+</html>

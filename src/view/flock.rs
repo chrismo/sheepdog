@@ -1,41 +1,30 @@
 // The Flock page's data (#376): a card per branch the watcher cached at
-// <state>/branches/<repo>-<hash>/<branch>.json. key_stage moves into #335's
-// STEPS table when that lands.
+// <state>/branches/<repo>-<hash>/<branch>.json. Each NEXT key's stage and
+// the word it shows come from src/next/steps.rs (#377).
 
+use crate::next::steps::{self, Stage};
 use crate::val::{at, n, on, t};
 use serde_json::{json, Value};
 use std::fs;
 use crate::watch::json_files;
 use std::path::Path;
 
-pub const STAGES: [&str; 7] = ["build", "push", "ci", "review", "bot", "threads", "merge"];
+/// The Flock's seven stages, in order, as src/next/steps.rs names them.
+pub const STAGES: [&str; 7] = {
+    let (f, mut out, mut i) = (Stage::FLOW, [""; 7], 0);
+    while i < 7 {
+        out[i] = f[i].name();
+        i += 1;
+    }
+    out
+};
 
-/// Each stage's NEXT keys, with the word a lit stage shows (tests check
-/// the keys against src/next.rs).
-const KEYS: [(&str, &[(&str, &str)]); 7] = [
-    ("build", &[("implement", "implement"), ("nothing", "nothing to ship"), ("nothing-dirty", "nothing to ship"),
-                ("reset-dirty", "reset away"), ("dirty", "uncommitted"), ("default", "start")]),
-    ("push", &[("push", "push"), ("behind", "behind"), ("conflict", "conflict"), ("restack-undone", "restack undone"),
-               ("open-pr", "open PR"), ("retarget", "retarget"), ("fetch", "fetch"), ("ship-parent", "ship parent"),
-               ("take", "take back"), ("foreign-authors", "others' commits")]),
-    ("ci", &[("ci-red", "fix"), ("ci-wait", "running"), ("ci-rerun", "rerun"), ("ci-blocked", "blocked"),
-             ("ci-config", "set up CI"), ("verify-red", "verify")]),
-    ("review", &[("review", "queued"), ("review-fix", "fix"), ("review-wait", "waiting"), ("review-decide", "decide"),
-                 ("review-held", "held"), ("submit", "submit"), ("yours", "yours")]),
-    ("bot", &[("bot-trigger", "ask"), ("bot-wait", "waiting"), ("bot-silent", "silent")]),
-    // "bot" is sd act address on the bot's threads.
-    ("threads", &[("bot", "address"), ("answer", "answer"), ("human", "reply"), ("read", "read")]),
-    ("merge", &[("ready", "ready"), ("draft", "mark ready"), ("merge-wait", "merging"), ("blocked", "blocked"),
-                ("merged", "merged"), ("closed", "closed"), ("parent-wait", "after parent"), ("author-wait", "author"),
-                ("parent-closed", "parent closed")]),
-];
-
-fn lookup(key: &str) -> Option<(&'static str, &'static str)> {
-    KEYS.iter().find_map(|(stage, ks)| ks.iter().find(|(k, _)| *k == key).map(|(_, label)| (*stage, *label)))
-}
-
+/// The stage <key> lights: none for a hold step, or a key STEPS doesn't have.
 fn key_stage(key: &str) -> Option<&'static str> {
-    lookup(key).map(|(stage, _)| stage)
+    match steps::find(key)?.stage {
+        Stage::Hold => None,
+        stage => Some(stage.name()),
+    }
 }
 
 /// The stage a NEXT step in <s> lights: answer (chrismo's answer, waiting)
@@ -47,8 +36,9 @@ pub(super) fn step_stage(key: &str, s: &Value) -> Option<&'static str> {
     }
 }
 
+/// The word a lit stage shows for <key>.
 fn label(key: &str) -> String {
-    lookup(key).map_or(key.to_string(), |(_, l)| l.to_string())
+    steps::find(key).map_or(key, |d| d.label).to_string()
 }
 
 fn count(n: f64, one: &str) -> String {
@@ -375,30 +365,6 @@ mod tests {
         let s = with(open(), "next", json!([{"key": "open-pr", "who": "run"}, {"key": "ci-red", "who": "agent"}]));
         assert_eq!(one(s.clone(), "push"), "cur:open PR");
         assert_eq!(one(s, "ci"), "cur:fix");
-    }
-
-    /// Keys that hold every stage, so light none.
-    const GUARDS: [&str; 9] = ["attached", "budget", "errors", "failed", "foreign", "gh-wait", "question", "running", "stale"];
-
-    /// The keys src/next.rs gives its steps.
-    fn next_keys() -> Vec<String> {
-        crate::next::steps::STEPS.iter().map(|d| d.key.to_string()).collect()
-    }
-
-    #[test]
-    fn every_key_next_gives_has_a_stage_or_is_a_guard() {
-        let keys = next_keys();
-        for k in &keys {
-            assert!(key_stage(k).is_some() != GUARDS.contains(&k.as_str()), "{k}: a stage, or a guard, not both");
-        }
-    }
-
-    #[test]
-    fn the_stage_table_names_no_key_next_never_gives() {
-        let keys = next_keys();
-        for k in KEYS.iter().flat_map(|(_, ks)| ks.iter().map(|(k, _)| k)).chain(GUARDS.iter()) {
-            assert!(keys.iter().any(|x| x == k), "{k}");
-        }
     }
 
     #[test]
