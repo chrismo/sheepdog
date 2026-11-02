@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fetch_that_panics_lets_the_next_one_start() {
+    fn a_fetch_that_panics_frees_its_key() {
         let dir = std::env::temp_dir().join(format!("sd-cache-test-{}", std::process::id()));
         let key = "panics";
         get(&dir, key, || panic!("a bug in the fetch"));

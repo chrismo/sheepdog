@@ -18,9 +18,10 @@ Usage: sd view [--port <n>] [--no-open]
   issue list). It reads the checkout sd was built from, whatever repo sd
   view runs in.
 
-  GitHub data is cached under <state>/github/, served at once, and asked
-  for again in the background once it's a minute old; each page shows its
-  age and has a refresh button.
+  GitHub data is cached under <state>/github/ and served at once; the first
+  read after it's a minute old fetches it again in the background, so with
+  no page open nothing is asked. Each page shows its age and has a refresh
+  button.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

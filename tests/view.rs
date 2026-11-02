@@ -570,6 +570,20 @@ fn a_failed_fetch_keeps_the_last_data_and_says_why() {
 }
 
 #[test]
+fn a_timeline_s_failed_fetch_keeps_its_last_pr_history() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "a", state("a", json!([])));
+    let f = sd.tmp.join("state/github/pr%2Fgithub.com%2Fo%2Fr%2F7.json");
+    fs::create_dir_all(f.parent().unwrap()).unwrap();
+    let old = json!({ "opened": "2026-10-31T09:05:00Z", "merged": null, "commits": [], "total": null });
+    fs::write(&f, json!({ "tried": 1, "at": 1, "data": old, "error": null }).to_string()).unwrap();
+    sd.fake("gh", "#!/usr/bin/env bash\necho 'rate limit exceeded' >&2\nexit 1\n");
+    let s = serve(&sd);
+    let (_, t) = timeline(&s, &format!("{}/a", sheepdog::watch::repo_key("/src/sheepdog")));
+    assert_eq!((&t["github"], &t["error"], &t["fetched"]), (&old, &json!("gh: rate limit exceeded"), &json!("1970-01-01T00:00:00Z")));
+}
+
+#[test]
 fn a_failed_fetch_of_a_full_list_still_says_it_may_be_cut_off() {
     let sd = sd();
     let full: Vec<Value> = (0..500).map(|i| json!({ "number": i, "title": "t", "url": "u", "body": "" })).collect();
