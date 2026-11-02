@@ -5,10 +5,12 @@
 // mustn't hold up the page.
 //
 // Only 127.0.0.1, and only Host 127.0.0.1 or localhost: another site can
-// rebind its name to 127.0.0.1. Writes go to POST /api/act behind the guard
+// rebind its name to 127.0.0.1. Writes go to POST /api/act (view/act.rs: a
+// branch's NEXT step, run as the watcher runs it) behind the guard
 // (view/guard.rs, #396): this run's token, which the page carries, and our
 // own Origin, as does POST /api/refresh, the pages' refresh button (#401).
 
+mod act;
 mod branch;
 mod cache;
 mod flock;
@@ -30,6 +32,7 @@ const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
 const GH_JS: &str = include_str!("view/gh.js");
 const PORT: u16 = 7377;
+const BODY_MAX: usize = 4096;
 
 fn die(msg: impl std::fmt::Display) -> ! {
     eprintln!("sd view: {msg}");
@@ -89,6 +92,7 @@ fn read_request(r: &mut impl BufRead) -> Option<Request> {
     r.read_line(&mut line).ok()?;
     let mut parts = line.split_whitespace();
     let mut req = Request { method: parts.next()?.into(), path: parts.next()?.into(), ..Default::default() };
+    let mut len = 0;
     loop {
         let mut h = String::new();
         if r.read_line(&mut h).ok()? == 0 || h.trim().is_empty() {
@@ -100,14 +104,22 @@ fn read_request(r: &mut impl BufRead) -> Option<Request> {
             "host" => req.host = v,
             "origin" => req.origin = Some(v),
             "x-sd-token" => req.token = Some(v),
+            "content-length" => len = v.parse().unwrap_or(0),
             _ => {}
+        }
+    }
+    if req.method == "POST" && len > 0 {
+        let mut body = vec![0; len.min(BODY_MAX)];
+        if r.read_exact(&mut body).is_ok() {
+            req.body = String::from_utf8_lossy(&body).into_owned();
         }
     }
     Some(req)
 }
 
-/// The guarded writes. Slice 2 of #396 runs NEXT's step at /api/act.
-fn write(route: &str, req: &Request, port: u16, token: &str) -> (&'static str, &'static str, String) {
+/// The guarded writes: /api/refresh makes GitHub data stale, /api/act runs
+/// a branch's NEXT step (view/act.rs).
+fn write(route: &str, req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
     if req.method != "POST" {
         return ("405 Method Not Allowed", "text/plain", "a write is a POST\n".into());
     }
@@ -118,7 +130,8 @@ fn write(route: &str, req: &Request, port: u16, token: &str) -> (&'static str, &
         cache::force();
         return ("200 OK", "text/plain", "GitHub data is stale: the next read fetches it again\n".into());
     }
-    ("501 Not Implemented", "text/plain", "no action yet (#396)\n".into())
+    let (status, body) = act::run(state, &req.body);
+    (status, "text/plain", body)
 }
 
 fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
@@ -128,7 +141,7 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
     }
     let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
     if route == "/api/act" || route == "/api/refresh" {
-        return write(route, req, port, token);
+        return write(route, req, port, token, state);
     }
     if req.method != "GET" {
         return ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into());

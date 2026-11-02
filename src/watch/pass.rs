@@ -67,7 +67,18 @@ fn dispatch_step(key: &str) -> Option<&'static str> {
 
 const AGENT_STEPS: [&str; 5] = ["implement", "review", "address", "ci-fix", "resolve"];
 
-fn act_args(step: &str) -> Vec<&str> {
+/// The step a pass runs for NEXT's first step <first>: its verb, when
+/// it's the agent's (an agent step) or sheepdog's (a run step). None for
+/// chrismo's, a wait, or a step without a verb. The Flock's drill-in runs
+/// the same (view/act.rs, #396).
+pub(crate) fn dispatch_verb(first: &Value) -> Option<&'static str> {
+    let step = dispatch_step(at(first, "key").as_str()?)?;
+    let who = if AGENT_STEPS.contains(&step) { "agent" } else { "run" };
+    (at(first, "who").as_str() == Some(who)).then_some(step)
+}
+
+/// sd act's args for <step>: resolve is restack --resolve.
+pub(crate) fn act_args(step: &str) -> Vec<&str> {
     if step == "resolve" {
         vec!["restack", "--resolve"]
     } else {
@@ -668,11 +679,8 @@ impl Watch {
     fn dispatch(&self, repo: &str, name: &str, b: &str, s: &Value) -> Option<String> {
         let first = at(s, "next").get(0)?;
         let key = at(first, "key").as_str()?;
-        let step = dispatch_step(key)?;
+        let step = dispatch_verb(first)?;
         let agent = AGENT_STEPS.contains(&step);
-        if at(first, "who").as_str() != Some(if agent { "agent" } else { "run" }) {
-            return None;
-        }
         // A file that doesn't read is off.
         let enabled = config::get_text_in(repo, "settings.autoRun", b, false).is_ok_and(|v| v == "true");
         // A followed PR's NEXT has no attached step, so neither is left to NEXT.
@@ -990,11 +998,15 @@ pub fn pass() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// An agent step's timeout, from the branch's settings.stepTimeout: verify,
-/// the agent and verify again each take up to that, and <secs> covers the
-/// rest. stepTimeout 0 is none.
-fn agent_secs(b: &str, secs: u64) -> u64 {
-    match config::get_text("settings.stepTimeout", b, false).ok().and_then(|t| t.parse::<u64>().ok()) {
+/// A launched step's timeout: <secs> for a run step; for an agent step,
+/// from <b>'s settings.stepTimeout in <repo>: verify, the agent and verify
+/// again each take up to that, and <secs> covers the rest. stepTimeout 0
+/// is none.
+pub(crate) fn step_secs(repo: &str, step: &str, b: &str, secs: u64) -> u64 {
+    if !AGENT_STEPS.contains(&step) {
+        return secs;
+    }
+    match config::get_text_in(repo, "settings.stepTimeout", b, false).ok().and_then(|t| t.parse::<u64>().ok()) {
         Some(0) => u64::from(u32::MAX),
         Some(t) => 3 * t + secs,
         None => secs,
@@ -1005,11 +1017,9 @@ fn agent_secs(b: &str, secs: u64) -> u64 {
 /// branch's repo.
 pub fn step(argv: &[String]) -> ExitCode {
     let [secs, step, b] = argv else { die("usage: sd watch step <secs> <step> <branch>") };
-    let Ok(mut secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
+    let Ok(secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
     let Some(outcome) = running::outcome_file(".", b) else { die("not in a git repository") };
-    if AGENT_STEPS.contains(&step.as_str()) {
-        secs = agent_secs(b, secs);
-    }
+    let secs = step_secs(".", step, b, secs);
     let args = act_args(step);
     let verb = args.join(" ");
     let ran = running::leasing(b, step, secs + GRACE, || {

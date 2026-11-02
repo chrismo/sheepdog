@@ -25,5 +25,12 @@ Usage: sd view [--port <n>] [--no-open]
   checked again (sd watch refresh), one at a time, and its card shows when;
   its refresh button checks every branch again.
 
+  A branch's drill-in has a button for NEXT's first step when it's the
+  agent's or sheepdog's: it runs sd act <verb> <branch> in the branch's
+  repo, the same command the watcher's autoRun pass launches for that step,
+  one step at a time; the branch is checked again when it ends, so the page
+  shows the result. The step runs only if it's still NEXT's first; your
+  steps and waits have no button.
+
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 
 const REFRESH_SECS: u64 = 120;
 
@@ -44,20 +44,20 @@ impl Drop for Running {
     }
 }
 
-/// When the watcher last wrote <c>'s cache file, in ms.
-fn written(state: &Path, c: &Cached) -> Option<u64> {
-    let m = fs::metadata(state.join("branches").join(format!("{}.json", c.id))).and_then(|m| m.modified()).ok()?;
+/// When the watcher last wrote the cache file of the branch <id>, in ms.
+fn written(state: &Path, id: &str) -> Option<u64> {
+    let m = fs::metadata(state.join("branches").join(format!("{id}.json"))).and_then(|m| m.modified()).ok()?;
     m.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as u64)
 }
 
 pub fn checked(state: &Path, c: &Cached) -> Option<String> {
-    written(state, c).map(|ms| utc((ms / 1000) as i64))
+    written(state, &c.id).map(|ms| utc((ms / 1000) as i64))
 }
 
 /// Why no refresh may start for GitHub's rate limit, as the pass says it.
 pub fn held(state: &Path, cached: &[Cached]) -> Option<String> {
     let now = now_ms();
-    let freshest = cached.iter().filter_map(|c| Some((written(state, c).filter(|&w| w <= now)?, c.doc.as_ref()?)));
+    let freshest = cached.iter().filter_map(|c| Some((written(state, &c.id).filter(|&w| w <= now)?, c.doc.as_ref()?)));
     let s = &freshest.max_by_key(|(w, _)| *w)?.1["state"];
     let floor: f64 = config::get_global("settings.rateLimitFloor", false).ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
     let left = t(s, "rate_limit.remaining");
@@ -91,7 +91,7 @@ pub fn refreshing(state: &Path, cached: &[Cached]) -> bool {
         .filter(|c| !done(c))
         .filter_map(|c| {
             let repo = repos.get(c.id.split_once('/')?.0)?;
-            let w = written(state, c);
+            let w = written(state, &c.id);
             if b.failed.get(&c.id) == Some(&w) {
                 return None;
             }
@@ -104,18 +104,38 @@ pub fn refreshing(state: &Path, cached: &[Cached]) -> bool {
     b.running = Some(c.id.clone());
     b.tried.insert(c.id.clone(), now);
     let (id, repo, branch) = (c.id.clone(), repo.clone(), c.branch.clone());
-    std::thread::spawn(move || {
-        let _running = Running;
-        let (prog, verb) = sd_verb("watch", "SHEEPDOG_WATCH_PROGRAM");
-        let out = proc::with_timeout(REFRESH_SECS, &prog, &[&verb[..], &["refresh", &branch]].concat(), Some(&repo));
-        if out.ok {
-            branches().failed.remove(&id);
-        } else {
-            // Its fetch failure is on stdout.
-            let why = out.stderr.lines().chain(out.stdout.lines()).next().unwrap_or("failed").to_string();
-            eprintln!("sd view: sd watch refresh {branch} in {repo}: {why}");
-            branches().failed.insert(id, w);
-        }
-    });
+    std::thread::spawn(move || run(&id, &repo, &branch, w));
     true
+}
+
+/// <branch>'s refresh in <repo>, holding the slot; <w> is its file's time
+/// before, which a failure waits to see change.
+fn run(id: &str, repo: &str, branch: &str, w: Option<u64>) {
+    let _running = Running;
+    let (prog, verb) = sd_verb("watch", "SHEEPDOG_WATCH_PROGRAM");
+    let out = proc::with_timeout(REFRESH_SECS, &prog, &[&verb[..], &["refresh", branch]].concat(), Some(repo));
+    if out.ok {
+        branches().failed.remove(id);
+    } else {
+        // Its fetch failure is on stdout.
+        let why = out.stderr.lines().chain(out.stdout.lines()).next().unwrap_or("failed").to_string();
+        eprintln!("sd view: sd watch refresh {branch} in {repo}: {why}");
+        branches().failed.insert(id.to_string(), w);
+    }
+}
+
+/// <branch>'s refresh now, on this thread, once the slot is free: after a
+/// step the page ran on it (act.rs, #396), so the page sees the result.
+pub fn now(state: &Path, id: &str, repo: &str, branch: &str) {
+    loop {
+        let mut b = branches();
+        if b.running.is_none() {
+            b.running = Some(id.to_string());
+            b.tried.insert(id.to_string(), now_ms());
+            break;
+        }
+        drop(b);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    run(id, repo, branch, written(state, id));
 }

@@ -34,9 +34,14 @@ impl Server {
 
     /// <method> <path> with <headers>: the status code, headers and body.
     fn send(&self, method: &str, path: &str, headers: &[(&str, &str)]) -> (u16, String, String) {
+        self.send_body(method, path, headers, if method == "POST" { "{}" } else { "" })
+    }
+
+    /// send, with <body> (framed by Content-Length) on a POST.
+    fn send_body(&self, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> (u16, String, String) {
         let mut s = TcpStream::connect(("127.0.0.1", self.port)).unwrap();
         let hs: String = headers.iter().map(|(k, v)| format!("{k}: {v}\r\n")).collect();
-        let body = if method == "POST" { "Content-Length: 2\r\n\r\n{}" } else { "\r\n" };
+        let body = if method == "POST" { format!("Content-Length: {}\r\n\r\n{body}", body.len()) } else { "\r\n".into() };
         write!(s, "{method} {path} HTTP/1.1\r\n{hs}Connection: close\r\n{body}").unwrap();
         let mut resp = String::new();
         s.read_to_string(&mut resp).unwrap();
@@ -156,7 +161,7 @@ fn root_serves_the_page() {
     let (code, head, body) = serve(&sd).get("/");
     assert_eq!(code, 200, "{head}");
     assert_has(&head.to_lowercase(), &["content-type: text/html"]);
-    assert_has(&body, &["<title>", "/api/flock"]);
+    assert_has(&body, &["<title>", "data-act", "/api/act", "/api/flock"]);
 }
 
 #[test]
@@ -209,7 +214,7 @@ fn help_and_unknown_options() {
     let sd = sd();
     let r = sd.run(&["--help"]);
     assert_eq!(r.status, 0);
-    assert_has(&r.output, &["Usage: sd view", "--port", "--no-open"]);
+    assert_has(&r.output, &["Usage: sd view", "--port", "--no-open", "button", "sd act", "watcher"]);
     let r = sd.run(&["--frob"]);
     assert_ne!(r.status, 0);
     assert_has(&r.output, &["sd view: unknown option: --frob"]);
@@ -432,22 +437,181 @@ fn a_write_from_another_origin_is_refused() {
 
 #[test]
 fn a_get_never_writes() {
-    let sd = sd();
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let id = with_next(&sd, "feat", json!([{ "key": "review", "who": "agent", "say": "review it", "cmd": "sd act review" }]));
     let s = serve(&sd);
     let token = page_token(&s);
     let ours = format!("http://127.0.0.1:{}", s.port);
     let (code, body) = write(&s, "GET", Some(&ours), Some(&token));
     assert_eq!(code, 405, "{body}");
+    let path = format!("/api/act?id={}&key=review", id.replace('/', "%2F"));
+    let (code, body) = write_to(&s, &path, "GET", Some(&ours), Some(&token));
+    assert_eq!(code, 405, "{body}");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(act_log(&sd).is_empty(), "{:?}", act_log(&sd));
 }
 
+// Past the guard, the action reads the body: {} names no branch or step.
 #[test]
 fn a_guarded_write_reaches_the_action() {
     let sd = sd();
     let s = serve(&sd);
     let token = page_token(&s);
     let (code, body) = write(&s, "POST", Some(&format!("http://127.0.0.1:{}", s.port)), Some(&token));
-    assert_eq!(code, 501, "{body}");
-    assert_has(&body, &["no action yet"]);
+    assert_eq!(code, 400, "{body}");
+    assert_has(&body, &["id", "key"]);
+}
+
+/// A fake sd act (SHEEPDOG_ACT_PROGRAM) that logs "start <cwd> <args>" and
+/// "end <args>" to act.log, held while $ACT_GATE exists (10s at most).
+fn acting(sd: &mut Sd) {
+    let log = sd.path("act.log");
+    sd.fake("sd-act", &format!(
+        "#!/usr/bin/env bash\necho \"start $(pwd -P) $*\" >> {log}\n\
+         for _ in $(seq 200); do [ -e \"${{ACT_GATE:-/nonexistent}}\" ] || break; sleep 0.05; done\necho \"end $*\" >> {log}\n"));
+    sd.env.push(("SHEEPDOG_ACT_PROGRAM".into(), sd.path("fakebin/sd-act")));
+}
+
+fn act_log(sd: &Sd) -> Vec<String> {
+    fs::read_to_string(sd.path("act.log")).unwrap_or_default().lines().map(str::to_string).collect()
+}
+
+/// <branch>'s cache file in repos/r rewritten, fresh, with <next>: its id.
+fn with_next(sd: &Sd, branch: &str, next: Value) -> String {
+    let dir = sheepdog::watch::repo_key(&sd.path("repos/r"));
+    let f = sd.tmp.join(format!("state/branches/{dir}/{branch}.json"));
+    fs::write(&f, json!({ "glyph": "🤖", "state": state(branch, next) }).to_string()).unwrap();
+    format!("{dir}/{branch}")
+}
+
+/// POST /api/act {id, key} from our page, with the run's token: the status code and body.
+fn act(s: &Server, id: &str, key: &str) -> (u16, String) {
+    let host = format!("127.0.0.1:{}", s.port);
+    let origin = format!("http://{host}");
+    let token = page_token(s);
+    let hs = [("Host", host.as_str()), ("Origin", origin.as_str()), ("X-Sd-Token", token.as_str()), ("Content-Type", "application/json")];
+    let (code, _, body) = s.send_body("POST", "/api/act", &hs, &json!({ "id": id, "key": key }).to_string());
+    (code, body)
+}
+
+/// GET /api/branch for <id> until no step is running on it; panics after 10s.
+fn acted(s: &Server, id: &str) -> Value {
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let (code, b) = branch(s, id);
+        assert_eq!(code, 200, "{b}");
+        if b["acting"].is_null() {
+            return b;
+        }
+        assert!(Instant::now() < end, "still acting: {b}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+// The drill-in's button (#396): NEXT's first step, when it's the agent's or
+// sheepdog's, runs as the watcher would run it, sd act <verb> <branch> in
+// the branch's repo; the branch is checked again when it ends.
+#[test]
+fn the_drill_in_runs_next_s_step_as_the_watcher_would() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let gate = sd.path("gate");
+    fs::write(&gate, "").unwrap();
+    sd.env.push(("ACT_GATE".into(), gate.clone()));
+    let id = with_next(&sd, "feat", json!([
+        { "key": "review", "who": "agent", "say": "review it", "cmd": "sd act review" },
+        { "key": "ci-wait", "who": "wait", "say": "CI running", "cmd": null },
+    ]));
+    let s = serve(&sd);
+    let (_, b) = branch(&s, &id);
+    assert_eq!(b["act"], json!({ "key": "review", "verb": "review" }));
+    assert_eq!(b["acting"], Value::Null);
+    let (code, body) = act(&s, &id, "review");
+    assert_eq!(code, 200, "{body}");
+    assert_has(&body, &["sd act review feat"]);
+    assert_eq!(branch(&s, &id).1["acting"], "review");
+    assert_eq!(s.flock()["branches"][0]["acting"], "review");
+    fs::remove_file(&gate).unwrap();
+    let b = acted(&s, &id);
+    assert_eq!(b["acting"], Value::Null);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(act_log(&sd), [format!("start {repo} review feat"), "end review feat".into()]);
+    assert_eq!(watch_log(&sd), [format!("start {repo} refresh feat"), "end feat".into()]);
+}
+
+#[test]
+fn a_conflict_s_step_runs_as_restack_resolve() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let id = with_next(&sd, "feat", json!([{ "key": "conflict", "who": "agent", "say": "resolve", "cmd": "sd act restack --resolve" }]));
+    let s = serve(&sd);
+    assert_eq!(branch(&s, &id).1["act"], json!({ "key": "conflict", "verb": "restack --resolve" }));
+    assert_eq!(act(&s, &id, "conflict").0, 200);
+    acted(&s, &id);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(act_log(&sd)[0], format!("start {repo} restack --resolve feat"));
+}
+
+#[test]
+fn a_step_that_is_no_longer_next_s_first_is_refused() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let id = with_next(&sd, "feat", json!([{ "key": "push", "who": "run", "say": "push", "cmd": "sd act push" }]));
+    let s = serve(&sd);
+    let (code, body) = act(&s, &id, "review");
+    assert_eq!(code, 409, "{body}");
+    assert_has(&body, &["push", "review"]);
+    assert_eq!(act(&s, "nope/x", "push").0, 404);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(act_log(&sd).is_empty(), "{:?}", act_log(&sd));
+}
+
+#[test]
+fn chrismo_s_and_waiting_steps_have_no_button_and_are_refused() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    acting(&mut sd);
+    let s = serve(&sd);
+    for (key, who) in [("ready", "you"), ("bot", "you"), ("ci-wait", "wait"), ("open-pr", "run")] {
+        let id = with_next(&sd, "feat", json!([{ "key": key, "who": who, "say": "s", "cmd": null }]));
+        assert_eq!(branch(&s, &id).1["act"], Value::Null, "{key}");
+        let (code, body) = act(&s, &id, key);
+        assert_eq!(code, 409, "{key}: {body}");
+        assert_has(&body, &[key]);
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(act_log(&sd).is_empty(), "{:?}", act_log(&sd));
+}
+
+#[test]
+fn one_step_runs_at_a_time() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    watched(&mut sd, "repos/r", "other", 5);
+    acting(&mut sd);
+    let gate = sd.path("gate");
+    fs::write(&gate, "").unwrap();
+    sd.env.push(("ACT_GATE".into(), gate.clone()));
+    let feat = with_next(&sd, "feat", json!([{ "key": "review", "who": "agent", "say": "s", "cmd": null }]));
+    let other = with_next(&sd, "other", json!([{ "key": "push", "who": "run", "say": "s", "cmd": null }]));
+    let s = serve(&sd);
+    assert_eq!(act(&s, &feat, "review").0, 200);
+    let (code, body) = act(&s, &other, "push");
+    assert_eq!(code, 409, "{body}");
+    assert_has(&body, &["feat"]);
+    assert_eq!(act(&s, &feat, "review").0, 409);
+    assert_eq!(branch(&s, &other).1["acting"], Value::Null);
+    fs::remove_file(&gate).unwrap();
+    acted(&s, &feat);
+    assert_eq!(act_log(&sd).len(), 2, "{:?}", act_log(&sd));
+    assert_eq!(act(&s, &other, "push").0, 200);
+    acted(&s, &other);
+    assert_eq!(act_log(&sd).len(), 4, "{:?}", act_log(&sd));
 }
 
 // The Map (#378) reads the checkout the binary was built in: here, this one.
