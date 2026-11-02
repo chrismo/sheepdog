@@ -455,8 +455,14 @@ fn a_red_verify_still_counts_on_the_old_head_after_a_restack_is_reset_away_325()
     let before = sd.rev("feat");
     assert_eq!(sd.run(&["restack"]).status, 0);
     sd.git(&["reset", "-q", "--hard", &before]);
+    red_back_on(&sd, &before);
+}
+
+/// sd state counts verify red at <sha>, the HEAD a restack was reset back to.
+fn red_back_on(sd: &Sd, sha: &str) {
+    assert_eq!(sd.rev("feat"), sha);
     let state = sd.exec(&sd.link("state"), &[], &["--json", "feat"]).output;
-    assert_eq!(jq(&["-c", ".verify.at_head"], &state), "true", "{state}");
+    assert_eq!(jq(&["-c", "[.verify.sha, .verify.at_head]"], &state), format!(r#"["{sha}",true]"#), "{state}");
 }
 
 // The same for a restack by tree, which no agent resolves and so no verify
@@ -1548,6 +1554,22 @@ fn resolve_verify_runs_on_the_result_a_failure_keeps_the_rebased_branch_and_says
     assert_eq!(sd.rev("feat^"), sd.rev("origin/main"));
     assert_eq!(sd.base_pin(), sd.rev("origin/main"));
     red_at_head(&sd, "feat");
+}
+
+// verify failing again on the resolution records it there, and the commit
+// it was carried from stays red: reset back to, it still counts (#325).
+#[test]
+fn resolve_verify_failing_on_a_carried_red_keeps_the_old_head_red_325() {
+    let sd = agent_sd();
+    sd.verb_ok("config", &["set", "--global", "settings.verify", "grep -qx nope file.txt"]);
+    assert_ne!(sd.run(&["verify"]).status, 0);
+    let before = sd.rev("feat");
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    assert_eq!(sd.run(&["restack", "--resolve"]).status, 1);
+    red_at_head(&sd, "feat");
+    sd.git(&["reset", "-q", "--hard", &before]);
+    red_back_on(&sd, &before);
 }
 
 // A red verify is carried to the resolution before verify runs on it, so it

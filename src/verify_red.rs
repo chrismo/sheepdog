@@ -1,12 +1,13 @@
 // The verify record (#325): refs/sheepdog/<b>/verify-red, one line of JSON,
-// {head, step, cmd, at}: settings.verify failed with <head> checked out, run
+// {head, step, cmd, at, carried?}: settings.verify failed with <head> checked out, run
 // by <step> (implement, address, ci-fix, review, resolve, or verify by hand).
 // Every run on a clean tree writes it: a failure records the commit it ran
 // on, a pass removes it. Keyed on the commit, so sd state calls it at_head
 // only while HEAD is still that commit: a new commit leaves it standing on
 // an old one, which NEXT and ship ignore. A restack is no fix, so it carries
 // the record to the commit it lands on (carry), listing the head it left in
-// carried, so a reset back there is red again.
+// carried, so a reset back there is red again; a failure recorded over a
+// carried record keeps its carried.
 
 use crate::git::git_out;
 use crate::pins::{self, Pin};
@@ -17,13 +18,21 @@ pub fn name(b: &str) -> String {
     pins::name(b, Pin::VerifyRed)
 }
 
-/// verify failed in <wt>: record its HEAD; a failure to record it only warns.
+/// verify failed in <wt>: record its HEAD, keeping the heads an earlier
+/// record was carried from red; a failure to record it only warns.
 pub fn record(wt: &str, b: &str, step: &str, cmd: &str) {
     let Some(head) = git_out(wt, &["rev-parse", "HEAD"]) else {
         eprintln!("sd: warning: couldn't read HEAD in {wt}, so the failed verify isn't recorded");
         return;
     };
-    let rec = json::to_string(&json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0})) + "\n";
+    let mut rec = json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0});
+    let old = pins::read(wt, b, Pin::VerifyRed).and_then(|s| serde_json::from_str::<Value>(&s).ok());
+    let mut kept = old.as_ref().map(carried).unwrap_or_default();
+    kept.retain(|c| *c != head);
+    if !kept.is_empty() {
+        rec["carried"] = json!(kept);
+    }
+    let rec = json::to_string(&rec) + "\n";
     if !pins::store(wt, b, Pin::VerifyRed, &rec, None).ok {
         eprintln!("sd: warning: couldn't record the failed verify on {b}, so NEXT won't show it");
     }
