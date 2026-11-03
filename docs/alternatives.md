@@ -636,3 +636,11 @@ Ideas from the prior art not yet decided:
 
 Settled since: fork per step vs. one persistent session per branch (#69,
 closed 2026-10-23). No tools are queued to read.
+
+## Keep building or switch (2026-11-03)
+
+**Keep sheepdog.** chrismo's main reason: to understand from the inside how
+these machines work, which stays worth it even if sheepdog is later
+mothballed. It also still fits: nothing above runs pi (and maybe OpenCode
+later), works locally in worktrees, and watches without spending tokens. If
+it stops, the fallback is Sortie plus a pi adapter we'd write, re-read first.
