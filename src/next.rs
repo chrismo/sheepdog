@@ -57,7 +57,8 @@
 //
 // Behind the default branch alone is no step: it moves too often to chase.
 // A conflict with it is, and so is a restack after the parent merged.
-// Behind an open parent is no step either, short of a conflict (#300). A
+// Behind an open parent is no step either, short of a conflict or the parent
+// rewriting its history past the base (sync.base_on_target, #300). A
 // merged parent's restack is one: once its commits are dropped
 // (sync.base_on_default), retarget follows it, and main moving is no step.
 // Only bot items are ever marked i, so owed_bot - info is the blocking bot count.

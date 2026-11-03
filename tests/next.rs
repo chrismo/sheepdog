@@ -459,6 +459,19 @@ fn an_open_parent_that_moved_no_restack_unless_it_would_conflict_300() {
     assert_eq!(step("conflict", "cmd", &conflict), "sd act restack --resolve");
 }
 
+// A parent that rewrote its history (its own restack, a force-push) leaves its
+// old commits in the child's PR until the child restacks: one restack, as for
+// a merged parent; moving on top of the base is still none (#300).
+#[test]
+fn an_open_parent_that_rewrote_its_history_restack_once_300() {
+    let moved = e![ON_OPEN_PARENT, ".sync.up_to_date = false", ".sync.behind = 3", ".sync.base_on_default = false"];
+    let rewritten = e![&moved, ".sync.base_on_target = false"];
+    assert_eq!(keys(&rewritten), "behind parent-wait");
+    assert_eq!(step("behind", "cmd", &rewritten), "sd act restack");
+    assert_eq!(keys(&e![&moved, ".sync.base_on_target = true"]), "parent-wait");
+    assert_eq!(keys(&e![&moved, ".sync.base_on_target = null"]), "parent-wait");
+}
+
 #[test]
 fn a_plain_branch_behind_main_no_restack_unless_it_conflicts_or_github_says_behind_300() {
     let behind = e![".sync.up_to_date = false", ".sync.behind = 40", ".sync.base_on_default = true"];

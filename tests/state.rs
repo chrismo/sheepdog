@@ -1344,6 +1344,39 @@ fn sync_parent_merged_with_a_merge_commit_base_on_main_no_restack_300() {
     assert_eq!(r.field(r#"[.next[].key] | index("behind")"#), "null");
 }
 
+// An open parent that moved on top of the base is no restack; one that
+// rewrote its history (the base no longer in it) is (#300).
+#[test]
+fn sync_open_parent_rewritten_base_off_the_parent_restacks_300() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent"]);
+    sd.commit("p.txt", "p");
+    sd.git(&["push", "-q", "origin", "parent"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("c.txt", "c");
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    sd.git_in("other", &["fetch", "-q", "origin"]);
+    sd.git_in("other", &["switch", "-qc", "parent", "origin/parent"]);
+    sd.commit_in("other", "q.txt", "q");
+    sd.git_in("other", &["push", "-q", "origin", "parent"]);
+    sd.git(&["fetch", "-q"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.up_to_date"), "false");
+    assert_eq!(r.field(".sync.base_on_target"), "true");
+    assert_eq!(r.field(r#"[.next[].key] | index("behind")"#), "null");
+    sd.git_in("other", &["commit", "-q", "--amend", "-m", "q, reworded"]);
+    sd.git_in("other", &["push", "-qf", "origin", "parent"]);
+    sd.git(&["fetch", "-q"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.base_on_target"), "true", "the base is p, still in the parent");
+    sd.git_in("other", &["reset", "-q", "--hard", "HEAD~1"]);
+    sd.git_in("other", &["commit", "-q", "--amend", "-m", "p, reworded"]);
+    sd.git_in("other", &["push", "-qf", "origin", "parent"]);
+    sd.git(&["fetch", "-q"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.base_on_target"), "false");
+}
+
 // A restack after a merged parent replays old_base..HEAD: the parent's PR
 // commits in it, newest first, are the wrong base sd act restack refuses (#348).
 #[test]

@@ -134,7 +134,8 @@ derived! {
     /// The branch adds something to the target: commits ahead (sync.ahead > 0),
     /// not all empty (sync.empty_diff, #301); None when sync.ahead is null.
     ahead_target: Option<bool>,
-    /// The parent merged and its commits may still be here: restack once (#300).
+    /// The parent merged and its commits may still be here, or an open parent
+    /// rewrote its history past the base: restack once (#300).
     chase: bool,
     /// A restack was undone: some of the target's commits are copies here (#47).
     undone: bool,
@@ -395,7 +396,8 @@ impl Derived {
     }
 
     fn sync(&mut self, j: &J) {
-        self.chase = j.on("parent.merged") && !j.on("sync.base_on_default");
+        self.chase = (j.on("parent.merged") && !j.on("sync.base_on_default"))
+            || (j.ne("sync.target", "sync.default") && j.off("sync.base_on_target"));
         self.up_to_date = j.flag("sync.up_to_date");
         self.behind_target = no(self.up_to_date);
         self.sync_conflict = j.flag("sync.conflict");

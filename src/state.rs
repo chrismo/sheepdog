@@ -730,7 +730,8 @@ struct Facts {
     by_tree: bool,
     conflict: Value,
     replays_parent: Value,
-    base_on_default: Value,
+    /// Whether old_base is on the default branch, and on the target (#300).
+    base_on: (Value, Value),
     foreign_authors: (Value, Value),
     restack_authors: (Value, Value),
     undone: i64,
@@ -990,8 +991,8 @@ fn assemble(s: &Facts) -> Value {
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "empty_diff": s.empty_diff, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
-                 "undone": s.undone, "replays_parent": s.replays_parent, "base_on_default": s.base_on_default,
-                 "foreign_authors": s.restack_authors.0, "foreign_commits": s.restack_authors.1},
+                 "undone": s.undone, "replays_parent": s.replays_parent, "base_on_default": s.base_on.0,
+                 "base_on_target": s.base_on.1, "foreign_authors": s.restack_authors.0, "foreign_commits": s.restack_authors.1},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1,
@@ -1132,14 +1133,15 @@ fn empty_diff(dir: &str, head: &str, base: &str) -> Value {
     }
 }
 
-/// O3: whether old_base is in <remote>/<default>'s history, so HEAD holds
-/// no merged parent's commits to drop (#300); null with no base or no ref.
-fn base_on_default(dir: &str, remote: &str, default_branch: &str, old_base: &str) -> Value {
-    let default_ref = rev(dir, &format!("refs/remotes/{remote}/{default_branch}"));
-    if old_base.is_empty() || default_ref.is_empty() {
+/// O3: whether old_base is in <remote>/<branch>'s history (#300): on the
+/// default branch, HEAD holds no merged parent's commits to drop; on the
+/// target, the parent hasn't rewritten them. Null with no base or no ref.
+fn base_on(dir: &str, remote: &str, branch: &str, old_base: &str) -> Value {
+    let r = rev(dir, &format!("refs/remotes/{remote}/{branch}"));
+    if old_base.is_empty() || r.is_empty() {
         return Value::Null;
     }
-    json!(is_ancestor(dir, old_base, &default_ref))
+    json!(is_ancestor(dir, old_base, &r))
 }
 
 /// O4: <branch>'s worktree has uncommitted changes (#143, #178); null when
@@ -1644,7 +1646,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let (_, now_ns) = now_utc();
     let facts = Facts {
         branch: branch.into(),
-        replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr), base_on_default: base_on_default(dir, remote, &default_branch, &old_base),
+        replays_parent: replays_parent(dir, &head, &old_base, &parent_merged, &up_to_date, &parent_pr), base_on: (base_on(dir, remote, &default_branch, &old_base), base_on(dir, remote, &target, &old_base)),
         foreign_authors: foreign_authors(dir, branch, reviewer, &viewer, removes.then_some(remote_sha.as_str()), &target_ref,
             &[&head, &target_ref, &old_base, &rev(dir, &format!("refs/remotes/{remote}/{default_branch}"))]),
         restack_authors: foreign_authors(dir, branch, reviewer, &viewer, (up_to_date == false && !old_base.is_empty()).then_some(head.as_str()), &target_ref, &[&old_base, &target_ref]),
