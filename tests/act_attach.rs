@@ -782,7 +782,11 @@ fn describe_refused_while_attached() {
 #[test]
 fn review_refused_while_attached_before_verify_runs() {
     let sd = sd();
+    // a branch with something to review: origin/main one commit behind
     nothing_ahead(&sd);
+    std::fs::write(sd.cwd.join("work.txt"), "work\n").unwrap();
+    sd.git(&["add", "work.txt"]);
+    sd.git(&["commit", "-m", "work"]);
     let _sleeper = sd.live_lock();
     sd.write_global(r#"{"settings": {"verify": "touch verify-ran"}}"#);
     let r = sd.run(&["review"]);
