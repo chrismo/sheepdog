@@ -397,7 +397,8 @@ impl Derived {
 
     fn sync(&mut self, j: &J) {
         self.chase = (j.on("parent.merged") && !j.on("sync.base_on_default"))
-            || (j.ne("sync.target", "sync.default") && j.off("sync.base_on_target"));
+            // no base: can't tell whether the parent rewrote; behind_step says so
+            || (j.ne("sync.target", "sync.default") && (j.off("sync.base_on_target") || j.null("sync.old_base")));
         self.up_to_date = j.flag("sync.up_to_date");
         self.behind_target = no(self.up_to_date);
         self.sync_conflict = j.flag("sync.conflict");

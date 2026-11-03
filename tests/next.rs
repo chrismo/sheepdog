@@ -475,6 +475,11 @@ fn an_open_parent_that_rewrote_its_history_restack_once_300() {
     assert_eq!(step("behind", "cmd", &rewritten), "sd act restack");
     assert_eq!(keys(&e![&moved, ".sync.base_on_target = true"]), "parent-wait");
     assert_eq!(keys(&e![&moved, ".sync.base_on_target = null"]), "parent-wait");
+    // no base at all: can't tell whether it rewrote, so say so, as before #300
+    let no_base = e![&moved, ".sync.old_base = null", ".sync.base_on_target = null"];
+    assert_eq!(keys(&no_base), "behind parent-wait");
+    assert_eq!(step("behind", "who", &no_base), "you");
+    assert_eq!(step("behind", "say", &no_base), "restack onto p (3 behind): no base to restack from; see sd state's errors");
 }
 
 #[test]
