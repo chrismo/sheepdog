@@ -24,8 +24,18 @@ const READY: &str = r#"{"branch": "feat", "head": "h1",
     "session": {"enrolled": true, "harness": null, "id": null, "locked": false},
     "errors": []}"#;
 
-// A stacked branch: its parent is another branch, not the default.
+// A stacked branch: its parent is another branch, not the default. Behind
+// an open parent restacks only on a conflict (#300).
 const STACKED: &[&str] = &[r#".parent.name = "base""#, r#".sync.target = "base""#, ".sync.up_to_date = false", ".sync.behind = 3"];
+
+// A restack NEXT offers: behind main after the parent merged, its commits
+// still here (#300). GitHub retargeted the PR already, so no retarget step.
+const RESTACK_DUE: &[&str] = &[
+    r#".parent = {"name": "base", "source": "config", "merged": true, "pr": {"number": 1, "state": "MERGED"}}"#,
+    ".sync.up_to_date = false",
+    ".sync.behind = 3",
+    ".sync.base_on_default = false",
+];
 
 const FRESH: &[&str] = &[
     ".pr = null",
@@ -349,11 +359,13 @@ fn human_items_chrismo_replies_via_the_long_list() {
 }
 
 // @test "behind a stacked parent: sd act restack"
+// Since #300, behind a merged parent only: an open one restacks on a conflict.
 #[test]
 fn behind_a_stacked_parent_sd_act_restack() {
-    assert_eq!(step("behind", "who", &e![STACKED]), "run");
-    assert_eq!(step("behind", "say", &e![STACKED]), "restack onto base (3 behind)");
-    assert_eq!(step("behind", "cmd", &e![STACKED]), "sd act restack");
+    assert_eq!(step("behind", "who", &e![RESTACK_DUE]), "run");
+    assert_eq!(step("behind", "say", &e![RESTACK_DUE]), "restack onto main (3 behind)");
+    assert_eq!(step("behind", "say", &e![STACKED]), "");
+    assert_eq!(step("behind", "cmd", &e![RESTACK_DUE]), "sd act restack");
 }
 
 // @test "a tree restack that conflicts is chrismo's: --resolve can't do it"
@@ -367,8 +379,8 @@ fn a_tree_restack_that_conflicts_is_chrismo_s_resolve_can_t_do_it() {
 // @test "behind, by tree: the step says the commits become one"
 #[test]
 fn behind_by_tree_the_step_says_the_commits_become_one() {
-    assert_eq!(step("behind", "say", &e![STACKED, ".sync.by_tree = true"]), "restack onto base by tree (3 behind): its commits become one");
-    assert_eq!(step("behind", "cmd", &e![STACKED, ".sync.by_tree = true"]), "sd act restack");
+    assert_eq!(step("behind", "say", &e![RESTACK_DUE, ".sync.by_tree = true"]), "restack onto main by tree (3 behind): its commits become one");
+    assert_eq!(step("behind", "cmd", &e![RESTACK_DUE, ".sync.by_tree = true"]), "sd act restack");
 }
 
 // @test "a conflicting restack hands the agent the resolution"
@@ -382,9 +394,9 @@ fn a_conflicting_restack_hands_the_agent_the_resolution() {
 // @test "behind with no old base: chrismo's, pointing at sd state's errors, no rebase"
 #[test]
 fn behind_with_no_old_base_chrismo_s_pointing_at_sd_state_s_errors_no_rebase() {
-    assert_eq!(step("behind", "who", &e![STACKED, ".sync.old_base = null"]), "you");
-    assert_eq!(step("behind", "say", &e![STACKED, ".sync.old_base = null"]), "restack onto base (3 behind): no base to restack from; see sd state's errors");
-    assert_eq!(step("behind", "cmd", &e![STACKED, ".sync.old_base = null"]), "sd state --json");
+    assert_eq!(step("behind", "who", &e![RESTACK_DUE, ".sync.old_base = null"]), "you");
+    assert_eq!(step("behind", "say", &e![RESTACK_DUE, ".sync.old_base = null"]), "restack onto main (3 behind): no base to restack from; see sd state's errors");
+    assert_eq!(step("behind", "cmd", &e![RESTACK_DUE, ".sync.old_base = null"]), "sd state --json");
 }
 
 // @test "only behind the default branch: no step; main moves too often to chase"
@@ -406,16 +418,65 @@ fn parent_merged_retargeted_to_the_default_branch_restack() {
     assert_eq!(keys(&e![r#".parent.name = "base""#, ".parent.merged = true", ".sync.up_to_date = false", ".sync.behind = 2"]), "behind");
 }
 
+// Restack only when it's needed (#300): the treadmill of soak 7 was a child
+// of a merged parent restacking on every move of main until it retargeted.
+const ON_MERGED_PARENT: &[&str] = &[
+    r#".pr.base = "p""#,
+    r#".parent = {"name": "p", "source": "config", "merged": true, "pr": {"number": 25, "state": "MERGED", "head_sha": "x"}}"#,
+    ".sync.up_to_date = false",
+    ".sync.behind = 3",
+];
+
+#[test]
+fn a_merged_parent_not_yet_restacked_away_restack_once_then_retarget_300() {
+    // the base is the parent's, not main's: its commits are still here
+    let kept = e![ON_MERGED_PARENT, ".sync.base_on_default = false"];
+    assert_eq!(keys(&kept), "behind retarget");
+    assert_eq!(step("behind", "cmd", &kept), "sd act restack");
+    // can't tell: restack, never retarget onto main with the parent's commits
+    assert_eq!(keys(&e![ON_MERGED_PARENT, ".sync.base_on_default = null"]), "behind retarget");
+    // restacked, not pushed yet: retarget right away, not after everything else
+    let restacked = e![ON_MERGED_PARENT, ".sync.up_to_date = true", ".sync.base_on_default = true", ".push.ahead = 1"];
+    assert_eq!(keys(&restacked), "retarget push");
+}
+
+#[test]
+fn a_merged_parent_already_restacked_away_main_moved_retarget_no_restack_300() {
+    let moved = e![ON_MERGED_PARENT, ".sync.base_on_default = true"];
+    assert_eq!(keys(&moved), "retarget");
+    // GitHub retargeted it already: a plain branch behind main
+    assert_eq!(keys(&e![&moved, r#".pr.base = "main""#]), "ready");
+    // still a restack when it would conflict
+    assert_eq!(keys(&e![&moved, ".sync.conflict = true"]), "conflict retarget");
+}
+
+#[test]
+fn an_open_parent_that_moved_no_restack_unless_it_would_conflict_300() {
+    let moved = e![ON_OPEN_PARENT, ".sync.up_to_date = false", ".sync.behind = 3", ".sync.base_on_default = false"];
+    assert_eq!(keys(&moved), "parent-wait");
+    let conflict = e![&moved, ".sync.conflict = true"];
+    assert_eq!(keys(&conflict), "conflict parent-wait");
+    assert_eq!(step("conflict", "cmd", &conflict), "sd act restack --resolve");
+}
+
+#[test]
+fn a_plain_branch_behind_main_no_restack_unless_it_conflicts_or_github_says_behind_300() {
+    let behind = e![".sync.up_to_date = false", ".sync.behind = 40", ".sync.base_on_default = true"];
+    assert_eq!(keys(&behind), "ready");
+    assert_eq!(keys(&e![&behind, ".sync.conflict = true"]), "conflict");
+    assert_eq!(keys(&e![&behind, r#".pr.merge_state = "BEHIND""#]), "behind");
+}
+
 // NEXT asks restack's gate (#348): a restack it refuses is chrismo's step,
 // saying why and what clears it, never one sd watch runs.
 #[test]
 fn a_restack_its_gate_refuses_is_chrismos_with_the_reason_348() {
     // commits someone else made, which it would rewrite (#356): look, then force it
-    let theirs = e![STACKED, r#".sync.foreign_authors = ["them@example.com"]"#];
+    let theirs = e![RESTACK_DUE, r#".sync.foreign_authors = ["them@example.com"]"#];
     assert_eq!(step("behind", "who", &theirs), "you");
     assert_eq!(step("behind", "cmd", &theirs), "sd act restack --force");
     let say = step("behind", "say", &theirs);
-    assert!(say.starts_with("restack onto base (3 behind): sd act restack refuses: restacking feat would rewrite commits someone else made, by them@example.com"), "{say}");
+    assert!(say.starts_with("restack onto main (3 behind): sd act restack refuses: restacking feat would rewrite commits someone else made, by them@example.com"), "{say}");
     // the conflict step too, which --resolve's gate refuses the same
     let theirs_conflict = e![&theirs, ".sync.conflict = true"];
     assert_eq!(keys(&theirs_conflict), "conflict");
@@ -430,10 +491,12 @@ fn a_restack_its_gate_refuses_is_chrismos_with_the_reason_348() {
     assert!(step("behind", "say", &wrong).contains("wrong base: this would replay 1 of #1's commits onto origin/main"));
     assert_eq!(step("behind", "who", &e![&merged, ".sync.replays_parent = null"]), "you");
     // unknowns: whether it would conflict, whether the parent merged
-    assert_eq!(step("behind", "who", &e![STACKED, ".sync.conflict = null"]), "you");
-    assert!(step("behind", "say", &e![STACKED, ".sync.conflict = null"]).contains("can't tell whether restacking feat would conflict"));
-    assert_eq!(step("behind", "who", &e![STACKED, ".parent.merged = null"]), "you");
-    assert_eq!(step("behind", "cmd", &e![STACKED, ".parent.merged = null"]), "sd act restack --force");
+    assert_eq!(step("behind", "who", &e![RESTACK_DUE, ".sync.conflict = null"]), "you");
+    assert!(step("behind", "say", &e![RESTACK_DUE, ".sync.conflict = null"]).contains("can't tell whether restacking feat would conflict"));
+    // not known to have merged is no restack, as for an open parent (#300); its conflict still is
+    assert_eq!(step("behind", "who", &e![RESTACK_DUE, ".parent.merged = null"]), "");
+    assert_eq!(step("conflict", "who", &e![STACKED, ".parent.merged = null", ".sync.conflict = true"]), "you");
+    assert_eq!(step("conflict", "cmd", &e![STACKED, ".parent.merged = null", ".sync.conflict = true"]), "sd act restack --resolve --force");
     // GitHub says behind, but the target has nothing new here: no restack to run
     let gh = e![r#".pr.merge_state = "BEHIND""#];
     assert_eq!(keys(&gh), "behind");
@@ -681,7 +744,7 @@ fn while_a_stored_answer_waits_the_steps_that_move_head_wait_for_it_they_d_drop_
     let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
     assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "bot");
     assert_eq!(keys(&e![r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".threads.owed_bot = 1", &a]), "bot");
-    assert_eq!(keys(&e![STACKED, ".threads.owed_bot = 1", &a]), "bot");
+    assert_eq!(keys(&e![RESTACK_DUE, ".threads.owed_bot = 1", &a]), "bot");
     let st = e![r#".review.local = {sha: "x", status: "uncovered", uncovered: 2}"#, r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}"#];
     assert_eq!(keys(&e![&st, ".threads.owed_bot = 1", &a]), "bot");
 }
@@ -692,7 +755,7 @@ fn past_the_budget_a_moot_questions_stored_answer_still_holds_back_no_restack_34
     // on an answer that has nothing to go on with.
     for over in [r#".spend = {"usd": 30, "budget": 25}"#, r#".spend = {"usd": null, "budget": 25}"#] {
         for q in [answered("address"), answered("ci-fix")] {
-            assert_eq!(keys(&e![over, STACKED, &q]), "question behind", "{over} {q}");
+            assert_eq!(keys(&e![over, RESTACK_DUE, &q]), "question behind", "{over} {q}");
         }
     }
 }
@@ -705,11 +768,11 @@ fn a_moot_question_holds_back_nothing_whether_its_answer_is_stored_or_not_326() 
     let review = e![UNREVIEWED];
     for q in [asked("address", true), answered("address")] {
         assert_eq!(keys(&e![&red, &q]), "question ci-red", "{q}");
-        assert_eq!(keys(&e![STACKED, &q]), "question behind", "{q}");
+        assert_eq!(keys(&e![RESTACK_DUE, &q]), "question behind", "{q}");
         assert_eq!(keys(&e![&review, &q]), "question review", "{q}");
     }
     for q in [asked("ci-fix", true), answered("ci-fix")] {
-        assert_eq!(keys(&e![STACKED, &q]), "question behind", "{q}");
+        assert_eq!(keys(&e![RESTACK_DUE, &q]), "question behind", "{q}");
         assert_eq!(keys(&e![".threads.owed_bot = 1", &q]), "question bot", "{q}");
         assert_eq!(keys(&e![&review, &q]), "question review", "{q}");
     }
@@ -800,7 +863,7 @@ fn a_stored_ci_fix_answer_runs_as_the_ci_red_step_once_ci_is_red_at_head_and_wai
     );
     // what would move HEAD waits for it
     assert_eq!(keys(&e![&red, ".threads.owed_bot = 1", &a]), "ci-red");
-    assert_eq!(keys(&e![&red, STACKED, &a]), "ci-red");
+    assert_eq!(keys(&e![&red, RESTACK_DUE, &a]), "ci-red");
 }
 
 // #355 (round 7 of #333): no CI commit at all leaves ci.for_head null; that's
@@ -848,7 +911,7 @@ fn info_bot_items_wait_behind_a_restack_too_247() {
     let info = e![".threads.owed_bot = 1", ".threads.info = 1"];
     // soak 6: main moved and the restack conflicts; the resolve supersedes the item
     assert_eq!(keys(&e![&info, ".sync.up_to_date = false", ".sync.behind = 2", ".sync.conflict = true"]), "conflict");
-    assert_eq!(keys(&e![&info, STACKED]), "behind");
+    assert_eq!(keys(&e![&info, RESTACK_DUE]), "behind");
     assert_eq!(keys(&e![&info, r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3"]), "behind");
     // a by-tree conflict is chrismo's to resolve, so nothing moves without chrismo
     assert_eq!(keys(&e![&info, STACKED, ".sync.conflict = true", ".sync.by_tree = true"]), "conflict read");
@@ -1068,7 +1131,7 @@ fn commits_whose_authors_are_unknown_hold_the_push_and_the_restack_chrismo_sets_
         "can't tell who made the commits the push removes from origin/feat (no user.email, or git failed): set user.email, or look (git log --format='%h %ae %ce %s' feat..origin/feat), then force it"
     );
     assert_eq!(step("foreign-authors", "cmd", &diverged), "sd act push --force");
-    let restack = e![STACKED, ".sync.foreign_authors = null"];
+    let restack = e![RESTACK_DUE, ".sync.foreign_authors = null"];
     assert_eq!(step("behind", "who", &restack), "you");
     assert_eq!(step("behind", "cmd", &restack), "sd act restack --force");
     assert!(step("behind", "say", &restack).contains("sd act restack refuses: can't tell who made the commits restacking feat would rewrite"));
@@ -1576,8 +1639,8 @@ fn order_follows_the_loop_s_ordering_79_design_record_restack_agent_fixes_push_t
     // ci-red yields to push while commits are unpushed (they may be the fix), so
     // it shows up only once the push is done; address refuses them, so it
     // follows the push (#326).
-    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind push bot review");
-    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", STACKED, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind ci-red bot review");
+    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", RESTACK_DUE, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind push bot review");
+    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", RESTACK_DUE, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind ci-red bot review");
 }
 
 // @test "a state that isn't a record fails"
@@ -1696,8 +1759,8 @@ fn dirty_uncommitted_edits_with_no_question_standing_are_chrismo_s_in_place_of_t
     assert_eq!(keys(&e![UNREVIEWED, &reset]), "reset-dirty");
     assert_eq!(keys(&e![&red, &reset]), "reset-dirty");
     // restack refuses it too, behind or conflicting
-    assert_eq!(keys(&e![STACKED, ".push.dirty = true"]), "dirty");
-    assert_eq!(keys(&e![STACKED, ".sync.by_tree = true", ".push.dirty = true"]), "dirty");
+    assert_eq!(keys(&e![RESTACK_DUE, ".push.dirty = true"]), "dirty");
+    assert_eq!(keys(&e![RESTACK_DUE, ".sync.by_tree = true", ".push.dirty = true"]), "dirty");
     assert_eq!(keys(&e![STACKED, ".sync.conflict = true", ".push.dirty = true"]), "dirty");
     assert_eq!(keys(&e![r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3", ".push.dirty = true"]), "dirty");
     // the by-tree conflict is chrismo's already, and behind with no base names no restack
@@ -1713,7 +1776,7 @@ fn dirty_while_a_question_stands_with_its_edits_uncommitted_the_other_steps_that
     assert_eq!(keys(&e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#, ".push.dirty = true", &asked("address", true)]), "question");
     let st = e![r#".review.local = {sha: "x", status: "uncovered", uncovered: 2}"#, r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}"#];
     assert_eq!(keys(&e![&st, ".push.dirty = true", &asked("ci-fix", true)]), "question");
-    assert_eq!(keys(&e![STACKED, ".push.dirty = true", &asked("ci-fix", true)]), "question");
+    assert_eq!(keys(&e![RESTACK_DUE, ".push.dirty = true", &asked("ci-fix", true)]), "question");
 }
 
 // @test "dirty: no step while the question stands (the edits are the agent's), the worktree is clean, or no agent step is due (#178)"

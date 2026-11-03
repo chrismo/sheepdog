@@ -293,6 +293,30 @@ fn parent_merged_but_the_pr_still_targets_it_sd_parent_kept_so_retarget_is_still
     assert_eq!(sd.config("branch.child.sd-parent"), "main");
 }
 
+// The soak 7 treadmill (#300): one restack drops the merged parent's
+// commits; main moving after it is no reason for another, only to retarget.
+#[test]
+fn parent_merged_restacked_once_main_moves_again_retarget_not_another_restack_300() {
+    let sd = sd();
+    let a_head = sd.stacked_child();
+    sd.squash_a(false);
+    sd.merged_pr("A", &a_head, &[]);
+    sd.open_pr("child", "A", 2);
+    sd.git(&["fetch", "-q", "origin"]);
+    let state = || sd.exec(&sd.link("state"), &[], &["--json", "child"]).output;
+    let before = state();
+    assert_eq!(jq(&["-r", ".sync.base_on_default"], &before), "false");
+    assert_eq!(jq(&["-c", "[.next[].key][0:2]"], &before), r#"["behind","retarget"]"#);
+    assert_eq!(sd.run(&["restack"]).status, 0);
+    sd.upstream("main", "h", "H", "main moved");
+    sd.git(&["fetch", "-q", "origin"]);
+    let after = state();
+    assert_eq!(jq(&["-r", ".sync.up_to_date"], &after), "false");
+    assert_eq!(jq(&["-r", ".sync.base_on_default"], &after), "true");
+    assert_eq!(jq(&["-c", "[.next[].key][0:2]"], &after), r#"["retarget","push"]"#);
+    assert_eq!(jq(&["-r", r#"[.next[].key] | index("behind")"#], &after), "null");
+}
+
 // @test "parent merged, the branch's own PR lookup fails: sd-parent kept"
 #[test]
 fn parent_merged_the_branchs_own_pr_lookup_fails_sd_parent_kept() {

@@ -1316,6 +1316,32 @@ fn sync_squash_merged_parent_retargets_to_main_and_replays_only_our_change() {
     assert_eq!(r.field(".sync.old_base"), parent_sha);
     assert_eq!(r.field(".sync.up_to_date"), "false");
     assert_eq!(r.field(".sync.conflict"), "false");
+    // the parent's commits are still here: the one restack is due (#300)
+    assert_eq!(r.field(".sync.base_on_default"), "false");
+}
+
+// A parent merged with a merge commit leaves its commits on main: nothing to
+// drop, so main moving on is no restack, only a retarget (#300).
+#[test]
+fn sync_parent_merged_with_a_merge_commit_base_on_main_no_restack_300() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent"]);
+    sd.commit("p.txt", "p");
+    sd.git(&["push", "-q", "origin", "parent"]);
+    let parent_sha = sd.git(&["rev-parse", "parent"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("c.txt", "c");
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    sd.git_in("other", &["fetch", "-q", "origin"]);
+    sd.git_in("other", &["merge", "-q", "--no-ff", "--no-edit", "origin/parent"]);
+    sd.commit_in("other", "m.txt", "main moved");
+    sd.git_in("other", &["push", "-q", "origin", "main"]);
+    sd.git(&["fetch", "-q"]);
+    sd.pr_fixture("parent", &[r#".state = "MERGED""#, &head_oid(&parent_sha)]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.up_to_date"), "false");
+    assert_eq!(r.field(".sync.base_on_default"), "true");
+    assert_eq!(r.field(r#"[.next[].key] | index("behind")"#), "null");
 }
 
 // A restack after a merged parent replays old_base..HEAD: the parent's PR

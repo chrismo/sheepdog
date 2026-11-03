@@ -533,7 +533,7 @@ fn glyph_waiting_on_the_review_bot_is_and_quiet_the_bot_silent_past_its_timeout_
 fn glyph_work_an_agent_will_do_later_is() {
     let sd = sd();
     for a in [
-        r#".sync.up_to_date = false | .sync.behind = 2 | .sync.target = "base" | .sync.old_base = "abc""#,
+        // a restack: behind main after the parent merged; behind an open parent is none (#300)
         r#".sync.up_to_date = false | .parent.merged = true | .sync.old_base = "abc" | .sync.replays_parent = []"#,
         ".threads.owed_bot = 1",
         ".push.ahead = 1",

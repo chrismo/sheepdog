@@ -134,7 +134,7 @@ derived! {
     /// The branch adds something to the target: commits ahead (sync.ahead > 0),
     /// not all empty (sync.empty_diff, #301); None when sync.ahead is null.
     ahead_target: Option<bool>,
-    /// The target isn't the default branch, or the parent merged: restack after it.
+    /// The parent merged and its commits may still be here: restack once (#300).
     chase: bool,
     /// A restack was undone: some of the target's commits are copies here (#47).
     undone: bool,
@@ -156,7 +156,7 @@ derived! {
     by_tree: Option<bool>,
     /// No pinned base (sync.old_base is null).
     old_base_null: bool,
-    /// No base to restack from, with a target worth chasing.
+    /// No base to restack from, on a stacked target or after a merged parent.
     no_base: bool,
     /// A restack NEXT offers to someone: the agent, the pipeline or chrismo.
     restack_due: bool,
@@ -395,7 +395,7 @@ impl Derived {
     }
 
     fn sync(&mut self, j: &J) {
-        self.chase = j.ne("sync.target", "sync.default") || j.on("parent.merged");
+        self.chase = j.on("parent.merged") && !j.on("sync.base_on_default");
         self.up_to_date = j.flag("sync.up_to_date");
         self.behind_target = no(self.up_to_date);
         self.sync_conflict = j.flag("sync.conflict");
@@ -406,7 +406,7 @@ impl Derived {
         self.gh_restack = self.has_pr && !conflicts && self.gh_behind;
         self.by_tree = j.flag("sync.by_tree");
         self.old_base_null = j.null("sync.old_base");
-        self.no_base = self.old_base_null && self.chase;
+        self.no_base = self.old_base_null && (j.ne("sync.target", "sync.default") || j.on("parent.merged"));
         let off_default = j.ne("pr.base", "sync.default");
         self.stacked = off_default && (j.is("parent.pr.state", "OPEN") || j.on("parent.merged"));
         self.parent_closed = off_default && j.is("parent.pr.state", "CLOSED");
