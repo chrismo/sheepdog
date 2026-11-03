@@ -514,12 +514,12 @@ pub fn retarget(d: &Derived) -> Gate {
 
 pub fn retarget_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
-        chase, behind_target,
+        chase, up_to_date,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
         taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
-        undone: _, up_to_date: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
+        undone: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
         parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
         ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
@@ -529,7 +529,8 @@ pub fn retarget_rules(d: &Derived) -> Vec<Rule> {
         rv_submitted: _, rv_local: _, budget_unread: _, over_budget: _,
     } = d;
     // Soft: the restack may be held (dirty, a stored answer); --force retargets anyway.
-    vec![Rule { name: RETARGET_OWED, level: Level::Soft, refuses: *chase && *behind_target, clears: "restack first (sd act restack)", yours: true }]
+    // Unknown sync refuses too: the parent's commits may still be here.
+    vec![Rule { name: RETARGET_OWED, level: Level::Soft, refuses: *chase && !yes(*up_to_date), clears: "restack first (sd act restack)", yours: true }]
 }
 
 /// What parity finds wrong with NEXT's <steps> for <d>: a gated verb NEXT
@@ -565,6 +566,15 @@ mod tests {
     /// An open PR whose push removes nothing someone else made.
     fn pushable() -> Derived {
         Derived { open: true, foreign_authors: Some(false), ..Derived::default() }
+    }
+
+    #[test]
+    fn retarget_waits_while_the_one_restack_may_be_owed_even_when_sync_is_unknown_300() {
+        let owed = Gate::Soft(vec![RETARGET_OWED.into()]);
+        assert_eq!(retarget(&Derived { chase: true, up_to_date: Some(false), behind_target: true, ..Derived::default() }), owed);
+        assert_eq!(retarget(&Derived { chase: true, up_to_date: None, ..Derived::default() }), owed);
+        assert_eq!(retarget(&Derived { chase: true, up_to_date: Some(true), ..Derived::default() }), Gate::Go);
+        assert_eq!(retarget(&Derived { chase: false, up_to_date: None, ..Derived::default() }), Gate::Go);
     }
 
     #[test]
