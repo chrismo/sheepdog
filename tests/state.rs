@@ -514,6 +514,29 @@ fn task_the_recorded_sd_task_else_null_next_implements_a_branch_with_nothing_ahe
     assert_eq!(r.field(".push.dirty"), "false");
 }
 
+// An empty starting commit, which GitHub needs to open a PR, is a commit
+// ahead with nothing in the diff: NEXT implements, PR or not (#301).
+#[test]
+fn sync_empty_diff_an_empty_starting_commit_adds_nothing_next_implements_with_a_pr_or_without_301() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.git(&["config", "branch.feat.sd-task", "add a"]);
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "start"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.ahead"), "1");
+    assert_eq!(r.field(".sync.empty_diff"), "true");
+    assert_eq!(r.field_c("[.next[].key]"), r#"["implement"]"#);
+    sd.git(&["push", "-q", "-u", "origin", "feat"]);
+    sd.pr_fixture("feat", &[]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.empty_diff"), "true");
+    assert_eq!(r.field_c(r#"[.next[].key] | index("review")"#), "null");
+    assert_eq!(r.field_c("[.next[].key][0]"), "implement");
+    sd.commit("a.txt", "a");
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.empty_diff"), "false");
+}
+
 // @test "dirty: reported for a branch with nothing ahead, where implement would refuse the worktree (#143)"
 #[test]
 fn dirty_reported_for_a_branch_with_nothing_ahead_where_implement_would_refuse_the_worktree_143() {
