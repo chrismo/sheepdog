@@ -306,7 +306,8 @@ fn parent_merged_restacked_once_main_moves_again_retarget_not_another_restack_30
     let state = || sd.exec(&sd.link("state"), &[], &["--json", "child"]).output;
     let before = state();
     assert_eq!(jq(&["-r", ".sync.base_on_default"], &before), "false");
-    assert_eq!(jq(&["-c", "[.next[].key][0:2]"], &before), r#"["behind","retarget"]"#);
+    assert_eq!(jq(&["-c", "[.next[].key][0:1]"], &before), r#"["behind"]"#);
+    assert_eq!(jq(&["-r", r#"[.next[].key] | index("retarget")"#], &before), "null");
     assert_eq!(sd.run(&["restack"]).status, 0);
     sd.upstream("main", "h", "H", "main moved");
     sd.git(&["fetch", "-q", "origin"]);

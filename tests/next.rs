@@ -430,11 +430,16 @@ const ON_MERGED_PARENT: &[&str] = &[
 #[test]
 fn a_merged_parent_not_yet_restacked_away_restack_once_then_retarget_300() {
     // the base is the parent's, not main's: its commits are still here
+    // retarget waits for it, or the PR moves to main with the parent's commits
     let kept = e![ON_MERGED_PARENT, ".sync.base_on_default = false"];
-    assert_eq!(keys(&kept), "behind retarget");
+    assert_eq!(keys(&kept), "behind");
     assert_eq!(step("behind", "cmd", &kept), "sd act restack");
     // can't tell: restack, never retarget onto main with the parent's commits
-    assert_eq!(keys(&e![ON_MERGED_PARENT, ".sync.base_on_default = null"]), "behind retarget");
+    assert_eq!(keys(&e![ON_MERGED_PARENT, ".sync.base_on_default = null"]), "behind");
+    // a restack held back holds the retarget too: dirty, a stored answer, a conflict
+    assert_eq!(keys(&e![&kept, ".push.dirty = true"]), "dirty");
+    assert_eq!(keys(&e![&kept, ".threads.owed_bot = 1", &answered("address")]), "bot");
+    assert_eq!(keys(&e![&kept, ".sync.conflict = true"]), "conflict");
     // restacked, not pushed yet: retarget right away, not after everything else
     let restacked = e![ON_MERGED_PARENT, ".sync.up_to_date = true", ".sync.base_on_default = true", ".push.ahead = 1"];
     assert_eq!(keys(&restacked), "retarget push");
