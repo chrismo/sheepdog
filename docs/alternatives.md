@@ -55,7 +55,8 @@ gh-stack, attractor, symphony and roast), the Amp docs (2026-10-17), shallow
 clones in `~/modev/pr-workflow-prior-art/` (Symphony at be10a1b, 2026-09-15;
 Roast at 40b87a5, 2026-10-06; Open SWE at c560ff7, Nasiko at 50b0a34, Evener
 at a4dcbc1 and samcdavid/dotfiles at 2e73af1, 2026-10-16), READMEs for Archon
-and Gas Town (2026-10-18) and for shepherd-pr (2026-10-21). Nothing but
+and Gas Town (2026-10-18) and for shepherd-pr (2026-10-21), and pstack's
+README, `plugin.json` and three playbooks via `gh api` (2026-11-03). Nothing but
 sheepdog was run, so treat the rest as claims.
 
 Summary:
@@ -84,6 +85,7 @@ Summary:
 | Open SWE | Agent (a Deep Agents / LangGraph graph) | Persistent per-thread cloud sandboxes | Its own agent | Not stated | Not stated |
 | shepherd-pr | Agent, on the user's request; installing the skill starts nothing | Local (Bash, Python 3 stdlib, authenticated `gh`; macOS or Linux; GitHub.com only) | Guides for Claude Code, Cursor, Codex, Devin CLI, Kimi Code, Gemini CLI, OpenCode, Pi, Hermes Agent and others | Not stated | The agent pushes scoped fixes to an authorized branch; the bundled tools write nothing. Asks before comments, reruns or merges |
 | Amp PR follow-up | Agent, in its thread | Cloud (orbs), GitHub App and webhooks | Amp's own agent | Not stated | Not stated; writes run as the user |
+| pstack (Cursor) | Agent, following a playbook under `/loop`; a `watch-pr` script polls | Local chat, or one Cursor cloud agent per PR | Cursor; Claude Code through a generated adapter (Cursor-only steps skipped); a model per role | Yes: babysit works the bottom PR and never restacks; shipping lands bottom-up and retargets | The agent pushes (`--force-with-lease`). Shipping merges only PRs a separate verifier agent passed |
 
 ### The agent drives the loop (opposite of design rule 2)
 
@@ -164,6 +166,44 @@ when the session ends. The README warns that a generated harness guide is not
 proof of a verified install. Closest in spirit to `sd state`, without the
 pipeline, stacks or unattended loop. Thread replies, local review before bots
 and takeover are not stated. 2★, 0 forks, MIT, 21 commits, no releases.
+
+**pstack** (Lauren Tan / poteto, in `cursor/plugins` under `pstack/`, v0.15.36,
+MIT; read 2026-11-03). A Cursor plugin of skills for engineering method as a
+whole: about 55 skills, 23 `poteto-mode` playbooks and 24 one-rule principles.
+The PR part is the `babysit`, `shipping` and `autopilot-full` / `-stack`
+playbooks; the rest (bug fix, perf, feature, writing) has no counterpart in
+sheepdog. Read: the README, `plugin.json` and those three playbooks.
+
+- **Babysit:** one babysitter per stack, working only the lowest unmerged PR.
+  It goes conflicts, then threads, then CI, batching fixes into one push wave.
+  It never restacks, retargets or force-pushes: it reports "needs a rebase" to
+  the PR's owner. A bundled `watch-pr` script polls GitHub and returns a
+  verdict (`READY`, `WAITING`, `ADVANCE`, `COMPLETE`); the agent acts on each one.
+- **CI:** classified before any retry. A flake gets one fresh build, and an
+  identical second failure means it was never a flake. A failure in code the
+  diff never touches means a stale base (`git merge-base --is-ancestor`), and
+  gets reported, not retried. Only a failure in the diff's own code gets a commit.
+- **Bot findings:** each claim is checked against the code; real ones are fixed
+  red-first in the lowest PR that owns the code. From the third bot pass it leans
+  toward dismissing, except anything touching security, auth, billing, data or
+  migrations, which is escalated.
+- **Shipping:** a verifier agent that didn't write the code runs the change as
+  a user would and posts `PASS` / `PASS+NOTES` / `FAIL`. Green CI and a bot
+  approval don't count as verdicts. Only the contiguous run of verified PRs from
+  the bottom lands. A verdict is keyed on `git patch-id`, so it survives a rebase
+  that doesn't change the patch.
+- **Autopilot-full:** one cloud-agent owner per PR, each off trunk (never
+  stacked); a root agent audits hourly under `/loop` and replaces agents with
+  no side effects past a stuck-after time.
+- **Verdict (theory, from the docs; nothing run):** the agent-drives camp. A
+  deterministic watcher waits, but every verdict costs a model turn, and the
+  agent runs `gh` itself, replies included. Much of it independently matches
+  sheepdog's rules: idempotency, conflicts before threads before CI, bot
+  findings checked against the code. Its one-babysitter rule is enforcement
+  where sheepdog reconciles (rule 4). Review pins here already compare patch-ids
+  (`rewritten-same`). Taken: #429 (a red verify matched by patch-id after a hand
+  rebase) and #430 (rerun once and check for a stale base before ci-fix). Not
+  filed: the independent verifier.
 
 **Open SWE (langchain-ai/open-swe).** A software-factory system on Deep Agents
 and LangGraph: issue- or conversation-triggered coding, PR review, persistent
