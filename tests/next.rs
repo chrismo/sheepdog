@@ -449,6 +449,37 @@ fn a_conflicting_restack_is_the_agent_s_instead_of_a_plain_restack() {
     assert_eq!(step("conflict", "who", &e![STACKED, ".sync.conflict = true"]), "agent");
 }
 
+// Restacked, not pushed yet: diverged from a remote head that's ours.
+const RESTACKED: &[&str] = &[".push.ahead = 2", ".push.behind = 2", ".push.diverged = true"];
+
+// The target moved again between the restack and its push: push first, or
+// a busy target restacks the branch over and over and never pushes (#300).
+#[test]
+fn restacked_but_unpushed_pushes_before_restacking_again_300() {
+    // behind a stacked parent
+    assert_eq!(keys(&e![STACKED, RESTACKED]), "push");
+    // the parent merged, the PR still targeting it: retarget waits as before (#248)
+    let merged = e![r#".pr.base = "p""#, r#".parent = {"name": "p", "source": "pr", "merged": true, "pr": {"number": 25, "state": "MERGED", "head_sha": "x"}}"#, ".sync.up_to_date = false", ".sync.behind = 2"];
+    assert_eq!(keys(&merged), "behind retarget");
+    assert_eq!(keys(&e![&merged, RESTACKED]), "push retarget");
+    // GitHub requires it up to date: the push is what GitHub hasn't seen
+    let gh = e![r#".pr.merge_state = "BEHIND""#, ".sync.up_to_date = false", ".sync.behind = 3"];
+    assert_eq!(keys(&e![&gh, RESTACKED]), "push");
+    assert_eq!(keys(&e![r#".pr.merge_state = "BEHIND""#, RESTACKED]), "push");
+    // the restack comes back once it's pushed
+    assert_eq!(keys(&e![STACKED]), "behind");
+}
+
+#[test]
+fn restacked_but_unpushed_still_resolves_a_conflict_first_and_restacks_new_commits_before_their_push_300() {
+    // a conflict holds the merge anyway: the resolve's push carries both
+    assert_eq!(keys(&e![STACKED, RESTACKED, ".sync.conflict = true"]), "conflict push");
+    // commits made here, never restacked: one push after the restack carries them
+    assert_eq!(keys(&e![STACKED, ".push.ahead = 2"]), "behind push");
+    // a push NEXT holds isn't owed yet: the restack stays chrismo's to weigh
+    assert_eq!(keys(&e![STACKED, RESTACKED, &red(true)]), "behind verify-red");
+}
+
 // @test "red CI: the agent fixes it; names the failing checks"
 #[test]
 fn red_ci_the_agent_fixes_it_names_the_failing_checks() {

@@ -55,6 +55,9 @@
 //
 // Behind the default branch alone is no step: it moves too often to chase.
 // A conflict with it is, and so is a restack after the parent merged.
+// A rewrite NEXT would push (diverged from a remote head that's ours) pushes
+// before another plain restack, or a busy target starves the push (#300);
+// a conflict still goes first.
 // Only bot items are ever marked i, so owed_bot - info is the blocking bot count.
 //
 // Info bot items are read once nothing else moves without chrismo (#168): a
@@ -279,8 +282,12 @@ fn conflict_step(d: &Derived, s: &Value, remote: &str, hold: &Option<Value>) -> 
 }
 
 /// The restack behind a target worth chasing, or the default branch when
-/// GitHub requires it: run, as gates::restack lets it (#348).
+/// GitHub requires it: run, as gates::restack lets it (#348). Not while a
+/// rewrite of ours is owed its push (#300).
 fn behind_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
+    if d.unpushed && d.behind_remote && push_step(d) {
+        return None;
+    }
     let t = |p: &str| val::t(s, p);
     let target = t("sync.target");
     let say = if d.open && !d.undone && !d.parent_closed && d.chase_behind {
