@@ -503,6 +503,35 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> Vec<Rule> {
     ]
 }
 
+pub const RETARGET_OWED: &str =
+    "the one restack after the merged parent is still owed: retargeting first would put the parent's commits in the PR";
+
+/// sd act retarget's rule over Derived (#300); the PR lookup and parent's
+/// state, Hard or Done, are restack::retarget_gate's, over the record.
+pub fn retarget(d: &Derived) -> Gate {
+    judge(&retarget_rules(d))
+}
+
+pub fn retarget_rules(d: &Derived) -> Vec<Rule> {
+    let Derived {
+        chase, behind_target,
+        own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
+        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
+        taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
+        undone: _, up_to_date: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
+        gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
+        parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
+        ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
+        reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
+        failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _,
+        dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
+        rv_submitted: _, rv_local: _, budget_unread: _, over_budget: _,
+    } = d;
+    // Soft: the restack may be held (dirty, a stored answer); --force retargets anyway.
+    vec![Rule { name: RETARGET_OWED, level: Level::Soft, refuses: *chase && *behind_target, clears: "restack first (sd act restack)", yours: true }]
+}
+
 /// What parity finds wrong with NEXT's <steps> for <d>: a gated verb NEXT
 /// offers while its gate refuses (runs() false), an sd act verb with no
 /// declaration, and an agent step whose verb has no gate (#341).

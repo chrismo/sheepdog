@@ -886,11 +886,10 @@ fn parent_closed(cx: &Cx) -> Option<Value> {
     )
 }
 
-/// Not while the one restack is owed (#300): the PR would move to the default
-/// branch with the parent's commits, and a held restack (dirty, a stored
-/// answer) would leave retarget first.
+/// Not while gates::retarget refuses (#300): the one restack is still owed,
+/// and a held restack (dirty, a stored answer) would leave retarget first.
 fn retarget(cx: &Cx) -> Option<Value> {
-    if !(cx.d.has_pr && cx.d.stacked && yes(cx.d.parent_merged)) || (cx.d.chase && cx.d.behind_target) {
+    if !(cx.d.has_pr && cx.d.stacked && yes(cx.d.parent_merged) && crate::act::gates::retarget(cx.d).runs()) {
         return None;
     }
     step(def!("retarget"), "run",

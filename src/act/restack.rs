@@ -381,24 +381,20 @@ fn retarget_gate(s: &Value) -> Gate {
     if eq(s, "pr.base", "sync.default") {
         return Gate::Done(format!("PR #{number} already targets {default} (GitHub retargeted it)"));
     }
-    Gate::Go
+    gates::retarget(&Derived::new(s))
 }
 
-pub fn retarget(b: &str) {
+pub fn retarget(b: &str, force: bool) {
     let s = state(".", b);
-    match retarget_gate(&s) {
-        Gate::Hard(why) => die(why),
-        Gate::Done(line) => println!("{line}"),
-        _ => {
-            let (number, default) = (t(&s, "pr.number"), t(&s, "sync.default"));
-            // GH_REPO, which act::run set, points gh at settings.remote's repo.
-            let o = crate::gh::retarget_pr(&number, &default);
-            eprint!("{}", o.stderr);
-            if !o.ok() {
-                die(format!("gh pr edit --base {default} failed for PR #{number}"));
-            }
-            println!("PR #{number} now targets {default} (was {})", t(&s, "pr.base"));
+    if enforce(retarget_gate(&s), force, &format!("retargeting {b}")).is_some() {
+        let (number, default) = (t(&s, "pr.number"), t(&s, "sync.default"));
+        // GH_REPO, which act::run set, points gh at settings.remote's repo.
+        let o = crate::gh::retarget_pr(&number, &default);
+        eprint!("{}", o.stderr);
+        if !o.ok() {
+            die(format!("gh pr edit --base {default} failed for PR #{number}"));
         }
+        println!("PR #{number} now targets {default} (was {})", t(&s, "pr.base"));
     }
     parent_to_default(b, &s);
 }
@@ -585,7 +581,18 @@ mod tests {
 
     #[test]
     fn retarget_gate_edits_a_pr_still_on_the_merged_parent() {
-        assert_eq!(retarget_gate(&behind()), Gate::Go);
+        assert_eq!(retarget_gate(&with(behind(), "sync.up_to_date", json!(true))), Gate::Go);
+        // Restacked once onto main: main moving after it is no reason to wait.
+        let s = with(behind(), "sync.base_on_default", json!(true));
+        assert_eq!(retarget_gate(&s), Gate::Go);
+    }
+
+    #[test]
+    fn retarget_gate_waits_for_the_one_restack_a_merged_parent_owes_unless_forced_300() {
+        assert_eq!(retarget_gate(&behind()), Gate::Soft(vec![gates::RETARGET_OWED.into()]));
+        // Already on the default branch: nothing to wait for.
+        let s = with(behind(), "pr.base", json!("main"));
+        assert!(matches!(retarget_gate(&s), Gate::Done(_)));
     }
 
     #[test]

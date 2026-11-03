@@ -498,6 +498,25 @@ fn retarget_parent_merged_pr_still_on_it_base_edited_to_main_sd_parent_rewritten
     assert_eq!(sd.config("branch.child.sd-parent"), "main");
 }
 
+// #300: before the one restack, the PR would move to main with the merged
+// parent's squashed-away commits in it; --force runs it anyway.
+#[test]
+fn retarget_waits_for_the_one_restack_after_a_squash_merged_parent_unless_forced_300() {
+    let sd = sd();
+    let a_head = sd.stacked_child();
+    sd.squash_a(false);
+    sd.merged_pr("A", &a_head, &[]);
+    sd.open_pr("child", "A", 2);
+    sd.git(&["fetch", "-q", "origin"]);
+    let r = sd.run(&["retarget"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not retargeting child:", "restack", "--force"]);
+    assert_eq!(sd.gh_calls(), None);
+    assert_eq!(sd.config("branch.child.sd-parent"), "A");
+    assert_eq!(sd.run(&["retarget", "--force"]).status, 0);
+    assert_eq!(sd.gh_calls().as_deref(), Some("pr edit 2 --base main"));
+}
+
 // @test "retarget: the PR already targets main (GitHub did it): no edit, sd-parent still rewritten"
 #[test]
 fn retarget_the_pr_already_targets_main_github_did_it_no_edit_sd_parent_still_rewritten() {

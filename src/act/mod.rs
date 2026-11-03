@@ -342,7 +342,7 @@ fn act(verb: &str, v: &verbs::Verb, b: &str, remote: &str, a: &Args) -> ExitCode
         "trigger" => github::trigger(b, remote, a.force),
         "answer" => answer::answer(b, remote, a, v.name),
         "restack" => restack::restack(b, remote, a),
-        "retarget" => restack::retarget(b),
+        "retarget" => restack::retarget(b, a.force),
         "review" => review::review(b, remote, a.accept, a.force),
         "attach" => attach::attach(b, &a.harness, a.force),
         "start" => return ExitCode::from(u8::try_from(start::start(b, remote, a)).unwrap_or(1)),
