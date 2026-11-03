@@ -1230,6 +1230,13 @@ fn an_empty_diff_with_a_task_implements_whatever_its_commit_count_pr_or_not_301(
     assert_eq!(keys(&e![UNREVIEWED, task, empty, ".push.dirty = true"]), "nothing-dirty");
     // a PR with no commits left at all is the same
     assert_eq!(keys(&e![UNREVIEWED, task, ".sync.ahead = 0"]), "implement");
+    // an open PR with commits not pushed yet (a local revert of what's on
+    // the PR): they go to the PR first, not implement; review, which they'd
+    // leave nothing for, isn't offered
+    let reverted = e![UNREVIEWED, ".sync.ahead = 2", ".push.ahead = 1"];
+    assert_eq!(keys(&e![&reverted, task]), "push review");
+    assert_eq!(keys(&e![&reverted, task, empty]), "push");
+    assert_eq!(keys(&e![&reverted, empty]), "push");
     // merged or closed, nothing to implement
     assert_eq!(keys(&e![task, empty, r#".pr.state = "MERGED""#]), "merged");
     assert_eq!(keys(&e![task, empty, r#".pr.state = "CLOSED""#]), "closed");

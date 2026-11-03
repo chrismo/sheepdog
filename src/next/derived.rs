@@ -126,7 +126,8 @@ derived! {
     push_dirty: Option<bool>,
     /// The parent isn't on the remote yet.
     parent_unpushed: bool,
-    /// No PR or an open one, nothing ahead of the base and nothing behind the remote.
+    /// No PR, or an open one with nothing unpushed; nothing ahead of the base
+    /// and nothing behind the remote.
     empty: bool,
 
     // Sync with the parent (O2, O3).
@@ -388,7 +389,9 @@ impl Derived {
         self.parent_unpushed = j.on("parent.unpushed");
         self.undone = j.n("sync.undone") > 0.0;
         self.ahead_target = j.g("sync.ahead").as_f64().map(|n| n > 0.0 && !yes(j.flag("sync.empty_diff")));
-        self.empty = self.open && no(self.ahead_target) && j.n("push.behind") == 0.0;
+        // an open PR's unpushed commits go to it even when they net to nothing
+        let pushed = self.pr_null || j.n("push.ahead") == 0.0;
+        self.empty = self.open && pushed && no(self.ahead_target) && j.n("push.behind") == 0.0;
     }
 
     fn sync(&mut self, j: &J) {
