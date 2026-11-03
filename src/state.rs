@@ -723,6 +723,7 @@ struct Facts {
     target: String,
     default_branch: String,
     sync_ahead: Value,
+    empty_diff: Value,
     behind: Value,
     up_to_date: Value,
     old_base: String,
@@ -986,7 +987,7 @@ fn assemble(s: &Facts) -> Value {
         "pr": pr_out,
         "parent": {"name": s.parent, "source": s.parent_source, "merged": s.parent_merged, "local": s.parent_local,
                    "on_remote": s.parent_remote, "unpushed": s.parent_unpushed, "pr": parent_pr},
-        "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "behind": s.behind,
+        "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "empty_diff": s.empty_diff, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
                  "undone": s.undone, "replays_parent": s.replays_parent,
                  "foreign_authors": s.restack_authors.0, "foreign_commits": s.restack_authors.1},
@@ -1115,6 +1116,19 @@ fn replays_parent(dir: &str, head: &str, old_base: &str, parent_merged: &Value, 
     let Some(list) = git_out(dir, &["rev-list", "--topo-order", &format!("{old_base}..{head}")]) else { return Value::Null };
     let commits = parent_commits(parent_pr);
     json!(list.lines().filter(|c| commits.contains(*c)).collect::<Vec<_>>())
+}
+
+/// O3: <head>'s tree is <base>'s, whatever its commit count: an empty
+/// starting commit, which GitHub needs to open a PR, adds nothing (#301).
+/// Null with no base.
+fn empty_diff(dir: &str, head: &str, base: &str) -> Value {
+    if base.is_empty() {
+        return Value::Null;
+    }
+    match git_out(dir, &["rev-parse", &format!("{head}^{{tree}}"), &format!("{base}^{{tree}}")]) {
+        Some(trees) => json!(trees.lines().next() == trees.lines().nth(1)),
+        None => Value::Null,
+    }
 }
 
 /// O4: <branch>'s worktree has uncommitted changes (#143, #178); null when
@@ -1636,7 +1650,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         parent_unpushed,
         target,
         default_branch,
-        sync_ahead,
+        sync_ahead, empty_diff: empty_diff(dir, &head, &old_base),
         behind,
         up_to_date,
         old_base,

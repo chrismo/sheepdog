@@ -325,6 +325,7 @@ pub mod rvw {
     pub const FINDINGS: &str = "review findings stand at HEAD";
     pub const VERIFY_RED: &str = "verify is red at HEAD";
     pub const ANSWER: &str = "an answer to the agent's question goes on first";
+    pub const EMPTY: &str = "the branch adds nothing to its target";
     // a followed PR (#250)
     pub const NOT_OPEN: &str = "the PR isn't open";
     pub const YOURS: &str = "commits here the PR doesn't have";
@@ -362,12 +363,12 @@ pub fn findings_clear(d: &Derived) -> &'static str {
 
 pub fn review_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
-        reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending,
+        reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending, ahead_target,
         rv_yours, rv_fetch, rv_current, rv_submitted, rv_local,
         own_base: _, running: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _, lagging: _,
         locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _,
-        held: _, unpushed: _, to_push: _, ci_held: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
+        held: _, unpushed: _, to_push: _, ci_held: _, parent_unpushed: _, empty: _, chase: _, undone: _,
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
         merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
@@ -392,6 +393,7 @@ pub fn review_rules(d: &Derived) -> Vec<Rule> {
         rule(rvw::FINDINGS, Level::Soft, mine && *fixing, findings_clear(d)),
         rule(rvw::VERIFY_RED, Level::Soft, mine && *verify_red, "fix it, then sd act verify"),
         rule(rvw::ANSWER, Level::Soft, mine && *answer_pending, "its step runs, as sd state's NEXT says"),
+        rule(rvw::EMPTY, Level::Soft, mine && no(*ahead_target), "sd act implement, or commit to it"),
         rule(stale, Level::Soft, theirs && !rv_current, catch_up),
         rule(rvw::SUBMITTED, Level::Soft, theirs && *rv_submitted, "the author pushes"),
         rule(rvw::HAD, Level::Soft, theirs && *rv_local, "the author pushes, or sd act review --force"),
@@ -732,6 +734,13 @@ mod tests {
         assert_eq!(review(&Derived { any_cover: true, ..unreviewed() }), soft(&[rvw::COVERED]));
         assert_eq!(review(&Derived { fixing: true, verify_red: true, ..unreviewed() }), soft(&[rvw::FINDINGS, rvw::VERIFY_RED]));
         assert_eq!(review(&Derived { answer_pending: true, ..unreviewed() }), soft(&[rvw::ANSWER]));
+    }
+
+    #[test]
+    fn review_refuses_a_branch_that_adds_nothing_to_its_target_unless_forced_301() {
+        assert_eq!(review(&Derived { ahead_target: Some(false), ..unreviewed() }), soft(&[rvw::EMPTY]));
+        assert_eq!(review(&Derived { ahead_target: Some(true), ..unreviewed() }), Gate::Go);
+        assert_eq!(review(&Derived { ahead_target: Some(false), ..followed() }), Gate::Go);
     }
 
     #[test]

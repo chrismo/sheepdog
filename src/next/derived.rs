@@ -126,11 +126,13 @@ derived! {
     push_dirty: Option<bool>,
     /// The parent isn't on the remote yet.
     parent_unpushed: bool,
-    /// No PR, nothing ahead of the base and nothing behind the remote.
+    /// No PR, or an open one with nothing unpushed; nothing ahead of the base
+    /// and nothing behind the remote.
     empty: bool,
 
     // Sync with the parent (O2, O3).
-    /// Commits ahead of the target (sync.ahead > 0); None when sync.ahead is null.
+    /// The branch adds something to the target: commits ahead (sync.ahead > 0),
+    /// not all empty (sync.empty_diff, #301); None when sync.ahead is null.
     ahead_target: Option<bool>,
     /// The target isn't the default branch, or the parent merged: restack after it.
     chase: bool,
@@ -386,8 +388,10 @@ impl Derived {
         self.ci_held = !j.nul("push.held");
         self.parent_unpushed = j.on("parent.unpushed");
         self.undone = j.n("sync.undone") > 0.0;
-        self.ahead_target = j.g("sync.ahead").as_f64().map(|n| n > 0.0);
-        self.empty = self.pr_null && no(self.ahead_target) && j.n("push.behind") == 0.0;
+        self.ahead_target = j.g("sync.ahead").as_f64().map(|n| n > 0.0 && !yes(j.flag("sync.empty_diff")));
+        // an open PR's unpushed commits go to it even when they net to nothing
+        let pushed = self.pr_null || j.n("push.ahead") == 0.0;
+        self.empty = self.open && pushed && no(self.ahead_target) && j.n("push.behind") == 0.0;
     }
 
     fn sync(&mut self, j: &J) {
@@ -484,7 +488,7 @@ impl Derived {
             && (ci.runs()
                 || self.bot_blocking > 0.0
                 || self.fix_due
-                || (self.need_review && !self.fixing)
+                || (self.need_review && !self.fixing && !no(self.ahead_target))
                 || self.restack_due
                 || (self.pr_null && !self.empty && !self.dropping));
         // while it stands, what would move HEAD waits: that drops the question

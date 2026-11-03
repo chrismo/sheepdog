@@ -1212,6 +1212,36 @@ fn nothing_ahead_of_the_base_with_a_task_implement_not_push_or_ship_143() {
     assert_eq!(keys(&e![FRESH, r#".task = "add c""#, r#".spend = {"usd": 30, "budget": 25}"#]), "budget");
 }
 
+// An empty starting commit (GitHub opens no PR without a commit) is ahead by
+// count, but adds nothing: implement, not push and ship, or review (#301).
+#[test]
+fn an_empty_diff_with_a_task_implements_whatever_its_commit_count_pr_or_not_301() {
+    let task = r#".task = "add c""#;
+    let empty = ".sync.empty_diff = true";
+    let unpushed = e![FRESH, ".sync.ahead = 1", ".push.ahead = 1"];
+    assert_eq!(keys(&e![&unpushed, task, empty]), "implement");
+    assert_eq!(keys(&e![&unpushed, task]), "push open-pr");
+    assert_eq!(keys(&e![&unpushed, task, ".sync.empty_diff = false"]), "push open-pr");
+    assert_eq!(keys(&e![&unpushed, empty]), "nothing");
+    // pushed, with the PR it let GitHub open
+    assert_eq!(keys(&e![UNREVIEWED, task, empty]), "implement");
+    assert_eq!(keys(&e![UNREVIEWED, task]), "review");
+    assert_eq!(keys(&e![UNREVIEWED, empty]), "nothing");
+    assert_eq!(keys(&e![UNREVIEWED, task, empty, ".push.dirty = true"]), "nothing-dirty");
+    // a PR with no commits left at all is the same
+    assert_eq!(keys(&e![UNREVIEWED, task, ".sync.ahead = 0"]), "implement");
+    // an open PR with commits not pushed yet (a local revert of what's on
+    // the PR): they go to the PR first, not implement; review, which they'd
+    // leave nothing for, isn't offered
+    let reverted = e![UNREVIEWED, ".sync.ahead = 2", ".push.ahead = 1"];
+    assert_eq!(keys(&e![&reverted, task]), "push review");
+    assert_eq!(keys(&e![&reverted, task, empty]), "push");
+    assert_eq!(keys(&e![&reverted, empty]), "push");
+    // merged or closed, nothing to implement
+    assert_eq!(keys(&e![task, empty, r#".pr.state = "MERGED""#]), "merged");
+    assert_eq!(keys(&e![task, empty, r#".pr.state = "CLOSED""#]), "closed");
+}
+
 // @test "nothing ahead of the base, no task: chrismo commits or records one (#143)"
 #[test]
 fn nothing_ahead_of_the_base_no_task_chrismo_commits_or_records_one_143() {

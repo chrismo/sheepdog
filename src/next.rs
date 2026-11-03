@@ -30,6 +30,8 @@
 // start a branch (#159). A branch with nothing ahead of its base and no PR
 // has nothing to push or ship: its task is implemented, or with no task it's
 // chrismo's (#143). So are uncommitted changes there, which implement refuses.
+// Nothing ahead is by diff, not commit count (sync.empty_diff, #301): an
+// empty starting commit adds nothing, PR or not, and review refuses it.
 // Implement and review-fix are offered only when gates::implement says Go
 // (#348): with errors, pr may be wrong, so nothing spends on implementing;
 // past settings.reviewRounds the findings are chrismo's. Review, the

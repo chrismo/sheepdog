@@ -84,7 +84,8 @@ fn bot(s: &Value) -> (&'static str, String) {
 fn base(s: &Value, stage: &str) -> (&'static str, String) {
     let pr = !at(s, "pr").is_null();
     match stage {
-        "build" if n(s, "sync.ahead") > 0.0 => ("done", count(n(s, "sync.ahead"), "commit")),
+        // as NEXT's ahead_target: commits that add nothing aren't built (#301)
+        "build" if n(s, "sync.ahead") > 0.0 && !on(s, "sync.empty_diff") =>("done", count(n(s, "sync.ahead"), "commit")),
         "push" if !pr => ("todo", "no PR".into()),
         "push" if n(s, "push.ahead") > 0.0 => ("todo", format!("{} unpushed", n(s, "push.ahead"))),
         "push" if on(s, "sync.conflict") => ("red", "conflict".into()),
@@ -296,6 +297,12 @@ mod tests {
         assert_eq!(one(s, "ci"), "todo:old head");
         let s = with(with(open(), "ci.verdict", json!("none")), "ci.for_head", json!(false));
         assert_eq!(one(s, "ci"), "skip:no checks");
+    }
+
+    #[test]
+    fn build_is_todo_when_the_commits_add_nothing_301() {
+        assert_eq!(one(with(open(), "sync.empty_diff", json!(true)), "build"), "todo:");
+        assert_eq!(one(with(open(), "sync.empty_diff", json!(false)), "build"), "done:1 commit");
     }
 
     #[test]
