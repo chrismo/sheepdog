@@ -186,6 +186,34 @@ fn the_prompt_carries_the_decisions_on_record_after_the_task_343() {
     assert!(grep(&prompt, "Don't raise again"));
 }
 
+// Each commit's full message reaches the reviewer, its body under its
+// subject, its trailers dropped (#280), and the prompt treats a choice a
+// commit message explains as decided, whatever the guidance.
+#[test]
+fn the_prompt_carries_each_commits_full_message_280() {
+    let mut sd = sd();
+    sd.write("file.txt", "one\ntwo\nthree added\nfour\n");
+    sd.git(&[
+        "commit",
+        "-qam",
+        "add four",
+        "-m",
+        "Four, not five: the task stops at four.",
+        "-m",
+        "Co-Authored-By: Someone <someone@example.com>",
+    ]);
+    let head = sd.head();
+    sd.set_env("SHEEPDOG_HEAD", &head);
+    sd.ok(&[]);
+    let prompt = sd.fx_read("claude.prompt");
+    let commits = &prompt[prompt.find("Commits (").unwrap()..prompt.find("\nDiff:").unwrap()];
+    assert!(has_line(commits, &format!("- {} add four", &head[..7])), "{commits}");
+    assert!(has_line(commits, "    Four, not five: the task stops at four."), "{commits}");
+    assert!(grep(commits, "^- [0-9a-f]{7} add three$"), "{commits}");
+    assert!(!grep(commits, "Co-Authored-By"), "{commits}");
+    assert!(grep(&prompt, "a commit message explains"), "{prompt}");
+}
+
 // @test "a fresh session each run, read-only tools, a schema"
 #[test]
 fn a_fresh_session_each_run_read_only_tools_a_schema() {
@@ -264,6 +292,7 @@ fn settings_reviewprompt_a_custom_file_replaces_the_guidance_the_reporting_rules
     assert!(grep(&prompt, r"Look only for off-by-one errors\."));
     assert!(!grep(&prompt, "Find what a careful reviewer would flag"));
     assert!(grep(&prompt, "No findings is a valid"));
+    assert!(grep(&prompt, "a commit message explains"), "{prompt}");
     assert!(grep(&prompt, r"^\+three added"));
 }
 

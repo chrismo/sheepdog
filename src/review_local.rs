@@ -8,8 +8,9 @@
 // own review; empty means .sheepdog/review.md in the base commit, else
 // lib/prompts/review.md), then the fixed reporting rules (lib/review-rules.md),
 // the task, the decisions on record (SHEEPDOG_DECISIONS, #343), the commits
-// and the diff. Why a local review before the bot: #79
-// (Design record).
+// (each one's full message, trailers dropped, under a rule that a choice one
+// explains is decided, #280) and the diff. Why a local
+// review before the bot: #79 (Design record).
 
 use crate::git::{self, git, strip_nl};
 use crate::guidance::{self, step_guidance};
@@ -53,6 +54,39 @@ fn git_or_die(args: &[&str], what: &str) -> String {
     strip_nl(o.stdout)
 }
 
+/// The commits <base>..<head>, newest first, each with its full message (#280).
+fn commit_list(base: &str, head: &str) -> String {
+    let range = format!("{base}..{head}");
+    let log = git_or_die(&["log", "--format=%h%x1f%B%x1e", &range], &format!("git log {range}"));
+    let commits: Vec<String> = log.split('\x1e').filter_map(|c| c.trim_start().split_once('\x1f')).map(|(sha, msg)| listed(sha, msg)).collect();
+    commits.join("\n")
+}
+
+/// One commit as the prompt lists it: "- <sha> <subject>", then its body
+/// indented, without its trailers.
+fn listed(sha: &str, message: &str) -> String {
+    let message = message.trim();
+    let (subject, body) = message.split_once("\n\n").unwrap_or((message, ""));
+    let mut out = format!("- {sha} {subject}");
+    for l in without_trailers(body).lines() {
+        out += &if l.is_empty() { "\n".to_string() } else { format!("\n    {l}") };
+    }
+    out
+}
+
+/// <body> without its last paragraph when that is all trailers: a key whose
+/// value is `Name <email>` or a URL (Co-Authored-By:, Claude-Session:), so a
+/// paragraph of prose like "Why: ..." stays.
+fn without_trailers(body: &str) -> &str {
+    let (rest, last) = body.rsplit_once("\n\n").unwrap_or(("", body));
+    let trailer = Regex::new(r"^[A-Za-z0-9-]+: (.*<[^<>\s]+@[^<>\s]+>|https?://\S+)\s*$").expect("a fixed pattern compiles");
+    if last.lines().all(|l| trailer.is_match(l)) {
+        rest
+    } else {
+        body
+    }
+}
+
 pub fn run(argv: &[String]) -> ExitCode {
     if matches!(argv.first().map(String::as_str), Some("-h" | "--help")) {
         print!("{HELP}");
@@ -79,7 +113,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     }
 
     let diff = git_or_die(&["diff", &base, &head], &format!("git diff {base} {head}"));
-    let commits = git_or_die(&["log", "--format=- %s", &format!("{base}..{head}")], &format!("git log {base}..{head}"));
+    let commits = commit_list(&base, &head);
     let short = |s: &str| s.chars().take(7).collect::<String>();
     let range = format!("{}..{}", short(&base), short(&head));
     let lib = guidance::lib_dir();
@@ -93,7 +127,11 @@ pub fn run(argv: &[String]) -> ExitCode {
         &env("SHEEPDOG_DECISIONS"),
         "Don't raise again a finding one of these settles, unless the change since that commit reopens it; then say which decision and what changed.",
     );
-    prompt += &format!("\n\n{}\n\nTask: {task}{decided}\n\nCommits ({range}):\n{commits}\n\nDiff:\n{diff}", strip_nl(rules));
+    let commits_rule = "Each carries its full message, where authors record why. A choice a commit message explains is decided: flag it only if the stated reasoning is wrong, and say why.";
+    prompt += &format!(
+        "\n\n{}\n\nTask: {task}{decided}\n\nCommits ({range}): {commits_rule}\n{commits}\n\nDiff:\n{diff}",
+        strip_nl(rules)
+    );
 
     let sid = harness::new_session();
     let what = if branch.is_empty() { range.clone() } else { format!("{branch} ({range})") };
@@ -121,4 +159,40 @@ pub fn run(argv: &[String]) -> ExitCode {
     };
     println!("{}", json::to_string(findings));
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::listed;
+
+    #[test]
+    fn a_subject_only_commit_is_one_line() {
+        assert_eq!(listed("abc1234", "fix the thing\n"), "- abc1234 fix the thing");
+    }
+
+    #[test]
+    fn a_commit_body_is_indented_under_its_subject() {
+        let msg = "fix the thing\n\nWhy: it broke.\nSecond line.\n\nAnother paragraph.\n";
+        assert_eq!(
+            listed("abc1234", msg),
+            "- abc1234 fix the thing\n    Why: it broke.\n    Second line.\n\n    Another paragraph."
+        );
+    }
+
+    #[test]
+    fn trailers_are_dropped() {
+        let msg = "fix the thing\n\nBecause.\n\nCo-Authored-By: A <a@b.c>\nSigned-off-by: B <b@c.d>\n";
+        assert_eq!(listed("abc1234", msg), "- abc1234 fix the thing\n    Because.");
+        assert_eq!(listed("abc1234", "fix the thing\n\nCo-Authored-By: A <a@b.c>\n"), "- abc1234 fix the thing");
+        assert_eq!(listed("abc1234", "fix the thing\n\nClaude-Session: https://x.y/z\n"), "- abc1234 fix the thing");
+    }
+
+    #[test]
+    fn a_labelled_paragraph_is_not_a_trailer() {
+        let msg = "fix the thing\n\nWhy: the parser choked on X.\nNote: keeps the old order.\n";
+        assert_eq!(
+            listed("abc1234", msg),
+            "- abc1234 fix the thing\n    Why: the parser choked on X.\n    Note: keeps the old order."
+        );
+    }
 }
