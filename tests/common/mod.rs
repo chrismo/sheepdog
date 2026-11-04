@@ -238,6 +238,17 @@ impl Sd {
         fs::set_permissions(f, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// <to> := the binary under test, hard-linked, or copied where a link
+    /// can't be made (another filesystem): not a symlink, which current_exe
+    /// would resolve. The copy writes an executable, so it holds SPAWN as
+    /// `script` does.
+    pub fn place_bin(&self, to: &Path) {
+        let _g = SPAWN.write().unwrap();
+        if fs::hard_link(env!("CARGO_BIN_EXE_sd"), to).is_err() {
+            fs::copy(env!("CARGO_BIN_EXE_sd"), to).unwrap();
+        }
+    }
+
     pub fn command(&self, program: &Path) -> Command {
         let mut c = Command::new(program);
         let path = std::env::var("PATH").unwrap_or_default();

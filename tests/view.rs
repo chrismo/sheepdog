@@ -1290,12 +1290,46 @@ fn a_cache_file_written_in_the_future_doesn_t_hold_refreshes() {
     assert_eq!((&f["held"], &f["refreshing"]), (&Value::Null, &json!(true)), "{f}");
 }
 
-// The Map's stages and trend (#378, slice 2).
+// The Map's stages and trend (#378, slice 2), read from a fixture checkout
+// (#424): the Map reads the checkout the binary sits in (map::root), so the
+// test runs the binary from <checkout>/target/debug/, the same on
+// CI (whose checkout has no .git) and locally.
+
+/// <tmp>/checkout: a repo whose first-parent history has a commit before the
+/// split, one on 2026-10-13 and two on 2026-10-14, and the binary under
+/// test at target/debug/sd-view (`Sd::place_bin`). Its HEAD.
+fn map_checkout(sd: &mut Sd) -> String {
+    let dir = sd.tmp.join("checkout");
+    fs::create_dir_all(dir.join("target/debug")).unwrap();
+    sd.git(&["init", "-q", &dir.display().to_string()]);
+    fs::write(dir.join(".gitignore"), "target/\n").unwrap();
+    let day = |d: &str, files: &[(&str, &str)]| {
+        for (p, text) in files {
+            let f = dir.join(p);
+            fs::create_dir_all(f.parent().unwrap()).unwrap();
+            fs::write(f, text).unwrap();
+        }
+        sd.git_in("checkout", &["add", "-A"]);
+        let when = format!("{d}T12:00:00Z");
+        let d_ = dir.display().to_string();
+        sd.git_with(&[("GIT_COMMITTER_DATE", &when), ("GIT_AUTHOR_DATE", &when)], None, &["-C", &d_, "commit", "-qm", d]);
+    };
+    let ratchet = "src/act/push.rs  run  too_many_lines  140\n";
+    day("2026-10-12", &[("src/state.rs", "s\n")]);
+    day("2026-10-13", &[("src/state.rs", &"s\n".repeat(10)), ("tests/t.rs", &"t\n".repeat(4))]);
+    day("2026-10-14", &[("src/act/push.rs", &"p\n".repeat(3)), ("tests/lint-ratchet.txt", ratchet)]);
+    day("2026-10-14", &[("src/act/implement.rs", "i\n"), ("src/view/map.rs", "m\n")]);
+    let bin = dir.join("target/debug/sd-view");
+    sd.place_bin(&bin);
+    sd.bin = bin;
+    sd.git_in("checkout", &["rev-parse", "HEAD"])
+}
 
 #[test]
 fn api_map_groups_files_by_stage_and_carries_a_trend() {
-    let sd = sd();
+    let mut sd = sd();
     sd.fake("gh", "#!/usr/bin/env bash\necho '[]'\n");
+    let head = map_checkout(&mut sd);
     let s = serve(&sd);
     let mut m = map(&s);
     let end = Instant::now() + Duration::from_secs(20);
@@ -1304,34 +1338,19 @@ fn api_map_groups_files_by_stage_and_carries_a_trend() {
         std::thread::sleep(Duration::from_millis(50));
         m = map(&s);
     }
-    let names: Vec<&str> = m["groups"].as_array().unwrap().iter().map(|g| g["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["watch loop", "observe", "decide", "act", "agent steps", "records", "settings", "pages", "plumbing"]);
-    let group = |p: &str| m["groups"].as_array().unwrap().iter().find(|g| g["files"].as_array().unwrap().iter().any(|f| f["path"] == p)).unwrap()["name"].clone();
-    assert_eq!([group("src/state.rs"), group("src/act/push.rs"), group("src/act/implement.rs"), group("src/view/map.rs")], ["observe", "act", "agent steps", "pages"]);
+    assert_eq!(m["root"], sd.path("checkout"));
+    let groups: Vec<(&str, Vec<&str>)> = m["groups"].as_array().unwrap().iter()
+        .map(|g| (g["name"].as_str().unwrap(), g["files"].as_array().unwrap().iter().map(|f| f["path"].as_str().unwrap()).collect()))
+        .collect();
+    assert_eq!(groups, [("observe", vec!["src/state.rs"]), ("act", vec!["src/act/push.rs"]), ("agent steps", vec!["src/act/implement.rs"]), ("pages", vec!["src/view/map.rs"])]);
     let t = &m["trend"];
-    let root = env!("CARGO_MANIFEST_DIR");
-    // CI's checkout has no .git: the trend then says so and has no points
-    // (the unit tests in src/view/map.rs cover the trend on a built repo).
-    if !std::path::Path::new(root).join(".git").exists() {
-        assert_eq!(t["points"], serde_json::json!([]), "{t}");
-        assert!(t["error"].as_str().unwrap().contains("not a git repository"), "{t}");
-        return;
-    }
     assert_eq!((&t["error"], t["fetched"].is_string()), (&Value::Null, true), "{t}");
-    let points = t["points"].as_array().unwrap();
-    assert!(points.len() >= 2, "{t}");
-    let head = String::from_utf8(std::process::Command::new("git").args(["-C", root, "rev-parse", "HEAD"]).output().unwrap().stdout).unwrap();
-    assert_eq!(points.last().unwrap()["sha"], head.trim());
-    let dates: Vec<&str> = points.iter().map(|p| p["date"].as_str().unwrap()).collect();
-    let mut sorted = dates.clone();
-    sorted.sort_unstable();
-    sorted.dedup();
-    assert_eq!(dates, sorted, "one point a day, oldest first");
-    assert!(dates[0] >= "2026-10-13");
-    for p in points {
-        assert!(p["src"].is_u64() && p["tests"].is_u64() && p["ratchet"].is_u64(), "{p}");
-    }
-    assert!(points.last().unwrap()["src"].as_u64().unwrap() > 1000);
+    let points: Vec<_> = t["points"].as_array().unwrap().iter()
+        .map(|p| (p["date"].as_str().unwrap(), p["src"].as_u64().unwrap(), p["tests"].as_u64().unwrap(), p["ratchet"].as_u64().unwrap()))
+        .collect();
+    // The day before the split isn't sampled; a day is its newest commit.
+    assert_eq!(points, [("2026-10-13", 10, 4, 0), ("2026-10-14", 15, 5, 1)], "{t}");
+    assert_eq!(t["points"][1]["sha"], head);
     let cached = fs::read_dir(sd.tmp.join("state/github")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("trend-"));
     assert!(cached, "the trend is cached under <state>/github/");
 }
