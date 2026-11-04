@@ -73,7 +73,12 @@ fn sd() -> Sd {
 
 /// The watcher's cache file for <branch> of the repo at /src/<repo>: {"state": <state>}.
 fn cache(sd: &Sd, repo: &str, branch: &str, state: Value) {
-    let dir = sheepdog::watch::repo_key(&format!("/src/{repo}"));
+    cache_at(sd, &format!("/src/{repo}"), branch, state);
+}
+
+/// The watcher's cache file for <branch> of the repo at <path>.
+fn cache_at(sd: &Sd, path: &str, branch: &str, state: Value) {
+    let dir = sheepdog::watch::repo_key(path);
     let f = sd.tmp.join(format!("state/branches/{dir}/{branch}.json"));
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, json!({ "glyph": "🤖", "state": state }).to_string()).unwrap();
@@ -148,15 +153,33 @@ fn a_part_of_a_branch_name_or_its_pr_number_opens_its_drill_in() {
     }
 }
 
-#[test]
-fn dot_opens_the_current_worktree_s_branch() {
-    let mut sd = sd();
-    let key = two_atlas_branches(&sd);
+/// A repo at <tmp>/wt on 377-atlas-world, the cwd; its cache key.
+fn on_atlas_world(sd: &mut Sd) -> String {
     sd.git(&["init", "-q", &sd.path("wt")]);
     sd.git_in("wt", &["checkout", "-q", "-b", "377-atlas-world"]);
     sd.cd("wt");
+    let wt = fs::canonicalize(sd.path("wt")).unwrap();
+    sheepdog::watch::repo_key(&wt.to_string_lossy())
+}
+
+#[test]
+fn dot_opens_the_current_worktree_s_branch_in_its_own_repo() {
+    let mut sd = sd();
+    two_atlas_branches(&sd);
+    let key = on_atlas_world(&mut sd);
+    cache_at(&sd, &fs::canonicalize(sd.path("wt")).unwrap().to_string_lossy(), "377-atlas-world", pr_state("377-atlas-world", 1));
     let s = serve_args(&sd, &["."], Stdio::null());
     assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/377-atlas-world", s.port));
+}
+
+#[test]
+fn dot_matches_no_branch_of_another_repo() {
+    let mut sd = sd();
+    two_atlas_branches(&sd);
+    on_atlas_world(&mut sd);
+    let r = sd.run(&["--no-open", "--port", "0", "."]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["377-atlas-world", "matches no branch"]);
 }
 
 #[test]

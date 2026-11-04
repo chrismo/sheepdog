@@ -111,19 +111,21 @@ pub fn run(argv: &[String]) -> ExitCode {
 }
 
 /// The cached branch <target> names (. is the current worktree's), or die
-/// saying why it isn't one. . matches its branch's name exactly: a part of
-/// it would open some other branch when its own isn't cached.
+/// saying why it isn't one. . matches its branch's name exactly, in its own
+/// repo only: anything wider would open some other branch when its own
+/// isn't cached.
 fn branch_id(state: &Path, target: &str) -> String {
-    let (name, parts) = if target == "." {
-        let head = crate::git::git(".", &["symbolic-ref", "--short", "HEAD"]);
-        if !head.ok {
-            die(format!(". names no branch: {}", head.stderr.trim()));
-        }
-        (head.stdout.trim().to_string(), false)
-    } else {
-        (target.to_string(), true)
-    };
-    pick::pick(&flock::cached(state), &name, parts).unwrap_or_else(|e| die(e))
+    let cached = flock::cached(state);
+    if target != "." {
+        return pick::pick(&cached, target, true).unwrap_or_else(|e| die(e));
+    }
+    let head = crate::git::git(".", &["symbolic-ref", "--short", "HEAD"]);
+    if !head.ok {
+        die(format!(". names no branch: {}", head.stderr.trim()));
+    }
+    let repo = format!("{}/", crate::watch::repo_key(&crate::git::main_worktree(".")));
+    let ours: Vec<_> = cached.into_iter().filter(|c| c.id.starts_with(&repo)).collect();
+    pick::pick(&ours, head.stdout.trim(), false).unwrap_or_else(|e| die(e))
 }
 
 fn browse(url: &str) {
