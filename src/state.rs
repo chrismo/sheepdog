@@ -1934,10 +1934,31 @@ fn long_lines(s: &Value) -> String {
             t(s, "verify.cmd")
         ));
     }
-    out.push_str(&flag_lines(s));
+    out.push_str(&long_flag_lines(s));
     if !at(s, "flags_error").is_null() {
         out.push_str(&format!("  ⚑  check failed: {}\n", t(s, "flags_error")));
     }
+    out
+}
+
+/// The flag kinds --long counts instead of listing (#436).
+const COUNTED_IN_LONG: [&str; 2] = ["test-edit", "suppression"];
+
+fn long_flag_lines(s: &Value) -> String {
+    let (counted, listed): (Vec<Value>, Vec<Value>) =
+        arr(at(s, "flags")).iter().cloned().partition(|f| COUNTED_IN_LONG.contains(&t(f, "kind").as_str()));
+    let mut out = flag_lines(&json!({"flags": listed}));
+    if counted.is_empty() {
+        return out;
+    }
+    let counts: Vec<String> = COUNTED_IN_LONG
+        .iter()
+        .map(|k| (k, counted.iter().filter(|f| t(f, "kind") == *k).count()))
+        .filter(|(_, n)| *n > 0)
+        .map(|(k, n)| format!("{n} {k}"))
+        .collect();
+    let items = if counted.len() == 1 { "item" } else { "items" };
+    out.push_str(&format!("  ⚑  {} {items} not shown: sd state --json\n", counts.join(" and ")));
     out
 }
 
@@ -2066,6 +2087,17 @@ mod tests {
             "  ⚑  suppression  a.sh:2  # shellcheck disable=SC2086  0123456,fedcba9\n  ⚑  test-edit  a.bats:7 (-3)  [ x ]  \n"
         );
         assert_eq!(flag_lines(&json!({"flags_error": "boom"})), "");
+    }
+
+    #[test]
+    fn long_flag_lines_counts_test_edits_and_suppressions_naming_only_the_kinds_there_are_436() {
+        let f = |kind: &str| json!({"kind": kind, "file": "a", "line": 1, "n": 1, "text": "x", "commits": []});
+        assert_eq!(long_flag_lines(&json!({"flags": [f("suppression")]})), "  ⚑  1 suppression item not shown: sd state --json\n");
+        assert_eq!(
+            long_flag_lines(&json!({"flags": [f("test-edit"), f("skip"), f("test-edit")]})),
+            "  ⚑  skip  a:1  x  \n  ⚑  2 test-edit items not shown: sd state --json\n"
+        );
+        assert_eq!(long_flag_lines(&json!({"flags": null})), "");
     }
 
     #[test]

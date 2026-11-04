@@ -4266,17 +4266,37 @@ fn flags_no_base_no_check_flags_is_null() {
 fn flags_counted_on_the_one_liner_one_line_each_in_long() {
     let sd = sd();
     sd.git(&["switch", "-qc", "feat"]);
-    sd.commit("a.sh", "# shellcheck disable=SC2086\necho $x");
+    sd.commit("x.bats", "@test \"a\" {\n  skip \"later\"\n}");
     let added = sd.git(&["rev-parse", "--short=7", "HEAD"]);
     let r = sd.run(&[]);
     assert_eq!(r.status, 0);
     assert_has(r.lines()[0], &[" · ⚑ 1 flagged"]);
     let r = sd.run(&["--long"]);
     assert_eq!(r.status, 0);
-    assert_match(
-        r.lines().last().unwrap(),
-        &format!(r"^ +⚑ +suppression +a\.sh:1 +# shellcheck disable=SC2086 +{added}$"),
+    assert_match(r.lines().last().unwrap(), &format!(r#"^ +⚑ +skip +x\.bats:2 +skip "later" +{added}$"#));
+    assert!(!r.output.contains("not shown"), "{}", r.output);
+}
+
+// @test "flags: --long counts test-edits and suppressions on one line instead of listing them; --json keeps them (#436)"
+#[test]
+fn flags_long_counts_test_edits_and_suppressions_on_one_line_instead_of_listing_them_json_keeps_them_436() {
+    let sd = sd();
+    sd.commit("t.bats", "@test \"one\" {\n  [ 1 -eq 1 ]\n}\n@test \"two\" {\n  true\n}");
+    sd.git(&["push", "-q", "origin", "main"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("t.bats", "@test \"one\" {\n  [ 1 -eq 2 ]\n}\n@test \"two\" {\n  skip\n}");
+    sd.commit("a.sh", "# shellcheck disable=SC2086\necho $x\n# noqa");
+    let r = sd.state(&[]);
+    assert_eq!(
+        r.field(r#"[.flags[] | "\(.kind) \(.file):\(.line)"] | join(", ")"#),
+        "suppression a.sh:1, suppression a.sh:3, test-edit t.bats:2, test-edit t.bats:5, skip t.bats:5"
     );
+    let r = sd.run(&["--long"]);
+    assert_eq!(r.status, 0);
+    assert!(!r.output.contains("⚑  suppression") && !r.output.contains("⚑  test-edit"), "{}", r.output);
+    let lines = r.lines();
+    assert_match(lines[lines.len() - 2], r"^ +⚑ +skip +t\.bats:5 +skip +[0-9a-f]{7}$");
+    assert_eq!(lines[lines.len() - 1], "  ⚑  2 test-edit and 2 suppression items not shown: sd state --json");
 }
 
 // ── O8 session ───────────────────────────────────────────────────────────────
