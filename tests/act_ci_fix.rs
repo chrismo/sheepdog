@@ -72,7 +72,7 @@ const CHECKS: &str = r#"{"total_count":2,"check_runs":[
     {"name":"test","status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/555/job/777","app":{"slug":"github-actions"},"output":{"title":"1 test failed","summary":"FAIL: TestThree wants THREE","text":"text line 1\nTestThree: expected THREE, got three"}},
     {"name":"lint","status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/556/job/778","app":{"slug":"github-actions"},"output":{"title":null,"summary":null,"text":null}}]}"#;
 
-/// Default agent: uppercases three, which is what the logs ask for.
+/// Default agent: uppercases three, which is what the failing check asks for.
 const AGENT_FIXES: &str = "#!/usr/bin/env bash\nprintf \"one\\ntwo\\nTHREE\\n\" > file.txt\n";
 
 /// The fix, plus a CI config file.

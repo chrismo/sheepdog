@@ -210,10 +210,10 @@ Verbs:
             fix, verifies, pushes, asking sd act push's gate first.
             "flaky" (the agent blames CI's environment) commits nothing
             and is recorded against the red SHA, so the same red isn't
-            handed over again: rerun CI
-            instead. Refuses on an old head or with unpushed commits (push
-            first), on cancelled or blocked CI, and where a fix couldn't
-            be pushed: an undone restack, a parent not on the remote.
+            handed over again: rerun CI instead. Refuses on an old head
+            or with unpushed commits (push first), on cancelled or
+            blocked CI, and where a fix couldn't be pushed: an undone
+            restack, a parent not on the remote.
             --force runs it anyway (past a CI wait, a flaky isn't
             recorded) and pushes past push's own refusals, never an undone
             restack: forced past one, the agent's fix is committed here and
