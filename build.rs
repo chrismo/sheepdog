@@ -18,14 +18,30 @@ fn commit() -> String {
     }
 }
 
+/// A branch ref only in packed-refs has no file, and the commit that writes
+/// one leaves HEAD and packed-refs alone, so then the ref's nearest directory
+/// that exists, no higher than refs/, is watched instead.
+fn ref_watch(path: &str) -> Option<String> {
+    for a in Path::new(path).ancestors() {
+        if a.exists() {
+            return Some(a.to_string_lossy().into_owned());
+        }
+        if a.file_name().is_some_and(|n| n == "refs") {
+            return None;
+        }
+    }
+    None
+}
+
 /// --git-path finds HEAD and refs in a worktree too, where .git is a file.
-/// src is watched so an edit there redoes the dirty check.
+/// src is watched so an edit there redoes the dirty check. Cargo reruns on
+/// every build for a path that doesn't exist, so none is watched.
 fn watched() -> Vec<String> {
-    let mut names = vec!["HEAD".to_string(), "packed-refs".into()];
-    names.extend(git(&["symbolic-ref", "-q", "HEAD"]));
-    let mut out: Vec<String> = names.iter().filter_map(|n| git(&["rev-parse", "--git-path", n])).collect();
+    let path = |n: &str| git(&["rev-parse", "--git-path", n]);
+    let mut out: Vec<String> = ["HEAD", "packed-refs"].into_iter().filter_map(path).collect();
     out.push("src".into());
     out.retain(|p| Path::new(p).exists());
+    out.extend(git(&["symbolic-ref", "-q", "HEAD"]).and_then(|r| path(&r)).and_then(|p| ref_watch(&p)));
     out
 }
 
