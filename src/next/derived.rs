@@ -181,11 +181,9 @@ derived! {
 
     // CI (O5).
     /// CI's verdict on the SHA it read (ci.verdict); none when absent.
-    ci_verdict: String => |r: &mut arb::Rng| r.pick(&["red", "green", "none", "pending", "blocked", "inconclusive", "odd"]).to_string(),
+    ci_verdict: String => |r: &mut arb::Rng| r.pick(&["red", "green", "none", "pending", "blocked", "odd"]).to_string(),
     /// CI is blocked on HEAD: a check didn't start, or wants approval.
     ci_blocked: bool,
-    /// CI was cancelled.
-    ci_inconclusive: bool,
     /// CI is running.
     ci_pending: bool,
     /// CI's verdict is for HEAD (ci.for_head).
@@ -434,7 +432,6 @@ impl Derived {
         let at_head = yes(self.ci_for_head);
         self.ci_verdict = j.g("ci.verdict").as_str().unwrap_or("none").to_string();
         self.ci_blocked = j.is("ci.verdict", "blocked") && at_head;
-        self.ci_inconclusive = j.is("ci.verdict", "inconclusive");
         self.ci_pending = j.is("ci.verdict", "pending");
         let ci_ok = j.is("ci.verdict", "green") || j.is("ci.verdict", "none");
         // sd state reads the required checks of every draft: null is a failed read

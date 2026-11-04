@@ -469,7 +469,7 @@ impl Cx<'_> {
 const AUTHOR: &[fn(&Cx) -> Option<Value>] = &[
     merged, closed, errors, stale, gh_wait, attached, foreign, human, question, undone, ship_parent, conflict, ci_first,
     behind, retarget, dirty, ci_red, ci_blocked, bot, read, take, reset_dirty, nothing, verify_red, foreign_authors, ci_config,
-    push, bot_refused, open_pr, draft, review, bot_trigger, ci_rerun, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed,
+    push, bot_refused, open_pr, draft, review, bot_trigger, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed,
     review_wait, parent_wait, end,
 ];
 
@@ -670,7 +670,6 @@ fn read(cx: &Cx) -> Option<Value> {
         && !d.bot_due
         && !d.bot_waiting
         && !d.restack_due
-        && !d.ci_inconclusive
         && !(d.stacked && yes(d.parent_merged));
     if !(d.open && d.info && quiet) {
         return None;
@@ -846,13 +845,6 @@ fn bot_trigger(cx: &Cx) -> Option<Value> {
         return None;
     }
     step(def!("bot-trigger"), "run", format!("trigger the review bot ({})", cx.t("bot.command")), cmd("sd act trigger"))
-}
-
-fn ci_rerun(cx: &Cx) -> Option<Value> {
-    if !(cx.d.has_pr && cx.d.ci_inconclusive) {
-        return None;
-    }
-    step(def!("ci-rerun"), "run", "rerun cancelled CI", cmd("gh pr checks"))
 }
 
 fn bot_wait(cx: &Cx) -> Option<Value> {

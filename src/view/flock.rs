@@ -58,7 +58,6 @@ fn ci(s: &Value) -> (&'static str, String) {
         "green" => ("done", "green"),
         "red" => ("red", "red"),
         "pending" => ("todo", "running"),
-        "inconclusive" => ("todo", "cancelled"),
         v => return ("todo", v.into()),
     };
     (status, text.into())
@@ -249,7 +248,6 @@ mod tests {
             ("red", "red:red"),
             ("none", "skip:no checks"),
             ("pending", "todo:running"),
-            ("inconclusive", "todo:cancelled"),
             ("blocked", "todo:blocked"),
         ] {
             assert_eq!(one(with(open(), "ci.verdict", json!(v)), "ci"), want, "{v}");

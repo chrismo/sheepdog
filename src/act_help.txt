@@ -133,7 +133,7 @@ Verbs:
             exits 0, except on a restack that would conflict: that restack
             would drop the question. A ci-fix answer is stored the same way
             while CI may yet be red at HEAD (unpushed, not run on HEAD yet,
-            pending, blocked, cancelled); once it passed at HEAD, or no
+            pending, blocked); once it passed at HEAD, or no
             CI ran there, the question is moot, and answer refuses.
             Stored, it says whether sd watch runs it once a push or CI run
             clears the gate, or what is chrismo's to clear first. Spends
@@ -217,8 +217,8 @@ Verbs:
             "flaky" (the agent blames CI's environment) commits nothing
             and is recorded against the red SHA, so the same red isn't
             handed over again: rerun CI instead. Refuses on an old head
-            or with unpushed commits (push first), on cancelled or
-            blocked CI, and where a fix couldn't be pushed: an undone
+            or with unpushed commits (push first), on blocked CI, and
+            where a fix couldn't be pushed: an undone
             restack, a parent not on the remote.
             --force runs it anyway (past a CI wait, a flaky isn't
             recorded) and pushes past push's own refusals, never an undone

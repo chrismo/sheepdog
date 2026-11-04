@@ -54,7 +54,7 @@ pub fn describe_rules(d: &Derived) -> Vec<Rule> {
         undone: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
         parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
-        ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
+        ci_verdict: _, ci_blocked: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
         reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _,
         dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
@@ -79,7 +79,7 @@ pub fn push_rules(d: &Derived) -> Vec<Rule> {
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
         to_push: _, ci_held: _, push_dirty: _, empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
+        ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, fixing: _,
         findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _, over_budget: _,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _,
@@ -143,7 +143,7 @@ pub fn address_rules(d: &Derived) -> Vec<Rule> {
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
-        ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
+        ci_verdict: _, ci_blocked: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _,
         need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
         budget_unread, over_budget, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _,
         resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
@@ -214,7 +214,7 @@ pub fn implement_rules(d: &Derived) -> Vec<Rule> {
         verify_red: _, foreign: _, foreign_authors: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
         push_dirty: _, parent_unpushed: _, empty: _, chase: _, undone: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
-        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _,
+        restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _,
         ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _, bot_due: _, bot_late: _,
         bot_waiting: _, budget_unread, over_budget, failed_out: _, stored: _, addr_moot: _, ci_moot: _,
         resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
@@ -253,7 +253,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
         empty: _, chase: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _,
         gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
-        parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, draft_ready: _,
+        parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_blocked: _, ci_pending: _, draft_ready: _,
         any_cover: _, reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _,
         bot_late: _, bot_waiting: _, budget_unread, over_budget, failed_out: _, asking: _, stored: _,
         addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
@@ -262,7 +262,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
     } = d;
     let pushes = crate::next::push_step(d);
     let (v, at_head, settled) = (ci_verdict.as_str(), yes(*ci_for_head), !*to_push);
-    let known = matches!(v, "red" | "green" | "none" | "pending" | "blocked" | "inconclusive");
+    let known = matches!(v, "red" | "green" | "none" | "pending" | "blocked");
     let rule = |name, level, refuses: bool, clears, yours| Rule { name, level, refuses, clears, yours };
     let wait = |name, refuses: bool, clears, yours| rule(name, Level::Soft, refuses, clears, yours);
     // to_push without unpushed is a drop: the remote's commits reset away here
@@ -274,12 +274,10 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         rule("no CI ran at HEAD", Level::Done, v == "none" && !no(*ci_for_head) && settled, "", true),
         wait("CI is pending", v == "pending", "wait for it", false),
         wait("CI is blocked", v == "blocked" && at_head, "start or approve its checks: gh pr checks", true),
-        wait("CI was cancelled", v == "inconclusive" && at_head, "rerun it, or look: gh pr checks", true),
         wait("CI's verdict is unknown", !known, "sd state says why", true),
         wait("CI's red isn't for HEAD", v == "red" && !at_head, "push if there's anything to push, then wait for CI on HEAD", false),
         wait("CI is green, but not on HEAD", v == "green" && !at_head, "wait for CI on HEAD", false),
         wait("CI is blocked, but not on HEAD", v == "blocked" && !at_head, "wait for CI on HEAD", false),
-        wait("CI was cancelled, but not on HEAD", v == "inconclusive" && !at_head, "wait for CI on HEAD", false),
         wait("no CI has reported on HEAD yet", v == "none" && no(*ci_for_head), "wait for CI on HEAD", false),
         wait("there are unpushed commits, which may be the fix already", *unpushed && pushes, "sd act push, then wait for CI on HEAD", false),
         wait("there are unpushed commits, held with the agent's CI config change", unoffered && *ci_held, "review it, then sd act push", true),
@@ -371,7 +369,7 @@ pub fn review_rules(d: &Derived) -> Vec<Rule> {
         held: _, unpushed: _, to_push: _, ci_held: _, parent_unpushed: _, empty: _, chase: _, undone: _,
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
-        merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
+        merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_pending: _, ci_for_head: _, draft_ready: _, reviewed: _, need_review: _,
         findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread, over_budget,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
         resume_ci: _, dirty: _, refused: _, bot: _, rv_dirty: _, rv_pending: _,
@@ -415,7 +413,7 @@ pub fn accept_rules(d: &Derived) -> Vec<Rule> {
         taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
-        merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
+        merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
         fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread: _,
         over_budget: _, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _,
         resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _,
@@ -472,7 +470,7 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> Vec<Rule> {
         dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
         ahead_target: _, chase: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, ci_verdict: _, ci_blocked: _,
-        ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
+        ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _, reviewed: _, need_review: _,
         fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _, budget_unread,
         over_budget, failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _,
         dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
@@ -522,7 +520,7 @@ pub fn retarget_rules(d: &Derived) -> Vec<Rule> {
         undone: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
         parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
-        ci_verdict: _, ci_blocked: _, ci_inconclusive: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
+        ci_verdict: _, ci_blocked: _, ci_pending: _, ci_for_head: _, draft_ready: _, any_cover: _,
         reviewed: _, need_review: _, fixing: _, findings_declined: _, fix_due: _, bot_due: _, bot_late: _, bot_waiting: _,
         failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _,
         dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
@@ -861,11 +859,10 @@ mod tests {
     }
 
     #[test]
-    fn ci_fix_waits_on_ci_and_says_blocked_and_cancelled_are_chrismos_to_clear_355() {
+    fn ci_fix_waits_on_ci_and_says_blocked_is_chrismos_to_clear_355() {
         let on = |v: &str| ci_fix_said(&Derived { ci_verdict: v.into(), ..red() });
         assert_eq!(on("pending"), [("CI is pending", false)]);
         assert_eq!(on("blocked"), [("CI is blocked", true)]);
-        assert_eq!(on("inconclusive"), [("CI was cancelled", true)]);
         assert_eq!(on("odd"), [("CI's verdict is unknown", true)]);
         assert_eq!(ci_fix_said(&Derived { ci_for_head: Some(false), ..red() }), [("CI's red isn't for HEAD", false)]);
         assert_eq!(ci_fix_said(&Derived { ci_for_head: None, ..red() }), [("CI's red isn't for HEAD", false)]);
@@ -912,10 +909,9 @@ mod tests {
 
     // CI on HEAD hasn't run yet: a push starts it.
     #[test]
-    fn ci_fix_says_blocked_and_cancelled_ci_are_chrismos_only_at_head() {
+    fn ci_fix_says_blocked_ci_is_chrismos_only_at_head() {
         let old = |v: &str| Derived { ci_verdict: v.into(), ci_for_head: Some(false), ..red() };
         assert_eq!(ci_fix_said(&old("blocked")), [("CI is blocked, but not on HEAD", false)]);
-        assert_eq!(ci_fix_said(&old("inconclusive")), [("CI was cancelled, but not on HEAD", false)]);
         let ahead = ci_fix_said(&Derived { to_push: true, unpushed: true, ..old("blocked") });
         assert_eq!(ahead, [("CI is blocked, but not on HEAD", false), ("there are unpushed commits, which may be the fix already", false)]);
     }

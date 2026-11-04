@@ -229,17 +229,6 @@ fn ci_green_nothing_to_fix_nothing_runs() {
     assert!(!sd.ran("claude.args"));
 }
 
-// @test "CI inconclusive (cancelled): rerun it instead"
-#[test]
-fn ci_inconclusive_cancelled_rerun_it_instead() {
-    let sd = sd();
-    sd.state(&[r#".ci.verdict = "inconclusive" | .ci.failing = []"#]);
-    let r = sd.run(&["ci-fix"]);
-    assert_ne!(r.status, 0);
-    assert_has(&r.output, &["rerun"]);
-    assert!(!sd.ran("claude.args"));
-}
-
 // @test "red on an old head: push first; the fix may already be there"
 #[test]
 fn red_on_an_old_head_push_first_the_fix_may_already_be_there() {
@@ -269,7 +258,6 @@ fn unpushed_commits_push_first() {
 fn a_ci_wait_refuses_unforced_and_force_runs_the_agent_with_a_warning() {
     for (edit, why) in [
         (r#".ci.verdict = "pending" | .ci.failing = []"#, "CI is pending"),
-        (r#".ci.verdict = "inconclusive" | .ci.failing = []"#, "CI was cancelled"),
         (".push.ahead = 1", "there are unpushed commits"),
     ] {
         let sd = sd();
@@ -976,7 +964,6 @@ fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clear
     let r = sd.ok(&["answer", "keep THREE"]);
     assert_has(&r, &["(NEXT then offers ci-fix, so sd watch runs ci-fix)"]);
     for (edit, yours) in [
-        (r#".ci.verdict = "inconclusive""#, "CI was cancelled (rerun it, or look: gh pr checks)"),
         (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "there are unpushed commits, held with the agent's CI config change (review it, then sd act push)"),
         (r#".push.ahead = 1 | .verify = {at_head: true, sha: "h1", step: "ci-fix", cmd: "make test"}"#, "there are unpushed commits, held by the verify red on HEAD (fix it, then sd act verify)"),
         (r#".push.ahead = 1 | .ci.for_head = false | .ci.sha = "r0" | .parent.unpushed = true"#, "the parent branch isn't on the remote yet (ship it first (sd act ship <parent>))"),

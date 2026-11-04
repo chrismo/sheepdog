@@ -48,8 +48,8 @@ Step labels in comments and test headers are the design's atomic actions:
   draft, mergeable; native-stack membership, #17) · **O2** parent state (from
   config; open / merged / closed) · **O3** sync vs parent (behind? would a
   restack conflict?) · **O4** local vs remote (unpushed? remote moved? whose
-  SHA, via reflog) · **O5** CI on the head SHA (cancelled is inconclusive, not
-  red; checks on a non-HEAD SHA give no verdict) · **O6** review freshness
+  SHA, via reflog) · **O5** CI on the head SHA (cancelled counts as red, #430;
+  checks on a non-HEAD SHA give no verdict) · **O6** review freshness
   (HEAD covered by `local` / `bot` / `accepted`? bot replied since trigger,
   #63) · **O7** threads owed a reply (unresolved threads and review bodies
   where the last speaker isn't us; bot vs human; outdated-but-unresolved) ·

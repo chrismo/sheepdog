@@ -948,7 +948,6 @@ fn info_bot_items_wait_until_the_pipeline_can_t_move_without_chrismo_168() {
     assert_eq!(keys(&e![&info, r#".review.local = {sha: "x", status: "uncovered", uncovered: 2}"#, r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: false, cap: 3, items: []}"#]), "review-fix");
     assert_eq!(keys(&e![&info, r#".bot = {command: "/review-bot"}"#, r#".review.bot = {sha: null, status: "none"}"#]), "bot-trigger");
     assert_eq!(keys(&e![&info, r#".bot = {command: "/review-bot", timeout: 3600}"#, r#".review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}"#]), "bot-wait");
-    assert_eq!(keys(&e![&info, r#".ci.verdict = "inconclusive""#]), "ci-rerun");
     assert_eq!(keys(&e![&info, r#".pr.base = "p""#, r#".parent = {"name": "p", "source": "pr", "merged": true, "pr": {"number": 25, "state": "MERGED", "head_sha": "x"}}"#]), "retarget");
     // still ahead of marking the draft ready
     assert_eq!(keys(&e![&info, ".pr.draft = true", r#".pr.merge_state = "DRAFT""#]), "read draft");
@@ -1515,12 +1514,6 @@ fn bot_triggered_no_reply_yet_wait_on_the_bot_not_ready_not_draft_ready() {
     assert_eq!(keys(&e![&st, ".pr.draft = true", r#".pr.merge_state = "DRAFT""#]), "bot-wait");
 }
 
-// @test "bot waiting and CI cancelled: the rerun (a run step) comes before the wait"
-#[test]
-fn bot_waiting_and_ci_cancelled_the_rerun_a_run_step_comes_before_the_wait() {
-    assert_eq!(keys(&e![r#".bot = {command: "/review-bot", timeout: 3600}"#, r#".review.bot = {sha: "h1", status: "covered", triggered: "t", replied: false, waited: 60}"#, r#".ci.verdict = "inconclusive""#]), "ci-rerun bot-wait");
-}
-
 // @test "bot replied since the trigger: ready"
 #[test]
 fn bot_replied_since_the_trigger_ready() {
@@ -1641,12 +1634,6 @@ fn stacked_with_a_required_human_review_wait_on_the_review_before_the_parent() {
 fn stacked_and_fully_reviewed_the_open_parent_is_all_that_s_left() {
     assert_eq!(keys(&e![ON_OPEN_PARENT, r#".bot = {command: "/review-bot"}"#, r#".review.bot = {sha: "h1", status: "covered"}"#]), "parent-wait");
     assert_eq!(keys(&e![UNREVIEWED, ON_OPEN_PARENT, r#".review.accepted = {sha: "h1", status: "covered"}"#]), "parent-wait");
-}
-
-// @test "inconclusive CI: rerun it"
-#[test]
-fn inconclusive_ci_rerun_it() {
-    assert_eq!(step("ci-rerun", "who", &e![r#".ci.verdict = "inconclusive""#]), "run");
 }
 
 // @test "CI pending or not yet on HEAD: wait"

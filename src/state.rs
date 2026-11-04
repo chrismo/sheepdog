@@ -667,7 +667,6 @@ fn ci_class(x: &Value) -> &'static str {
     match v {
         "pending" | "PENDING" | "EXPECTED" => "pending",
         "SUCCESS" | "NEUTRAL" | "SKIPPED" => "ok",
-        "CANCELLED" | "STALE" => "cancelled",
         "STARTUP_FAILURE" | "ACTION_REQUIRED" => "blocked",
         _ => "fail",
     }
@@ -919,8 +918,6 @@ fn assemble(s: &Facts) -> Value {
         "blocked"
     } else if has("pending") || !mi.is_empty() {
         "pending"
-    } else if has("cancelled") {
-        "inconclusive"
     } else {
         "green"
     };
@@ -1763,7 +1760,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
 // ── output ───────────────────────────────────────────────────────────────────
 
 /// The one-liner's CI slot: a glyph for the verdict, then the words, so
-/// "CI red" still greps (#75). blocked, inconclusive and none get no glyph,
+/// "CI red" still greps (#75). blocked and none get no glyph,
 /// nor does any verdict on an old head: it isn't HEAD's (O5).
 fn ci_item(s: &Value) -> String {
     let verdict = t(s, "ci.verdict");
@@ -2037,7 +2034,6 @@ mod tests {
         assert_eq!(ci_item(&ci("pending", json!([]))), "⏳ CI pending");
         assert_eq!(ci_item(&ci("none", json!([]))), "CI none");
         assert_eq!(ci_item(&ci("blocked", json!([]))), "CI blocked");
-        assert_eq!(ci_item(&ci("inconclusive", json!([]))), "CI inconclusive");
         // checks on a non-HEAD SHA give no verdict (O5): the words, no glyph
         let old = |verdict: &str| json!({"ci": {"verdict": verdict, "failing": [], "for_head": false}});
         assert_eq!(ci_item(&old("green")), "CI green on old head");
