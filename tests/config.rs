@@ -1027,6 +1027,73 @@ fn get_no_branch_needs_a_path() {
     assert!(r.output.contains("Usage"), "{}", r.output);
 }
 
+// ── get --global / --repo / --branch: one layer's file alone (#434) ─────────
+
+#[test]
+fn get_a_layer_flag_reads_only_that_file_and_get_alone_the_resolved_value() {
+    let sd = Sd::new();
+    sd.ok(&["set", "--global", "settings.verify", "make global"]);
+    sd.ok(&["set", "--repo", "settings.verify", "make repo"]);
+    sd.ok(&["set", "--branch", "feat", "settings.verify", "make branch"]);
+    assert_eq!(sd.ok(&["get", "--global", "settings.verify"]), "make global\n");
+    assert_eq!(sd.ok(&["get", "--repo", "settings.verify"]), "make repo\n");
+    assert_eq!(sd.ok(&["get", "--branch", "feat", "settings.verify"]), "make branch\n");
+    assert_eq!(sd.ok(&["get", "settings.verify"]), "make branch\n");
+    assert_eq!(sd.ok(&["get", "--global", "--json", "settings.verify"]), "\"make global\"\n");
+}
+
+#[test]
+fn get_global_a_key_the_global_file_doesnt_set_is_unset_exit_3_defaults_and_all() {
+    let sd = Sd::new();
+    sd.ok(&["set", "--branch", "feat", "settings.stepTimeout", "900"]);
+    for key in ["settings.stepTimeout", "settings.verify"] {
+        let r = sd.run(&["get", "--global", key]);
+        assert_eq!(r.status, 3, "{key}");
+        assert_eq!(r.output, "", "{key}");
+    }
+    assert_eq!(sd.ok(&["get", "settings.stepTimeout"]), "900\n");
+}
+
+#[test]
+fn get_branch_a_null_the_file_sets_prints_null_exit_0_where_the_resolved_get_falls_through() {
+    let sd = Sd::new();
+    sd.ok(&["set", "--global", "harnesses.claude.effort", "max"]);
+    sd.ok(&["set", "--branch", "feat", "--json", "harnesses.claude.effort", "null"]);
+    assert_eq!(sd.ok(&["get", "--branch", "feat", "harnesses.claude.effort"]), "null\n");
+    assert_eq!(sd.ok(&["get", "--branch", "feat", "--json", "harnesses.claude.effort"]), "null\n");
+    assert_eq!(sd.run(&["get", "--repo", "harnesses.claude.effort"]).status, 3);
+}
+
+#[test]
+fn get_takes_at_most_one_layer_flag_and_no_branch_or_branch_argument_with_one() {
+    let sd = Sd::new();
+    for flags in [
+        &["--global", "--repo"][..],
+        &["--repo", "--branch", "feat"],
+        &["--global", "--no-branch"],
+    ] {
+        let mut args = vec!["get"];
+        args.extend_from_slice(flags);
+        args.push("settings.verify");
+        let r = sd.run(&args);
+        assert_eq!(r.status, 1, "{args:?}");
+        assert_eq!(
+            r.output,
+            "sd config: get takes at most one of --no-branch, --global, --repo and --branch"
+        );
+    }
+    let r = sd.run(&["get", "--global", "settings.verify", "feat"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.lines()[0], "sd config: get needs <path> alone with --global, --repo or --branch");
+}
+
+#[test]
+fn help_get_lists_the_layer_flags() {
+    let sd = Sd::new();
+    let help = sd.ok(&["--help"]);
+    assert!(help.contains("sd config get   [--global | --repo | --branch <b>] [--json] <path>"), "{help}");
+}
+
 #[test]
 fn get_a_config_error_exits_1_never_the_unset_code() {
     let sd = Sd::new();
@@ -2370,9 +2437,9 @@ fn repo_set_repo_outside_a_repo_fails() {
 }
 
 #[test]
-fn repo_only_set_and_unset_take_repo() {
+fn repo_only_get_set_and_unset_take_repo() {
     let sd = Sd::new();
-    for verb in ["get", "show", "files", "step", "init"] {
+    for verb in ["show", "files", "step", "init"] {
         let r = sd.run(&[verb, "--repo", "x"]);
         assert_eq!(r.status, 1, "{verb}");
         assert_eq!(r.output, format!("sd config: {verb} doesn't take --repo"));
