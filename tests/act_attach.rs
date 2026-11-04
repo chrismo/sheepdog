@@ -991,3 +991,35 @@ fn a_hold_is_never_cleared_as_stale_and_attach_and_agent_steps_refuse_naming_rel
     assert_has(&r.output, &["attached", "sd act release"]);
     assert_eq!(sd.lock(), held);
 }
+
+// No process ever lets a hold go, so an attach --force over one puts it back on exit.
+#[test]
+fn attach_force_over_a_hold_puts_the_hold_back_when_it_exits_427() {
+    let sd = sd();
+    sd.ok(&["hold"]);
+    let held = sd.lock();
+    let r = sd.run(&["attach", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_match(&sd.fx_read("claude.lock"), "^[0-9]+@");
+    assert_eq!(sd.lock(), held);
+}
+
+#[test]
+fn hold_refuses_a_branch_that_doesnt_exist_427() {
+    let sd = sd();
+    let r = sd.run(&["hold", "typo"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["no branch", "typo"]);
+    assert_eq!(sd.config("branch.typo.sd-lock"), None);
+}
+
+// sd watch status lists only enrolled branches' locks, so this one won't turn up there.
+#[test]
+fn hold_on_a_branch_not_enrolled_holds_it_and_warns_427() {
+    let sd = sd();
+    sd.git(&["config", "--unset", "branch.feat.sheepdog"]);
+    let r = sd.run(&["hold"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_held(&sd);
+    assert_has(&r.output, &["warning", "isn't enrolled", "sd watch status"]);
+}
