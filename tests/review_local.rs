@@ -187,8 +187,8 @@ fn the_prompt_carries_the_decisions_on_record_after_the_task_343() {
 }
 
 // Each commit's full message reaches the reviewer, its body under its
-// subject, its trailers dropped (#280), and the shipped guidance treats a
-// choice a commit message explains as decided.
+// subject, its trailers dropped (#280), and the prompt treats a choice a
+// commit message explains as decided, whatever the guidance.
 #[test]
 fn the_prompt_carries_each_commits_full_message_280() {
     let mut sd = sd();
@@ -292,6 +292,7 @@ fn settings_reviewprompt_a_custom_file_replaces_the_guidance_the_reporting_rules
     assert!(grep(&prompt, r"Look only for off-by-one errors\."));
     assert!(!grep(&prompt, "Find what a careful reviewer would flag"));
     assert!(grep(&prompt, "No findings is a valid"));
+    assert!(grep(&prompt, "a commit message explains"), "{prompt}");
     assert!(grep(&prompt, r"^\+three added"));
 }
 

@@ -8,7 +8,8 @@
 // own review; empty means .sheepdog/review.md in the base commit, else
 // lib/prompts/review.md), then the fixed reporting rules (lib/review-rules.md),
 // the task, the decisions on record (SHEEPDOG_DECISIONS, #343), the commits
-// (each one's full message, trailers dropped, #280) and the diff. Why a local
+// (each one's full message, trailers dropped, under a rule that a choice one
+// explains is decided, #280) and the diff. Why a local
 // review before the bot: #79 (Design record).
 
 use crate::git::{self, git, strip_nl};
@@ -126,7 +127,11 @@ pub fn run(argv: &[String]) -> ExitCode {
         &env("SHEEPDOG_DECISIONS"),
         "Don't raise again a finding one of these settles, unless the change since that commit reopens it; then say which decision and what changed.",
     );
-    prompt += &format!("\n\n{}\n\nTask: {task}{decided}\n\nCommits ({range}):\n{commits}\n\nDiff:\n{diff}", strip_nl(rules));
+    let commits_rule = "Each carries its full message, where authors record why. A choice a commit message explains is decided: flag it only if the stated reasoning is wrong, and say why.";
+    prompt += &format!(
+        "\n\n{}\n\nTask: {task}{decided}\n\nCommits ({range}): {commits_rule}\n{commits}\n\nDiff:\n{diff}",
+        strip_nl(rules)
+    );
 
     let sid = harness::new_session();
     let what = if branch.is_empty() { range.clone() } else { format!("{branch} ({range})") };
