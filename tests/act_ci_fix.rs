@@ -373,6 +373,21 @@ fn red_with_a_restack_due_the_fix_is_committed_not_pushed_the_restacks_push_carr
     assert_lacks(&r.output, "CI reruns");
 }
 
+// --force pushes the fix now, past the restack that would carry it (#418).
+#[test]
+fn red_with_a_restack_due_force_pushes_the_fix_now_418() {
+    let sd = sd();
+    sd.state(&[
+        r#".parent = {name: "base", merged: true, pr: {number: 1, state: "MERGED"}}"#,
+        ".sync.up_to_date = false | .sync.behind = 3 | .sync.base_on_default = false | .sync.replays_parent = []",
+    ]);
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
+    assert_lacks(&r.output, "not pushed: the restack goes first");
+}
+
 // @test "no settings.verify: the agent is told no local checks exist, not that they pass"
 #[test]
 fn no_settings_verify_the_agent_is_told_no_local_checks_exist_not_that_they_pass() {

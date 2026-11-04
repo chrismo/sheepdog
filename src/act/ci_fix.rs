@@ -104,9 +104,9 @@ fn ci_report(sha: &str) -> String {
 
 /// Push the fix in <wt> and say <pushed>, unless held for chrismo, <state>'s
 /// PR is no longer open, <b> was attached during the step, NEXT runs a
-/// restack next, whose push carries the fix (#418), or sd act push's gate
-/// refuses on the state after the fix; <kept> says what is left unpushed
-/// when the push doesn't happen.
+/// restack next, whose push carries the fix (#418; <force> pushes now), or
+/// sd act push's gate refuses on the state after the fix; <kept> says what
+/// is left unpushed when the push doesn't happen.
 fn publish(b: &str, wt: &str, remote: &str, state: &Value, force: bool, kept: &str, pushed: &str) {
     hold_gate(b, &format!("pushing {b}"), "");
     let left = format!("the commit is kept in {wt}");
@@ -116,8 +116,8 @@ fn publish(b: &str, wt: &str, remote: &str, state: &Value, force: bool, kept: &s
         eprint!("{e}");
         die(format!("sd state failed; {kept}"))
     });
-    if crate::next::restack_runs(&now, remote) {
-        println!("not pushed: the restack goes first, and its push carries the fix (sd act restack, then sd act push)");
+    if !force && crate::next::restack_runs(&now, remote) {
+        println!("not pushed: the restack goes first, and its push carries the fix (sd act restack, then sd act push; or sd act push to push it now)");
         return;
     }
     if enforce_leaving(gates::push(&Derived::new(&now)), force, &format!("pushing {b}"), kept).is_none() {
