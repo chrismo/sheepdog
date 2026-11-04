@@ -1297,8 +1297,7 @@ fn a_cache_file_written_in_the_future_doesn_t_hold_refreshes() {
 
 /// <tmp>/checkout: a repo whose first-parent history has a commit before the
 /// split, one on 2026-10-13 and two on 2026-10-14, and the binary under
-/// test at target/debug/sd-view (hard-linked, or copied: not a symlink,
-/// which current_exe would resolve). Its HEAD.
+/// test at target/debug/sd-view (`Sd::place_bin`). Its HEAD.
 fn map_checkout(sd: &mut Sd) -> String {
     let dir = sd.tmp.join("checkout");
     fs::create_dir_all(dir.join("target/debug")).unwrap();
@@ -1321,11 +1320,7 @@ fn map_checkout(sd: &mut Sd) -> String {
     day("2026-10-14", &[("src/act/push.rs", &"p\n".repeat(3)), ("tests/lint-ratchet.txt", ratchet)]);
     day("2026-10-14", &[("src/act/implement.rs", "i\n"), ("src/view/map.rs", "m\n")]);
     let bin = dir.join("target/debug/sd-view");
-    // A link, not a copy, where one can be made: a binary just written can
-    // fail to run (ETXTBSY) while another test thread forks.
-    if fs::hard_link(env!("CARGO_BIN_EXE_sd"), &bin).is_err() {
-        fs::copy(env!("CARGO_BIN_EXE_sd"), &bin).unwrap();
-    }
+    sd.place_bin(&bin);
     sd.bin = bin;
     sd.git_in("checkout", &["rev-parse", "HEAD"])
 }
