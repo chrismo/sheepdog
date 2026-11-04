@@ -1324,9 +1324,9 @@ mod tests {
         classify(&json!({"next": steps}), false)
     }
 
-    const KEYS: [&str; 54] = [
+    const KEYS: [&str; 53] = [
         "answer", "attached", "author-wait", "behind", "blocked", "bot", "bot-silent", "bot-trigger", "bot-wait", "budget",
-        "ci-blocked", "ci-config", "ci-red", "ci-rerun", "ci-wait", "closed", "conflict", "default", "dirty", "draft", "errors",
+        "ci-blocked", "ci-config", "ci-red", "ci-wait", "closed", "conflict", "default", "dirty", "draft", "errors",
         "failed", "fetch", "foreign", "foreign-authors", "gh-wait", "human", "implement", "merge-wait", "merged", "nothing",
         "nothing-dirty", "open-pr", "parent-closed", "parent-wait", "push", "question", "read", "ready", "reset-dirty",
         "restack-undone", "retarget", "review", "review-decide", "review-fix", "review-held", "review-wait", "running",

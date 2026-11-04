@@ -597,13 +597,10 @@ fn glyph_outranks() {
     assert_eq!(sd.glyph("repo"), "❌");
 }
 
-// @test "glyph: cancelled checks are 🔧, CI for an older commit is ⏳"
+// @test "glyph: CI for an older commit is ⏳"
 #[test]
-fn glyph_cancelled_checks_are_ci_for_an_older_commit_is() {
+fn glyph_ci_for_an_older_commit_is_waiting() {
     let sd = sd();
-    sd.ps_fixture("feat", &[r#".ci.verdict = "inconclusive""#]);
-    sd.pass();
-    assert_eq!(sd.glyph("repo"), "🔧");
     sd.ps_fixture("feat", &[".ci.for_head = false"]);
     sd.pass();
     assert_eq!(sd.glyph("repo"), "⏳");
@@ -3410,7 +3407,7 @@ fn dispatch_runs_only_the_first_step_and_only_as_the_one_it_is() {
 fn dispatch_leaves_the_run_steps_outside_this_slice_to_chrismo() {
     let sd = sd();
     sd.dispatching();
-    for key in ["merged", "stale", "ship-parent", "open-pr", "draft", "ci-rerun", "made-up"] {
+    for key in ["merged", "stale", "ship-parent", "open-pr", "draft", "made-up"] {
         sd.first_step("feat", key, &[]);
         sd.pass();
         assert_eq!(sd.acts(), "", "{key}");

@@ -119,7 +119,7 @@ Not notified:
     like merge-wait, keeps ready
   review review-fix implement: routine agent work, picked up when the branch
     is next worked on
-  push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
+  push open-pr ship-parent draft bot-trigger retarget: mechanical
   ci-wait bot-wait review-wait parent-wait merge-wait: waiting; merge-wait (GitHub
     recomputing after the base moved) keeps ready notified
   fetch author-wait: a followed PR's (#250): the author pushed, mechanical
@@ -169,7 +169,7 @@ limit, launched or run by hand, writes limit in SHEEPDOG_STATE_DIR, and no
 agent step starts before its reset (an hour, when the harness gave none).
 Mechanical steps run either way. A step launched or held isn't notified or
 ❌ (Notified, above).
-The other run steps (stale: the pass just fetched; merged, draft, ci-rerun,
+The other run steps (stale: the pass just fetched; merged, draft,
 ship-parent, open-pr) stay chrismo's.
 
 Launched steps (#268): the pass doesn't wait for one. It runs as sd watch

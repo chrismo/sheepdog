@@ -80,7 +80,6 @@ pub const STEPS: &[StepDef] = &[
     s("review-held", YOU, Stuck, None, None)
         .at(Review, "held", "a Hard rule of review's gate holds the review back: no base, or a worktree not known clean"),
     s("bot-trigger", RUN, Turn, None, Some("trigger")).at(Bot, "ask", "ask the review bot to look at HEAD (settings.botCommand)").path(1),
-    s("ci-rerun", RUN, Turn, None, None).at(Ci, "rerun", "CI was cancelled: rerun it"),
     s("bot-wait", WAIT, Turn, None, None).at(Bot, "waiting", "waiting for the review bot's answer").path(2),
     s("bot-silent", YOU, Stuck, None, None).at(Bot, "silent", "the review bot hasn't answered within settings.botTimeout"),
     s("ci-wait", WAIT, Turn, None, None).at(Ci, "running", "waiting for CI on HEAD").path(1),
@@ -268,7 +267,7 @@ pub struct StepDef {
     /// The step an autoRun pass launches when it's first, the agent's or
     /// run's: sd act <verb>, resolve as restack --resolve. None for stale
     /// (the pass has just fetched), merged (forget --remove deletes the
-    /// worktree), draft, ci-rerun, and ship-parent and open-pr, which may
+    /// worktree), draft, and ship-parent and open-pr, which may
     /// spend tokens describing.
     pub verb: Option<&'static str>,
     pub stage: Stage,

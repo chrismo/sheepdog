@@ -2677,16 +2677,17 @@ fn ci_unfinished_checks_are_pending() {
     assert_eq!(r.field(r#".ci.pending | join(",")"#), "test,ext");
 }
 
-// @test "ci: cancelled is inconclusive, not red"
+// @test "ci: a cancelled check is red, as a failed one is"
 #[test]
-fn ci_cancelled_is_inconclusive_not_red() {
+fn ci_cancelled_is_red_like_a_failure_430() {
     let sd = sd();
     sd.feat_pr(&[&checks(
         r#"[{__typename:"CheckRun",name:"a",status:"COMPLETED",conclusion:"SUCCESS"},
     {__typename:"CheckRun",name:"b",status:"COMPLETED",conclusion:"CANCELLED"}]"#,
     )]);
     let r = sd.state(&[]);
-    assert_eq!(r.field(".ci.verdict"), "inconclusive");
+    assert_eq!(r.field(".ci.verdict"), "red");
+    assert_eq!(r.field(r#".ci.failing | join(",")"#), "b");
 }
 
 // @test "ci: a check that didn't start or wants approval is blocked, not red"
