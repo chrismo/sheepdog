@@ -31,6 +31,10 @@ fn main() -> ExitCode {
         "state" => sheepdog::state::run(&rest),
         "view" => sheepdog::view::run(&rest),
         "watch" => sheepdog::watch::run(&rest),
+        "--version" | "-V" => {
+            println!("sd {} ({})", env!("CARGO_PKG_VERSION"), sheepdog::stamp::short(sheepdog::stamp::COMMIT));
+            ExitCode::SUCCESS
+        }
         "help" | "-h" | "--help" => {
             print!("{HELP}");
             ExitCode::SUCCESS

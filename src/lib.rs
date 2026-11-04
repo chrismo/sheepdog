@@ -14,6 +14,7 @@ pub mod proc;
 pub mod review_local;
 pub mod rules;
 pub mod running;
+pub mod stamp;
 pub mod state;
 pub mod stray;
 #[cfg(test)]

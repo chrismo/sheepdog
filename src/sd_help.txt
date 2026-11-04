@@ -12,3 +12,4 @@ Verbs:
   view          the Flock page: every branch sd watch tracks, live in the browser
 
 sd <verb> --help for each verb's own usage.
+sd --version names the commit sd was built from.

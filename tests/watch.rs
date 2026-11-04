@@ -3981,3 +3981,12 @@ fn status_with_no_launchctl_says_launchd_isnt_here_and_before_any_pass_still_dia
     assert_eq!(r.status, 0);
     assert_has(&r.output, &["no pass yet\n\n", "job's last pass: none yet (settings.interval 300s)\n", "launchd: not here (no launchctl)\n"]);
 }
+
+#[test]
+fn status_says_when_sd_was_built_from_an_older_commit_than_its_repos_head_440() {
+    let sd = sd();
+    let head = sd.git(&["rev-parse", "--short=7", "HEAD"]);
+    let r = sd.run_env(&[("SHEEPDOG_BUILD_REPO", &sd.path("repo"))], &["status"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.output, &["\nsd: built from ", &format!(", repo HEAD is {head}: rebuild with ./install.sh\nlogs: ")]);
+}
