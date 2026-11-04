@@ -33,7 +33,7 @@ const STAGES: [&str; 9] = ["watch loop", "observe", "decide", "act", "agent step
 /// agent steps if it spends tokens, else act. A file neither places lands in plumbing, and
 /// every_file_under_src_has_a_stage names it.
 const PLACES: &[(&str, &str)] = &[
-    ("src/watch.rs", "watch loop"), ("src/watch/", "watch loop"), ("src/watch_help.txt", "watch loop"),
+    ("src/watch.rs", "watch loop"), ("src/watch/", "watch loop"), ("src/watch_help.txt", "watch loop"), ("src/stamp.rs", "watch loop"),
     ("src/state.rs", "observe"), ("src/state_help.txt", "observe"),
     ("src/next.rs", "decide"), ("src/next/", "decide"), ("src/act/gate.rs", "decide"), ("src/act/gates.rs", "decide"),
     ("src/act/mod.rs", "act"), ("src/act_help.txt", "act"), ("src/act/verbs.rs", "act"), ("src/act/bookkeeping.rs", "act"),
