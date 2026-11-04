@@ -25,9 +25,14 @@ pub fn status_line() -> String {
 /// <built> is a sha, "<sha>-dirty" or "unknown".
 pub fn line(built: &str, head: Option<&str>) -> String {
     let from = if built == "unknown" { "an unknown commit".into() } else { short(built) };
+    let (sha, dirty) = (built.split('-').next(), built.ends_with("-dirty"));
     match head {
         None => format!("sd: built from {from}, repo HEAD unreadable"),
-        Some(h) if built.split('-').next() == Some(h) => format!("sd: built from {from}, up to date"),
+        // The edits a dirty build saw may since have changed or been reverted.
+        Some(h) if sha == Some(h) && dirty => {
+            format!("sd: built from {from}, with uncommitted changes the tree may no longer have: rebuild with ./install.sh")
+        }
+        Some(h) if sha == Some(h) => format!("sd: built from {from}, up to date"),
         Some(h) => format!("sd: built from {from}, repo HEAD is {}: rebuild with ./install.sh", short(h)),
     }
 }
@@ -43,7 +48,18 @@ mod tests {
     fn line_says_up_to_date_on_the_same_commit_and_rebuild_on_an_older_one() {
         assert_eq!(line(OLD, Some(OLD)), "sd: built from fd45131, up to date");
         assert_eq!(line(OLD, Some(NEW)), "sd: built from fd45131, repo HEAD is 1a2b3c4: rebuild with ./install.sh");
-        assert_eq!(line(&format!("{OLD}-dirty"), Some(OLD)), "sd: built from fd45131-dirty, up to date");
+    }
+
+    #[test]
+    fn line_never_calls_a_dirty_build_up_to_date() {
+        assert_eq!(
+            line(&format!("{OLD}-dirty"), Some(OLD)),
+            "sd: built from fd45131-dirty, with uncommitted changes the tree may no longer have: rebuild with ./install.sh"
+        );
+        assert_eq!(
+            line(&format!("{OLD}-dirty"), Some(NEW)),
+            "sd: built from fd45131-dirty, repo HEAD is 1a2b3c4: rebuild with ./install.sh"
+        );
     }
 
     #[test]
