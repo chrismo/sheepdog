@@ -214,6 +214,9 @@ status reads what a silent job usually comes down to, writing nothing:
   launchd: com.sheepdog.watch loaded, state, runs, last exit, interval and
     program from launchctl print; not loaded, with launchctl's reason; or
     not here, with no launchctl (Linux)
+  sd: built from <commit>, up to date; or repo HEAD is <commit>: rebuild
+    with ./install.sh (the checkout that built sd, whose HEAD a pull moves
+    and nothing rebuilds after, #440)
   logs: the two paths
 
 GitHub's rate limit: a pass checks no more branches after one whose sd

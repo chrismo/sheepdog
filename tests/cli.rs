@@ -146,3 +146,12 @@ fn run_as_sd_verb_it_is_that_verb() {
     assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(r.output, "origin");
 }
+
+// #245 (soak 6 small gaps), item 7: a soak or bug report names its build.
+#[test]
+fn version_prints_the_package_version_and_the_commit_it_was_built_from_440() {
+    let sd = sd();
+    let r = sd.run_sep(&["--version"]);
+    assert_eq!(r.status, 0);
+    assert!(regex::Regex::new(r"^sd 0\.1\.0 \(([0-9a-f]{7}(-dirty)?|unknown)\)$").unwrap().is_match(&r.output), "{}", r.output);
+}

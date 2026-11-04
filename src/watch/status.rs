@@ -40,6 +40,7 @@ fn block(state: &str) -> String {
     lines.extend(limit_line(state));
     lines.extend(failure_lines(&repos));
     lines.push(launchd_line(launchctl_print()));
+    lines.push(crate::stamp::status_line());
     lines.push(format!("logs: {state}/launchd.log, {state}/steps.log"));
     lines.iter().map(|l| format!("{l}\n")).collect()
 }
