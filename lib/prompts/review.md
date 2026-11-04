@@ -8,3 +8,7 @@ Find what a careful reviewer would flag before merging: bugs, behaviour that
 contradicts the task, missing or wrong tests, changes outside the task's scope,
 and anything that would confuse the next reader. Skip style nits a formatter
 would fix. Don't restate what the diff does.
+
+The commits below carry their full messages, where authors record why. A choice
+a commit message explains is decided: flag it only if the stated reasoning is
+wrong, and say why.
