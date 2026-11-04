@@ -11,6 +11,7 @@ const HELP: &str = r#"sd config - harness and settings for the PR pipeline.
 
 Usage:
   sd config get   [--no-branch] [--json] <path> [<branch>]
+  sd config get   [--global | --repo | --branch <b>] [--json] <path>
   sd config step  [--harness <h>] <step> [<branch>]
   sd config set   [--global | --repo | --branch <b>] [--json] <path> <value>
   sd config unset [--global | --repo | --branch <b>] <path>
@@ -22,6 +23,7 @@ Usage:
 
 Examples:
   sd config get settings.verify                    one value
+  sd config get --global settings.autoRun          the global file's value
   sd config step address                           what a step runs with (JSON)
   sd config set --global harnesses.claude.model opus
   sd config set --repo settings.remote fork        every branch of this repo
@@ -65,6 +67,10 @@ Notes:
     moved to its new name the next time its file is read, or dropped if
     the file already has the new name
   - get prints strings raw, lists one per line, objects as JSON (--json: all)
+  - get --global, --repo or --branch <b> reads only that file, as set
+    writes it: no defaults, profiles or other layers; exit 3 when that
+    file doesn't set the key. At most one of them, and not with
+    --no-branch or a <branch>
   - exit 3: no value and no default. exit 1: an error
   - <branch> defaults to the current one; --no-branch skips the branch file
     (inside a repo, the repo file is still read)
@@ -654,8 +660,17 @@ fn line(v: &Value) -> String {
 
 fn get(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
     let segs = segments(path)?;
-    let all = with_defaults(&files(dir, b, no_branch)?);
-    let v = lookup(&all, &segs).ok_or(Fail::Unset)?;
+    printed_at(&with_defaults(&files(dir, b, no_branch)?), &segs, as_json)
+}
+
+/// <path> in one layer's <file> alone: no defaults, profiles or other files.
+fn get_layer(file: &str, kind: Layer, path: &str, as_json: bool) -> Res<String> {
+    let segs = segments(path)?;
+    printed_at(&layer(file, Some(kind))?, &segs, as_json)
+}
+
+fn printed_at(doc: &Value, segs: &[String], as_json: bool) -> Res<String> {
+    let v = lookup(doc, segs).ok_or(Fail::Unset)?;
     Ok(match v {
         Value::Array(a) if !as_json => a.iter().map(|e| line(e) + "\n").collect(),
         Value::Object(_) => format!("{v}\n"),
@@ -1233,7 +1248,7 @@ fn cli(argv: &[String]) -> Res<String> {
     let Some(verb) = argv.first() else { usage_exit(HELP) };
     let takes: &[&str] = match verb.as_str() {
         "-h" | "--help" => return Ok(HELP.into()),
-        "get" => &["--no-branch", "--json"],
+        "get" => &["--no-branch", "--json", "--global", "--repo", "--branch"],
         "files" | "show" => &["--no-branch"],
         "explain" => &["--no-branch", "--json", "--branch"],
         "step" => &["--harness"],
@@ -1275,12 +1290,7 @@ fn cli(argv: &[String]) -> Res<String> {
     let n = args.len();
 
     match verb.as_str() {
-        "get" => {
-            if !(n == 1 || n == 2) {
-                needs(verb, "<path> [<branch>]");
-            }
-            get(".", arg(0), arg(1), has("--no-branch"), has("--json"))
-        }
+        "get" => get_cmd(&args, &flags, &branch_opt),
         "explain" => {
             if n > 1 {
                 needs(verb, "at most a <path>");
@@ -1337,6 +1347,26 @@ fn cli(argv: &[String]) -> Res<String> {
             Ok(String::new())
         }
     }
+}
+
+fn get_cmd(args: &[&str], flags: &[&str], branch_opt: &str) -> Res<String> {
+    let has = |f: &str| flags.contains(&f);
+    let arg = |i: usize| args.get(i).copied().unwrap_or("");
+    let layers = ["--no-branch", "--global", "--repo", "--branch"].iter().filter(|f| has(f)).count();
+    if layers > 1 {
+        return err("get takes at most one of --no-branch, --global, --repo and --branch");
+    }
+    if layers == 1 && !has("--no-branch") {
+        if args.len() != 1 {
+            needs("get", "<path> alone with --global, --repo or --branch");
+        }
+        let (file, kind) = target_file(has("--global"), has("--repo"), branch_opt)?;
+        return get_layer(&file, kind, arg(0), has("--json"));
+    }
+    if !(args.len() == 1 || args.len() == 2) {
+        needs("get", "<path> [<branch>]");
+    }
+    get(".", arg(0), arg(1), has("--no-branch"), has("--json"))
 }
 
 #[cfg(test)]
