@@ -1,5 +1,9 @@
 # <img src="img/sheepdog-full-color.png" alt="sheepdog" width="110" align="middle"> sheepdog
 
+> [!WARNING]
+> **Alpha.** sheepdog is under active development. Commands, settings and
+> on-disk state can change without notice or a migration path.
+
 Takes the busy work out of getting a branch to a merged PR and keeping it
 current while it's open: up to date with its parent (stack-aware), CI green on
 the head SHA, review current, bot comments answered. Scripts observe and act;
