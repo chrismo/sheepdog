@@ -210,7 +210,9 @@ Verbs:
             the repo's ci-fix guidance (settings.ciFixPrompt, else
             .sheepdog/ci-fix.md), and settings.implementAllow lets the
             agent run the commands it names. The pipeline commits its
-            fix, verifies, pushes, asking sd act push's gate first.
+            fix, verifies, pushes, asking sd act push's gate first; with a
+            restack NEXT runs due, it leaves the fix to that restack's push,
+            so CI runs once (#418).
             "flaky" (the agent blames CI's environment) commits nothing
             and is recorded against the red SHA, so the same red isn't
             handed over again: rerun CI instead. Refuses on an old head

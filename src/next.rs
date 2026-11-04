@@ -7,10 +7,13 @@
 //
 // Ordering of the loop's own steps, after what blocks everything (stale refs,
 // human items): restack and retarget, agent fixes, one push, then review and
-// wait; the push leads because every push restarts CI (#79 Design record). GitHub behind the
-// remote refs, a push it hasn't seen yet (sd state's lag), is a wait where
-// stale refs are a fetch (#246). It has no time limit: a PR GitHub never
-// updates waits until chrismo sees sd watch's ⚠️ glyph.
+// wait; the push leads because every push restarts CI (#79 Design record).
+// Except: with CI red at HEAD, ci-fix goes ahead of a clean restack, whose
+// push then carries the fix (#418); a conflict still goes first, as the fix
+// needs the resolved tree. GitHub behind the remote refs, a push it hasn't
+// seen yet (sd state's lag), is a wait where stale refs are a fetch (#246).
+// It has no time limit: a PR GitHub never updates waits until chrismo sees
+// sd watch's ⚠️ glyph.
 //
 // While address's own gate (src/act/gates.rs) would refuse it, address
 // comes after the steps that clear the gate, or is chrismo's when it would be
@@ -317,6 +320,15 @@ fn behind_step(d: &Derived, s: &Value, remote: &str) -> Option<Value> {
     }
 }
 
+/// Whether NEXT's behind step for <s> is sheepdog's to run (#418).
+pub fn restack_runs(s: &Value, remote: &str) -> bool {
+    is_run(&behind_step(&Derived::new(s), s, remote))
+}
+
+fn is_run(st: &Option<Value>) -> bool {
+    st.as_ref().is_some_and(|st| st["who"] == "run")
+}
+
 /// The steps for an sd state record, first is next.
 pub fn steps(s: &Value, remote: &str) -> Result<Value, String> {
     if !s.is_object() {
@@ -455,9 +467,9 @@ impl Cx<'_> {
 /// restack and retarget, agent fixes, one push, then review and wait (the
 /// header above).
 const AUTHOR: &[fn(&Cx) -> Option<Value>] = &[
-    merged, closed, errors, stale, gh_wait, attached, foreign, human, question, undone, ship_parent, conflict, behind, retarget,
-    dirty, ci_red, ci_blocked, bot, read, take, reset_dirty, nothing, verify_red, foreign_authors, ci_config, push, bot_refused,
-    open_pr, draft, review, bot_trigger, ci_rerun, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed,
+    merged, closed, errors, stale, gh_wait, attached, foreign, human, question, undone, ship_parent, conflict, ci_first,
+    behind, retarget, dirty, ci_red, ci_blocked, bot, read, take, reset_dirty, nothing, verify_red, foreign_authors, ci_config,
+    push, bot_refused, open_pr, draft, review, bot_trigger, ci_rerun, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed,
     review_wait, parent_wait, end,
 ];
 
@@ -598,7 +610,20 @@ fn dirty(cx: &Cx) -> Option<Value> {
     )
 }
 
+/// A conflict offers no behind step, so it stays ahead of ci-fix (#418).
+fn fix_first(cx: &Cx) -> bool {
+    is_run(&behind(cx)) && ci_fix_step(cx).is_some_and(|st| st["key"] == "ci-red")
+}
+
+fn ci_first(cx: &Cx) -> Option<Value> {
+    ci_fix_step(cx).filter(|_| fix_first(cx))
+}
+
 fn ci_red(cx: &Cx) -> Option<Value> {
+    ci_fix_step(cx).filter(|_| !fix_first(cx))
+}
+
+fn ci_fix_step(cx: &Cx) -> Option<Value> {
     let d = cx.d;
     let failing = sj(cx.g("ci.failing"), ", ");
     if cx.ci_fix.runs() && d.asking != "ci-fix" && !d.refused {
@@ -1191,5 +1216,72 @@ pub fn lines(steps: &Value, all: bool) -> String {
     } else {
         let more = if ls.len() > 1 { format!("  (+{} more)", ls.len() - 1) } else { String::new() };
         format!("NEXT  {first}{more}\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// tests/next.rs's READY: an open PR, in sync, green and reviewed.
+    fn ready() -> Value {
+        json!({"branch": "feat", "head": "h1",
+            "pr": {"number": 7, "url": "u", "state": "OPEN", "draft": false, "base": "main", "head_sha": "h1", "mergeable": "MERGEABLE",
+                   "merge_state": "CLEAN", "review_decision": null, "review_requests": []},
+            "parent": {"name": "main", "source": "pr", "merged": false, "pr": null},
+            "sync": {"target": "main", "default": "main", "ahead": 1, "behind": 0, "up_to_date": true, "old_base": "b0b0", "conflict": false,
+                     "replays_parent": [], "foreign_authors": []},
+            "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true, "dirty": false, "foreign_authors": []},
+            "fresh": true, "stale": [],
+            "ci": {"sha": "h1", "for_head": true, "verdict": "green", "failing": [], "pending": []},
+            "review": {"local": {"sha": "h1", "status": "covered"}, "bot": {"sha": null, "status": "none"},
+                       "accepted": {"sha": null, "status": "none"}},
+            "threads": {"owed_bot": 0, "owed_human": 0, "outdated": 0, "blocking": 0, "info": 0, "items": []},
+            "session": {"enrolled": true, "harness": null, "id": null, "locked": false},
+            "errors": []})
+    }
+
+    fn with(edits: &[(&str, Value)]) -> Value {
+        let mut s = ready();
+        for (path, v) in edits {
+            let at = path.split('.').fold(&mut s, |cur, k| &mut cur[k]);
+            *at = v.clone();
+        }
+        s
+    }
+
+    /// tests/next.rs's RESTACK_DUE (#300).
+    fn behind() -> Vec<(&'static str, Value)> {
+        vec![
+            ("parent", json!({"name": "base", "source": "config", "merged": true, "pr": {"number": 1, "state": "MERGED"}})),
+            ("sync.up_to_date", json!(false)),
+            ("sync.behind", json!(3)),
+            ("sync.base_on_default", json!(false)),
+        ]
+    }
+
+    fn red() -> Vec<(&'static str, Value)> {
+        vec![("ci.verdict", json!("red")), ("ci.failing", json!(["test"]))]
+    }
+
+    fn keys(edits: &[(&str, Value)]) -> Vec<String> {
+        let s = with(edits);
+        offer(&Derived::new(&s), &s, "origin").iter().map(|st| text(&st["key"])).collect()
+    }
+
+    #[test]
+    fn red_ci_with_a_clean_restack_fixes_ci_first_so_the_restacks_push_carries_the_fix_418() {
+        assert_eq!(keys(&[behind(), red()].concat())[..2], ["ci-red", "behind"]);
+    }
+
+    #[test]
+    fn red_ci_with_a_conflicting_restack_resolves_first_the_fix_needs_the_resolved_tree_418() {
+        let conflict = [behind(), red(), vec![("sync.conflict", json!(true))]].concat();
+        assert_eq!(keys(&conflict)[..2], ["conflict", "ci-red"]);
+    }
+
+    #[test]
+    fn green_ci_and_behind_restacks_as_before_418() {
+        assert_eq!(keys(&behind()), ["behind"]);
     }
 }
