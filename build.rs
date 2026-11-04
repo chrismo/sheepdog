@@ -1,9 +1,14 @@
 // Stamps the commit sd is built from as SD_BUILD_COMMIT (#440): HEAD's sha,
-// "-dirty" after it when tracked files differ from HEAD, or "unknown" with no
-// git. src/stamp.rs reads it.
+// "-dirty" after it when the tracked files the binary is built from differ
+// from HEAD, or "unknown" with no git. src/stamp.rs reads it.
 
 use std::path::Path;
 use std::process::Command;
+
+/// What the binary is built from (everything include_str! embeds is under
+/// src): the dirty check covers these and only these, and each is watched so
+/// an edit or its revert redoes the check.
+const INPUTS: [&str; 4] = ["src", "build.rs", "Cargo.toml", "Cargo.lock"];
 
 fn git(args: &[&str]) -> Option<String> {
     let o = Command::new("git").args(args).output().ok()?;
@@ -12,7 +17,9 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn commit() -> String {
     let Some(sha) = git(&["rev-parse", "HEAD"]) else { return "unknown".into() };
-    match git(&["status", "--porcelain", "--untracked-files=no"]) {
+    let mut args = vec!["status", "--porcelain", "--untracked-files=no", "--"];
+    args.extend(INPUTS);
+    match git(&args) {
         Some(s) if !s.is_empty() => format!("{sha}-dirty"),
         _ => sha,
     }
@@ -34,12 +41,12 @@ fn ref_watch(path: &str) -> Option<String> {
 }
 
 /// --git-path finds HEAD and refs in a worktree too, where .git is a file.
-/// src is watched so an edit there redoes the dirty check. Cargo reruns on
-/// every build for a path that doesn't exist, so none is watched.
+/// Cargo reruns on every build for a path that doesn't exist, so none is
+/// watched.
 fn watched() -> Vec<String> {
     let path = |n: &str| git(&["rev-parse", "--git-path", n]);
     let mut out: Vec<String> = ["HEAD", "packed-refs"].into_iter().filter_map(path).collect();
-    out.push("src".into());
+    out.extend(INPUTS.map(String::from));
     out.retain(|p| Path::new(p).exists());
     out.extend(git(&["symbolic-ref", "-q", "HEAD"]).and_then(|r| path(&r)).and_then(|p| ref_watch(&p)));
     out
