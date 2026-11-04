@@ -135,7 +135,6 @@ pub fn run(argv: &[String]) -> ExitCode {
 
     let sid = harness::new_session();
     let what = if branch.is_empty() { range.clone() } else { format!("{branch} ({range})") };
-    eprintln!("sd review-local: {h} (new session {sid}) is reviewing {what}…");
     let step = Step {
         harness: &h,
         session: &sid,
@@ -150,6 +149,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         claude_allow: READONLY_ALLOW,
         pi_tools: READONLY_PI_TOOLS,
     };
+    eprintln!("sd review-local: {} is reviewing {what}…", step.said());
     let Ok(Ran { results, .. }) = harness::run_step(&step) else {
         die(format!("the {h} review failed or returned no usable result"))
     };

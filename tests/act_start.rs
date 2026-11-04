@@ -763,6 +763,19 @@ fn implement_names_no_next_command_sd_states_next_does_that_144() {
     assert_lacks(&r.output, "sd act review");
 }
 
+// @test "implement: the start line names the model and effort the block passes (#292)"
+#[test]
+fn implement_the_start_line_names_the_model_and_effort_the_block_passes_292() {
+    let mut sd = sd();
+    sd.verb_ok("config", &["set", "--global", "harnesses.claude.model", "opus"]);
+    sd.verb_ok("config", &["set", "--global", "harnesses.claude.effort", "high"]);
+    sd.started(TASK);
+    let r = sd.run_sep(&["implement"]);
+    assert_eq!(r.status, 0);
+    let sid = sd.git(&["config", "branch.feat-x.sd-session"]);
+    assert_has(&r.stderr, &[&format!("sd act: claude (model opus, effort high; new session {sid}) is implementing feat-x…")]);
+}
+
 #[test]
 fn start_records_harness_before_implement_so_a_failed_first_step_keeps_it_242() {
     let mut sd = sd();
