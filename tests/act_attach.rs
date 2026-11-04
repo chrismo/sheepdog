@@ -949,8 +949,8 @@ fn hold_takes_the_lock_with_no_session_and_sd_state_shows_attached_naming_releas
     assert!(!sd.fx_exists("claude.args"), "no session opens");
     let state: serde_json::Value = serde_json::from_str(&sd.verb_ok("state", &["--json"])).unwrap();
     let attached = state["next"].as_array().unwrap().iter().find(|s| s["key"] == "attached").cloned().unwrap_or_default();
-    assert_eq!(attached["cmd"], "sd act release", "{attached}");
-    assert_has(attached["say"].as_str().unwrap_or_default(), &["held since 20"]);
+    assert!(attached["cmd"].is_null(), "a wait step's cmd would release the hold: {attached}");
+    assert_has(attached["say"].as_str().unwrap_or_default(), &["held since 20", "sd act release"]);
 }
 
 #[test]

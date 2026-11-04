@@ -536,11 +536,12 @@ fn attached(cx: &Cx) -> Option<Value> {
     if !(cx.d.open && yes(cx.d.locked)) {
         return None;
     }
-    let (say, then) = match cx.s["session"]["held"].as_str() {
-        Some(since) => (format!("held since {since} (sd act hold): agent steps wait until sd act release"), cmd("sd act release")),
-        None => ("attached: the branch's session is open interactively; agent steps wait until it exits".into(), None),
+    // No cmd for a hold: an agent following NEXT would run it and drop chrismo's hold.
+    let say = match cx.s["session"]["held"].as_str() {
+        Some(since) => format!("held since {since} (sd act hold): agent steps wait until sd act release"),
+        None => "attached: the branch's session is open interactively; agent steps wait until it exits".into(),
     };
-    step(def!("attached"), "wait", say, then)
+    step(def!("attached"), "wait", say, None)
 }
 
 fn foreign(cx: &Cx) -> Option<Value> {

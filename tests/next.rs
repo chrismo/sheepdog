@@ -335,13 +335,15 @@ fn attached_the_session_is_open_interactively_agent_steps_wait() {
 }
 
 // A hold (sd act hold, #427) is the same wait, saying since when and how to release it.
+// The release is only in `say`: a wait step's cmd is something anyone may run, and
+// an agent following NEXT would drop chrismo's hold.
 #[test]
 fn attached_by_a_hold_says_since_when_and_how_to_release_it_427() {
     let out = next(&e![".session.locked = true", r#".session.held = "2026-11-04T09:00:00Z""#, ".threads.owed_bot = 2"]);
     assert_eq!(raw(&out[0]["key"]), "attached");
     assert_eq!(raw(&out[0]["who"]), "wait");
     assert_eq!(raw(&out[0]["say"]), "held since 2026-11-04T09:00:00Z (sd act hold): agent steps wait until sd act release");
-    assert_eq!(raw(&out[0]["cmd"]), "sd act release");
+    assert_eq!(raw(&out[0]["cmd"]), "null");
     assert_eq!(raw(&out[1]["key"]), "bot");
 }
 
