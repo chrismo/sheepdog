@@ -2,15 +2,23 @@ sd view - the Flock page: every branch sd watch tracks, where its PR stands
 and who moves next, live in the browser; the Atlas, how the workflow works;
 the Map, the code behind it.
 
-Usage: sd view [--port <n>] [--no-open]
+Usage: sd view [<branch>] [--port <n>] [--no-open]
 
   Starts a local server on 127.0.0.1, prints its URL and opens it in the
-  browser, then serves until Ctrl-C. The page reads the state each sd watch
-  pass caches, and asks again every 30s. It shows the last pass's time: with
-  the watcher stopped, that time stops moving. A branch's timeline has its
-  PR's commits, CI and merge from GitHub (gh). A branch is there from its
-  first pass, and stays until the watcher drops its cache: after it's
-  unenrolled, or once its merge is notified.
+  browser, then serves until Ctrl-C. With one already on the port, it opens
+  that one instead.
+
+  <branch> opens on that branch's drill-in: . for the current worktree's
+  branch, or a branch's exact name, its PR number, or a part of its name
+  (any case: sd view atlas-w). Several matches or none are listed, and
+  nothing starts.
+
+  The page reads the state each sd watch pass caches, and asks again every
+  30s. It shows the last pass's time: with the watcher stopped, that time
+  stops moving. A branch's timeline has its PR's commits, CI and merge from
+  GitHub (gh). A branch is there from its first pass, and stays until the
+  watcher drops its cache: after it's unenrolled, or once its merge is
+  notified.
 
   The Atlas (/atlas, linked from the Flock and the Map) is the workflow
   itself, generated from the code so it can't drift: every NEXT step by the

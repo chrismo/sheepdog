@@ -1,4 +1,6 @@
-// sd view [--port <n>] [--no-open] (src/view_help.txt, #375, #376): GET / is
+// sd view [<branch>] [--port <n>] [--no-open] (src/view_help.txt, #375,
+// #376): <branch>, . or a part of a cached branch's name or its PR number,
+// opens on its drill-in (view/pick.rs, #458). GET / is
 // the Flock page, GET /api/flock its data from the watcher's cache; GET /map
 // the Map page (#378), GET /api/map its data from sheepdog's own source; GET
 // /atlas the Atlas page (#377), GET /api/atlas its data from the step table
@@ -22,6 +24,7 @@ mod flock;
 mod guard;
 mod links;
 mod map;
+mod pick;
 mod refresh;
 mod settings;
 mod timeline;
@@ -48,7 +51,7 @@ fn die(msg: impl std::fmt::Display) -> ! {
 }
 
 pub fn run(argv: &[String]) -> ExitCode {
-    let (mut port, mut open) = (PORT, true);
+    let (mut port, mut open, mut target) = (PORT, true, None);
     let mut args = argv.iter();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -60,11 +63,25 @@ pub fn run(argv: &[String]) -> ExitCode {
             "--port" => {
                 port = args.next().and_then(|p| p.parse().ok()).unwrap_or_else(|| die("--port takes a number"));
             }
-            o => die(format!("unknown option: {o}")),
+            o if o.starts_with('-') || target.is_some() => die(format!("unknown option: {o}")),
+            o => target = Some(o.to_string()),
         }
     }
-    let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| die(format!("127.0.0.1:{port}: {e}")));
     let state = state_dir();
+    let hash = target.map_or_else(String::new, |t| format!("#b={}", branch_id(Path::new(&state), &t)));
+    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        // Most likely our own sd view, on the port it always takes.
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            let url = format!("http://127.0.0.1:{port}/{hash}");
+            println!("sd view: already running at {url}");
+            if open {
+                browse(&url);
+            }
+            return ExitCode::SUCCESS;
+        }
+        Err(e) => die(format!("127.0.0.1:{port}: {e}")),
+    };
     cache::prune(Path::new(&state));
     let pruning = state.clone();
     std::thread::spawn(move || loop {
@@ -72,11 +89,10 @@ pub fn run(argv: &[String]) -> ExitCode {
         cache::prune(Path::new(&pruning));
     });
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-    let url = format!("http://127.0.0.1:{port}/");
+    let url = format!("http://127.0.0.1:{port}/{hash}");
     println!("sd view: {url} (Ctrl-C stops it)");
     if open {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        let _ = Command::new(opener).arg(&url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+        browse(&url);
     }
     let token = guard::token();
     for stream in listener.incoming() {
@@ -92,6 +108,26 @@ pub fn run(argv: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// The cached branch <target> names (. is the current worktree's), or die
+/// saying why it isn't one.
+fn branch_id(state: &Path, target: &str) -> String {
+    let name = if target == "." {
+        let head = crate::git::git(".", &["symbolic-ref", "--short", "HEAD"]);
+        if !head.ok {
+            die(format!(". names no branch: {}", head.stderr.trim()));
+        }
+        head.stdout.trim().to_string()
+    } else {
+        target.to_string()
+    };
+    pick::pick(&flock::cached(state), &name).unwrap_or_else(|e| die(e))
+}
+
+fn browse(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = Command::new(opener).arg(url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
 }
 
 /// The request line and the headers we read, or None for a request we can't read.

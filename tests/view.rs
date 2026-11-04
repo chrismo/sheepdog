@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 struct Server {
     child: Child,
     port: u16,
+    /// The URL sd view printed.
+    url: String,
 }
 
 impl Drop for Server {
@@ -103,18 +105,81 @@ fn serve_logging(sd: &Sd, log: &str) -> Server {
 }
 
 fn serve_to(sd: &Sd, stderr: Stdio) -> Server {
+    serve_args(sd, &[], stderr)
+}
+
+/// sd view --no-open --port 0 <args>.
+fn serve_args(sd: &Sd, args: &[&str], stderr: Stdio) -> Server {
     let mut c = sd.command(&sd.bin);
-    c.args(["--no-open", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(stderr);
+    c.args(["--no-open", "--port", "0"]).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(stderr);
     let mut child = spawn(&mut c);
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
-    let port = regex::Regex::new(r"http://127\.0\.0\.1:(\d+)/")
+    let caps = regex::Regex::new(r"(http://127\.0\.0\.1:(\d+)/\S*)")
         .unwrap()
         .captures(&line)
-        .unwrap_or_else(|| panic!("no URL in {line:?}"))[1]
-        .parse()
-        .unwrap();
-    Server { child, port }
+        .unwrap_or_else(|| panic!("no URL in {line:?}"));
+    Server { port: caps[2].parse().unwrap(), url: caps[1].to_string(), child }
+}
+
+// sd view <branch> (#458): . or a part of a cached branch's name or its PR
+// number opens that branch's drill-in.
+
+fn pr_state(branch: &str, pr: u64) -> Value {
+    let mut s = state(branch, json!([]));
+    s["pr"]["number"] = json!(pr);
+    s
+}
+
+fn two_atlas_branches(sd: &Sd) -> String {
+    cache(sd, "sheepdog", "377-atlas-world", pr_state("377-atlas-world", 449));
+    cache(sd, "sheepdog", "377-atlas-prompt", pr_state("377-atlas-prompt", 450));
+    sheepdog::watch::repo_key("/src/sheepdog")
+}
+
+#[test]
+fn a_part_of_a_branch_name_or_its_pr_number_opens_its_drill_in() {
+    let sd = sd();
+    let key = two_atlas_branches(&sd);
+    for arg in ["atlas-W", "450", "377-atlas-prompt"] {
+        let want = if arg == "atlas-W" { "377-atlas-world" } else { "377-atlas-prompt" };
+        let s = serve_args(&sd, &[arg], Stdio::null());
+        assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/{want}", s.port), "{arg}");
+    }
+}
+
+#[test]
+fn dot_opens_the_current_worktree_s_branch() {
+    let mut sd = sd();
+    let key = two_atlas_branches(&sd);
+    sd.git(&["init", "-q", &sd.path("wt")]);
+    sd.git_in("wt", &["checkout", "-q", "-b", "377-atlas-world"]);
+    sd.cd("wt");
+    let s = serve_args(&sd, &["."], Stdio::null());
+    assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/377-atlas-world", s.port));
+}
+
+#[test]
+fn several_matches_or_none_are_listed_and_nothing_serves() {
+    let sd = sd();
+    two_atlas_branches(&sd);
+    let r = sd.run(&["--no-open", "--port", "0", "377-atlas"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["377-atlas", "matches 2 branches", "sheepdog 377-atlas-prompt", "sheepdog 377-atlas-world"]);
+    let r = sd.run(&["--no-open", "--port", "0", "nope"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["nope", "matches no branch"]);
+}
+
+#[test]
+fn a_second_sd_view_on_a_taken_port_opens_the_running_one() {
+    let sd = sd();
+    let key = two_atlas_branches(&sd);
+    let s = serve(&sd);
+    let port = s.port.to_string();
+    let r = sd.run(&["--no-open", "--port", &port, "450"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["already running", &format!("http://127.0.0.1:{port}/#b={key}/377-atlas-prompt")]);
 }
 
 #[test]
