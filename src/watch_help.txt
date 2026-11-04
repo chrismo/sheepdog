@@ -115,7 +115,8 @@ Not notified:
     carries over; gh-wait is GitHub not yet showing a push (#246)
   running: an agent step is running on the branch (#170); what was notified
     carries over, since it hides every other step
-  attached: chrismo is in the branch's session; like merge-wait, keeps ready
+  attached: chrismo is in the branch's session, or holds it (sd act hold);
+    like merge-wait, keeps ready
   review review-fix implement: routine agent work, picked up when the branch
     is next worked on
   push open-pr ship-parent draft bot-trigger ci-rerun retarget: mechanical
@@ -208,6 +209,9 @@ status reads what a silent job usually comes down to, writing nothing:
     the enrolled branches whose own setting differs)
   running: <repo> <branch> <step> (pid, since, deadline or run by hand),
     one per live running marker, else none
+  attached: <repo> <branch>, held (sd act hold) or session <pid>@<host>
+    since <time>, <how long> ago: one per enrolled branch's sd-lock (#427);
+    a hold has no expiry, so one left behind shows here
   usage limit: till <reset>, <harness>: <what it said>, while one holds
   failures: <repo> <branch> <step> failed <n> in a row (holds at 3): <error>,
     one per failure record (#242)

@@ -8,6 +8,7 @@ pub mod guidance;
 pub mod harness;
 pub mod json;
 pub mod limit;
+pub mod lock;
 pub mod next;
 pub mod pins;
 pub mod proc;

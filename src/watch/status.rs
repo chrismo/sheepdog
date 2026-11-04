@@ -8,7 +8,8 @@ use crate::config::{self, state_dir};
 use crate::next::FAIL_LIMIT;
 use crate::pins::{self, Pin};
 use crate::val::{at, t, text};
-use crate::{running, time};
+use crate::git::git_out;
+use crate::{lock, running, time};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -37,6 +38,7 @@ fn block(state: &str) -> String {
         repos.iter().flat_map(|(name, repo)| enrolled(repo).into_iter().filter(|b| auto_run(repo, b) != on).map(move |b| format!("{name} {b}"))).collect();
     let mut lines = vec![age_line(age_of(&format!("{state}/job-pass")), interval()), auto_run_line(on, &overrides)];
     lines.extend(running_lines(&repos));
+    lines.extend(attached_lines(&repos));
     lines.extend(limit_line(state));
     lines.extend(failure_lines(&repos));
     lines.push(launchd_line(launchctl_print()));
@@ -89,6 +91,24 @@ fn running_lines(repos: &[(String, String)]) -> Vec<String> {
     }
     if out.is_empty() {
         out.push("running: none".into());
+    }
+    out
+}
+
+/// Each enrolled branch's sd-lock: who holds it and since when (#427).
+fn attached_lines(repos: &[(String, String)]) -> Vec<String> {
+    let now = time::now_utc().1;
+    let mut out = vec![];
+    for (name, repo) in repos {
+        for b in enrolled(repo) {
+            let lock = git_out(repo, &["config", "--get", &format!("branch.{b}.sd-lock")]).unwrap_or_default();
+            if lock.is_empty() {
+                continue;
+            }
+            let (who, since) = lock::who_since(&lock);
+            let ago = time::epoch_ns(since).map_or(String::new(), |t| format!(", {} ago", dur(((now - t) / 1_000_000_000) as i64)));
+            out.push(format!("attached: {name} {b}, {who} since {since}{ago}"));
+        }
     }
     out
 }

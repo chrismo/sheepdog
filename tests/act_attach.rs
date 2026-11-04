@@ -17,7 +17,7 @@
 
 mod common;
 
-use common::{assert_has, assert_match, chomp, dead_pid, lock_by, spawn, Holder, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, dead_pid, lock_by, spawn, Holder, Sd};
 use sheepdog::running::proc_start;
 use std::fs;
 use std::process::{Child, Command, Stdio};
@@ -930,4 +930,64 @@ fn implement_refused_while_another_step_holds_the_marker_341() {
     assert_has(&r.output, &[&format!("address is running on feat (pid {pid}"), "not starting another agent step"]);
     assert!(!sd.fx_exists("claude.args"));
     assert!(marker.exists());
+}
+
+// ── hold / release (#427): the attached lock with no session ────────────────
+
+/// "held@<host> <time>": the lock sd act hold writes, no pid in it.
+fn assert_held(sd: &Sd) {
+    let lock = sd.lock().unwrap_or_default();
+    assert_match(&lock, &format!(r"^held@{} \d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", regex::escape(&host())));
+}
+
+#[test]
+fn hold_takes_the_lock_with_no_session_and_sd_state_shows_attached_naming_release_427() {
+    let sd = sd();
+    let r = sd.run(&["hold"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_held(&sd);
+    assert!(!sd.fx_exists("claude.args"), "no session opens");
+    let state: serde_json::Value = serde_json::from_str(&sd.verb_ok("state", &["--json"])).unwrap();
+    let attached = state["next"].as_array().unwrap().iter().find(|s| s["key"] == "attached").cloned().unwrap_or_default();
+    assert_eq!(attached["cmd"], "sd act release", "{attached}");
+    assert_has(attached["say"].as_str().unwrap_or_default(), &["held since 20"]);
+}
+
+#[test]
+fn release_clears_a_hold_427() {
+    let sd = sd();
+    sd.ok(&["hold"]);
+    let r = sd.run(&["release"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.lock(), None);
+}
+
+#[test]
+fn release_refuses_a_live_sessions_lock_and_force_drops_it_427() {
+    let sd = sd();
+    let sleeper = sd.live_lock();
+    let r = sd.run(&["release"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &[&sleeper.lock(), "--force"]);
+    assert_eq!(sd.lock(), Some(sleeper.lock()));
+    let r = sd.run(&["release", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.lock(), None);
+}
+
+#[test]
+fn a_hold_is_never_cleared_as_stale_and_attach_and_agent_steps_refuse_naming_release_427() {
+    let sd = sd();
+    nothing_ahead(&sd);
+    sd.ok(&["hold"]);
+    let held = sd.lock();
+    let r = sd.run(&["attach"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["already attached", "sd act release"]);
+    assert_lacks(&r.output, "stale lock");
+    assert!(!sd.fx_exists("claude.args"));
+    let r = sd.run(&["implement"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["attached", "sd act release"]);
+    assert_eq!(sd.lock(), held);
 }

@@ -94,8 +94,8 @@ fn quoted(s: &str) -> String {
 const CHECKS: [(&str, &str, Level, &str, &str); 2] = [
     ("running", "another step holds the branch's running marker (<git dir>/sheepdog/running/<branch>)", Level::Hard,
      "it ends; if it's hung, kill its pid or remove the marker", "every verb that writes the worktree, the branch or its remote, before its gate"),
-    ("attached", "the branch is attached: its session is open interactively (branch.<b>.sd-lock)", Level::Soft,
-     "exit that session, or sd act <verb> --force", "every agent step: once its gate lets it run, or first if it has no gate"),
+    ("attached", "the branch is attached: its session is open interactively, or held (branch.<b>.sd-lock)", Level::Soft,
+     "exit that session, sd act release a hold, or sd act <verb> --force", "every agent step: once its gate lets it run, or first if it has no gate"),
 ];
 
 fn checks_of(v: &Verb) -> Vec<&'static str> {

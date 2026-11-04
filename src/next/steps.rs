@@ -28,7 +28,7 @@ pub const STEPS: &[StepDef] = &[
         .at(Hold, "gh-wait", "the push landed, but GitHub's PR data still shows the old head; it catches up in seconds")
         .hold(HUnsure),
     s("attached", WAIT, Turn, None, None)
-        .at(Hold, "attached", "chrismo is working in this branch's session, so sheepdog starts nothing until it's closed")
+        .at(Hold, "attached", "chrismo is working in this branch's session, or holds it (sd act hold), so sheepdog starts nothing until it's closed or released")
         .hold(Top),
     s("foreign", YOU, Stuck, None, None)
         .at(Hold, "foreign", "we're current with the remote and it has commits this machine never made: the branch has diverged from us, so look at them before anything pushes")
