@@ -1,9 +1,10 @@
 // The Atlas's data (#377): every NEXT step by stage from src/next/steps.rs
 // and each verb's gate rules from src/act/gates.rs, so the page can't drift
 // from the code, and the settings each step reads (steps::settings_of) with
-// this repo's value and layer from one sd config explain per request, and
-// its links (view/links.rs, #375): the files behind it and the branches at
-// it now. No branch state is read for the rules: each rule list comes off
+// this repo's value and layer from one sd config explain per request, the
+// prompt file an agent step's verb declares (act/verbs.rs), and its links
+// (view/links.rs, #375): the files behind it and the branches at it now.
+// No branch state is read for the rules: each rule list comes off
 // probes(), with a rule worded by state listed once per wording, and
 // refuses is ignored.
 
@@ -49,7 +50,20 @@ fn step(d: &StepDef, traced: &[Value], links: &Links) -> Value {
     let branches = links.at.get(d.key).cloned().unwrap_or_default();
     json!({"key": d.key, "who": d.who, "label": d.label, "meaning": d.meaning, "verb": d.verb.map(declared), "glyph": d.glyph,
            "path": d.path, "when": d.when, "waits": d.who[0], "hold": d.hold.map(HoldKind::name),
-           "settings": settings, "files": links::files_of(d, links.exists), "branches": branches})
+           "settings": settings, "prompt": prompt_of(d), "files": links::files_of(d, links.exists), "branches": branches})
+}
+
+/// The prompt <d>'s agent reads, as its verb declares it (src/act/verbs.rs):
+/// the one for <d>'s key, else the verb's only one; null where no agent runs.
+fn prompt_of(d: &StepDef) -> Value {
+    let Some(v) = d.verb.and_then(|step| VERBS.iter().find(|v| v.step() == step)) else { return Value::Null };
+    let only = match v.prompts {
+        [one] => Some(one),
+        _ => None,
+    };
+    v.prompts.iter().find(|p| p.step == d.key).or(only).map_or(Value::Null, |p| {
+        json!({"file": format!("lib/prompts/{}", p.file), "setting": format!("settings.{}", p.setting), "convention": crate::guidance::convention(p.setting)})
+    })
 }
 
 /// settings.<key> with this repo's value and layer (null when config can't
@@ -152,7 +166,8 @@ fn verb(v: &Verb) -> Value {
 /// clears}] or null}], checks: [{id, name, level, means, clears, applies}],
 /// configError: what sd config said, or null}. A step is {key, who, label,
 /// meaning, verb, glyph, path, when, waits, hold, settings: [{path, value,
-/// layer, set}], files: [path], branches: [{id, repo, branch}]}: path its
+/// layer, set}], prompt: {file, setting, convention} or null, files: [path],
+/// branches: [{id, repo, branch}]}: path its
 /// place on the stage's happy path or null for an exception (StepDef::path),
 /// when the condition a path step is taken under or null for one always
 /// taken (path_if), waits the first actor in who, hold what a Hold step does
@@ -465,6 +480,31 @@ mod tests {
         assert_eq!(quoted(""), "''");
         assert_eq!(set_command("autoRun", &json!(true)), "sd config set --repo settings.autoRun true");
         assert_eq!(set_command("interval", &json!(300)), "sd config set --global settings.interval 300");
+    }
+
+    /// An agent step's prompt is its verb's declared one (src/act/verbs.rs),
+    /// by the step's key where the verb reads two (implement, review-fix);
+    /// the setting over it is one of the step's settings.
+    #[test]
+    fn every_agent_step_names_its_verbs_prompt_file_and_the_setting_over_it() {
+        let a = unconfigured();
+        for s in steps_in(&a) {
+            let agent = s["who"].as_array().unwrap().contains(&json!("agent")) && !s["verb"].is_null();
+            assert_eq!(s["prompt"].is_object(), agent, "{s}");
+            if agent {
+                let setting = &s["prompt"]["setting"];
+                assert!(s["settings"].as_array().unwrap().iter().any(|x| x["path"] == *setting), "{}: {setting} not in its settings", s["key"]);
+            }
+        }
+        let prompt = |k: &str| steps_in(&a).into_iter().find(|s| s["key"] == k).unwrap()["prompt"].clone();
+        assert_eq!(
+            prompt("review-fix"),
+            json!({"file": "lib/prompts/review-fix.md", "setting": "settings.reviewFixPrompt", "convention": ".sheepdog/review-fix.md"})
+        );
+        assert_eq!(prompt("implement")["file"], "lib/prompts/implement.md");
+        assert_eq!(prompt("conflict")["file"], "lib/prompts/resolve.md");
+        assert_eq!(prompt("bot")["setting"], "settings.addressPrompt");
+        assert_eq!(prompt("push"), Value::Null);
     }
 
     #[test]

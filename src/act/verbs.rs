@@ -1,5 +1,7 @@
 // Each sd act verb's declaration (#341), read once by act::run for its
-// interlocks, and the registry gates::parity checks NEXT against.
+// interlocks, and the registry gates::parity checks NEXT against; an agent
+// verb's prompt files, which its code reads through prompt() and the Atlas
+// shows (#377).
 // Not here: attach and forget --remove ask running::idle mid-verb, and
 // harness::run_step marks every agent run, describe's included.
 
@@ -29,10 +31,38 @@ pub struct Verb {
     /// step: the marker's own refusal says "not starting another agent step".
     pub doing: &'static str,
     pub gate: Option<Gated>,
+    /// The prompts its agent reads, one per step it runs.
+    pub prompts: &'static [Prompt],
+}
+
+/// A step's shipped prompt, lib/prompts/<file>, which settings.<setting>
+/// overrides, then .sheepdog/<file> in the base commit (guidance.rs).
+pub struct Prompt {
+    /// The step it's for: the verb's, or review-fix for implement's other.
+    pub step: &'static str,
+    pub setting: &'static str,
+    pub file: &'static str,
 }
 
 const fn v(name: &'static str, scope: Scope, agent: bool, spends: bool, doing: &'static str) -> Verb {
-    Verb { name, scope, agent, spends, doing, gate: None }
+    Verb { name, scope, agent, spends, doing, gate: None, prompts: &[] }
+}
+
+const fn p(step: &'static str, setting: &'static str, file: &'static str) -> Prompt {
+    Prompt { step, setting, file }
+}
+
+impl Prompt {
+    /// The step's guidance for <b>, by guidance::step_guidance from <base>.
+    pub fn read(&self, b: &str, base: &str) -> Result<String, String> {
+        crate::guidance::step_guidance(self.setting, b, base, &crate::guidance::lib_dir().join("prompts").join(self.file))
+    }
+}
+
+impl Verb {
+    const fn reads(self, prompts: &'static [Prompt]) -> Verb {
+        Verb { prompts, ..self }
+    }
 }
 
 const fn gated(v: Verb, offered: fn(&[serde_json::Value]) -> bool, rules: fn(&crate::next::Derived) -> Vec<super::gate::Rule>) -> Verb {
@@ -44,7 +74,7 @@ use Scope::{None as Nothing, Remote, Worktree};
 pub const VERBS: &[Verb] = &[
     // its sd act implement is a verb of its own
     v("start", Nothing, false, true, ""),
-    gated(v("implement", Worktree, true, true, ""), |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"), gates::implement_rules),
+    gated(v("implement", Worktree, true, true, "").reads(&[p("implement", "implementPrompt", "implement.md"), p("review-fix", "reviewFixPrompt", "review-fix.md")]), |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"), gates::implement_rules),
     v("follow", Nothing, false, false, ""),
     v("fetch", Worktree, false, false, "fetching"),
     v("enroll", Nothing, false, false, ""),
@@ -52,23 +82,23 @@ pub const VERBS: &[Verb] = &[
     v("forget", Nothing, false, false, ""),
     v("unregister", Nothing, false, false, ""),
     // NEXT lists address behind the steps that clear its gate (#326): only a first step runs
-    gated(v("address", Worktree, true, true, ""), |steps| steps.first().is_some_and(|s| s["key"] == "bot" && s["who"] == "agent"), gates::address_rules),
+    gated(v("address", Worktree, true, true, "").reads(&[p("address", "addressPrompt", "address.md")]), |steps| steps.first().is_some_and(|s| s["key"] == "bot" && s["who"] == "agent"), gates::address_rules),
     v("ack", Nothing, false, false, ""),
     // act::run takes the declaration of the verb it resumes
     v("answer", Worktree, true, true, ""),
     gated(v("restack", Worktree, false, false, "restacking"), |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), |d| gates::restack_rules(d, false)),
-    gated(v("restack --resolve", Worktree, true, true, "restacking"), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), |d| gates::restack_rules(d, true)),
+    gated(v("restack --resolve", Worktree, true, true, "restacking").reads(&[p("resolve", "resolvePrompt", "resolve.md")]), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), |d| gates::restack_rules(d, true)),
     gated(v("retarget", Nothing, false, false, ""), |steps| steps.iter().any(|s| s["key"] == "retarget"), gates::retarget_rules),
     gated(v("push", Remote, false, false, "pushing"), |steps| steps.iter().any(|s| s["key"] == "push"), gates::push_rules),
     v("verify", Worktree, false, false, "running verify"),
     v("autofix", Worktree, false, false, "running autofix"),
-    gated(v("ci-fix", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "ci-red"), gates::ci_fix_rules),
-    gated(v("review", Worktree, true, true, ""), |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gates::review_rules),
+    gated(v("ci-fix", Worktree, true, true, "").reads(&[p("ci-fix", "ciFixPrompt", "ci-fix.md")]), |steps| steps.iter().any(|s| s["key"] == "ci-red"), gates::ci_fix_rules),
+    gated(v("review", Worktree, true, true, "").reads(&[p("review", "reviewPrompt", "review.md")]), |steps| steps.iter().any(|s| s["key"] == "review" && s["who"] == "agent"), gates::review_rules),
     // reads no worktree; refused while attached, as review is. NEXT's
     // review-decide step offers it, but to chrismo, so parity doesn't ask it
     gated(v("review --accept", Nothing, true, false, ""), |_| false, gates::accept_rules),
     // NEXT never offers it: ship runs it
-    gated(v("describe", Nothing, true, true, ""), |_| false, gates::describe_rules),
+    gated(v("describe", Nothing, true, true, "").reads(&[p("describe", "describePrompt", "describe.md")]), |_| false, gates::describe_rules),
     // describes unless a description is stored (its gate is describe's)
     v("ship", Remote, true, true, "shipping"),
     v("trigger", Nothing, false, false, ""),
@@ -90,6 +120,11 @@ pub fn of(verb: &str, a: &Args) -> Option<&'static Verb> {
         _ => "",
     };
     find(&format!("{verb} {flag}")).or_else(|| find(verb))
+}
+
+/// The prompt <step> reads, as its verb declares it.
+pub fn prompt(step: &str) -> &'static Prompt {
+    VERBS.iter().flat_map(|v| v.prompts).find(|p| p.step == step).unwrap_or_else(|| panic!("no verb declares {step}'s prompt"))
 }
 
 /// <cmd> is what follows "sd act ".
@@ -130,6 +165,40 @@ mod tests {
     fn the_markers_step_is_the_verbs_and_resolve_for_restack_resolve() {
         assert_eq!(find("restack --resolve").unwrap().step(), "resolve");
         assert_eq!(find("ci-fix").unwrap().step(), "ci-fix");
+    }
+
+    /// Every prompt a verb declares is shipped, and its setting is one
+    /// sd config knows and whose .sheepdog/ convention file (guidance.rs) is
+    /// named as the shipped one is.
+    #[test]
+    fn every_declared_prompt_is_a_file_under_lib_prompts_with_a_known_setting() {
+        let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib/prompts");
+        let names = crate::config::setting_names();
+        let declared: Vec<&Prompt> = VERBS.iter().flat_map(|v| v.prompts).collect();
+        assert!(!declared.is_empty());
+        for p in &declared {
+            assert!(lib.join(p.file).is_file(), "{}: no lib/prompts/{}", p.step, p.file);
+            assert!(names.contains(&p.setting), "{}: settings.{} isn't a setting", p.step, p.setting);
+            assert_eq!(crate::guidance::convention(p.setting), format!(".sheepdog/{}", p.file), "{}", p.step);
+            assert_eq!(declared.iter().filter(|q| q.step == p.step).count(), 1, "{}: declared twice", p.step);
+        }
+    }
+
+    /// The verbs that run an agent on a prompt of their own declare it;
+    /// answer resumes the asking step's session, review --accept runs no
+    /// agent, and ship runs describe's (and start, which runs none of its
+    /// own, implement's).
+    #[test]
+    fn every_agent_verb_but_answer_review_accept_and_ship_declares_its_prompt() {
+        for v in VERBS {
+            let borrows = ["answer", "review --accept", "ship"].contains(&v.name);
+            assert_eq!(!v.prompts.is_empty(), v.agent && !borrows, "{}", v.name);
+        }
+        let steps = |n: &str| find(n).unwrap().prompts.iter().map(|p| p.step).collect::<Vec<_>>();
+        assert_eq!(steps("implement"), ["implement", "review-fix"]);
+        assert_eq!(steps("restack --resolve"), ["resolve"]);
+        assert_eq!(prompt("review-fix").file, "review-fix.md");
+        assert_eq!(prompt("review-fix").setting, "reviewFixPrompt");
     }
 
     #[test]

@@ -13,7 +13,7 @@
 // review before the bot: #79 (Design record).
 
 use crate::git::{self, git, strip_nl};
-use crate::guidance::{self, step_guidance};
+use crate::guidance;
 use crate::harness::{self, Ran, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::val::t;
 use crate::{config, json};
@@ -117,7 +117,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     let short = |s: &str| s.chars().take(7).collect::<String>();
     let range = format!("{}..{}", short(&base), short(&head));
     let lib = guidance::lib_dir();
-    let mut prompt = step_guidance("reviewPrompt", &branch, &base, &lib.join("prompts/review.md")).unwrap_or_else(|e| {
+    let mut prompt = crate::act::verbs::prompt("review").read(&branch, &base).unwrap_or_else(|e| {
         eprintln!("{e}");
         die("can't read the review guidance")
     });

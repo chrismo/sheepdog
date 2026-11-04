@@ -9,7 +9,6 @@ use super::attached_during;
 use super::editing::{unknown, Outcome, Spec};
 use super::step::{step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl, Git};
-use crate::guidance::{lib_dir, step_guidance};
 use crate::proc;
 use crate::val::t;
 use serde_json::Value;
@@ -159,7 +158,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str) -> Result<Vec<String>, Halt>
     let replayed = git_out(".", &["log", "--reverse", "--no-merges", "--topo-order", "--format=%h %s", &range]).unwrap_or_default();
     // implement's settings and session, logged in usage.sup as its own step.
     let mut s = step_session(b, "implement", harness, false);
-    let guidance = step_guidance("resolvePrompt", b, r.old_base, &lib_dir().join("prompts").join("resolve.md")).map_err(|e| {
+    let guidance = super::verbs::prompt("resolve").read(b, r.old_base).map_err(|e| {
         eprintln!("{e}");
         format!("can't read the resolve guidance; {}", r.back())
     })?;
