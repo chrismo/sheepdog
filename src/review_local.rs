@@ -73,11 +73,12 @@ fn listed(sha: &str, message: &str) -> String {
     out
 }
 
-/// <body> without its last paragraph when that is all trailers
-/// (Co-Authored-By: and the like).
+/// <body> without its last paragraph when that is all trailers: a key whose
+/// value is `Name <email>` or a URL (Co-Authored-By:, Claude-Session:), so a
+/// paragraph of prose like "Why: ..." stays.
 fn without_trailers(body: &str) -> &str {
     let (rest, last) = body.rsplit_once("\n\n").unwrap_or(("", body));
-    let trailer = Regex::new(r"^[A-Za-z0-9-]+: ").expect("a fixed pattern compiles");
+    let trailer = Regex::new(r"^[A-Za-z0-9-]+: (.*<[^<>\s]+@[^<>\s]+>|https?://\S+)\s*$").expect("a fixed pattern compiles");
     if last.lines().all(|l| trailer.is_match(l)) {
         rest
     } else {
@@ -178,5 +179,15 @@ mod tests {
         let msg = "fix the thing\n\nBecause.\n\nCo-Authored-By: A <a@b.c>\nSigned-off-by: B <b@c.d>\n";
         assert_eq!(listed("abc1234", msg), "- abc1234 fix the thing\n    Because.");
         assert_eq!(listed("abc1234", "fix the thing\n\nCo-Authored-By: A <a@b.c>\n"), "- abc1234 fix the thing");
+        assert_eq!(listed("abc1234", "fix the thing\n\nClaude-Session: https://x.y/z\n"), "- abc1234 fix the thing");
+    }
+
+    #[test]
+    fn a_labelled_paragraph_is_not_a_trailer() {
+        let msg = "fix the thing\n\nWhy: the parser choked on X.\nNote: keeps the old order.\n";
+        assert_eq!(
+            listed("abc1234", msg),
+            "- abc1234 fix the thing\n    Why: the parser choked on X.\n    Note: keeps the old order."
+        );
     }
 }
