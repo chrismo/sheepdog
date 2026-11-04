@@ -932,6 +932,21 @@ fn the_atlas_page_serves_the_stages_and_each_verbs_rules() {
     assert_eq!(push["checks"], json!(["running"]));
 }
 
+// The world: each stage a line of its path's words in their declared
+// order, conditional ones drawn apart with their condition, and a count of
+// its exceptions; tapping a stage opens its bands.
+#[test]
+fn the_atlas_opens_on_the_world_each_stage_its_path_in_order() {
+    let sd = sd();
+    let s = serve(&sd);
+    let a = atlas(&s);
+    let push = a["stages"].as_array().unwrap().iter().find(|x| x["stage"] == "push").unwrap();
+    assert_eq!(push["path"], json!(["behind", "push", "open-pr", "retarget"]));
+    let body = s.get("/atlas").2;
+    assert_has(&body, &["st.path.map", "w.when", "class=\"world\""]);
+    assert!(!body.contains("where an agent step would be"), "the stand-in layer sits before the stages, in none");
+}
+
 #[test]
 fn the_three_pages_link_to_each_other() {
     let sd = sd();

@@ -321,8 +321,8 @@ impl StepDef {
     }
 
     /// A path step taken only when <cond> holds (behind: the target moved),
-    /// against one the stage always takes (push). The Atlas colors it and
-    /// shows the condition.
+    /// against one the stage always takes (push). The Atlas draws it dashed
+    /// and muted, with the condition.
     pub const fn path_if(mut self, n: u8, cond: &'static str) -> Self {
         self.path = Some(n);
         self.when = Some(cond);

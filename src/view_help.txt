@@ -15,29 +15,30 @@ Usage: sd view [--port <n>] [--no-open]
   The Atlas (/atlas, linked from the Flock and the Map) is the workflow
   itself, generated from the code so it can't drift: every NEXT step by the
   Flock's seven stages, with who does it and a line on what it means
-  (src/next/steps.rs). First the nine steps in no stage, by what each does
-  to NEXT's list (StepDef::hold): busy, the list is running alone; unsure,
-  a warning above it (errors, stale, gh-wait); whose move, above it while
-  it stands (attached, foreign, question); stand-in, in place of the agent
-  steps (budget, failed). A
-  stage opens into its steps: the happy path first, the steps the stage
-  takes when nothing is wrong, in the time order declared on each step's
-  row (StepDef::path; NEXT's own list is a priority order and never reads
-  it), a step taken only under a condition colored and showing it
-  (path_if: behind when the target moved), then off the path: the steps
-  NEXT offers when the stage can't take its next path step, grouped by
-  whose move gets it back on (chrismo, an agent, sheepdog, others). Under "check
-  order" the steps are one list in the order NEXT checks them. A step
-  opens into its
-  verb's gate (src/act/gates.rs):
-  each rule's level as what --force does with it (force can't, force passes,
-  warns, nothing to do, setting holds) and what clears it, then what else
-  is checked: the running marker before the gate (force can't), and an
-  attached session once the gate lets the verb run, or first for a verb with
-  no gate (force passes). The step's panel also lists the settings it reads,
-  each with this repo's value and the layer it comes from (sd config
-  explain) and a copy button for the sd config set command that changes it.
-  It reads no branch's state: only the repo's config.
+  (src/next/steps.rs). It opens on the world: the nine steps in no stage,
+  then the seven stages top to bottom, each a line of its happy path's
+  words, the steps it takes when nothing is wrong, in the time order
+  declared on each step's row (StepDef::path; NEXT's own list is a priority
+  order and never reads it), and a count of its exceptions. A path step the
+  stage always takes is outlined in color; one taken only under a condition
+  is dashed and muted, its condition on hover and in the open stage
+  (path_if: behind, when the target moved). The steps in no stage open by
+  what each does to NEXT's list (StepDef::hold): busy, the list is running
+  alone; unsure, a warning above it (errors, stale, gh-wait); whose move,
+  above it while it stands (attached, foreign, question); stand-in, in place
+  of the agent steps (budget, failed). A stage opens into its path, then off
+  the path: the steps NEXT offers when the stage can't take its next path
+  step, grouped by whose move gets it back on (chrismo, an agent, sheepdog,
+  others). Under "check order" an open stage's steps are one list in the
+  order NEXT checks them. A step opens into its verb's gate
+  (src/act/gates.rs): each rule's level as what --force does with it (force
+  can't, force passes, warns, nothing to do, setting holds) and what clears
+  it, then what else is checked: the running marker before the gate (force
+  can't), and an attached session once the gate lets the verb run, or first
+  for a verb with no gate (force passes). The step's panel also lists the
+  settings it reads, each with this repo's value and the layer it comes from
+  (sd config explain) and a copy button for the sd config set command that
+  changes it. It reads no branch's state: only the repo's config.
 
   The Map (/map, linked from the Flock and the Atlas) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's
