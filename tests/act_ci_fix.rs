@@ -373,19 +373,22 @@ fn red_with_a_restack_due_the_fix_is_committed_not_pushed_the_restacks_push_carr
     assert_lacks(&r.output, "CI reruns");
 }
 
-// --force pushes the fix now, past the restack that would carry it (#418).
+// --force is for ci-fix's own refusals (a CI wait, a flaky, a question), so
+// it still leaves the fix to the restack; sd act push is the way to push now
+// (#418).
 #[test]
-fn red_with_a_restack_due_force_pushes_the_fix_now_418() {
+fn red_with_a_restack_due_force_still_leaves_the_fix_to_the_restack_and_names_sd_act_push_418() {
     let sd = sd();
     sd.state(&[
         r#".parent = {name: "base", merged: true, pr: {number: 1, state: "MERGED"}}"#,
         ".sync.up_to_date = false | .sync.behind = 3 | .sync.base_on_default = false | .sync.replays_parent = []",
     ]);
+    let before = sd.remote_feat();
     let r = sd.run(&["ci-fix", "--force"]);
     assert_eq!(r.status, 0, "{}", r.output);
     assert_eq!(sd.subject(), "Uppercase three");
-    assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
-    assert_lacks(&r.output, "not pushed: the restack goes first");
+    assert_eq!(sd.remote_feat(), before);
+    assert_has(&r.output, &["not pushed: the restack goes first", "or sd act push to push it now"]);
 }
 
 // @test "no settings.verify: the agent is told no local checks exist, not that they pass"
