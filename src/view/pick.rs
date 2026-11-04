@@ -7,10 +7,11 @@ use crate::val::at;
 
 /// The id of the one cached branch <arg> names: the branch named exactly,
 /// else each whose PR number is <arg> or whose name holds it, ignoring
-/// case. Err is what to print when that isn't one branch.
-pub fn pick(list: &[Cached], arg: &str) -> Result<String, String> {
+/// case; without <parts>, only the exact name. Err is what to print when
+/// that isn't one branch.
+pub fn pick(list: &[Cached], arg: &str, parts: bool) -> Result<String, String> {
     let exact: Vec<&Cached> = list.iter().filter(|c| c.branch == arg).collect();
-    let found = if exact.is_empty() {
+    let found = if exact.is_empty() && parts {
         let (low, n) = (arg.to_lowercase(), arg.parse::<u64>().ok());
         list.iter().filter(|c| (n.is_some() && pr(c) == n) || c.branch.to_lowercase().contains(&low)).collect()
     } else {
@@ -42,18 +43,26 @@ mod tests {
     #[test]
     fn an_exact_name_wins_over_a_part_of_another() {
         let list = [c("view", 1), c("view-arg", 2)];
-        assert_eq!(pick(&list, "view"), Ok("r-1/view".into()));
+        assert_eq!(pick(&list, "view", true), Ok("r-1/view".into()));
     }
 
     #[test]
     fn a_number_matches_a_pr_or_a_part_of_a_name() {
         let list = [c("377-atlas", 449), c("449-other", 3), c("x", 5)];
-        assert_eq!(pick(&list, "5"), Ok("r-1/x".into()));
-        assert!(pick(&list, "449").unwrap_err().contains("matches 2 branches"));
+        assert_eq!(pick(&list, "5", true), Ok("r-1/x".into()));
+        assert!(pick(&list, "449", true).unwrap_err().contains("matches 2 branches"));
     }
 
     #[test]
     fn a_part_ignores_case() {
-        assert_eq!(pick(&[c("377-Atlas-World", 1)], "atlas-w"), Ok("r-1/377-Atlas-World".into()));
+        assert_eq!(pick(&[c("377-Atlas-World", 1)], "atlas-w", true), Ok("r-1/377-Atlas-World".into()));
+    }
+
+    #[test]
+    fn without_parts_only_the_exact_name_matches() {
+        let list = [c("view-arg", 2)];
+        assert!(pick(&list, "view", false).unwrap_err().contains("matches no branch"));
+        assert!(pick(&list, "2", false).unwrap_err().contains("matches no branch"));
+        assert_eq!(pick(&list, "view-arg", false), Ok("r-1/view-arg".into()));
     }
 }

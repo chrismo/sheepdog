@@ -111,18 +111,19 @@ pub fn run(argv: &[String]) -> ExitCode {
 }
 
 /// The cached branch <target> names (. is the current worktree's), or die
-/// saying why it isn't one.
+/// saying why it isn't one. . matches its branch's name exactly: a part of
+/// it would open some other branch when its own isn't cached.
 fn branch_id(state: &Path, target: &str) -> String {
-    let name = if target == "." {
+    let (name, parts) = if target == "." {
         let head = crate::git::git(".", &["symbolic-ref", "--short", "HEAD"]);
         if !head.ok {
             die(format!(". names no branch: {}", head.stderr.trim()));
         }
-        head.stdout.trim().to_string()
+        (head.stdout.trim().to_string(), false)
     } else {
-        target.to_string()
+        (target.to_string(), true)
     };
-    pick::pick(&flock::cached(state), &name).unwrap_or_else(|e| die(e))
+    pick::pick(&flock::cached(state), &name, parts).unwrap_or_else(|e| die(e))
 }
 
 fn browse(url: &str) {
