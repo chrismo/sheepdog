@@ -64,6 +64,12 @@ button.row:focus-visible, button.hold:focus-visible, button.stage:focus-visible 
 .stage .name { font-weight: 700; display: flex; gap: 10px; align-items: baseline; }
 .stage .name .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .stage .kinds { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+.stage .what { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; min-width: 0; }
+.stage .what .name { min-width: 6.5em; }
+.world { display: flex; flex-wrap: wrap; gap: 4px 2px; align-items: baseline; font-size: 0.84rem; }
+.world .w { border: 1.5px solid var(--run); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
+.world .w.when { border-color: var(--muted); border-style: dashed; color: var(--muted); }
+.world .arr { color: var(--muted); padding: 0 2px; }
 .steps { margin: 0; padding: 0 0 0 36px; display: grid; gap: 10px; margin-top: 8px; }
 .steps[hidden] { display: none; }
 .band { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; }
@@ -151,7 +157,7 @@ const HOLDS = [
   ["busy", "busy", "the whole list is this one step"],
   ["unsure", "unsure", "a warning above the stage steps"],
   ["top", "whose move", "above the stage steps, which stand"],
-  ["standin", "stand-in", "in a stage, where an agent step would be"],
+  ["standin", "stand-in", "in place of every agent step, at most one shown"],
 ];
 const WAITS = [["you", "chrismo moves"], ["agent", "an agent moves"], ["run", "sheepdog moves"], ["wait", "waiting on others"]];
 const by = s => s.verb ? "sd act " + esc(s.verb) : esc(s.who.join(" / "));
@@ -160,10 +166,13 @@ const row = (s, i) => `<li><button class="row" type="button" data-k="${esc(s.key
 const pill = s => `<li><button class="pill${s.when ? " when" : ""}" type="button" data-k="${esc(s.key)}" title="${esc(s.meaning)}">` +
   `<span class="key">${esc(s.key)}</span><span class="verb">${s.when ? "when " + esc(s.when) : by(s)}</span></button></li>`;
 
+// A stage's path steps in the order atlas.rs gives, declared on each row.
+const pathOf = st => st.path.map(k => st.steps.find(s => s.key === k)).filter(Boolean);
+
 // The path as a chain in its declared order, then the exceptions as rows
 // with their meaning, one band per actor they wait on.
-function bands(steps) {
-  const on = steps.filter(s => s.path != null).sort((a, b) => a.path - b.path);
+function bands(st) {
+  const steps = st.steps, on = pathOf(st);
   const path = on.length ? `<div class="band"><h4>path</h4><ul class="chain">${on.map(pill).join(`<li class="arr" aria-hidden="true">→</li>`)}</ul></div>` : "";
   const off = steps.some(s => s.path == null) ? `<div class="off"><h4>off the path</h4>` +
     `<p>When the stage can't take its next path step, NEXT offers one of these instead. The label says whose move gets it back on.</p></div>` : "";
@@ -174,7 +183,10 @@ function bands(steps) {
 }
 
 const checkOrder = () => $("order").getAttribute("aria-pressed") === "true";
-const kinds = steps => { const n = steps.filter(s => s.path != null).length; return `${n} on the path · ${steps.length - n} exception${steps.length - n === 1 ? "" : "s"}`; };
+const off = st => { const n = st.steps.length - st.path.length; return n ? `${n} off the path` : ""; };
+// The world: a stage's path words, a conditional one dashed with its condition on hover.
+const word = w => `<span class="w${w.when ? " when" : ""}"${w.when ? ` title="when ${esc(w.when)}"` : ""}>${esc(w.label)}</span>`;
+const world = st => `<span class="world">${pathOf(st).map(word).join(`<span class="arr" aria-hidden="true">→</span>`)}</span>`;
 
 function render(a) {
   data = a;
@@ -192,9 +204,9 @@ function render(a) {
     `<div class="steps" data-s="list" hidden>${flat ? `<ul class="flat numbered">${a.holds.map(row).join("")}</ul>` : HOLDS.map(layer).join("")}</div>`;
   $("stages").innerHTML = before + a.stages.map(s =>
     `<button class="stage" type="button" data-s="${esc(s.stage)}"><span class="dot"></span>` +
-    `<span class="name">${NAME[s.stage] || esc(s.stage)}<span class="n">${s.steps.length} step${s.steps.length === 1 ? "" : "s"}</span></span>` +
-    `<span class="kinds">${kinds(s.steps)}</span></button><div class="steps" data-s="${esc(s.stage)}" hidden>` +
-    (flat ? `<ul class="flat numbered">${s.steps.map(row).join("")}</ul>` : bands(s.steps)) + `</div>`).join("");
+    `<span class="what"><span class="name">${NAME[s.stage] || esc(s.stage)}</span>${world(s)}</span>` +
+    `<span class="kinds">${off(s)}</span></button><div class="steps" data-s="${esc(s.stage)}" hidden>` +
+    (flat ? `<ul class="flat numbered">${s.steps.map(row).join("")}</ul>` : bands(s)) + `</div>`).join("");
   route();
 }
 

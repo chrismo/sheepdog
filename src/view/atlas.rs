@@ -147,7 +147,7 @@ fn verb(v: &Verb) -> Value {
     json!({"name": v.name, "agent": v.agent, "spends": v.spends, "checks": checks_of(v), "rules": rules})
 }
 
-/// GET /api/atlas: {holds: [step], stages: [{stage, steps: [step]}],
+/// GET /api/atlas: {holds: [step], stages: [{stage, path: [key], steps: [step]}],
 /// verbs: [{name, agent, spends, checks: [id], rules: [{name, level, means,
 /// clears}] or null}], checks: [{id, name, level, means, clears, applies}],
 /// configError: what sd config said, or null}. A step is {key, who, label,
@@ -158,9 +158,17 @@ fn verb(v: &Verb) -> Value {
 /// taken (path_if), waits the first actor in who, hold what a Hold step does
 /// to the list (busy, unsure, top, standin) or null; its settings' values and
 /// layers from the repo sd view runs in, its branches those of the watcher's
-/// cache under <state> whose NEXT first step it is.
+/// cache under <state> whose NEXT first step it is. A stage's path is its
+/// path steps' keys in their declared order, the world view's line.
 pub fn atlas(state: &Path) -> Value {
     build(crate::config::explain_settings("."), &flock::cached(state))
+}
+
+/// <stage>'s happy path, its path steps' keys in their declared order.
+fn path_of(stage: Stage) -> Vec<&'static str> {
+    let mut on: Vec<&StepDef> = STEPS.iter().filter(|d| d.stage == stage && d.path.is_some()).collect();
+    on.sort_by_key(|d| d.path);
+    on.iter().map(|d| d.key).collect()
 }
 
 fn build(explained: Result<Vec<Value>, Vec<String>>, cached: &[Cached]) -> Value {
@@ -174,7 +182,10 @@ fn build(explained: Result<Vec<Value>, Vec<String>>, cached: &[Cached]) -> Value
     let holds: Vec<Value> = STEPS.iter().filter(|d| d.stage == Stage::Hold).map(step).collect();
     let stages: Vec<Value> = Stage::FLOW
         .iter()
-        .map(|&stage| json!({"stage": stage.name(), "steps": STEPS.iter().filter(|d| d.stage == stage).map(step).collect::<Vec<_>>()}))
+        .map(|&stage| {
+            let steps: Vec<Value> = STEPS.iter().filter(|d| d.stage == stage).map(step).collect();
+            json!({"stage": stage.name(), "path": path_of(stage), "steps": steps})
+        })
         .collect();
     let checks: Vec<Value> = CHECKS
         .iter()
@@ -270,6 +281,25 @@ mod tests {
         assert_eq!(when("retarget"), "the parent merged");
         assert_eq!(when("push"), Value::Null, "always taken");
         assert!(steps_in(&a).iter().all(|s| s["path"].is_u64() || s["when"].is_null()), "when is only for a path step");
+    }
+
+    /// The world view draws each stage as its path's words in time order,
+    /// so the order comes with the stage, from the rows, not the page.
+    #[test]
+    fn each_stage_lists_its_path_keys_in_their_declared_order() {
+        let a = unconfigured();
+        let path = |stage: &str| -> Vec<String> {
+            let st = a["stages"].as_array().unwrap().iter().find(|s| s["stage"] == stage).unwrap();
+            st["path"].as_array().unwrap_or_else(|| panic!("{stage} has no path: {st}")).iter().map(|k| k.as_str().unwrap().to_string()).collect()
+        };
+        assert_eq!(path("push"), ["behind", "push", "open-pr", "retarget"]);
+        assert_eq!(path("merge"), ["draft", "ready", "merged"]);
+        for st in a["stages"].as_array().unwrap() {
+            let mut on: Vec<(u64, String)> =
+                st["steps"].as_array().unwrap().iter().filter_map(|s| s["path"].as_u64().map(|n| (n, t(s, "key")))).collect();
+            on.sort();
+            assert_eq!(path(st["stage"].as_str().unwrap()), on.into_iter().map(|x| x.1).collect::<Vec<_>>(), "{}", st["stage"]);
+        }
     }
 
     /// The nine steps above the stages do four different things in NEXT's
