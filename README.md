@@ -3,6 +3,9 @@
 > [!WARNING]
 > **Alpha.** sheepdog is under active development. Commands, settings and
 > on-disk state can change without notice or a migration path.
+>
+> The goal is a pipeline that needs no agent to drive it. While it's alpha,
+> you're probably better off having one drive it anyway.
 
 Takes the busy work out of getting a branch to a merged PR and keeping it
 current while it's open: up to date with its parent (stack-aware), CI green on
