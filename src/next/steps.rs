@@ -5,10 +5,10 @@
 
 /// Every NEXT key, in next.rs's AUTHOR order; a held agent step's
 /// stand-ins and a followed PR's own steps (#250) come last. bot and
-/// answer, listed in two places as address's gate lets them, are here at
-/// the first. Each sits in a Flock stage, or in none (Hold, saying what it
-/// does to the list), with the word a lit stage shows and a line on what
-/// it means (#377).
+/// answer, listed in two places as address's gate lets them, and ci-red,
+/// before or after a restack (#418), are here at the first. Each sits in a
+/// Flock stage, or in none (Hold, saying what it does to the list), with
+/// the word a lit stage shows and a line on what it means (#377).
 pub const STEPS: &[StepDef] = &[
     s("default", YOU, Stuck, None, None)
         .at(Build, "start", "on the default branch, or a branch that is its own base: start a branch"),
@@ -42,10 +42,10 @@ pub const STEPS: &[StepDef] = &[
     s("ship-parent", RUN, Turn, None, None).at(Push, "ship parent", "the parent branch isn't on the remote yet: ship it first"),
     s("conflict", &["agent", "you"], Stuck, None, Some("resolve"))
         .at(Push, "conflict", "the restack would conflict: an agent resolves it (restack --resolve), or chrismo by hand"),
+    s("ci-red", AGENT, Stuck, None, Some("ci-fix")).at(Ci, "fix", "CI is red at HEAD: an agent diagnoses and fixes it (ci-fix)"),
     s("behind", &["run", "wait", "you"], Turn, None, Some("restack")).at(Push, "behind", "behind the target: restack onto it").path_if(1, "the target moved"),
     s("dirty", YOU, Stuck, None, None)
         .at(Build, "uncommitted", "uncommitted edits hold up a step that refuses them, and nothing says whose they are"),
-    s("ci-red", AGENT, Stuck, None, Some("ci-fix")).at(Ci, "fix", "CI is red at HEAD: an agent diagnoses and fixes it (ci-fix)"),
     s("ci-blocked", YOU, Stuck, None, None).at(Ci, "blocked", "CI's checks wait to be started or approved on GitHub"),
     // chrismo's when address's gate refuses with nothing ahead (#326)
     s("bot", &["agent", "you"], Turn, None, Some("address"))

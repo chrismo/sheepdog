@@ -354,6 +354,43 @@ fn red_the_agent_gets_the_failing_checks_as_github_reports_them_the_fix_is_commi
     assert!(gh.lines().all(|l| l.starts_with("api repos/") || l.starts_with("pr view")), "only GitHub's API, no CI's own commands:\n{gh}");
 }
 
+// A restack NEXT runs is due, and its force-push starts CI anyway: the fix
+// waits for it, so one push carries both and CI runs once (#418).
+#[test]
+fn red_with_a_restack_due_the_fix_is_committed_not_pushed_the_restacks_push_carries_it_418() {
+    let sd = sd();
+    sd.state(&[
+        r#".parent = {name: "base", merged: true, pr: {number: 1, state: "MERGED"}}"#,
+        ".sync.up_to_date = false | .sync.behind = 3 | .sync.base_on_default = false | .sync.replays_parent = []",
+    ]);
+    let (head, before) = (sd.rev("HEAD"), sd.remote_feat());
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), before);
+    assert_eq!(sd.recorded().as_deref(), Some(format!("{head} fixed").as_str()));
+    assert_has(&r.output, &["not pushed: the restack goes first, and its push carries the fix"]);
+    assert_lacks(&r.output, "CI reruns");
+}
+
+// --force is for ci-fix's own refusals (a CI wait, a flaky, a question), so
+// it still leaves the fix to the restack; sd act push is the way to push now
+// (#418).
+#[test]
+fn red_with_a_restack_due_force_still_leaves_the_fix_to_the_restack_and_names_sd_act_push_418() {
+    let sd = sd();
+    sd.state(&[
+        r#".parent = {name: "base", merged: true, pr: {number: 1, state: "MERGED"}}"#,
+        ".sync.up_to_date = false | .sync.behind = 3 | .sync.base_on_default = false | .sync.replays_parent = []",
+    ]);
+    let before = sd.remote_feat();
+    let r = sd.run(&["ci-fix", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.subject(), "Uppercase three");
+    assert_eq!(sd.remote_feat(), before);
+    assert_has(&r.output, &["not pushed: the restack goes first", "or sd act push to push it now"]);
+}
+
 // @test "no settings.verify: the agent is told no local checks exist, not that they pass"
 #[test]
 fn no_settings_verify_the_agent_is_told_no_local_checks_exist_not_that_they_pass() {

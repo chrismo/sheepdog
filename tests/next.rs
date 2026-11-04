@@ -556,6 +556,18 @@ fn red_ci_the_agent_fixes_it_names_the_failing_checks() {
     assert_eq!(step("ci-red", "cmd", &e![r#".ci.verdict = "red""#, r#".ci.failing = ["lint", "test"]"#]), "sd act ci-fix");
 }
 
+// A restack is a force-push and a CI run: with CI red at HEAD and the restack
+// clean, ci-fix goes first, so the restack's push carries the fix and CI runs
+// once (#418). A conflict still goes first: the fix needs the resolved tree.
+#[test]
+fn red_ci_and_a_clean_restack_ci_fix_first_then_the_restack_then_one_push_418() {
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#];
+    assert_eq!(keys(&e![RESTACK_DUE, &red]), "ci-red behind");
+    // the fix committed, not pushed: CI's red is for the old HEAD
+    assert_eq!(keys(&e![RESTACK_DUE, &red, ".push.ahead = 1", ".ci.for_head = false"]), "behind push");
+    assert_eq!(keys(&e![STACKED, &red, ".sync.conflict = true"]), "conflict ci-red");
+}
+
 // @test "red CI with unpushed commits, or on an old head: push first, or wait; no fix step"
 #[test]
 fn red_ci_with_unpushed_commits_or_on_an_old_head_push_first_or_wait_no_fix_step() {
@@ -1676,7 +1688,7 @@ fn order_follows_the_loop_s_ordering_79_design_record_restack_agent_fixes_push_t
     // it shows up only once the push is done; address refuses them, so it
     // follows the push (#326).
     assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", RESTACK_DUE, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".push.ahead = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind push bot review");
-    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", RESTACK_DUE, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human behind ci-red bot review");
+    assert_eq!(keys(&e![".fresh = false", ".threads.owed_human = 1", RESTACK_DUE, r#".ci.verdict = "red""#, ".threads.owed_bot = 1", ".pr.draft = true", r#".review.local = {sha: "x", status: "uncovered", uncovered: 1}"#]), "stale human ci-red behind bot review");
 }
 
 // @test "a state that isn't a record fails"
