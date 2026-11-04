@@ -306,7 +306,10 @@ Verbs:
             it. It has no pid, so it is never stale and has no expiry:
             sd watch status lists each attached branch, who holds it and
             for how long. Held already: nothing changes. A session's lock
-            is refused, --force takes it over
+            is refused, --force takes it over. attach --force over a hold
+            puts the hold back when the session exits, Ctrl-C included;
+            an attach killed outright (SIGKILL) leaves its own lock, which
+            is cleared as stale, and the hold goes with it: hold again
   release   drop a hold. A session's live lock is refused: exit that
             session, or --force drops it anyway. Nothing held: says so
 

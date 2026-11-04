@@ -227,6 +227,8 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     }
     // Only the lock this attach took: a --force may have taken it over since.
     // A hold taken over with --force comes back: nothing else would release it.
+    // Killed before here (SIGKILL), the pid lock is swept as stale and the hold
+    // is gone; the help says so.
     if get(&key("lock")) == mine {
         match crate::lock::held_since(&before) {
             Some(_) => git(".", &["config", &key("lock"), &before]),
