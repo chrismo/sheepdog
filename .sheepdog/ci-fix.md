@@ -16,7 +16,7 @@ it failed:
 
 1. `rwx results <run-id> --json`: the run's tasks; the failed ones have
    `"Status": {"Result": "failed"}`, each with a `Key`.
-2. `rwx logs <run-id> --task <key> --output "$TMPDIR/rwx-logs"`: downloads
+2. `rwx logs <run-id> --task <key> --output /tmp/rwx-logs`: downloads
    that task's logs there as `.log` files. Keep `--output` outside this
    worktree: the pipeline commits every file left in it. Read the end of
    each log; that's where cargo test, clippy or shellcheck says what broke.

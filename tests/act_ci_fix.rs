@@ -613,16 +613,17 @@ fn statuses_that_cant_be_read_are_skipped_not_fatal() {
     assert_lacks(&sd.prompt(), "(status: failure)");
 }
 
-// @test "a check run's output text is cut to its last lines"
+// @test "a check run's output summary and text are cut to their last lines"
 #[test]
-fn a_check_runs_output_text_is_cut_to_its_last_lines() {
+fn a_check_runs_output_summary_and_text_are_cut_to_their_last_lines() {
     let sd = sd();
-    let text: String = (1..=400).map(|i| format!("out {i}\n")).collect();
-    let checks = jq(&["--arg", "t", &text, ".check_runs[0].output.text = $t"], CHECKS);
+    let long = |w: &str| (1..=400).map(|i| format!("{w} {i}\n")).collect::<String>();
+    let checks = jq(&["--arg", "s", &long("sum"), "--arg", "t", &long("out"), ".check_runs[0].output.summary = $s | .check_runs[0].output.text = $t"], CHECKS);
     sd.put("checks.json", &checks);
     let r = sd.run(&["ci-fix"]);
     assert_eq!(r.status, 0);
-    assert_has(&sd.prompt(), &["out 400"]);
+    assert_has(&sd.prompt(), &["sum 400", "out 400"]);
+    assert_lacks(&sd.prompt(), "sum 1\n");
     assert_lacks(&sd.prompt(), "out 1\n");
 }
 

@@ -93,7 +93,7 @@ fn ci_report(sha: &str) -> String {
             continue;
         }
         out += &format!("## {name} (check run: {}): {}\n{}\n", t(c, "conclusion"), t(c, "output.title"), t(c, "details_url"));
-        for part in [t(c, "output.summary"), tail(&t(c, "output.text"), CI_TEXT_TAIL)] {
+        for part in ["output.summary", "output.text"].map(|f| tail(&t(c, f), CI_TEXT_TAIL)) {
             if !part.trim().is_empty() {
                 out += &format!("{}\n", part.trim_end_matches('\n'));
             }
