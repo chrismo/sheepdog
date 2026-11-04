@@ -173,7 +173,9 @@ Output:
   --long    the one-liner, every step, then a line per owed item
             (mark, type, author, excerpt, url), per open review finding
             (r, severity, file:line, body) and per flag (⚑, kind,
-            file:line, the line, commits)
+            file:line, the line, commits), except test-edits and
+            suppressions: one line counts those, and --json lists them
+            (#436)
   --json    everything
 
 Never fetches, and writes only the PR numbers it finds (branch.<b>.sd-pr,
