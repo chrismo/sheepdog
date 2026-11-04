@@ -13,7 +13,7 @@ Usage:
   sd act ack      [--id <id>]... [--question] [<branch>]
   sd act answer   [--force] <text> [<branch>]
   sd act restack  [--force] [--resolve] [<branch>]
-  sd act retarget [<branch>]
+  sd act retarget [--force] [<branch>]
   sd act push     [--force] [<branch>]
   sd act verify   [<branch>]
   sd act autofix  [<branch>]
@@ -164,8 +164,12 @@ Verbs:
             after isn't held for them
   retarget  after the parent merged: point the PR at the default branch
             (gh pr edit --base; GitHub usually did it already when the
-            parent's branch was deleted) and rewrite sd-parent to it
-  push      publish: a plain push for new commits; rewritten history, or a
+            parent's branch was deleted) and rewrite sd-parent to it.
+            Refuses, --force or not, with no PR, a PR not open, or a parent
+            closed, unmerged or not known to have merged. Refuses, unless
+            --force, while the one restack after the merge is owed, or
+            sync is unknown: the PR would get the parent's commits (#300)
+  push     publish: a plain push for new commits; rewritten history, or a
             pushed commit reset away, is force-pushed with a lease, only
             over a remote head of our own.
             Never over commits this copy has never had, --force or not.
@@ -376,7 +380,8 @@ failed step did.
                   stops), a closed PR or parent, an unknown merge or
                   conflict, a stored answer, or someone else's commits;
                   and keep a change that came out different
-  ship            ship though verify is red at HEAD
+  retarget        even while the one restack after the merged parent is owed
+  ship           ship though verify is red at HEAD
   implement, review, describe   the same
   implement       run though the branch is already ahead of its target (or
                   that's unknown), the remote has commits it doesn't, sd

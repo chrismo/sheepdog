@@ -27,6 +27,14 @@ Reports, for <branch> (default: the current one):
             in old_base..HEAD, newest first: a wrong base, which sd act
             restack refuses unless it goes by tree; [] otherwise, null
             when git can't list them
+            sync.base_on_default: old_base is in the default branch's
+            history, so HEAD holds no merged parent's commits to drop:
+            after the one restack a merged parent needs, main moving
+            restacks no more (#300); null with no base
+            sync.base_on_target: old_base is in the target's history; false
+            when an open parent rewrote it (its own restack, a force-push),
+            the one restack an open parent gets short of a conflict (#300);
+            null with no base
             sync.foreign_authors, sync.foreign_commits: as push's below,
             for the commits a restack would rewrite (old_base..HEAD, past
             the target) while it's behind: sd act restack refuses them

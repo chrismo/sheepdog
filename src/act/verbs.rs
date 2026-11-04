@@ -58,7 +58,7 @@ pub const VERBS: &[Verb] = &[
     v("answer", Worktree, true, true, ""),
     gated(v("restack", Worktree, false, false, "restacking"), |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), |d| gates::restack_rules(d, false)),
     gated(v("restack --resolve", Worktree, true, true, "restacking"), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), |d| gates::restack_rules(d, true)),
-    v("retarget", Nothing, false, false, ""),
+    gated(v("retarget", Nothing, false, false, ""), |steps| steps.iter().any(|s| s["key"] == "retarget"), gates::retarget_rules),
     gated(v("push", Remote, false, false, "pushing"), |steps| steps.iter().any(|s| s["key"] == "push"), gates::push_rules),
     v("verify", Worktree, false, false, "running verify"),
     v("autofix", Worktree, false, false, "running autofix"),

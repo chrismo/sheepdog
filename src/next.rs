@@ -6,8 +6,8 @@
 // cmd is what to run by hand meanwhile (null: no command yet).
 //
 // Ordering of the loop's own steps, after what blocks everything (stale refs,
-// human items): restack, agent fixes, one push, then review and wait; the push
-// leads because every push restarts CI (#79 Design record). GitHub behind the
+// human items): restack and retarget, agent fixes, one push, then review and
+// wait; the push leads because every push restarts CI (#79 Design record). GitHub behind the
 // remote refs, a push it hasn't seen yet (sd state's lag), is a wait where
 // stale refs are a fetch (#246). It has no time limit: a PR GitHub never
 // updates waits until chrismo sees sd watch's ⚠️ glyph.
@@ -57,6 +57,10 @@
 //
 // Behind the default branch alone is no step: it moves too often to chase.
 // A conflict with it is, and so is a restack after the parent merged.
+// Behind an open parent is no step either, short of a conflict or the parent
+// rewriting its history past the base (sync.base_on_target, #300). A
+// merged parent's restack is one: once its commits are dropped
+// (sync.base_on_default), retarget follows it, and main moving is no step.
 // Only bot items are ever marked i, so owed_bot - info is the blocking bot count.
 //
 // Info bot items are read once nothing else moves without chrismo (#168): a
@@ -448,11 +452,12 @@ impl Cx<'_> {
 }
 
 /// The author's steps, in the order NEXT lists them: what blocks everything,
-/// restack, agent fixes, one push, then review and wait (the header above).
+/// restack and retarget, agent fixes, one push, then review and wait (the
+/// header above).
 const AUTHOR: &[fn(&Cx) -> Option<Value>] = &[
-    merged, closed, errors, stale, gh_wait, attached, foreign, human, question, undone, ship_parent, conflict, behind, dirty,
-    ci_red, ci_blocked, bot, read, take, reset_dirty, nothing, verify_red, foreign_authors, ci_config, push, bot_refused,
-    open_pr, draft, review, bot_trigger, ci_rerun, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed, retarget,
+    merged, closed, errors, stale, gh_wait, attached, foreign, human, question, undone, ship_parent, conflict, behind, retarget,
+    dirty, ci_red, ci_blocked, bot, read, take, reset_dirty, nothing, verify_red, foreign_authors, ci_config, push, bot_refused,
+    open_pr, draft, review, bot_trigger, ci_rerun, bot_wait, bot_silent, ci_wait, ci_answer, parent_closed,
     review_wait, parent_wait, end,
 ];
 
@@ -881,8 +886,10 @@ fn parent_closed(cx: &Cx) -> Option<Value> {
     )
 }
 
+/// Not while gates::retarget refuses (#300): the one restack is still owed,
+/// and a held restack (dirty, a stored answer) would leave retarget first.
 fn retarget(cx: &Cx) -> Option<Value> {
-    if !(cx.d.has_pr && cx.d.stacked && yes(cx.d.parent_merged)) {
+    if !(cx.d.has_pr && cx.d.stacked && yes(cx.d.parent_merged) && crate::act::gates::retarget(cx.d).runs()) {
         return None;
     }
     step(def!("retarget"), "run",

@@ -293,6 +293,31 @@ fn parent_merged_but_the_pr_still_targets_it_sd_parent_kept_so_retarget_is_still
     assert_eq!(sd.config("branch.child.sd-parent"), "main");
 }
 
+// The soak 7 treadmill (#300): one restack drops the merged parent's
+// commits; main moving after it is no reason for another, only to retarget.
+#[test]
+fn parent_merged_restacked_once_main_moves_again_retarget_not_another_restack_300() {
+    let sd = sd();
+    let a_head = sd.stacked_child();
+    sd.squash_a(false);
+    sd.merged_pr("A", &a_head, &[]);
+    sd.open_pr("child", "A", 2);
+    sd.git(&["fetch", "-q", "origin"]);
+    let state = || sd.exec(&sd.link("state"), &[], &["--json", "child"]).output;
+    let before = state();
+    assert_eq!(jq(&["-r", ".sync.base_on_default"], &before), "false");
+    assert_eq!(jq(&["-c", "[.next[].key][0:1]"], &before), r#"["behind"]"#);
+    assert_eq!(jq(&["-r", r#"[.next[].key] | index("retarget")"#], &before), "null");
+    assert_eq!(sd.run(&["restack"]).status, 0);
+    sd.upstream("main", "h", "H", "main moved");
+    sd.git(&["fetch", "-q", "origin"]);
+    let after = state();
+    assert_eq!(jq(&["-r", ".sync.up_to_date"], &after), "false");
+    assert_eq!(jq(&["-r", ".sync.base_on_default"], &after), "true");
+    assert_eq!(jq(&["-c", "[.next[].key][0:2]"], &after), r#"["retarget","push"]"#);
+    assert_eq!(jq(&["-r", r#"[.next[].key] | index("behind")"#], &after), "null");
+}
+
 // @test "parent merged, the branch's own PR lookup fails: sd-parent kept"
 #[test]
 fn parent_merged_the_branchs_own_pr_lookup_fails_sd_parent_kept() {
@@ -471,6 +496,25 @@ fn retarget_parent_merged_pr_still_on_it_base_edited_to_main_sd_parent_rewritten
     assert_eq!(sd.run(&["retarget"]).status, 0);
     assert_eq!(sd.gh_calls().as_deref(), Some("pr edit 2 --base main"));
     assert_eq!(sd.config("branch.child.sd-parent"), "main");
+}
+
+// #300: before the one restack, the PR would move to main with the merged
+// parent's squashed-away commits in it; --force runs it anyway.
+#[test]
+fn retarget_waits_for_the_one_restack_after_a_squash_merged_parent_unless_forced_300() {
+    let sd = sd();
+    let a_head = sd.stacked_child();
+    sd.squash_a(false);
+    sd.merged_pr("A", &a_head, &[]);
+    sd.open_pr("child", "A", 2);
+    sd.git(&["fetch", "-q", "origin"]);
+    let r = sd.run(&["retarget"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["not retargeting child:", "restack", "--force"]);
+    assert_eq!(sd.gh_calls(), None);
+    assert_eq!(sd.config("branch.child.sd-parent"), "A");
+    assert_eq!(sd.run(&["retarget", "--force"]).status, 0);
+    assert_eq!(sd.gh_calls().as_deref(), Some("pr edit 2 --base main"));
 }
 
 // @test "retarget: the PR already targets main (GitHub did it): no edit, sd-parent still rewritten"
