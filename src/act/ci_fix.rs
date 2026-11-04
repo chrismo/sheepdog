@@ -1,8 +1,8 @@
 // ci-fix (J2): CI is red on HEAD. verify and autofix first, at zero tokens;
 // else the agent gets the failing checks, as GitHub reports them, and the
 // local verify output in the branch's session, and the pipeline commits its
-// fix, verifies and pushes. "flaky" is recorded against the red SHA (branch.<b>.sd-ci-fix),
-// so the same red isn't handed over again.
+// fix, verifies and pushes. "flaky" is recorded against the red SHA
+// (branch.<b>.sd-ci-fix), so the same red isn't handed over again.
 
 use super::commands::{status, tail, verify_autofix_to, Report};
 use super::editing::{guidance, run_editing_step, Outcome, Spec};

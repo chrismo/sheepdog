@@ -207,9 +207,10 @@ Verbs:
             the repo's ci-fix guidance (settings.ciFixPrompt, else
             .sheepdog/ci-fix.md), and settings.implementAllow lets the
             agent run the commands it names. The pipeline commits its
-            fix, verifies, pushes, asking sd act push's gate first. "flaky" (the agent blames CI's
-            environment) commits nothing and is recorded against the red
-            SHA, so the same red isn't handed over again: rerun CI
+            fix, verifies, pushes, asking sd act push's gate first.
+            "flaky" (the agent blames CI's environment) commits nothing
+            and is recorded against the red SHA, so the same red isn't
+            handed over again: rerun CI
             instead. Refuses on an old head or with unpushed commits (push
             first), on cancelled or blocked CI, and where a fix couldn't
             be pushed: an undone restack, a parent not on the remote.

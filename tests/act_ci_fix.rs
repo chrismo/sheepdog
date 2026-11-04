@@ -337,13 +337,13 @@ fn red_the_agent_gets_the_failing_checks_as_github_reports_them_the_fix_is_commi
     let p = sd.prompt();
     assert_has(&p, &["RWX: tests.yml (pull request)"]);
     assert_has(&p, &["test"]);
-    assert_has(&p, &["failure"]); // the status's state
-    assert_has(&p, &["Failed in 24s"]); // its description
+    assert_has(&p, &["(status: failure)", "Failed in 24s"]); // the status's state and description
     assert_has(&p, &["https://cloud.rwx.com/clabs/runs/01a1run"]); // and target URL, for the repo's guidance to read
     assert_has(&p, &["1 test failed"]); // the check run's output title
     assert_has(&p, &["FAIL: TestThree wants THREE"]); // summary
     assert_has(&p, &["TestThree: expected THREE, got three"]); // and text
     assert_has(&p, &["https://github.com/o/r/actions/runs/555/job/777"]); // its details URL
+    assert_has(&p, &["## lint (check run: failure)"]); // a check run with no output still gets its heading
     assert_has(&p, &["add a third line"]); // the task
     assert_has(&p, &["grep -q THREE file.txt"]); // the repo's checks
     assert_eq!(sd.subject(), "Uppercase three");
@@ -591,15 +591,26 @@ fn the_prs_state_unreadable_before_the_push_nothing_pushed_the_commit_kept_and_w
     assert_eq!(sd.remote_feat(), before);
 }
 
-// @test "checks and statuses that can't be read are skipped, not fatal"
+// @test "check runs that can't be read are skipped, not fatal"
 #[test]
-fn checks_and_statuses_that_cant_be_read_are_skipped_not_fatal() {
+fn check_runs_that_cant_be_read_are_skipped_not_fatal() {
     let sd = sd();
     sd.rm("checks.json");
     let r = sd.run(&["ci-fix"]);
     assert_eq!(r.status, 0);
-    assert_has(&sd.prompt(), &["RWX: tests.yml (pull request)"]);
+    assert_has(&sd.prompt(), &["## RWX: tests.yml (pull request) (status: failure)"]);
     assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
+}
+
+// @test "statuses that can't be read are skipped, not fatal"
+#[test]
+fn statuses_that_cant_be_read_are_skipped_not_fatal() {
+    let sd = sd();
+    sd.rm("status.json");
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0);
+    assert_has(&sd.prompt(), &["## test (check run: failure)"]);
+    assert_lacks(&sd.prompt(), "(status: failure)");
 }
 
 // @test "a check run's output text is cut to its last lines"

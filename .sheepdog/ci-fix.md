@@ -15,9 +15,9 @@ status whose URL is `https://cloud.rwx.com/<org>/runs/<run-id>`. To read why
 it failed:
 
 1. `rwx results <run-id> --json`: the run's tasks; the failed ones have
-   `"Status": {"Result": "failed"}`, each with an `ID`.
-2. `rwx logs <task-id> --output <dir>`: downloads that task's logs into
-   `<dir>` as `.log` files. Read the end of each; that's where cargo test,
+   `"Status": {"Result": "failed"}`, each with a `Key`.
+2. `rwx logs <run-id> --task <key> --output <dir>`: downloads that task's
+   logs into `<dir>` as `.log` files. Read the end of each; that's where cargo test,
    clippy or shellcheck says what broke.
 
 The tasks are `cargo-test` (the full suite), `clippy` (warnings are errors,
