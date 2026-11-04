@@ -45,6 +45,11 @@ const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
 const ATLAS_PAGE: &str = include_str!("view/atlas.html");
 const GH_JS: &str = include_str!("view/gh.js");
+/// The official art: the dog beside each page's title, and the tab icon.
+const ART: [(&str, &[u8]); 2] = [
+    ("/img/sheepdog.png", include_bytes!("../img/sheepdog-full-color.png")),
+    ("/img/icon.png", include_bytes!("../img/sheepdog-four-color.png")),
+];
 const PORT: u16 = 7377;
 const BODY_MAX: usize = 4096;
 
@@ -303,13 +308,22 @@ fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut r = BufReader::new((&stream).take(16 * 1024));
     let Some(req) = read_request(&mut r) else { return };
-    let (status, ctype, body) = respond(&req, port, token, state);
+    // The art is bytes, not text; the Host check is respond's.
+    let png = ART.iter().find(|(p, _)| req.method == "GET" && *p == req.path && guard::hosts(port).contains(&req.host));
+    let (status, ctype, body) = match png {
+        Some((_, bytes)) => ("200 OK", "image/png", bytes.to_vec()),
+        None => {
+            let (status, ctype, body) = respond(&req, port, token, state);
+            (status, ctype, body.into_bytes())
+        }
+    };
     let mut w = &stream;
     let _ = write!(
         w,
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
+    let _ = w.write_all(&body);
     // Closing with request bytes unread (a POST's body) resets the
     // connection, which can lose the response: drain them first.
     let _ = stream.shutdown(std::net::Shutdown::Write);
