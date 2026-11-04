@@ -17,7 +17,8 @@ fn git(args: &[&str]) -> Option<String> {
 
 fn commit() -> String {
     let Some(sha) = git(&["rev-parse", "HEAD"]) else { return "unknown".into() };
-    let mut args = vec!["status", "--porcelain", "--untracked-files=no", "--"];
+    // A build must not take index.lock from a git commit running beside it.
+    let mut args = vec!["--no-optional-locks", "status", "--porcelain", "--untracked-files=no", "--"];
     args.extend(INPUTS);
     match git(&args) {
         Some(s) if !s.is_empty() => format!("{sha}-dirty"),
