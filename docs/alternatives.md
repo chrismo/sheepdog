@@ -86,7 +86,7 @@ Borrowed, with where it landed:
 
 | Idea | From | In sheepdog |
 |---|---|---|
-| Cancelled CI is inconclusive, not red | Sortie (ADR-0023) | O5 |
+| Cancelled CI is inconclusive, not red | Sortie (ADR-0023) | Reversed by #430: cancelled counts as red (O5) |
 | A handed-off set of bot comments | Sortie | Not recorded |
 | `-U0` patch-id for the restack post-condition | 2026-10-11 round; source not recorded | Design table above |
 | The watcher's reaction model | agent-orchestrator | `sd watch` |
@@ -325,7 +325,8 @@ local tasks. Possibly heavy, like gh-stack: 29 architecture docs and 34 ADRs.
 - **Verdict:** a design reference, not a base. Adopting means giving up pi,
   giving up (or adding) stacks, accepting SQLite and letting the agent push
   (its `WORKFLOW.md` puts `git push` in a hook).
-- **Taken:** cancelled CI as inconclusive; the handed-off comment set.
+- **Taken:** the handed-off comment set; cancelled CI as inconclusive,
+  since reversed (#430: cancelled counts as red and goes to ci-fix).
 
 **Archon** · [coleam00/Archon](https://github.com/coleam00/Archon) · 23.8k★ ·
 MIT · docs, 2026-10-18. An earlier read called it Claude-centric; the README
