@@ -177,9 +177,8 @@ impl Ran {
 
 fn agent(s: &Step, b: &str) -> Result<Ran, Stop> {
     let (h, minted) = (s.harness, s.session);
-    // Only the first line, as bash's read -ra took it.
-    let args = t(s.settings, "args");
-    let extra: Vec<&str> = args.lines().next().unwrap_or("").split_whitespace().collect();
+    let args = step_args(s.settings);
+    let extra: Vec<&str> = args.iter().map(String::as_str).collect();
     let mut typed = typed_flags(h, s.settings);
     let (flags, cap, cap_note) = claude_cap(h, b, &extra)?;
     typed.extend(flags);
@@ -440,16 +439,27 @@ fn typed_flags(h: &str, block: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The block's args an agent step passes after the typed flags: only the
+/// first line, as bash's read -ra took it.
+fn step_args(block: &Value) -> Vec<String> {
+    t(block, "args").lines().next().unwrap_or("").split_whitespace().map(String::from).collect()
+}
+
 /// typed_flags' keys for a start line: "default" for an unset model or
-/// effort; a provider only when set.
+/// effort; a provider only when set. Then the args, when any: they come
+/// after the typed flags, so an --effort among them is the one that runs.
 fn settings_said(h: &str, block: &Value) -> String {
-    flag_table(h)
+    let mut said: Vec<String> = flag_table(h)
         .iter()
         .map(|&(_, k)| (k, t(block, k)))
         .filter(|(k, v)| *k != "provider" || !v.is_empty())
         .map(|(k, v)| format!("{k} {}", if v.is_empty() { "default" } else { &v }))
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect();
+    let args = step_args(block);
+    if !args.is_empty() {
+        said.push(format!("args {}", args.join(" ")));
+    }
+    said.join(", ")
 }
 
 /// claude on the claude.ai login: ANTHROPIC_API_KEY unset unless useApiKey.
@@ -926,6 +936,13 @@ mod tests {
         assert_eq!(settings_said("claude", &json!({"provider": "cf", "model": "opus"})), "model opus, effort default");
         assert_eq!(settings_said("pi", &json!({"provider": "cf", "model": "glm", "effort": "high"})), "provider cf, model glm, effort high");
         assert_eq!(settings_said("pi", &json!({"effort": "high"})), "model default, effort high");
+    }
+
+    #[test]
+    fn settings_said_adds_the_args_agent_passes_their_first_line_only() {
+        assert_eq!(settings_said("claude", &json!({"args": "--model sonnet"})), "model default, effort default, args --model sonnet");
+        assert_eq!(settings_said("claude", &json!({"effort": "high", "args": "  --effort   low \n--model x"})), "model default, effort high, args --effort low");
+        assert_eq!(settings_said("claude", &json!({"args": " \n--model x"})), "model default, effort default");
     }
 
     #[test]

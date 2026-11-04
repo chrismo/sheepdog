@@ -393,7 +393,8 @@ step's fork is left on disk (its id is in the failure and in usage.sup),
 and the branch's session is where it was, so a rerun starts where the
 failed step did. A step's start line names its harness, the model and
 effort it passes ("default" for one the block leaves unset; pi's provider
-when set) and its session: "claude (model opus, effort high; fork session
+when set), the block's args when it has any (they follow the typed
+flags, so an --effort among them wins), and its session: "claude (model opus, effort high; fork session
 <id>) is implementing <b>…" (#292).
 
 --force:
