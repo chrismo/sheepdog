@@ -89,7 +89,6 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
     );
 
     let (h, sid) = (ss.harness.as_str(), ss.id.as_str());
-    eprintln!("sd act: {h} ({} session {sid}) is describing {b}…", ss.mode);
     let step = Step {
         harness: h,
         session: sid,
@@ -104,6 +103,7 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
         claude_allow: READONLY_ALLOW,
         pi_tools: READONLY_PI_TOOLS,
     };
+    eprintln!("sd act: {} is describing {b}…", step.said());
     let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
         die(format!("the {h} describe step failed or returned no usable result (session {sid})"))
     };

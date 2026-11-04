@@ -280,6 +280,15 @@ fn describe_the_agent_writes_title_and_body_read_only_from_the_task_and_diff() {
     assert!(!allow.contains("Edit") && !allow.contains("Write"), "{allow}");
 }
 
+// @test "describe: the start line says model default and effort default when the block sets neither (#292)"
+#[test]
+fn describe_the_start_line_says_model_default_and_effort_default_when_the_block_sets_neither_292() {
+    let sd = sd();
+    let r = sd.run_sep(&["describe"]);
+    assert_eq!(r.status, 0);
+    assert_has(&r.stderr, &["sd act: claude (model default, effort default; new session ", ") is describing feat…"]);
+}
+
 // The verbs enforce settings.branchBudget themselves, not only NEXT (#349):
 // --force doesn't spend past it, and a step of unknown cost holds too.
 #[test]

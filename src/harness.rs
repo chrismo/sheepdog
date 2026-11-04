@@ -97,6 +97,12 @@ impl Step<'_> {
     fn label(&self) -> &str {
         if self.name.is_empty() { "agent" } else { self.name }
     }
+
+    /// Every agent step's start line: "claude (model opus, effort high; new
+    /// session <id>)".
+    pub fn said(&self) -> String {
+        format!("{} ({}; {} session {})", self.harness, settings_said(self.harness, self.settings), self.mode, self.session)
+    }
 }
 
 /// Runs the step in the current directory: its result objects, or its status
@@ -415,19 +421,35 @@ pub fn tui(h: &str, sid: &str, resume: bool, block: &Value) -> Result<Command, S
     Ok(c)
 }
 
-/// <h>'s flags for the block's provider, model and effort, those it sets.
-fn typed_flags(h: &str, block: &Value) -> Vec<String> {
-    let table: &[(&str, &str)] = match h {
+/// <h>'s flag for each block key it passes.
+fn flag_table(h: &str) -> &'static [(&'static str, &'static str)] {
+    match h {
         "claude" => &[("--model", "model"), ("--effort", "effort")],
         "pi" => &[("--provider", "provider"), ("--model", "model"), ("--thinking", "effort")],
         _ => &[],
-    };
-    table
+    }
+}
+
+/// <h>'s flags for the block's provider, model and effort, those it sets.
+fn typed_flags(h: &str, block: &Value) -> Vec<String> {
+    flag_table(h)
         .iter()
         .map(|&(f, k)| (f, t(block, k)))
         .filter(|(_, v)| !v.is_empty())
         .flat_map(|(f, v)| [f.to_string(), v])
         .collect()
+}
+
+/// typed_flags' keys for a start line: "default" for an unset model or
+/// effort; a provider only when set.
+fn settings_said(h: &str, block: &Value) -> String {
+    flag_table(h)
+        .iter()
+        .map(|&(_, k)| (k, t(block, k)))
+        .filter(|(k, v)| *k != "provider" || !v.is_empty())
+        .map(|(k, v)| format!("{k} {}", if v.is_empty() { "default" } else { &v }))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// claude on the claude.ai login: ANTHROPIC_API_KEY unset unless useApiKey.
@@ -893,6 +915,37 @@ mod tests {
 
         let keep = json!({"useApiKey": true});
         assert!(!claude_command(&step(&keep)).get_envs().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn settings_said_names_model_and_effort_set_or_default_and_pi_s_provider_when_set() {
+        assert_eq!(settings_said("claude", &json!({"model": "opus", "effort": "high"})), "model opus, effort high");
+        assert_eq!(settings_said("claude", &json!({})), "model default, effort default");
+        assert_eq!(settings_said("claude", &Value::Null), "model default, effort default");
+        assert_eq!(settings_said("claude", &json!({"model": "", "effort": "low"})), "model default, effort low");
+        assert_eq!(settings_said("claude", &json!({"provider": "cf", "model": "opus"})), "model opus, effort default");
+        assert_eq!(settings_said("pi", &json!({"provider": "cf", "model": "glm", "effort": "high"})), "provider cf, model glm, effort high");
+        assert_eq!(settings_said("pi", &json!({"effort": "high"})), "model default, effort high");
+    }
+
+    #[test]
+    fn a_steps_start_line_names_the_harness_its_settings_and_its_session() {
+        let block = json!({"model": "opus", "effort": "high"});
+        let s = Step {
+            harness: "claude",
+            session: "sid",
+            mode: "fork",
+            parent: "p",
+            timeout: 0,
+            prompt: "",
+            schema: "",
+            settings: &block,
+            name: "",
+            branch: "",
+            claude_allow: "",
+            pi_tools: "",
+        };
+        assert_eq!(s.said(), "claude (model opus, effort high; fork session sid)");
     }
 
     fn argv_of(c: &Command) -> String {

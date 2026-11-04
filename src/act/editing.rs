@@ -91,7 +91,6 @@ impl Spec<'_> {
         }
         let (allow, said) = harness::tool_rules(&s.harness, &agent_rules(self.b));
         prompt += &format!("\n\n{said}");
-        eprintln!("sd act: {} ({} session {}) is {}…", s.harness, s.mode, s.id, self.doing);
         let step = Step {
             harness: &s.harness,
             session: &s.id,
@@ -106,6 +105,7 @@ impl Spec<'_> {
             claude_allow: &allow,
             pi_tools: PI_TOOLS,
         };
+        eprintln!("sd act: {} is {}…", step.said(), self.doing);
         harness::run_step(&step).ok().and_then(Ran::last)
     }
 }

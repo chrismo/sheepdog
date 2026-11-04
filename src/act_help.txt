@@ -391,7 +391,10 @@ settings.forkLimit. Only a step that returns a usable result moves the
 branch's session to its fork; a give-up or a question counts. A failed
 step's fork is left on disk (its id is in the failure and in usage.sup),
 and the branch's session is where it was, so a rerun starts where the
-failed step did.
+failed step did. A step's start line names its harness, the model and
+effort it passes ("default" for one the block leaves unset; pi's provider
+when set) and its session: "claude (model opus, effort high; fork session
+<id>) is implementing <b>…" (#292).
 
 --force:
   address         run even if the branch is unpushed, diverged or taken over

@@ -268,7 +268,21 @@ fn says_when_the_reviewer_starts_which_harness_which_session_what_range() {
     assert_eq!(r.status, 0);
     let sid = after(&sd.fx_read("claude.args"), "--session-id");
     let (base, head) = (sd.var("SHEEPDOG_BASE"), sd.var("SHEEPDOG_HEAD"));
-    assert_has(&r.stderr, &[&format!("claude (new session {sid}) is reviewing main ({}..{})", &base[..7], &head[..7])]);
+    assert_has(&r.stderr, &[&format!("claude (model default, effort default; new session {sid}) is reviewing main ({}..{})", &base[..7], &head[..7])]);
+}
+
+// @test "the start line names the model and effort the block passes the reviewer (#292)"
+#[test]
+fn the_start_line_names_the_model_and_effort_the_block_passes_the_reviewer_292() {
+    let sd = sd();
+    sd.set_global("harnesses.claude.model", "opus");
+    sd.set_global("steps.review.claude.effort", "high");
+    let r = sd.run_sep(&[]);
+    assert_eq!(r.status, 0);
+    let args = sd.fx_read("claude.args");
+    assert_eq!((after(&args, "--model"), after(&args, "--effort")), ("opus".into(), "high".into()));
+    let sid = after(&args, "--session-id");
+    assert_has(&r.stderr, &[&format!("claude (model opus, effort high; new session {sid}) is reviewing main (")]);
 }
 
 // @test "settings.reviewPrompt empty: the shipped guidance and the reporting rules"
