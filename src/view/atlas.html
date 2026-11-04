@@ -40,12 +40,17 @@ h2 .n { color: var(--muted); }
 .nav a:hover { color: var(--ink); }
 #top { display: grid; gap: 10px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); align-items: center; }
-.legend i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-right: 5px; background: var(--lc); }
+.legend i { display: inline-block; width: 22px; height: 12px; border-radius: 4px; vertical-align: -2px; margin-right: 5px; border: 1.5px solid var(--run); }
+.legend i.when { border-color: var(--muted); border-style: dashed; }
+.legend i.ex { border-radius: 0; border-color: var(--muted); border-width: 0 0 1.5px 0; }
 section { display: grid; gap: 10px; }
-.holds { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+.intro { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.layer { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; }
+.layer h4 { margin: 0; padding-top: 7px; font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+.layer h4 .sub { display: block; font-family: var(--f-body); text-transform: none; letter-spacing: 0; font-size: 0.74rem; margin-top: 2px; }
 button.row, button.hold, button.stage { font: inherit; color: inherit; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line); }
 button.row:focus-visible, button.hold:focus-visible, button.stage:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
-.hold { border-left: 4px solid var(--wc) !important; border-radius: 6px; padding: 8px 10px; display: grid; gap: 2px; }
+.hold { border-radius: 6px; padding: 8px 10px; display: grid; gap: 2px; }
 .hold.on, .row.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .key { font-family: var(--f-mono); font-size: 0.86rem; font-weight: 600; }
 .mean { font-size: 0.8rem; color: var(--muted); }
@@ -58,14 +63,33 @@ button.row:focus-visible, button.hold:focus-visible, button.stage:focus-visible 
 .stage.open .dot { border-color: var(--ink); background: var(--ink); }
 .stage .name { font-weight: 700; display: flex; gap: 10px; align-items: baseline; }
 .stage .name .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font-weight: 400; }
-.strip { display: flex; height: 8px; width: min(220px, 36vw); border-radius: 4px; overflow: hidden; background: var(--line); }
-.strip i { display: block; height: 100%; width: var(--w); background: var(--c); }
-.steps { list-style: none; margin: 0; padding: 0 0 0 36px; display: grid; gap: 6px; margin-top: 6px; }
+.stage .kinds { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+.steps { margin: 0; padding: 0 0 0 36px; display: grid; gap: 10px; margin-top: 8px; }
 .steps[hidden] { display: none; }
-.row { width: 100%; display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: baseline; padding: 7px 10px; border-radius: 6px; }
-.row .who { width: 10px; height: 10px; border-radius: 50%; background: var(--wc); align-self: center; }
+.band { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; }
+.band h4 { margin: 0; padding-top: 7px; font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center; }
+.chain .arr { color: var(--muted); font-size: 0.9rem; padding: 0 2px; }
+button.pill { font: inherit; color: inherit; cursor: pointer; background: var(--surface); border: 1.5px solid var(--line); border-radius: 6px; padding: 5px 10px; display: grid; gap: 1px; text-align: left; }
+button.pill:focus-visible, .tog:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
+.pill.on { border-color: var(--ink) !important; box-shadow: 0 0 0 1px var(--ink) !important; }
+.pill { border-color: var(--run); box-shadow: inset 0 0 0 1px var(--run); }
+.pill.when { border-color: var(--muted); border-style: dashed; box-shadow: none; }
+.pill .key { font-size: 0.84rem; }
+.pill .verb { font-family: var(--f-mono); font-size: 0.7rem; color: var(--muted); }
+.pill.when .key { color: var(--muted); }
+.off { display: grid; gap: 2px; padding: 10px 0 2px; border-top: 1px solid var(--line); }
+.off h4 { margin: 0; font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
+.off p { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.band.ex h4 { padding-top: 8px; }
+.flat { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.row { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 7px 10px; border-radius: 6px; border-width: 0 0 1px 0 !important; background: none !important; }
 .row .verb { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
 .row .mean { display: block; }
+.numbered .row { border-width: 1px !important; background: var(--surface) !important; grid-template-columns: 20px 1fr auto; }
+.numbered .row .n { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); }
+.tog { font: inherit; font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.04em; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; margin-left: auto; text-transform: none; }
+.tog[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
 #sheet {
   position: fixed; left: 0; right: 0; bottom: 0; max-height: 70vh; overflow-y: auto; z-index: 5;
   background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
@@ -107,54 +131,84 @@ body.sheet footer { margin-bottom: 50vh; }
     <div class="nav"><span><a href="/">← Flock</a> · <a href="/map">Map →</a></span><span class="eyebrow" id="eyebrow">loading…</span></div>
     <h1>The workflow</h1>
     <div class="legend">
-      <span><i style="--lc:var(--you)"></i>you</span>
-      <span><i style="--lc:var(--agent)"></i>agent</span>
-      <span><i style="--lc:var(--run)"></i>sheepdog</span>
-      <span><i style="--lc:var(--wait)"></i>waiting</span>
+      <span><i></i>the path: what a stage does when nothing is wrong</span>
+      <span><i class="when"></i>a path step taken only when its condition holds</span>
+      <span><i class="ex"></i>off the path: what NEXT offers instead, and whose move it is</span>
     </div>
   </header>
-  <section><h2>Checked before anything else<span class="n" id="nholds"></span></h2><div class="holds" id="holds"></div></section>
-  <section><h2>Then, stage by stage<span class="n" id="nsteps"></span></h2><div id="stages"></div></section>
-  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a stage for its steps, a step for the branches at it now, what stops its verb, the settings that tune it, with this repo's values (sd config explain), and its files in the Map.</footer>
+  <section><h2>NEXT's list<span class="n" id="nsteps"></span><button class="tog" type="button" id="order" aria-pressed="false" title="list each stage's steps in the order NEXT checks them">check order</button></h2><div id="stages"></div></section>
+  <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a row for its steps, a step for the branches at it now, what stops its verb, the settings that tune it, with this repo's values (sd config explain), and its files in the Map. The path is in time order; exceptions stay in the order NEXT checks them.</footer>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script>
 const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 const $ = id => document.getElementById(id);
-const WHO = { you: "--you", agent: "--agent", run: "--run", wait: "--wait" };
-const NAME = { build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
+const NAME = { list: "Before the stages", build: "Build", push: "Push", ci: "CI", review: "Review", bot: "Bot review", threads: "Threads", merge: "Merge" };
 const LEVEL = { Hard: "--red", Limit: "--red", Soft: "--you", Warn: "--wait", Done: "--done" };
-const color = who => `var(${WHO[who] || "--wait"})`;
 let data = null, drawn = "";
 
-const row = s => `<li><button class="row" type="button" data-k="${esc(s.key)}" style="--wc:${color(s.who[0])}">` +
-  `<span class="who" title="${esc(s.who.join(", "))}"></span><span><span class="key">${esc(s.key)}</span><span class="mean">${esc(s.meaning)}</span></span>` +
-  `<span class="verb">${s.verb ? "sd act " + esc(s.verb) : esc(s.who.join(" / "))}</span></button></li>`;
+const HOLDS = [
+  ["busy", "busy", "the whole list is this one step"],
+  ["unsure", "unsure", "a warning above the stage steps"],
+  ["top", "whose move", "above the stage steps, which stand"],
+  ["standin", "stand-in", "in a stage, where an agent step would be"],
+];
+const WAITS = [["you", "chrismo moves"], ["agent", "an agent moves"], ["run", "sheepdog moves"], ["wait", "waiting on others"]];
+const by = s => s.verb ? "sd act " + esc(s.verb) : esc(s.who.join(" / "));
+const row = (s, i) => `<li><button class="row" type="button" data-k="${esc(s.key)}">${i == null ? "" : `<span class="n">${i + 1}</span>`}` +
+  `<span><span class="key">${esc(s.key)}</span><span class="mean">${esc(s.meaning)}</span></span><span class="verb">${by(s)}</span></button></li>`;
+const pill = s => `<li><button class="pill${s.when ? " when" : ""}" type="button" data-k="${esc(s.key)}" title="${esc(s.meaning)}">` +
+  `<span class="key">${esc(s.key)}</span><span class="verb">${s.when ? "when " + esc(s.when) : by(s)}</span></button></li>`;
 
-function strip(steps) {
-  const n = {};
-  steps.forEach(s => (n[s.who[0]] = (n[s.who[0]] || 0) + 1));
-  return Object.keys(WHO).filter(w => n[w]).map(w => `<i style="--w:${(n[w] / steps.length * 100).toFixed(1)}%;--c:${color(w)}" title="${n[w]} ${w}"></i>`).join("");
+// The path as a chain in its declared order, then the exceptions as rows
+// with their meaning, one band per actor they wait on.
+function bands(steps) {
+  const on = steps.filter(s => s.path != null).sort((a, b) => a.path - b.path);
+  const path = on.length ? `<div class="band"><h4>path</h4><ul class="chain">${on.map(pill).join(`<li class="arr" aria-hidden="true">→</li>`)}</ul></div>` : "";
+  const off = steps.some(s => s.path == null) ? `<div class="off"><h4>off the path</h4>` +
+    `<p>When the stage can't take its next path step, NEXT offers one of these instead. The label says whose move gets it back on.</p></div>` : "";
+  return path + off + WAITS.map(([w, name]) => {
+    const of = steps.filter(s => s.path == null && s.waits === w);
+    return of.length ? `<div class="band ex"><h4>${name}</h4><ul class="flat">${of.map(s => row(s)).join("")}</ul></div>` : "";
+  }).join("");
 }
+
+const checkOrder = () => $("order").getAttribute("aria-pressed") === "true";
+const kinds = steps => { const n = steps.filter(s => s.path != null).length; return `${n} on the path · ${steps.length - n} exception${steps.length - n === 1 ? "" : "s"}`; };
 
 function render(a) {
   data = a;
-  $("nholds").textContent = a.holds.length;
   const all = a.stages.reduce((n, s) => n + s.steps.length, 0);
-  $("nsteps").textContent = `${all} steps`;
+  $("nsteps").textContent = `${a.holds.length + all} steps`;
   $("eyebrow").classList.remove("stale");
   $("eyebrow").textContent = `${a.holds.length + all} steps · ${a.stages.length} stages · ${a.verbs.filter(v => v.rules).length} gates`;
-  $("holds").innerHTML = a.holds.map(s => `<button class="hold" type="button" data-k="${esc(s.key)}" style="--wc:${color(s.who[0])}">` +
-    `<span class="key">${esc(s.key)}</span><span class="mean">${esc(s.meaning)}</span></button>`).join("");
-  $("stages").innerHTML = a.stages.map(s =>
+  const layer = ([h, name, sub]) => {
+    const of = a.holds.filter(s => s.hold === h);
+    return of.length ? `<div class="layer"><h4>${name}<span class="sub">${sub}</span></h4><ul class="flat">${of.map(s => row(s)).join("")}</ul></div>` : "";
+  };
+  const flat = checkOrder();
+  const before = `<button class="stage" type="button" data-s="list"><span class="dot"></span>` +
+    `<span class="name">Before the stages<span class="n">${a.holds.length} steps</span></span><span class="kinds">in no stage: where each sits in the list</span></button>` +
+    `<div class="steps" data-s="list" hidden>${flat ? `<ul class="flat numbered">${a.holds.map(row).join("")}</ul>` : HOLDS.map(layer).join("")}</div>`;
+  $("stages").innerHTML = before + a.stages.map(s =>
     `<button class="stage" type="button" data-s="${esc(s.stage)}"><span class="dot"></span>` +
     `<span class="name">${NAME[s.stage] || esc(s.stage)}<span class="n">${s.steps.length} step${s.steps.length === 1 ? "" : "s"}</span></span>` +
-    `<span class="strip">${strip(s.steps)}</span></button><ul class="steps" data-s="${esc(s.stage)}" hidden>${s.steps.map(row).join("")}</ul>`).join("");
+    `<span class="kinds">${kinds(s.steps)}</span></button><div class="steps" data-s="${esc(s.stage)}" hidden>` +
+    (flat ? `<ul class="flat numbered">${s.steps.map(row).join("")}</ul>` : bands(s.steps)) + `</div>`).join("");
   route();
 }
 
+// The check-order toggle is a per-viewer convenience, remembered where the browser lets it.
+function setOrder(on) {
+  $("order").setAttribute("aria-pressed", on ? "true" : "false");
+  try { localStorage.setItem("sd-atlas-order", on ? "check" : ""); } catch {}
+  if (data) render(data);
+}
+try { if (localStorage.getItem("sd-atlas-order") === "check") $("order").setAttribute("aria-pressed", "true"); } catch {}
+$("order").addEventListener("click", () => setOrder(!checkOrder()));
+
 const findStep = k => [...data.holds, ...data.stages.flatMap(s => s.steps)].find(s => s.key === k);
-const stageOf = k => data.stages.find(s => s.steps.some(x => x.key === k))?.stage;
+const stageOf = k => data.stages.find(s => s.steps.some(x => x.key === k))?.stage || (data.holds.some(x => x.key === k) ? "list" : undefined);
 
 function rulesHtml(v) {
   if (!v) return `<p class="none">No verb: chrismo's step, or a wait. Nothing to gate.</p>`;
@@ -196,7 +250,7 @@ function showStep(k) {
   const v = s.verb ? data.verbs.find(v => v.name === s.verb) : null;
   document.querySelectorAll(".on").forEach(e => e.classList.remove("on"));
   document.querySelector(`[data-k="${CSS.escape(k)}"]`)?.classList.add("on");
-  const where = stageOf(k) ? NAME[stageOf(k)] : "holds the whole line";
+  const where = NAME[stageOf(k)] || "before the stages";
   $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))} · ${esc(where)}${s.glyph ? " · " + esc(s.glyph) : ""}</span></span>` +
     `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${branchesHtml(s)}${rulesHtml(v)}${settingsHtml(s)}${filesHtml(s)}`;
   $("sheet").hidden = false;

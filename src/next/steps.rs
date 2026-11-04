@@ -6,40 +6,50 @@
 /// Every NEXT key, in next.rs's AUTHOR order; a held agent step's
 /// stand-ins and a followed PR's own steps (#250) come last. bot and
 /// answer, listed in two places as address's gate lets them, are here at
-/// the first. Each sits in a Flock stage, or holds the whole line (Hold),
-/// with the word a lit stage shows and a line on what it means (#377).
+/// the first. Each sits in a Flock stage, or in none (Hold, saying what it
+/// does to the list), with the word a lit stage shows and a line on what
+/// it means (#377).
 pub const STEPS: &[StepDef] = &[
     s("default", YOU, Stuck, None, None)
         .at(Build, "start", "on the default branch, or a branch that is its own base: start a branch"),
     s("running", WAIT, Turn, Some("🤖"), None)
-        .at(Hold, "running", "an agent step is running on the branch; it hides every other step until it ends"),
+        .at(Hold, "running", "an agent is working on this branch. sheepdog runs one step per branch at a time, so whatever comes next queues until it finishes")
+        .hold(Busy),
     s("merged", RUN, Acts, Some("🏁"), None)
-        .at(Merge, "merged", "the PR merged: drop the branch's pins and enrollment, remove its worktree and delete it"),
+        .at(Merge, "merged", "the PR merged: drop the branch's pins and enrollment, remove its worktree and delete it").path(3),
     s("closed", YOU, Never, Some("🚫"), None).at(Merge, "closed", "the PR was closed without merging"),
-    s("errors", YOU, Unsure, None, None).at(Hold, "errors", "sd state reported errors, so the steps below it may be wrong"),
-    s("stale", RUN, Unsure, None, None).at(Hold, "stale", "GitHub is ahead of the remote refs: a fetch comes first"),
+    s("errors", YOU, Unsure, None, None)
+        .at(Hold, "errors", "sd state hit errors reading the branch, so we can't go forward until we figure out what's wrong (sd state --json has them)")
+        .hold(HUnsure),
+    s("stale", RUN, Unsure, None, None)
+        .at(Hold, "stale", "we haven't fetched, so we can't tell what's on the remote yet: fetch, then look again")
+        .hold(HUnsure),
     s("gh-wait", WAIT, Unsure, None, None)
-        .at(Hold, "gh-wait", "GitHub hasn't seen the push yet, so the steps below it may be wrong"),
+        .at(Hold, "gh-wait", "the push landed, but GitHub's PR data still shows the old head; it catches up in seconds")
+        .hold(HUnsure),
     s("attached", WAIT, Turn, None, None)
-        .at(Hold, "attached", "the branch's session is open interactively; agent steps wait until it exits"),
+        .at(Hold, "attached", "chrismo is working in this branch's session, so sheepdog starts nothing until it's closed")
+        .hold(Top),
     s("foreign", YOU, Stuck, None, None)
-        .at(Hold, "foreign", "the remote has commits this copy never had: take or drop them before anything pushes"),
+        .at(Hold, "foreign", "we're current with the remote and it has commits this machine never made: the branch has diverged from us, so look at them before anything pushes")
+        .hold(Top),
     s("human", YOU, Stuck, None, None).at(Threads, "reply", "a human's review item is owed a reply, which chrismo writes"),
     s("question", YOU, Stuck, None, None)
-        .at(Hold, "question", "an agent step needs chrismo's answer, or gave up; nothing reruns it until chrismo answers, edits or acks"),
+        .at(Hold, "question", "an agent step needs chrismo's answer, or gave up; nothing reruns it until chrismo answers, edits or acks")
+        .hold(Top),
     s("restack-undone", YOU, Stuck, None, None)
         .at(Push, "restack undone", "the restack was undone: some of the target's commits are copies here, so nothing pushes until it's redone"),
     s("ship-parent", RUN, Turn, None, None).at(Push, "ship parent", "the parent branch isn't on the remote yet: ship it first"),
     s("conflict", &["agent", "you"], Stuck, None, Some("resolve"))
         .at(Push, "conflict", "the restack would conflict: an agent resolves it (restack --resolve), or chrismo by hand"),
-    s("behind", &["run", "wait", "you"], Turn, None, Some("restack")).at(Push, "behind", "behind the target: restack onto it"),
+    s("behind", &["run", "wait", "you"], Turn, None, Some("restack")).at(Push, "behind", "behind the target: restack onto it").path_if(1, "the target moved"),
     s("dirty", YOU, Stuck, None, None)
         .at(Build, "uncommitted", "uncommitted edits hold up a step that refuses them, and nothing says whose they are"),
     s("ci-red", AGENT, Stuck, None, Some("ci-fix")).at(Ci, "fix", "CI is red at HEAD: an agent diagnoses and fixes it (ci-fix)"),
     s("ci-blocked", YOU, Stuck, None, None).at(Ci, "blocked", "CI's checks wait to be started or approved on GitHub"),
     // chrismo's when address's gate refuses with nothing ahead (#326)
     s("bot", &["agent", "you"], Turn, None, Some("address"))
-        .at(Threads, "address", "the review bot's items are owed a reply: an agent addresses them, or chrismo once address's gate refuses"),
+        .at(Threads, "address", "the review bot's items are owed a reply: an agent addresses them, or chrismo once address's gate refuses").path_if(1, "the bot left items"),
     s("read", YOU, Stuck, None, None)
         .at(Threads, "read", "info-only bot items to read, shown once nothing else moves without chrismo"),
     s("take", YOU, Turn, None, None)
@@ -48,7 +58,7 @@ pub const STEPS: &[StepDef] = &[
         .at(Build, "reset away", "pushed commits were reset away and edits sit on top: chrismo's to commit, take back or drop"),
     s("nothing-dirty", YOU, Turn, None, None)
         .at(Build, "nothing to ship", "uncommitted edits on a branch chrismo hasn't committed to yet"),
-    s("implement", AGENT, Turn, None, Some("implement")).at(Build, "implement", "an agent builds the branch's recorded task"),
+    s("implement", AGENT, Turn, None, Some("implement")).at(Build, "implement", "an agent builds the branch's recorded task").path(1),
     s("nothing", YOU, Stuck, None, None)
         .at(Build, "nothing to ship", "nothing ahead of the base and no task to implement: commit, or record a task"),
     s("verify-red", YOU, Stuck, None, None)
@@ -57,36 +67,38 @@ pub const STEPS: &[StepDef] = &[
         .at(Push, "others' commits", "the push would remove commits someone else made from the remote: look at them first"),
     s("ci-config", YOU, Stuck, None, None)
         .at(Ci, "set up CI", "an agent step's commit changed CI config, held unpushed until chrismo reviews it and pushes"),
-    s("push", RUN, Turn, None, Some("push")).at(Push, "push", "push the branch's commits to the remote"),
+    s("push", RUN, Turn, None, Some("push")).at(Push, "push", "push the branch's commits to the remote").path(2),
     s("answer", &["wait", "you"], Turn, None, None)
         .at(Threads, "answer", "chrismo's stored answer waits for the asking step to run again"),
-    s("open-pr", RUN, Turn, None, None).at(Push, "open PR", "open the PR (sd act ship)"),
-    s("draft", RUN, Turn, None, None).at(Merge, "mark ready", "the PR is a draft: mark it ready for review"),
+    s("open-pr", RUN, Turn, None, None).at(Push, "open PR", "open the PR (sd act ship)").path(3),
+    s("draft", RUN, Turn, None, None).at(Merge, "mark ready", "the PR is a draft: mark it ready for review").path_if(1, "the PR started as a draft"),
     s("review-fix", AGENT, Turn, None, Some("implement"))
-        .at(Review, "fix", "review findings stand at HEAD: an agent fixes them (implement), under settings.reviewRounds"),
+        .at(Review, "fix", "review findings stand at HEAD: an agent fixes them (implement), under settings.reviewRounds").path_if(2, "the review found something"),
     s("review-decide", YOU, Stuck, None, None)
         .at(Review, "decide", "the findings stand after settings.reviewRounds rounds, or the agent declined them: chrismo fixes them or accepts HEAD"),
-    s("review", AGENT, Turn, None, Some("review")).at(Review, "queued", "an agent reviews the change since the last review (A8)"),
+    s("review", AGENT, Turn, None, Some("review")).at(Review, "queued", "an agent reviews the change since the last review (A8)").path(1),
     s("review-held", YOU, Stuck, None, None)
         .at(Review, "held", "a Hard rule of review's gate holds the review back: no base, or a worktree not known clean"),
-    s("bot-trigger", RUN, Turn, None, Some("trigger")).at(Bot, "ask", "ask the review bot to look at HEAD (settings.botCommand)"),
+    s("bot-trigger", RUN, Turn, None, Some("trigger")).at(Bot, "ask", "ask the review bot to look at HEAD (settings.botCommand)").path(1),
     s("ci-rerun", RUN, Turn, None, None).at(Ci, "rerun", "CI was cancelled: rerun it"),
-    s("bot-wait", WAIT, Turn, None, None).at(Bot, "waiting", "waiting for the review bot's answer"),
+    s("bot-wait", WAIT, Turn, None, None).at(Bot, "waiting", "waiting for the review bot's answer").path(2),
     s("bot-silent", YOU, Stuck, None, None).at(Bot, "silent", "the review bot hasn't answered within settings.botTimeout"),
-    s("ci-wait", WAIT, Turn, None, None).at(Ci, "running", "waiting for CI on HEAD"),
+    s("ci-wait", WAIT, Turn, None, None).at(Ci, "running", "waiting for CI on HEAD").path(1),
     s("parent-closed", YOU, Stuck, None, None)
         .at(Merge, "parent closed", "the parent PR was closed without merging: point the branch at what it targets now"),
-    s("retarget", RUN, Turn, None, Some("retarget")).at(Push, "retarget", "the parent merged: retarget the PR at the parent's target"),
+    s("retarget", RUN, Turn, None, Some("retarget")).at(Push, "retarget", "the parent merged: retarget the PR at the parent's target").path_if(4, "the parent merged"),
     s("review-wait", WAIT, Turn, None, None).at(Review, "waiting", "waiting for GitHub's required review"),
     s("parent-wait", WAIT, Turn, None, None).at(Merge, "after parent", "waiting for the parent PR to merge"),
-    s("ready", YOU, Acts, Some("✅"), None).at(Merge, "ready", "green, reviewed and in sync: chrismo merges"),
+    s("ready", YOU, Acts, Some("✅"), None).at(Merge, "ready", "green, reviewed and in sync: chrismo merges").path(2),
     s("merge-wait", WAIT, Turn, None, None).at(Merge, "merging", "GitHub is recomputing the merge state after the base moved"),
     s("blocked", YOU, Turn, None, None).at(Merge, "blocked", "GitHub's branch rules hold the merge until chrismo sees why"),
     // in place of the agent steps: spend past the budget, or failed in a row
     s("budget", YOU, Stuck, None, None)
-        .at(Hold, "budget", "the branch's steps have spent past settings.branchBudget, or a cost is unknown: no agent step runs until chrismo raises it or takes over"),
+        .at(Hold, "budget", "the branch's steps have spent past settings.branchBudget, or a cost is unknown: no agent step runs until chrismo raises it or takes over")
+        .hold(Standin),
     s("failed", YOU, Stuck, None, None)
-        .at(Hold, "failed", "3 agent steps failed in a row: none runs until chrismo fixes what fails and reruns the last one"),
+        .at(Hold, "failed", "three agent steps in a row failed (FAIL_LIMIT), so none runs until chrismo fixes what broke and reruns the last one")
+        .hold(Standin),
     // a followed PR's (#250)
     s("yours", YOU, Stuck, None, None)
         .at(Review, "yours", "a followed PR's branch has commits of chrismo's the PR doesn't: move them to a branch of your own"),
@@ -166,6 +178,7 @@ const YOU: &[&str] = &["you"];
 const AGENT: &[&str] = &["agent"];
 const RUN: &[&str] = &["run"];
 const WAIT: &[&str] = &["wait"];
+use HoldKind::{Busy, Standin, Top, Unsure as HUnsure};
 use Notify::{Acts, Never, Stuck, Turn, Unsure};
 use Stage::{Bot, Build, Ci, Hold, Merge, Push, Review, Threads};
 
@@ -192,7 +205,7 @@ const fn s(
 impl Row {
     const fn at(self, stage: Stage, label: &'static str, meaning: &'static str) -> StepDef {
         let Row { key, who, notify, glyph, verb } = self;
-        StepDef { key, who, notify, glyph, verb, stage, label, meaning }
+        StepDef { key, who, notify, glyph, verb, stage, label, meaning, path: None, when: None, hold: None }
     }
 }
 
@@ -263,6 +276,65 @@ pub struct StepDef {
     pub label: &'static str,
     /// One line on what the step means (src/view_help.txt's Atlas, #377).
     pub meaning: &'static str,
+    /// Its place on the stage's happy path, or None for an exception (path()).
+    pub path: Option<u8>,
+    /// For a path step taken only sometimes, the condition (path_if()).
+    pub when: Option<&'static str>,
+    /// For a Hold step, what it does to NEXT's list (hold()).
+    pub hold: Option<HoldKind>,
+}
+
+/// What a Hold step does to NEXT's list (src/next.rs offer and finish):
+/// four different things the Atlas names, declared on the row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldKind {
+    /// The list is this step alone: running, one step per branch at a time.
+    Busy,
+    /// Listed above the stage steps as a warning that they may be wrong,
+    /// notified ⚠️: errors, stale, gh-wait.
+    Unsure,
+    /// Listed above the stage steps, which stand: attached, foreign, question.
+    Top,
+    /// In place of every agent step, at most one shown: budget, failed.
+    Standin,
+}
+
+impl HoldKind {
+    pub const fn name(self) -> &'static str {
+        match self {
+            HoldKind::Busy => "busy",
+            HoldKind::Unsure => "unsure",
+            HoldKind::Top => "top",
+            HoldKind::Standin => "standin",
+        }
+    }
+}
+
+impl StepDef {
+    /// Declares the step's place on its stage's happy path, 1 first. The
+    /// path is what the stage does when nothing is wrong, the sentence the
+    /// Atlas says for it; a step without one is an exception, shown by the
+    /// actor it waits on. NEXT never reads it: its list is a priority
+    /// order, and this is the time order, declared beside it (#377).
+    pub const fn path(mut self, n: u8) -> Self {
+        self.path = Some(n);
+        self
+    }
+
+    /// A path step taken only when <cond> holds (behind: the target moved),
+    /// against one the stage always takes (push). The Atlas colors it and
+    /// shows the condition.
+    pub const fn path_if(mut self, n: u8, cond: &'static str) -> Self {
+        self.path = Some(n);
+        self.when = Some(cond);
+        self
+    }
+
+    /// Declares what a Hold step does to the list; every Hold step has one.
+    pub const fn hold(mut self, kind: HoldKind) -> Self {
+        self.hold = Some(kind);
+        self
+    }
 }
 
 /// const, so def! can check a key when it compiles.
@@ -370,7 +442,7 @@ mod tests {
         assert!(find("ci-re").is_none() && find("nope").is_none());
     }
 
-    /// The steps that hold the whole line (#377): listed first in the Atlas.
+    /// The steps in no stage (#377): the Atlas draws them as NEXT's list.
     const HOLDS: [&str; 9] = ["attached", "budget", "errors", "failed", "foreign", "gh-wait", "question", "running", "stale"];
 
     #[test]
