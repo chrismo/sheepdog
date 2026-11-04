@@ -119,13 +119,13 @@ fn branch_id(state: &Path, target: &str) -> String {
     if target != "." {
         return pick::pick(&cached, target, true).unwrap_or_else(|e| die(e));
     }
-    let head = crate::git::git(".", &["symbolic-ref", "--short", "HEAD"]);
-    if !head.ok {
-        die(format!(". names no branch: {}", head.stderr.trim()));
-    }
+    // Mid-rebase (a restack's conflict), the branch being rebased.
+    let Some(head) = crate::git::current_branch(".") else {
+        die(". names no branch: HEAD is detached, or this isn't a git worktree");
+    };
     let repo = format!("{}/", crate::watch::repo_key(&crate::git::main_worktree(".")));
     let ours: Vec<_> = cached.into_iter().filter(|c| c.id.starts_with(&repo)).collect();
-    pick::pick(&ours, head.stdout.trim(), false).unwrap_or_else(|e| die(e))
+    pick::pick(&ours, &head, false).unwrap_or_else(|e| die(e))
 }
 
 fn browse(url: &str) {

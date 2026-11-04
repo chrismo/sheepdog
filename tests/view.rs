@@ -173,6 +173,30 @@ fn dot_opens_the_current_worktree_s_branch_in_its_own_repo() {
 }
 
 #[test]
+fn dot_mid_rebase_opens_the_branch_being_rebased() {
+    let mut sd = sd();
+    let key = on_atlas_world(&mut sd);
+    cache_at(&sd, &fs::canonicalize(sd.path("wt")).unwrap().to_string_lossy(), "377-atlas-world", pr_state("377-atlas-world", 1));
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sd.git(&["checkout", "-q", "--detach"]);
+    fs::create_dir(sd.cwd.join(".git/rebase-merge")).unwrap();
+    sd.write(".git/rebase-merge/head-name", "refs/heads/377-atlas-world\n");
+    let s = serve_args(&sd, &["."], Stdio::null());
+    assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/377-atlas-world", s.port));
+}
+
+#[test]
+fn dot_on_a_detached_head_names_no_branch() {
+    let mut sd = sd();
+    on_atlas_world(&mut sd);
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sd.git(&["checkout", "-q", "--detach"]);
+    let r = sd.run(&["--no-open", "--port", "0", "."]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &[". names no branch"]);
+}
+
+#[test]
 fn dot_matches_no_branch_of_another_repo() {
     let mut sd = sd();
     two_atlas_branches(&sd);
