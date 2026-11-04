@@ -430,7 +430,7 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     let sess = step_session(b, "address", &a.harness, answering);
     let verify = command("verify", b);
     let base = guidance_base(b);
-    let guidance = guidance(b, &base, "addressPrompt", "address.md", "address");
+    let guidance = guidance(b, &base, "address");
     let list: Vec<Value> = fs.iter().cloned().map(Value::Object).collect();
     let listed = format!("Findings:\n{}", serde_json::to_string_pretty(&list).expect("a Value serializes"));
     let r = run_editing_step(Spec {

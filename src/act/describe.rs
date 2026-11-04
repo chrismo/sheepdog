@@ -9,7 +9,6 @@ use super::review::short;
 use super::step::{spend_worded, step_session, step_store};
 use super::{die, enforce, gates, no_base_why, Args};
 use crate::git::{git_out, rev, worktree_for};
-use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, READONLY_ALLOW, READONLY_PI_TOOLS};
 use crate::json;
 use crate::next::Derived;
@@ -77,7 +76,7 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
     let task = if task.is_empty() { "(none recorded)" } else { &task };
     let commits = git_out(".", &["log", "--format=- %s", &format!("{base}..{head}")]).unwrap_or_default();
     let diff = git_out(".", &["diff", &base, &head]).unwrap_or_default();
-    let guidance = step_guidance("describePrompt", b, &base, &lib_dir().join("prompts/describe.md")).unwrap_or_else(|e| {
+    let guidance = super::verbs::prompt("describe").read(b, &base).unwrap_or_else(|e| {
         eprintln!("{e}");
         die("can't read the describe guidance")
     });

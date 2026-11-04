@@ -1481,6 +1481,22 @@ fn an_atlas_step_lists_the_files_behind_it() {
     assert_has(&s.get("/atlas").2, &["/map#p="]);
 }
 
+// An agent step names the prompt file its verb reads (#377, #423), from
+// the verb's declaration, and the setting that overrides it.
+#[test]
+fn an_atlas_agent_step_names_the_prompt_file_its_verb_reads() {
+    let sd = sd();
+    let s = serve(&sd);
+    let a = atlas(&s);
+    assert_eq!(
+        atlas_step(&a, "ci-red")["prompt"],
+        json!({"file": "lib/prompts/ci-fix.md", "setting": "settings.ciFixPrompt", "convention": ".sheepdog/ci-fix.md"})
+    );
+    assert_eq!(atlas_step(&a, "review")["prompt"]["file"], "lib/prompts/review.md");
+    assert_eq!(atlas_step(&a, "ready")["prompt"], Value::Null);
+    assert_has(&s.get("/atlas").2, &["The prompt it reads"]);
+}
+
 #[test]
 fn a_map_file_lists_the_atlas_steps_that_live_in_it() {
     let sd = sd();

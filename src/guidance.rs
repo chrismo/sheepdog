@@ -69,7 +69,7 @@ fn guidance(dir: &str, setting: &str, path: &str, base: &str, default: &Path) ->
 }
 
 /// .sheepdog/<name>.md for <setting>: reviewFixPrompt's is .sheepdog/review-fix.md.
-fn convention(setting: &str) -> String {
+pub fn convention(setting: &str) -> String {
     let name = setting.strip_suffix("Prompt").unwrap_or(setting);
     let mut kebab = String::new();
     for c in name.chars() {

@@ -243,6 +243,16 @@ function settingsHtml(s) {
   return `<h3>Settings that tune it</h3>${err}<ul class="settings">${rows}</ul>`;
 }
 
+// step_guidance's order: the setting, else the convention file in the base commit, else the shipped file
+function promptHtml(s) {
+  const p = s.prompt;
+  if (!p) return "";
+  const v = s.settings.find(x => x.path === p.setting)?.value;
+  const here = v ? `set here: ${esc(JSON.stringify(v))}` : "unset here";
+  return `<h3>The prompt it reads</h3><ul class="links"><li><code>${esc(p.file)}</code><span class="sub">shipped</span></li></ul>` +
+    `<p class="none">unless <code>${esc(p.setting)}</code> names a file (${here}), or the base commit has <code>${esc(p.convention)}</code></p>`;
+}
+
 const link = (href, text) => `<a href="${href}">${esc(text)}</a>`;
 function branchesHtml(s) {
   const at = s.branches.map(b => `<li>${link("/#b=" + encodeURIComponent(b.id), b.branch)}<span class="sub">${esc(b.repo)}</span></li>`).join("");
@@ -264,7 +274,7 @@ function showStep(k) {
   document.querySelector(`[data-k="${CSS.escape(k)}"]`)?.classList.add("on");
   const where = NAME[stageOf(k)] || "before the stages";
   $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))} · ${esc(where)}${s.glyph ? " · " + esc(s.glyph) : ""}</span></span>` +
-    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${branchesHtml(s)}${rulesHtml(v)}${settingsHtml(s)}${filesHtml(s)}`;
+    `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${branchesHtml(s)}${rulesHtml(v)}${promptHtml(s)}${settingsHtml(s)}${filesHtml(s)}`;
   $("sheet").hidden = false;
   document.body.classList.add("sheet");
   if (arriving) document.querySelector(".on")?.scrollIntoView({ block: "center" });

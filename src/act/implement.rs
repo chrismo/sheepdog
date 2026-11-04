@@ -258,14 +258,14 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let sess = step_session(b, "implement", &a.harness, answering);
     let base = guidance_base(b);
     let (prompt, schema) = if fixing {
-        let g = guidance(b, &base, "reviewFixPrompt", "review-fix.md", "review-fix");
+        let g = guidance(b, &base, "review-fix");
         let task = if task.is_empty() { "(none recorded)" } else { &task };
         let decided = decisions::section(&decisions::on_record(b), DECIDED);
         let list = listed(&fs);
         let p = format!("{g}\n\n{REVIEW_FIX_CONTRACT}\n\nFindings:\n{list}{decided}\n\nThe task this branch was made for, for context:\n{task}");
         (p, REVIEW_FIX_SCHEMA)
     } else {
-        let g = guidance(b, &base, "implementPrompt", "implement.md", "implement");
+        let g = guidance(b, &base, "implement");
         (format!("{g}\n\n{IMPLEMENT_CONTRACT}\n\nTask:\n{task}"), IMPLEMENT_SCHEMA)
     };
     let r = run_editing_step(Spec {

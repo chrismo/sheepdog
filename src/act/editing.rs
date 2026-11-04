@@ -7,7 +7,6 @@ use super::die;
 use super::hold::hold_since;
 use super::step::{agent_rules, answer_prompt, give_up, question_answered, step_store, Session};
 use crate::git::{git, rev};
-use crate::guidance::{lib_dir, step_guidance};
 use crate::harness::{self, Ran, Step, PI_TOOLS};
 use crate::val::t;
 use serde_json::Value;
@@ -43,12 +42,12 @@ pub fn unknown(word: &str, summary: &str) -> (String, String) {
     (format!("returned outcome \"{word}\": {summary}"), format!("the agent returned outcome \"{word}\""))
 }
 
-/// <b>'s guidance for a step: <setting>, else .sheepdog/<file> in <base>,
-/// else lib/prompts/<file>. Dies, naming <what>, when it can't be read.
-pub fn guidance(b: &str, base: &str, setting: &str, file: &str, what: &str) -> String {
-    step_guidance(setting, b, base, &lib_dir().join("prompts").join(file)).unwrap_or_else(|e| {
+/// <b>'s guidance for <step>, from the prompt its verb declares
+/// (verbs::prompt). Dies, naming <step>, when it can't be read.
+pub fn guidance(b: &str, base: &str, step: &str) -> String {
+    super::verbs::prompt(step).read(b, base).unwrap_or_else(|e| {
         eprintln!("{e}");
-        die(format!("can't read the {what} guidance"))
+        die(format!("can't read the {step} guidance"))
     })
 }
 

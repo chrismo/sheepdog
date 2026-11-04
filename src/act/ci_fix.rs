@@ -231,7 +231,7 @@ fn first_pass(b: &str, wt: &str, remote: &str, a: &Args, state: &Value, forced: 
     }
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
     let report = if sha.is_empty() { String::new() } else { ci_report(&sha) };
-    let mut p = guidance(b, base, "ciFixPrompt", "ci-fix.md", "ci-fix");
+    let mut p = guidance(b, base, "ci-fix");
     p += &format!("\n\n{CI_FIX_CONTRACT}\n\nTask: {}", if task.is_empty() { "(none recorded)" } else { &task });
     p += &format!("\n\n{}", failing_line(&sha, &sj(at(state, "ci.failing"), ", ")));
     if !forced.is_empty() {
