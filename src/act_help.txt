@@ -200,11 +200,14 @@ Verbs:
             again (A11), and ci-fix runs it first
   ci-fix    CI is red on HEAD: verify and autofix first (zero tokens; a
             fix there is pushed as is), else hand the agent the failing
-            checks, their logs (commit statuses and check runs over REST;
-            rwx results/logs for RWX, gh run view --log-failed for GitHub
-            Actions) and the local verify output, in the branch's session
-            (J2). The pipeline commits its fix, verifies, pushes, asking
-            sd act push's gate first. "flaky" (the agent blames CI's
+            checks as GitHub reports them, whatever CI posted them (each
+            commit status's state, description and URL; each check run's
+            conclusion, URL and output), and the local verify output, in
+            the branch's session (J2). No CI's logs: how to read them is
+            the repo's ci-fix guidance (settings.ciFixPrompt, else
+            .sheepdog/ci-fix.md), and settings.implementAllow lets the
+            agent run the commands it names. The pipeline commits its
+            fix, verifies, pushes, asking sd act push's gate first. "flaky" (the agent blames CI's
             environment) commits nothing and is recorded against the red
             SHA, so the same red isn't handed over again: rerun CI
             instead. Refuses on an old head or with unpushed commits (push

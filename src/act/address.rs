@@ -578,7 +578,7 @@ mod tests {
         let rec = |held: bool| {
             let mut s = json!({"branch": "feat", "pr": {"state": "OPEN"}, "sync": {"ahead": 1}, "push": {"remote_sha": "abc", "ahead": 1, "foreign_authors": []}});
             if held {
-                s["push"]["held"] = json!({"paths": [".rwx/tests.yml"]});
+                s["push"]["held"] = json!({"paths": [".github/workflows/ci.yml"]});
             }
             s
         };

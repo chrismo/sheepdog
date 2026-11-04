@@ -274,7 +274,7 @@ pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
         rule("no CI ran at HEAD", Level::Done, v == "none" && !no(*ci_for_head) && settled, "", true),
         wait("CI is pending", v == "pending", "wait for it", false),
         wait("CI is blocked", v == "blocked" && at_head, "start or approve its checks: gh pr checks", true),
-        wait("CI was cancelled", v == "inconclusive" && at_head, "rerun it: gh run rerun, or rwx retry", true),
+        wait("CI was cancelled", v == "inconclusive" && at_head, "rerun it, or look: gh pr checks", true),
         wait("CI's verdict is unknown", !known, "sd state says why", true),
         wait("CI's red isn't for HEAD", v == "red" && !at_head, "push if there's anything to push, then wait for CI on HEAD", false),
         wait("CI is green, but not on HEAD", v == "green" && !at_head, "wait for CI on HEAD", false),
