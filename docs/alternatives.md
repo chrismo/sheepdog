@@ -641,6 +641,10 @@ closed 2026-10-23). No tools are queued to read.
 
 **Keep sheepdog.** chrismo's main reason: to understand from the inside how
 these machines work, which stays worth it even if sheepdog is later
-mothballed. It also still fits: nothing above runs pi (and maybe OpenCode
-later), works locally in worktrees, and watches without spending tokens. If
-it stops, the fallback is Sortie plus a pi adapter we'd write, re-read first.
+mothballed. And machines like this look set to become normal for many
+process workflows, not only PRs: factory robots for software. The old ones
+were general (databases, job systems); agents make custom ones cheap enough
+for any size of org. It also still fits: nothing above runs pi (and maybe
+OpenCode later), works locally in worktrees, and watches without spending
+tokens. If it stops, the fallback is Sortie plus a pi adapter we'd write,
+re-read first.
