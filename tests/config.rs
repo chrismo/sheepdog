@@ -1055,6 +1055,16 @@ fn get_global_a_key_the_global_file_doesnt_set_is_unset_exit_3_defaults_and_all(
 }
 
 #[test]
+fn get_branch_a_null_the_file_sets_prints_null_exit_0_where_the_resolved_get_falls_through() {
+    let sd = Sd::new();
+    sd.ok(&["set", "--global", "harnesses.claude.effort", "max"]);
+    sd.ok(&["set", "--branch", "feat", "--json", "harnesses.claude.effort", "null"]);
+    assert_eq!(sd.ok(&["get", "--branch", "feat", "harnesses.claude.effort"]), "null\n");
+    assert_eq!(sd.ok(&["get", "--branch", "feat", "--json", "harnesses.claude.effort"]), "null\n");
+    assert_eq!(sd.run(&["get", "--repo", "harnesses.claude.effort"]).status, 3);
+}
+
+#[test]
 fn get_takes_at_most_one_layer_flag_and_no_branch_or_branch_argument_with_one() {
     let sd = Sd::new();
     for flags in [

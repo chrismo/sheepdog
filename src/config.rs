@@ -68,9 +68,9 @@ Notes:
     the file already has the new name
   - get prints strings raw, lists one per line, objects as JSON (--json: all)
   - get --global, --repo or --branch <b> reads only that file, as set
-    writes it: no defaults, profiles or other layers; exit 3 when that
-    file doesn't set the key. At most one of them, and not with
-    --no-branch or a <branch>
+    writes it: no defaults, profiles or other layers; a null the file
+    sets prints null; exit 3 when that file doesn't set the key. At
+    most one of them, and not with --no-branch or a <branch>
   - exit 3: no value and no default. exit 1: an error
   - <branch> defaults to the current one; --no-branch skips the branch file
     (inside a repo, the repo file is still read)
