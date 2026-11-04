@@ -15,6 +15,8 @@
 // the stored one and has a transcript, attach resumes that session, which
 // made the edits, and says so. On exit it's stored, as any resumed session
 // is; a rerun of the step still forks the stored session (#69).
+//
+// hold and release (#427) take and drop the same lock with no session.
 
 use super::commands::status;
 use super::{cfg, die, hostname};
@@ -36,8 +38,11 @@ fn get(key: &str) -> String {
 fn take(b: &str, lock: &str, force: bool) -> Result<Option<String>, String> {
     match (lock, force) {
         ("", _) => Ok(None),
+        (_, true) if crate::lock::held_since(lock).is_some() => {
+            Ok(Some(format!("taking over {b}'s hold ({lock}); it's put back when the session exits")))
+        }
         (_, true) => Ok(Some(format!("taking over {b}'s lock ({lock})"))),
-        _ => Err(format!("{b} is already attached ({lock}); exit that session, or --force to take it over")),
+        _ => Err(format!("{b} is already attached ({lock}); {}, or --force to take it over", crate::lock::let_go(lock))),
     }
 }
 
@@ -99,6 +104,51 @@ fn block(h: &str, b: &str) -> Value {
             die("sd config failed")
         }
     }
+}
+
+/// git config <args>, or exit as it did.
+fn config(args: &[&str]) {
+    let o = git(".", &[&["config"], args].concat());
+    if !o.ok {
+        eprint!("{}", o.stderr);
+        std::process::exit(o.code);
+    }
+}
+
+/// hold: the attached lock with no session; one already held stays as it was.
+pub fn hold(b: &str, force: bool) {
+    if !git(".", &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{b}")]).ok {
+        die(format!("no branch named {b}"));
+    }
+    if get(&format!("branch.{b}.sheepdog")) != "true" {
+        eprintln!("sd act: warning: {b} isn't enrolled, so sd watch status won't list this hold");
+    }
+    let key = format!("branch.{b}.sd-lock");
+    let lock = get(&key);
+    if let Some(since) = crate::lock::held_since(&lock) {
+        eprintln!("sd act: {b} is already held, since {since}");
+        return;
+    }
+    if let Some(note) = take(b, &lock, force).unwrap_or_else(|e| die(e)) {
+        eprintln!("sd act: {note}");
+    }
+    config(&[&key, &crate::lock::hold(&hostname(), &time::now_utc().0)]);
+    eprintln!("sd act: holding {b}: sd watch and agent steps start nothing on it until sd act release");
+}
+
+/// release: drop a hold; a session's lock only with --force (Soft).
+pub fn release(b: &str, force: bool) {
+    let key = format!("branch.{b}.sd-lock");
+    let lock = get(&key);
+    if lock.is_empty() {
+        eprintln!("sd act: {b} isn't held");
+        return;
+    }
+    if crate::lock::held_since(&lock).is_none() && !force {
+        die(format!("{b} is attached by a session ({lock}); exit that session, or --force to release it anyway"));
+    }
+    config(&["--unset", &key]);
+    eprintln!("sd act: released {b}");
 }
 
 pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
@@ -176,8 +226,14 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
         say(&format!("sd act: {h} wrote no transcript for session {sid}, so nothing is stored; attach again to start one\n"));
     }
     // Only the lock this attach took: a --force may have taken it over since.
+    // A hold taken over with --force comes back: nothing else would release it.
+    // Killed before here (SIGKILL), the pid lock is swept as stale and the hold
+    // is gone; the help says so.
     if get(&key("lock")) == mine {
-        git(".", &["config", "--unset", &key("lock")]);
+        match crate::lock::held_since(&before) {
+            Some(_) => git(".", &["config", &key("lock"), &before]),
+            None => git(".", &["config", "--unset", &key("lock")]),
+        };
     }
     std::process::exit(rc)
 }
@@ -192,6 +248,8 @@ mod tests {
         assert_eq!(take("feat", "", false), Ok(None));
         assert_eq!(take("feat", "", true), Ok(None));
         assert_eq!(take("feat", lock, true), Ok(Some(format!("taking over feat's lock ({lock})"))));
+        let held = "held@host 2026-11-04T09:00:00Z";
+        assert_eq!(take("feat", held, true), Ok(Some(format!("taking over feat's hold ({held}); it's put back when the session exits"))));
         assert_eq!(
             take("feat", lock, false),
             Err(format!("feat is already attached ({lock}); exit that session, or --force to take it over"))

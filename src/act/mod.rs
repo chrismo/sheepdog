@@ -204,7 +204,7 @@ pub fn attached_check(b: &str, doing: &str, force: bool) {
         return;
     }
     if !force {
-        die(format!("not {doing}: attached ({lock}). Exit that session, or --force"));
+        die(format!("not {doing}: attached ({lock}); {}, or --force", crate::lock::let_go(&lock)));
     }
     eprintln!("sd act: warning: {b} is attached ({lock}); running anyway");
 }
@@ -345,6 +345,8 @@ fn act(verb: &str, v: &verbs::Verb, b: &str, remote: &str, a: &Args) -> ExitCode
         "retarget" => restack::retarget(b, a.force),
         "review" => review::review(b, remote, a.accept, a.force),
         "attach" => attach::attach(b, &a.harness, a.force),
+        "hold" => attach::hold(b, a.force),
+        "release" => attach::release(b, a.force),
         "start" => return ExitCode::from(u8::try_from(start::start(b, remote, a)).unwrap_or(1)),
         "fetch" => follow::fetch(b, remote),
         "follow" => return ExitCode::from(u8::try_from(follow::follow(b, &a.pr, remote)).unwrap_or(1)),

@@ -23,6 +23,8 @@ Usage:
   sd act ship     [--force] [<branch>]
   sd act trigger  [--force] [<branch>]
   sd act attach   [--force] [--harness <h>] [<branch>]
+  sd act hold     [--force] [<branch>]
+  sd act release  [--force] [<branch>]
 
 Examples:
   cd "$(sd act start fix-login "Fix the login redirect")"   worktree, then the agent builds it
@@ -38,6 +40,7 @@ Examples:
   sd act review                      verify, then the local reviewer; clean pins local
   sd act ship                        describe, push, open a draft PR, enroll
   sd act attach                      open the branch's session yourself; agent steps wait
+  sd act hold                        working on it elsewhere: the watcher starts nothing
 
 Verbs:
   start     a worktree beside the main one, named after <name> with
@@ -296,6 +299,19 @@ Verbs:
             failed or was killed without its session stored, attach
             resumes that step's session, which made the edits, instead
             of the stored one, says so, and stores it on exit
+  hold      attach without a session (#427): hold branch.<b>.sd-lock as
+            "held@<host> <time>" until sd act release, for work on the
+            branch from anywhere else. sd state shows it attached, with
+            since when, and everything that waits on an attach waits on
+            it. It has no pid, so it is never stale and has no expiry:
+            sd watch status lists each attached branch, who holds it and
+            for how long. Held already: nothing changes. A session's lock
+            is refused, --force takes it over. attach --force over a hold
+            puts the hold back when the session exits, Ctrl-C included;
+            an attach killed outright (SIGKILL) leaves its own lock, which
+            is cleared as stale, and the hold goes with it: hold again
+  release   drop a hold. A session's live lock is refused: exit that
+            session, or --force drops it anyway. Nothing held: says so
 
 Running steps (#270): while another process's step holds the branch's
 running marker (sd state shows it), the verbs that write the worktree or
@@ -394,6 +410,8 @@ failed step did.
                   findings or a failed verify stand at; on a merged or closed
                   PR; before a stored answer runs
   attach          take over a lock another attach still holds
+  hold            the same, with no session
+  release         drop a session's lock, not only a hold
   ci-fix          run again on a red the agent already called flaky
   implement, address, ci-fix, restack --resolve   run though the agent's
                   question stands
@@ -432,7 +450,8 @@ Config (sd config show):
 State (git config): branch.<b>.sheepdog, .sd-task, .sd-parent, .sd-pr, .sd-mode
 (reviewer: sd act follow's), .sd-session,
 .sd-harness, .sd-handled, .sd-unposted (the items of an address round whose
-replies didn't post), .sd-lock ("<pid>@<host> <time>" while attached),
+replies didn't post), .sd-lock ("<pid>@<host> <time>" while attached,
+"held@<host> <time>" while held),
 .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
 .sd-accepted-after (the .sd-bot-triggered that review --accept followed),

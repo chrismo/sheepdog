@@ -1017,7 +1017,7 @@ fn assemble(s: &Facts) -> Value {
                     "items": owed, "unposted": s.unposted},
         "bot": {"command": jn(&s.bot_command), "timeout": s.bot_timeout},
         "session": {"enrolled": s.enrolled == "true", "harness": jn(&s.harness), "profile": s.profile, "id": jn(&s.session),
-                    "locked": !s.lock.is_empty(), "running": s.running},
+                    "locked": !s.lock.is_empty(), "held": crate::lock::held_since(&s.lock), "running": s.running},
         "spend": {"usd": s.spend.0, "unknown": s.spend.1, "budget": s.branch_budget, "stray": s.spend.2},
         "stored": {"handled": s.handled, "refs": refs},
         "rate_limit": {"cost": s.rl_cost, "remaining": s.rl_remaining, "reset_at": jn(&s.rl_reset), "limited": s.rl_limited},

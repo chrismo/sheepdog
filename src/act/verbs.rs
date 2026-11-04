@@ -73,6 +73,8 @@ pub const VERBS: &[Verb] = &[
     v("ship", Remote, true, true, "shipping"),
     v("trigger", Nothing, false, false, ""),
     v("attach", Nothing, false, false, ""),
+    v("hold", Nothing, false, false, ""),
+    v("release", Nothing, false, false, ""),
 ];
 
 pub fn find(name: &str) -> Option<&'static Verb> {

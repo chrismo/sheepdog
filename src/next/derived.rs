@@ -74,7 +74,7 @@ derived! {
     stale: bool,
     /// GitHub hasn't seen a push yet (lag, #246).
     lagging: bool,
-    /// The branch's session is open interactively (session.locked).
+    /// The branch's session is open interactively, or held (session.locked).
     locked: Option<bool>,
     /// Human items are owed a reply.
     owed_human: bool,

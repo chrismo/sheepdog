@@ -3508,6 +3508,18 @@ fn dispatch_not_while_a_step_runs_or_the_session_is_attached() {
     }
 }
 
+// A hold (sd act hold, #427) is the attached lock with no session: sd state
+// reports it as session.locked, with session.held, and the pass starts nothing.
+#[test]
+fn dispatch_not_on_a_held_branch_427() {
+    let sd = sd();
+    sd.dispatching();
+    let held = [r#".viewer = "me" | .pr.author = "me" | .push.ahead = 1"#, ".session.locked = true", r#".session.held = "2026-11-04T09:00:00Z""#];
+    sd.ps_fixture("feat", &held);
+    sd.pass();
+    assert_eq!(sd.acts(), "");
+}
+
 #[test]
 fn dispatch_a_failed_step_is_tried_once_a_pass_and_says_why() {
     let sd = sd();
@@ -3972,6 +3984,19 @@ fn status_says_what_holds_the_job_back_overdue_overrides_leases_a_limit_failures
     assert_has(&block, &["usage limit: till 20", "Z, claude: You've hit your session limit\n"]);
     assert_has(&block, &["failures: repo other review failed 1 in a row (holds at 3): boom\n"]);
     assert_has(&block, &["launchd: com.sheepdog.watch not loaded: Could not find service \"com.sheepdog.watch\" in domain for user gui: 501 (sd watch install)\n"]);
+}
+
+// No expiry on a hold (#427): status says who holds each attached branch and since when.
+#[test]
+fn status_names_each_attached_branch_who_holds_it_and_since_when_427() {
+    let sd = sd();
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.verb_ok("act", &["hold", "feat"]);
+    sd.git(&["config", "branch.other.sd-lock", "1@elsewhere.example 2026-10-15T00:00:00Z"]);
+    let block = sd.status_block();
+    assert_match(&block, r"(?m)^attached: repo feat, held \(sd act hold\) since \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ, \d+s ago$");
+    assert_match(&block, r"(?m)^attached: repo other, session 1@elsewhere\.example since 2026-10-15T00:00:00Z, \d+d ago$");
 }
 
 #[test]
