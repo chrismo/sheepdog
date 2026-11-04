@@ -2,20 +2,19 @@
 // sd-act through a link (tests/common). Moved from libexec/sd-act-ci-fix.bats;
 // each test keeps the bats test's title above it. On red CI, run
 // settings.autofix and verify first (zero tokens), then hand the failing
-// checks, their logs and the local verify output to the agent in the branch's
+// checks, as GitHub reports them, and the local verify output to the agent in the branch's
 // session; the pipeline commits, verifies and pushes its fix. A "flaky"
 // verdict is recorded against the red SHA so the same red doesn't burn
 // another round.
 //
 // Real git (a bare origin and a clone). sd state answers from
 // $FX/states/feat.json (SHEEPDOG_STATE_FIXTURES). Fakes on PATH: gh (REST:
-// commit status from $FX/status.json, check runs from $FX/checks.json, a job's
-// failed log from $FX/gha.log; the PR's state from $FX/pr.state, OPEN when
-// it's missing, and a failure when $FX/pr-view.fail exists; every call logged
-// to $FX/gh.calls), rwx
-// (results from $FX/rwx-results.json, logs from $FX/rwx.log), claude (runs
+// commit status from $FX/status.json, check runs from $FX/checks.json; the
+// PR's state from $FX/pr.state, OPEN when it's missing, and a failure when
+// $FX/pr-view.fail exists; every call logged to $FX/gh.calls), claude (runs
 // $FX/agent to edit, prints $FX/result.json, keeps its prompt in
-// $FX/claude.prompt).
+// $FX/claude.prompt). ci-fix knows GitHub's checks and statuses, no CI
+// platform (#452): no fake fetches a CI's logs.
 
 mod common;
 
@@ -33,22 +32,11 @@ filter=""; args=("$@"); for ((i = 0; i < $#; i++)); do [[ ${args[i]} == --jq ]] 
 case "$1 $2" in
   "api repos/{owner}/{repo}/commits/"*"/status") src=$FX/status.json ;;
   "api repos/{owner}/{repo}/commits/"*"/check-runs") src=$FX/checks.json ;;
-  "run view") cat "$FX/gha.log"; exit ;;
   "pr view") [[ -f $FX/pr-view.fail ]] && { echo "gh: HTTP 502" >&2; exit 1; }
              cat "$FX/pr.state" 2>/dev/null || echo OPEN; exit ;;
   *) echo "gh stub: unexpected call: $*" >&2; exit 1 ;;
 esac
 if [[ -n $filter ]]; then jq -r "$filter" "$src"; else cat "$src"; fi   # gh's --jq is jq
-"#;
-
-const RWX: &str = r#"#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FX/rwx.calls"
-case $1 in
-  results) cat "$FX/rwx-results.json" ;;
-  logs) out=""; while (( $# )); do [[ $1 == --output ]] && out=$2; shift; done
-        mkdir -p "$out" && cp "$FX/rwx.log" "$out/test.log" && echo "Logs downloaded to $out/" ;;
-  *) exit 1 ;;
-esac
 "#;
 
 const CLAUDE: &str = r#"#!/usr/bin/env bash
@@ -81,10 +69,10 @@ const STATE: &str = r#"{
     session: {enrolled: true, harness: null, id: null, locked: false}, errors: []}"#;
 
 const CHECKS: &str = r#"{"total_count":2,"check_runs":[
-    {"name":"test","status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/555/job/777","app":{"slug":"github-actions"},"output":{"title":"1 test failed","summary":"FAIL: TestThree wants THREE","text":null}},
+    {"name":"test","status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/555/job/777","app":{"slug":"github-actions"},"output":{"title":"1 test failed","summary":"FAIL: TestThree wants THREE","text":"text line 1\nTestThree: expected THREE, got three"}},
     {"name":"lint","status":"completed","conclusion":"failure","details_url":"https://github.com/o/r/actions/runs/556/job/778","app":{"slug":"github-actions"},"output":{"title":null,"summary":null,"text":null}}]}"#;
 
-/// Default agent: uppercases three, which is what the logs ask for.
+/// Default agent: uppercases three, which is what the failing check asks for.
 const AGENT_FIXES: &str = "#!/usr/bin/env bash\nprintf \"one\\ntwo\\nTHREE\\n\" > file.txt\n";
 
 /// The fix, plus a CI config file.
@@ -105,7 +93,6 @@ fn sd() -> Sd {
     ];
     fs::create_dir_all(sd.tmp.join("fx/states")).unwrap();
     sd.fake("gh", GH);
-    sd.fake("rwx", RWX);
     sd.fake("claude", CLAUDE);
     sd.origin(&["repo"]);
     sd.cd("repo");
@@ -122,9 +109,6 @@ fn sd() -> Sd {
     sd.state(&[]);
     sd.put("status.json", r#"{"state":"failure","statuses":[{"context":"RWX: tests.yml (pull request)","state":"failure","description":"Failed in 24s","target_url":"https://cloud.rwx.com/clabs/runs/01a1run"}]}"#);
     sd.put("checks.json", CHECKS);
-    sd.put("rwx-results.json", r#"{"ID":"01a1run","ResultStatus":"failed","Tasks":[{"Key":"lint","ID":"task-ok","Status":{"Result":"succeeded"}},{"Key":"test","ID":"task-bad","Status":{"Result":"failed"}}]}"#);
-    fs::write(sd.tmp.join("fx/rwx.log"), "rwx line 1\nrwx: expected THREE, got three\n").unwrap();
-    fs::write(sd.tmp.join("fx/gha.log"), "gha line 1\ngha: --- FAIL: TestThree\n").unwrap();
     sd.agent(AGENT_FIXES);
     sd.result(r#"{outcome: "fixed", commit_message: "Uppercase three", summary: "the test wants THREE"}"#);
     sd
@@ -342,9 +326,9 @@ fn a_dirty_worktree_is_refused_before_anything_runs() {
 
 // ── the step ─────────────────────────────────────────────────────────────────
 
-// @test "red: the agent gets the failing checks with their logs; the fix is committed, verified, pushed, recorded"
+// @test "red: the agent gets the failing checks as GitHub reports them; the fix is committed, verified, pushed, recorded"
 #[test]
-fn red_the_agent_gets_the_failing_checks_with_their_logs_the_fix_is_committed_verified_pushed_recorded() {
+fn red_the_agent_gets_the_failing_checks_as_github_reports_them_the_fix_is_committed_verified_pushed_recorded() {
     let sd = sd();
     sd.set(&["settings.verify", "grep -q THREE file.txt"]);
     let head = sd.rev("HEAD");
@@ -353,25 +337,21 @@ fn red_the_agent_gets_the_failing_checks_with_their_logs_the_fix_is_committed_ve
     let p = sd.prompt();
     assert_has(&p, &["RWX: tests.yml (pull request)"]);
     assert_has(&p, &["test"]);
-    assert_has(&p, &["Failed in 24s"]); // the status's description
-    assert_has(&p, &["rwx: expected THREE, got three"]); // rwx logs of the failed task
+    assert_has(&p, &["(status: failure)", "Failed in 24s"]); // the status's state and description
+    assert_has(&p, &["https://cloud.rwx.com/clabs/runs/01a1run"]); // and target URL, for the repo's guidance to read
     assert_has(&p, &["1 test failed"]); // the check run's output title
-    assert_has(&p, &["FAIL: TestThree wants THREE"]); // and summary
-    assert_has(&p, &["gha: --- FAIL: TestThree"]); // gh run view --log-failed
+    assert_has(&p, &["FAIL: TestThree wants THREE"]); // summary
+    assert_has(&p, &["TestThree: expected THREE, got three"]); // and text
+    assert_has(&p, &["https://github.com/o/r/actions/runs/555/job/777"]); // its details URL
+    assert_has(&p, &["## lint (check run: failure)"]); // a check run with no output still gets its heading
     assert_has(&p, &["add a third line"]); // the task
     assert_has(&p, &["grep -q THREE file.txt"]); // the repo's checks
     assert_eq!(sd.subject(), "Uppercase three");
     assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
     assert_eq!(sd.recorded().as_deref(), Some(format!("{head} fixed").as_str()));
     assert_has(&r.output, &["pushed"]);
-    let rwx = sd.fx("rwx.calls");
-    assert!(has_line(&rwx, "results 01a1run --json"), "{rwx}");
-    assert!(has_line(&rwx, "logs task-bad --output"), "{rwx}");
-    assert_lacks(&rwx, "task-ok");
     let gh = sd.fx("gh.calls");
-    assert!(has_line(&gh, "run view 555 --job 777 --log-failed"), "{gh}");
-    assert!(has_line(&gh, "run view 556 --job 778 --log-failed"), "{gh}"); // a check run with no output text still gets its log
-    assert_lacks(&gh, "graphql");
+    assert!(gh.lines().all(|l| l.starts_with("api repos/") || l.starts_with("pr view")), "only GitHub's API, no CI's own commands:\n{gh}");
 }
 
 // @test "no settings.verify: the agent is told no local checks exist, not that they pass"
@@ -611,28 +591,40 @@ fn the_prs_state_unreadable_before_the_push_nothing_pushed_the_commit_kept_and_w
     assert_eq!(sd.remote_feat(), before);
 }
 
-// @test "logs that can't be fetched are skipped, not fatal"
+// @test "check runs that can't be read are skipped, not fatal"
 #[test]
-fn logs_that_cant_be_fetched_are_skipped_not_fatal() {
+fn check_runs_that_cant_be_read_are_skipped_not_fatal() {
     let sd = sd();
-    sd.fake("rwx", "#!/usr/bin/env bash\nexit 1\n");
-    sd.rm("gha.log");
+    sd.rm("checks.json");
     let r = sd.run(&["ci-fix"]);
     assert_eq!(r.status, 0);
-    assert_has(&sd.prompt(), &["RWX: tests.yml (pull request)"]);
+    assert_has(&sd.prompt(), &["## RWX: tests.yml (pull request) (status: failure)"]);
     assert_eq!(sd.remote_feat(), sd.rev("HEAD"));
 }
 
-// @test "logs are cut to their last lines"
+// @test "statuses that can't be read are skipped, not fatal"
 #[test]
-fn logs_are_cut_to_their_last_lines() {
+fn statuses_that_cant_be_read_are_skipped_not_fatal() {
     let sd = sd();
-    let log: String = (1..=400).map(|i| format!("gha {i}\n")).collect();
-    fs::write(sd.tmp.join("fx/gha.log"), log).unwrap();
+    sd.rm("status.json");
     let r = sd.run(&["ci-fix"]);
     assert_eq!(r.status, 0);
-    assert_has(&sd.prompt(), &["gha 400"]);
-    assert_lacks(&sd.prompt(), "gha 1\n");
+    assert_has(&sd.prompt(), &["## test (check run: failure)"]);
+    assert_lacks(&sd.prompt(), "(status: failure)");
+}
+
+// @test "a check run's output summary and text are cut to their last lines"
+#[test]
+fn a_check_runs_output_summary_and_text_are_cut_to_their_last_lines() {
+    let sd = sd();
+    let long = |w: &str| (1..=400).map(|i| format!("{w} {i}\n")).collect::<String>();
+    let checks = jq(&["--arg", "s", &long("sum"), "--arg", "t", &long("out"), ".check_runs[0].output.summary = $s | .check_runs[0].output.text = $t"], CHECKS);
+    sd.put("checks.json", &checks);
+    let r = sd.run(&["ci-fix"]);
+    assert_eq!(r.status, 0);
+    assert_has(&sd.prompt(), &["sum 400", "out 400"]);
+    assert_lacks(&sd.prompt(), "sum 1\n");
+    assert_lacks(&sd.prompt(), "out 1\n");
 }
 
 // @test "autofix fixes what verify saw: committed and pushed, no agent"
@@ -876,7 +868,7 @@ fn answer_resumes_the_asking_session_with_chrismos_answer_its_edits_kept_commits
     let r = sd.run(&["answer", "keep THREE; the test is right"]);
     assert_eq!(r.status, 0, "{}", r.output);
     assert_has(&sd.prompt(), &["keep THREE; the test is right"]);
-    assert_lacks(&sd.prompt(), "rwx: expected THREE"); // the session has the logs already
+    assert_lacks(&sd.prompt(), "expected THREE, got three"); // the session has the checks already
     assert_eq!(sd.after("--resume"), sid);
     assert_eq!(sd.subject(), "Uppercase three");
     assert!(sd.git(&["status", "--porcelain"]).is_empty());
@@ -947,7 +939,7 @@ fn a_stored_ci_fix_answer_says_sd_watch_runs_it_only_when_a_push_or_ci_run_clear
     let r = sd.ok(&["answer", "keep THREE"]);
     assert_has(&r, &["(NEXT then offers ci-fix, so sd watch runs ci-fix)"]);
     for (edit, yours) in [
-        (r#".ci.verdict = "inconclusive""#, "CI was cancelled (rerun it: gh run rerun, or rwx retry)"),
+        (r#".ci.verdict = "inconclusive""#, "CI was cancelled (rerun it, or look: gh pr checks)"),
         (r#".push.ahead = 1 | .push.held = {paths: [".rwx/tests.yml"]}"#, "there are unpushed commits, held with the agent's CI config change (review it, then sd act push)"),
         (r#".push.ahead = 1 | .verify = {at_head: true, sha: "h1", step: "ci-fix", cmd: "make test"}"#, "there are unpushed commits, held by the verify red on HEAD (fix it, then sd act verify)"),
         (r#".push.ahead = 1 | .ci.for_head = false | .ci.sha = "r0" | .parent.unpushed = true"#, "the parent branch isn't on the remote yet (ship it first (sd act ship <parent>))"),
@@ -1224,7 +1216,7 @@ fn the_shipped_prompt_is_used_by_default() {
 fn settings_cifixprompt_names_a_file_in_the_repo_read_from_the_base_commit() {
     let sd = sd();
     sd.git(&["switch", "-q", "main"]);
-    sd.write("ci-fix.md", "OUR CI RULES: run rwx run first\n");
+    sd.write("ci-fix.md", "OUR CI RULES: read the run first\n");
     sd.git(&["add", "ci-fix.md"]);
     sd.git(&["commit", "-qm", "ci guidance"]);
     sd.git(&["push", "-q", "origin", "main"]);
@@ -1233,7 +1225,7 @@ fn settings_cifixprompt_names_a_file_in_the_repo_read_from_the_base_commit() {
     sd.set(&["settings.ciFixPrompt", "ci-fix.md"]);
     let r = sd.run(&["ci-fix"]);
     assert_eq!(r.status, 0);
-    assert_has(&sd.prompt(), &["OUR CI RULES: run rwx run first"]);
+    assert_has(&sd.prompt(), &["OUR CI RULES: read the run first"]);
     assert_lacks(&sd.prompt(), &shipped_prompt());
 }
 

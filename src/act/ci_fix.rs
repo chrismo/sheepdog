@@ -1,8 +1,8 @@
 // ci-fix (J2): CI is red on HEAD. verify and autofix first, at zero tokens;
-// else the agent gets the failing checks, their logs and the local verify
-// output in the branch's session, and the pipeline commits its fix, verifies
-// and pushes. "flaky" is recorded against the red SHA (branch.<b>.sd-ci-fix),
-// so the same red isn't handed over again.
+// else the agent gets the failing checks, as GitHub reports them, and the
+// local verify output in the branch's session, and the pipeline commits its
+// fix, verifies and pushes. "flaky" is recorded against the red SHA
+// (branch.<b>.sd-ci-fix), so the same red isn't handed over again.
 
 use super::commands::{status, tail, verify_autofix_to, Report};
 use super::editing::{guidance, run_editing_step, Outcome, Spec};
@@ -16,12 +16,9 @@ use super::{cfg, die, gates, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out};
 use crate::next::Derived;
-use crate::{gh, proc};
+use crate::gh;
 use crate::val::{at, sj, t, text};
-use regex::Regex;
 use serde_json::Value;
-use std::fs;
-use std::path::PathBuf;
 
 // The ci-fix step's prompt: guidance (settings.ciFixPrompt, else
 // .sheepdog/ci-fix.md in the base commit, else lib/prompts/ci-fix.md), then
@@ -44,7 +41,7 @@ const CI_FIX_SCHEMA: &str = r#"{"type": "object", "required": ["outcome", "commi
                 "commit_message": {"type": ["string", "null"]},
                 "summary": {"type": "string"}}}"#;
 
-const CI_LOG_TAIL: usize = 150;
+const CI_TEXT_TAIL: usize = 150;
 
 fn short(sha: &str) -> &str {
     &sha[..sha.len().min(7)]
@@ -77,70 +74,32 @@ fn gh_api(path: &str) -> Value {
     one_value(&gh::call(&["api", path], gh::READ).stdout).unwrap_or_default()
 }
 
-/// The failed tasks, (key, id), in `rwx results --json`'s answer: from its
-/// first line that opens an object, rwx's chatter before it skipped.
-fn rwx_failed(out: &str) -> Vec<(String, String)> {
-    let start = out.split_inclusive('\n').take_while(|l| !l.starts_with('{')).map(str::len).sum::<usize>();
-    let results = one_value(&out[start..]).unwrap_or_default();
-    let task = |tk: &&Value| (t(tk, "Key"), t(tk, "ID"));
-    failed(&results, "Tasks", "Status.Result", &["failed"]).iter().map(task).filter(|(_, id)| !id.is_empty()).collect()
-}
-
-/// The failed tasks' logs of RWX run <run>.
-fn rwx_logs(run: &str) -> String {
-    let mut logs = String::new();
-    let results = proc::run("rwx", &["results", run, "--json"], None, None);
-    for (i, (key, id)) in rwx_failed(&results.stdout).iter().enumerate() {
-        let Some(dir) = proc::private_dir(&format!("sd-ci-fix-{i}")) else { continue };
-        if proc::run("rwx", &["logs", id, "--output", &dir.to_string_lossy()], None, None).ok {
-            let mut files: Vec<PathBuf> = fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
-            files.retain(|f| f.is_file() && f.extension().is_some_and(|x| x == "log"));
-            files.sort();
-            for f in files {
-                logs += &format!("### task {key} (rwx logs {id})\n");
-                logs += &tail(&String::from_utf8_lossy(&fs::read(&f).unwrap_or_default()), CI_LOG_TAIL);
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
-    }
-    logs
-}
-
-/// The failing checks on <sha> and what can be fetched of their logs, for the
-/// prompt. All REST: the commit's statuses (RWX and other external CI; an
-/// RWX run's logs through rwx results and rwx logs) and its check runs
-/// (GitHub Actions; gh run view --log-failed). Each log is cut to its last
-/// CI_LOG_TAIL lines; a source that can't be read is left out, never fatal.
-fn ci_logs(sha: &str) -> String {
-    let rwx_run = Regex::new(r"cloud\.rwx\.com/[^/]+/runs/([0-9a-z]+)").expect("a fixed pattern compiles");
-    let gha_job = Regex::new(r"/actions/runs/([0-9]+)/job/([0-9]+)").expect("a fixed pattern compiles");
-    let mut logs = String::new();
+/// What GitHub reports of the failing checks on <sha>, for the prompt,
+/// whatever CI posted them; never a CI's own logs, which are the repo's
+/// guidance to read (#452). A list that can't be read is left out.
+fn ci_report(sha: &str) -> String {
+    let mut out = String::new();
     let statuses = gh_api(&format!("repos/{{owner}}/{{repo}}/commits/{sha}/status"));
     for s in failed(&statuses, "statuses", "state", &["failure", "error"]) {
-        let (ctx, url) = (t(s, "context"), t(s, "target_url"));
-        if ctx.is_empty() {
-            continue;
-        }
-        logs += &format!("## {ctx}: {}\n{url}\n", t(s, "description"));
-        if let Some(run) = rwx_run.captures(&url) {
-            logs += &rwx_logs(&run[1]);
+        let ctx = t(s, "context");
+        if !ctx.is_empty() {
+            out += &format!("## {ctx} (status: {}): {}\n{}\n", t(s, "state"), t(s, "description"), t(s, "target_url"));
         }
     }
     let checks = gh_api(&format!("repos/{{owner}}/{{repo}}/commits/{sha}/check-runs"));
     for c in failed(&checks, "check_runs", "conclusion", &["failure", "timed_out"]) {
-        let (name, url) = (t(c, "name"), t(c, "details_url"));
+        let name = t(c, "name");
         if name.is_empty() {
             continue;
         }
-        logs += &format!("## {name}: {}\n{}\n{url}\n", t(c, "output.title"), t(c, "output.summary"));
-        if let Some(job) = gha_job.captures(&url) {
-            let (run, job) = (&job[1], &job[2]);
-            logs += &format!("### failed steps (gh run view {run} --job {job} --log-failed)\n");
-            let log = gh::call(&["run", "view", run, "--job", job, "--log-failed"], gh::LOG);
-            logs += &tail(&log.stdout, CI_LOG_TAIL);
+        out += &format!("## {name} (check run: {}): {}\n{}\n", t(c, "conclusion"), t(c, "output.title"), t(c, "details_url"));
+        for part in ["output.summary", "output.text"].map(|f| tail(&t(c, f), CI_TEXT_TAIL)) {
+            if !part.trim().is_empty() {
+                out += &format!("{}\n", part.trim_end_matches('\n'));
+            }
         }
     }
-    logs
+    out
 }
 
 /// Push the fix in <wt>, unless held for chrismo, <state>'s PR is no longer
@@ -223,7 +182,7 @@ fn flaky(b: &str, wt: &str, red: Option<&str>, summary: &str, (before, agent_hea
     } else if let Some(c) = autofixed {
         println!("autofix's commit {c} is kept, unpushed: sd act push");
     } else {
-        println!("nothing committed; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks");
+        println!("nothing committed; rerun CI, or look: gh pr checks");
     }
 }
 
@@ -264,7 +223,7 @@ fn first_pass(b: &str, wt: &str, remote: &str, a: &Args, state: &Value, forced: 
         die(format!("verify ({verify}) changed files in {wt} (a formatter?); commit them, then sd act ci-fix"));
     }
     let task = git_out(".", &["config", "--get", &format!("branch.{b}.sd-task")]).unwrap_or_default();
-    let logs = if sha.is_empty() { String::new() } else { ci_logs(&sha) };
+    let report = if sha.is_empty() { String::new() } else { ci_report(&sha) };
     let mut p = guidance(b, base, "ciFixPrompt", "ci-fix.md", "ci-fix");
     p += &format!("\n\n{CI_FIX_CONTRACT}\n\nTask: {}", if task.is_empty() { "(none recorded)" } else { &task });
     p += &format!("\n\n{}", failing_line(&sha, &sj(at(state, "ci.failing"), ", ")));
@@ -272,11 +231,11 @@ fn first_pass(b: &str, wt: &str, remote: &str, a: &Args, state: &Value, forced: 
         p += "\n\nsd act ci-fix was forced past its gate, so CI may not be red at HEAD:";
         p += &forced.iter().map(|w| format!("\n- {w}")).collect::<String>();
     }
-    if !logs.is_empty() {
-        p += &format!("\n\n{}", logs.trim_end_matches('\n'));
+    if !report.is_empty() {
+        p += &format!("\n\n{}", report.trim_end_matches('\n'));
     }
     p += &if verify.is_empty() {
-        "\n\nNo local checks are configured (settings.verify), so only CI's logs say what failed.".to_string()
+        "\n\nNo local checks are configured (settings.verify), so only CI says what failed.".to_string()
     } else if verified.is_ok() {
         format!("\n\nThe repo's checks ({verify}) pass locally, so the failure may be in CI's environment, or in what CI runs that the local checks don't.")
     } else {
@@ -292,7 +251,7 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
     if judged_flaky(&last, &sha) {
         if !a.force {
             die(format!(
-                "ci-fix already judged {}'s red flaky and changed nothing; rerun CI (gh run rerun, or rwx retry), or look: gh pr checks. --force hands it over again",
+                "ci-fix already judged {}'s red flaky and changed nothing; rerun CI, or look: gh pr checks. --force hands it over again",
                 short(&sha)
             ));
         }
@@ -307,8 +266,8 @@ fn ci_fix_run(_: Go, b: &str, wt: &str, remote: &str, a: &Args, state: &Value, f
         base = guidance_base(b);
     }
     let verify = cfg("settings.verify", b);
-    // An answer goes to the session that has the logs, with the agent's edits
-    // in the worktree, so neither verify nor autofix runs first.
+    // An answer goes to the session that has the failing checks, with the
+    // agent's edits in the worktree, so neither verify nor autofix runs first.
     let (prompt, autofixed) = match answering {
         true => (String::new(), None),
         false => match first_pass(b, wt, remote, a, state, forced, &base) {
@@ -411,16 +370,5 @@ mod tests {
         assert_eq!(got, ["a", "c"]);
         assert!(failed(&json!({}), "statuses", "state", &["failure"]).is_empty());
         assert!(failed(&Value::Null, "check_runs", "conclusion", &["failure"]).is_empty());
-    }
-
-    #[test]
-    fn rwx_failed_reads_the_failed_tasks_after_rwxs_chatter() {
-        let out = "Fetching results…\n{\"Tasks\": [{\"Key\": \"lint\", \"ID\": \"t1\", \"Status\": {\"Result\": \"succeeded\"}},\n\
-                   {\"Key\": \"test\", \"ID\": \"t2\", \"Status\": {\"Result\": \"failed\"}},\n\
-                   {\"Key\": \"gone\", \"Status\": {\"Result\": \"failed\"}}]}\n";
-        assert_eq!(rwx_failed(out), [("test".to_string(), "t2".to_string())]);
-        assert!(rwx_failed("").is_empty());
-        assert!(rwx_failed("error: not found\n").is_empty());
-        assert!(rwx_failed("{\"Tasks\": null}").is_empty());
     }
 }

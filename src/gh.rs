@@ -18,8 +18,6 @@ pub const READ: u64 = 30;
 /// A write: longer than a read, as one given up on may land anyway, and the
 /// next run's retry then posts it twice.
 pub const WRITE: u64 = 60;
-/// A failed CI job's log, downloaded whole.
-pub const LOG: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Class {

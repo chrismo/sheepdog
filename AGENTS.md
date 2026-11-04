@@ -193,5 +193,11 @@ rwx runs list --branch <branch>
 rwx logs --task cargo-test <run-id>
 ```
 
+sheepdog itself reads no CI's logs (#452): ci-fix's agent reads RWX's by
+this repo's `.sheepdog/ci-fix.md`, a copy of `lib/prompts/ci-fix.md` plus
+the rwx steps (edit both together). The agent may run them only with
+`Bash(rwx results *)` and `Bash(rwx logs *)` in `settings.implementAllow`
+at the repo layer (`.git/sheepdog.json`, not committed).
+
 `rwx run` (a run from local edits, no push) is for chrismo to ask for; see
 "Don't launch runs with `rwx run`" above. `rwx lint .rwx/tests.yml` is free.

@@ -380,7 +380,7 @@ function tlEvents(t) {
     for (const c of g.commits) {
       ev.push({ lane: 1, s: ms(c.at), e: ms(c.at), label: c.sha.slice(0, 7), c: "var(--run)", tip: `commit ${c.sha.slice(0, 7)}: ${c.title}` });
       for (const k of c.ci) {
-        // An open check is a point, and an RWX status (no start) spans from its commit only when that's
+        // An open check is a point, and a commit status (no start) spans from its commit only when that's
         // under GAP: committedDate isn't the push, and a bar mustn't bridge a wait that should fold.
         const at = ms(c.at), e = k.end ? ms(k.end) : ms(k.start) || at;
         const s = k.start ? ms(k.start) : e - at <= GAP ? Math.min(at, e) : e;
