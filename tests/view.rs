@@ -1695,5 +1695,6 @@ fn the_pages_carry_the_sheepdog_art_which_sd_view_serves() {
         assert_has(&head, &["200 ok", "content-type: image/png"]);
         let want = fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("img").join(file)).unwrap();
         assert!(resp[at + 4..] == want[..], "{path} isn't img/{file}");
+        assert_eq!(s.ask("GET", path, &format!("evil.example:{}", s.port)).0, 403, "{path}");
     }
 }

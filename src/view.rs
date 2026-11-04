@@ -244,18 +244,26 @@ fn write(route: &str, req: &Request, port: u16, token: &str, state: &Path) -> (&
     (status, "text/plain", body)
 }
 
-fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
+/// Every route sd view serves, behind the one Host check.
+fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, Vec<u8>) {
     let ours = guard::hosts(port);
     if !ours.contains(&req.host) {
-        return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")));
+        return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")).into());
     }
     let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
-    if WRITES.contains(&route) {
-        return write(route, req, port, token, state);
-    }
-    if req.method != "GET" {
-        return ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into());
-    }
+    let (status, ctype, body) = if WRITES.contains(&route) {
+        write(route, req, port, token, state)
+    } else if req.method != "GET" {
+        ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into())
+    } else if let Some((_, png)) = ART.iter().find(|(p, _)| *p == route) {
+        return ("200 OK", "image/png", png.to_vec());
+    } else {
+        get(route, query, token, state)
+    };
+    (status, ctype, body.into_bytes())
+}
+
+fn get(route: &str, query: &str, token: &str, state: &Path) -> (&'static str, &'static str, String) {
     match route {
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.replace("__SD_TOKEN__", token)),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
@@ -308,15 +316,7 @@ fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut r = BufReader::new((&stream).take(16 * 1024));
     let Some(req) = read_request(&mut r) else { return };
-    // The art is bytes, not text; the Host check is respond's.
-    let png = ART.iter().find(|(p, _)| req.method == "GET" && *p == req.path && guard::hosts(port).contains(&req.host));
-    let (status, ctype, body) = match png {
-        Some((_, bytes)) => ("200 OK", "image/png", bytes.to_vec()),
-        None => {
-            let (status, ctype, body) = respond(&req, port, token, state);
-            (status, ctype, body.into_bytes())
-        }
-    };
+    let (status, ctype, body) = respond(&req, port, token, state);
     let mut w = &stream;
     let _ = write!(
         w,
