@@ -53,6 +53,7 @@ tasks:
       - tests/**
       - lib/prompts/**
       - lib/review-rules.md
+      - img/**
       - bin/sd
       - install.sh
 
@@ -67,6 +68,7 @@ tasks:
       - build.rs
       - src/**
       - tests/**
+      - img/**
 
   - key: shellcheck-package
     run: |

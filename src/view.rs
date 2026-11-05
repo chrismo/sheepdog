@@ -45,6 +45,11 @@ const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
 const ATLAS_PAGE: &str = include_str!("view/atlas.html");
 const GH_JS: &str = include_str!("view/gh.js");
+/// The official art: the dog beside each page's title, and the tab icon.
+const ART: [(&str, &[u8]); 2] = [
+    ("/img/sheepdog.png", include_bytes!("../img/sheepdog-full-color.png")),
+    ("/img/icon.png", include_bytes!("../img/sheepdog-four-color.png")),
+];
 const PORT: u16 = 7377;
 const BODY_MAX: usize = 4096;
 
@@ -239,18 +244,26 @@ fn write(route: &str, req: &Request, port: u16, token: &str, state: &Path) -> (&
     (status, "text/plain", body)
 }
 
-fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, String) {
+/// Every route sd view serves, behind the one Host check.
+fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, Vec<u8>) {
     let ours = guard::hosts(port);
     if !ours.contains(&req.host) {
-        return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")));
+        return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")).into());
     }
     let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
-    if WRITES.contains(&route) {
-        return write(route, req, port, token, state);
-    }
-    if req.method != "GET" {
-        return ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into());
-    }
+    let (status, ctype, body) = if WRITES.contains(&route) {
+        write(route, req, port, token, state)
+    } else if req.method != "GET" {
+        ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into())
+    } else if let Some((_, png)) = ART.iter().find(|(p, _)| *p == route) {
+        return ("200 OK", "image/png", png.to_vec());
+    } else {
+        get(route, query, token, state)
+    };
+    (status, ctype, body.into_bytes())
+}
+
+fn get(route: &str, query: &str, token: &str, state: &Path) -> (&'static str, &'static str, String) {
     match route {
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.replace("__SD_TOKEN__", token)),
         "/api/flock" => ("200 OK", "application/json", flock::flock(state).to_string()),
@@ -307,9 +320,10 @@ fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     let mut w = &stream;
     let _ = write!(
         w,
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
         body.len()
     );
+    let _ = w.write_all(&body);
     // Closing with request bytes unread (a POST's body) resets the
     // connection, which can lose the response: drain them first.
     let _ = stream.shutdown(std::net::Shutdown::Write);

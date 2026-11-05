@@ -185,7 +185,7 @@ means the sandbox, so run it outside.
 `.rwx/tests.yml` runs `cargo test --locked` on Ubuntu for PRs and pushes to
 `main`, as one task, `cargo-test`. Its filter lists the files the tests read
 from the repo (`src/`, `tests/`, `lib/prompts/`, `lib/review-rules.md`,
-`install.sh`, `bin/sd`, the Cargo files): a test that starts reading another
+`img/` (sd view compiles its art in), `install.sh`, `bin/sd`, the Cargo files): a test that starts reading another
 one needs it added there, or a change to that file won't rerun the task.
 Two lint tasks run beside it: `clippy` and `shellcheck` (`shellcheck
 install.sh`). `clippy` fails on any warning (`cargo clippy --all-targets

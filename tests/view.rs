@@ -1674,3 +1674,27 @@ fn the_drill_in_links_each_next_step_to_its_atlas_step() {
     let r = sd.run(&["--help"]);
     assert_has(&r.output, &["The three link into each other", "lists the Atlas steps that live in it"]);
 }
+
+// The official art (img/): the dog beside each page's title, and the tab
+// icon.
+
+#[test]
+fn the_pages_carry_the_sheepdog_art_which_sd_view_serves() {
+    let sd = sd();
+    let s = serve(&sd);
+    for page in ["/", "/atlas", "/map"] {
+        assert_has(&s.get(page).2, &[r#"<link rel="icon" type="image/png" href="/img/icon.png">"#, r#"src="/img/sheepdog.png""#]);
+    }
+    for (path, file) in [("/img/sheepdog.png", "sheepdog-full-color.png"), ("/img/icon.png", "sheepdog-four-color.png")] {
+        let mut c = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+        write!(c, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", s.port).unwrap();
+        let mut resp = Vec::new();
+        c.read_to_end(&mut resp).unwrap();
+        let at = resp.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&resp[..at]).to_lowercase();
+        assert_has(&head, &["200 ok", "content-type: image/png"]);
+        let want = fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("img").join(file)).unwrap();
+        assert!(resp[at + 4..] == want[..], "{path} isn't img/{file}");
+        assert_eq!(s.ask("GET", path, &format!("evil.example:{}", s.port)).0, 403, "{path}");
+    }
+}
