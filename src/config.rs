@@ -63,8 +63,8 @@ Layers (top wins; sd config files prints the paths):
             failures and the newest pass; all; none, no log), logRuns 5 (a
             branch's logs), logFileBytes 8388608 (a log's head and end are
             kept past it), logAge 1209600 (seconds) and logBytes 1073741824
-            (over every repo's logs; global file only), 0 for none; the other
-            settings empty
+            (over every repo's logs; global file only), 0 for no limit; the
+            other settings empty
 
 Notes:
   - null in a file removes the key; a default still applies
