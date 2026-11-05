@@ -575,7 +575,8 @@ fn a_push_refused_for_someone_elses_commits_posts_nothing_even_with_force() {
 
 // address's push asks push's gate on the state after the fix (#386): a push
 // that would remove someone else's commits is refused, the commit kept and
-// nothing posted; address's --force pushes past it with a warning.
+// nothing posted. address's --force doesn't reach push's gate: the refusal
+// points at sd act push --force.
 #[test]
 fn a_push_that_would_remove_someone_elses_commits_is_refused_even_forced_commit_kept_nothing_posted_386() {
     let sd = sd();
