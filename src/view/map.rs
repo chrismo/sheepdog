@@ -44,6 +44,7 @@ const PLACES: &[(&str, &str)] = &[
     ("src/review_local.rs", "agent steps"), ("src/review_local_help.txt", "agent steps"),
     ("src/pins.rs", "records"), ("src/decisions.rs", "records"), ("src/failed.rs", "records"), ("src/verify_red.rs", "records"),
     ("src/usage.rs", "records"), ("src/running.rs", "records"), ("src/lock.rs", "records"), ("src/limit.rs", "records"),
+    ("src/logs.rs", "records"),
     ("src/config.rs", "settings"),
     ("src/view.rs", "pages"), ("src/view/", "pages"), ("src/view_help.txt", "pages"),
     ("src/main.rs", "plumbing"), ("src/lib.rs", "plumbing"), ("src/sd_help.txt", "plumbing"), ("src/gh.rs", "plumbing"),
