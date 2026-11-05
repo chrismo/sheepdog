@@ -10,7 +10,7 @@
 use crate::{config, git, time, verify_red};
 use std::collections::HashSet;
 use std::fs;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
@@ -166,6 +166,20 @@ enum End {
     Failed,
 }
 
+fn head(f: &Path) -> Option<(u32, String)> {
+    let mut first = Vec::new();
+    io::BufReader::new(fs::File::open(f).ok()?).read_until(b'\n', &mut first).ok()?;
+    let first = String::from_utf8_lossy(&first);
+    let since = first.split(' ').nth(1)?.to_string();
+    let pid = first.split(" pid ").nth(1)?.split(':').next()?.parse().ok()?;
+    Some((pid, since))
+}
+
+fn alive(pid: u32) -> bool {
+    // SAFETY: kill with signal 0 only asks whether the pid exists.
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
 fn end_of(f: &Path) -> End {
     let Ok(mut file) = fs::File::open(f) else { return End::Running };
     let len = file.metadata().map_or(0, |m| m.len());
@@ -177,7 +191,8 @@ fn end_of(f: &Path) -> End {
     match text.trim_end_matches('\n').rsplit('\n').next() {
         Some(l) if l.starts_with("<== exit 0 after ") => End::Passed,
         Some(l) if l.starts_with("<== ") => End::Failed,
-        _ => End::Running,
+        _ if head(f).is_some_and(|(pid, _)| alive(pid)) => End::Running,
+        _ => End::Failed,
     }
 }
 
@@ -329,13 +344,7 @@ pub fn prune_every_repo(p: &Policy) {
 /// sd: (path, pid, since).
 pub fn running(wt: &str, b: &str) -> Option<(PathBuf, u32, String)> {
     let dir = branch_dir(&root(), &git::main_worktree(wt), b);
-    logs_in(&dir).into_iter().rev().filter(|f| end_of(f) == End::Running).find_map(|f| {
-        let first = fs::read_to_string(&f).ok()?.lines().next()?.to_string();
-        let since = first.split(' ').nth(1)?.to_string();
-        let pid: u32 = first.split(" pid ").nth(1)?.split(':').next()?.parse().ok()?;
-        // SAFETY: kill with signal 0 only asks whether the pid exists.
-        (unsafe { libc::kill(pid as i32, 0) } == 0).then_some((f, pid, since))
-    })
+    logs_in(&dir).into_iter().rev().filter(|f| end_of(f) == End::Running).find_map(|f| head(&f).map(|(pid, since)| (f, pid, since)))
 }
 
 #[cfg(test)]
@@ -360,13 +369,21 @@ mod tests {
         Policy { keep, runs, file_bytes: 0, age_secs: 0, total_bytes: 0 }
     }
 
-    /// A finished log at <dir>/<name> that ended <how>, <len> bytes of output.
-    fn log(dir: &Path, name: &str, how: &str, len: usize) -> PathBuf {
+    const DEAD: u32 = 999_999_999;
+
+    /// A log at <dir>/<name> by <pid> that ended <how> (none: no last line),
+    /// <len> bytes of output.
+    fn log_by(dir: &Path, name: &str, how: &str, len: usize, pid: u32) -> PathBuf {
         fs::create_dir_all(dir).unwrap();
         let f = dir.join(name);
         let end = if how.is_empty() { String::new() } else { format!("<== {how} after 1s\n") };
-        fs::write(&f, format!("==> 2026-11-05T00:00:00Z feat abc verify (verify) pid 1: x\n{}\n{end}", "o".repeat(len))).unwrap();
+        fs::write(&f, format!("==> 2026-11-05T00:00:00Z feat abc verify (verify) pid {pid}: x\n{}\n{end}", "o".repeat(len))).unwrap();
         f
+    }
+
+    /// A finished log by a gone sd, or with no <how> one this sd is writing.
+    fn log(dir: &Path, name: &str, how: &str, len: usize) -> PathBuf {
+        log_by(dir, name, how, len, if how.is_empty() { std::process::id() } else { DEAD })
     }
 
     fn names(dir: &Path) -> Vec<String> {
@@ -381,6 +398,24 @@ mod tests {
         assert_eq!(end_of(&log(&d.0, "c.log", "timed out after 5s", 3)), End::Failed);
         assert_eq!(end_of(&log(&d.0, "d.log", "", 3)), End::Running);
         assert_eq!(end_of(&log(&d.0, "e.log", "exit 0", 2000)), End::Passed);
+    }
+
+    #[test]
+    fn a_log_with_no_last_line_whose_sd_is_gone_failed() {
+        let d = dir("pid");
+        let killed = log_by(&d.0, "killed.log", "", 3, DEAD);
+        assert_eq!(end_of(&killed), End::Failed);
+        prune_branch(&d.0, &policy(Keep::All, 0), &HashSet::new());
+        prune_branch(&d.0, &policy(Keep::None, 0), &HashSet::new());
+        assert!(!killed.exists(), "it doesn't stay as a running one would");
+    }
+
+    #[test]
+    fn head_reads_the_pid_and_start_off_the_first_line_alone() {
+        let d = dir("head");
+        let f = log_by(&d.0, "a.log", "", 0, 42);
+        fs::OpenOptions::new().append(true).open(&f).unwrap().write_all(b"\xff\xfe not utf-8\n").unwrap();
+        assert_eq!(head(&f), Some((42, "2026-11-05T00:00:00Z".to_string())));
     }
 
     #[test]

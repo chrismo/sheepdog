@@ -321,12 +321,15 @@ pub fn repo_key(repo: &str) -> String {
     format!("{}-{}", basename(repo), &hex[..8])
 }
 
-/// What sheepdog keeps for <repo>'s branches that are gone: their pins and
-/// logs; then the log store's limits over every repo's logs.
-fn sweep_gone(repo: &str) {
-    pins::sweep(repo);
-    logs::sweep(repo);
+/// <repos>, after their gone branches' pins and logs go and every repo's
+/// logs are pruned once.
+fn swept(repos: Vec<String>) -> Vec<String> {
+    for repo in repos.iter().filter(|r| Path::new(r).is_dir()) {
+        pins::sweep(repo);
+        logs::sweep(repo);
+    }
     logs::prune_every_repo(&logs::Policy::from(|k| config::get_global(k, false).unwrap_or_default()));
+    repos
 }
 
 fn repo_state_dir(state: &str, repo: &str) -> String {
@@ -1014,12 +1017,11 @@ impl Watch {
         let mut lines = String::new();
         let (mut stopped, mut stop_line) = (false, String::new());
         let mut skipped: Vec<(String, String)> = vec![];
-        for repo in registered() {
+        for repo in swept(registered()) {
             if !Path::new(&repo).is_dir() {
                 continue;
             }
             let name = basename(&repo).to_string();
-            sweep_gone(&repo);
             for f in config::sweep_branch_files(&repo, false) {
                 self.log(&name, "-", &format!("deleted {f}: no local branch"));
             }
