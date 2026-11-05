@@ -86,6 +86,9 @@ pub const VERBS: &[Verb] = &[
     v("ack", Nothing, false, false, ""),
     // act::run takes the declaration of the verb it resumes
     v("answer", Worktree, true, true, ""),
+    // writes only the decisions record; refuses, unless --force, while a
+    // step runs (its own check: the marker's refusal can't be forced)
+    v("decision", Nothing, false, false, ""),
     gated(v("restack", Worktree, false, false, "restacking"), |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), |d| gates::restack_rules(d, false)),
     gated(v("restack --resolve", Worktree, true, true, "restacking").reads(&[p("resolve", "resolvePrompt", "resolve.md")]), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), |d| gates::restack_rules(d, true)),
     gated(v("retarget", Nothing, false, false, ""), |steps| steps.iter().any(|s| s["key"] == "retarget"), gates::retarget_rules),

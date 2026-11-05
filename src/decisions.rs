@@ -1,9 +1,10 @@
 // The decisions record (#343): refs/sheepdog/<b>/decisions, JSON lines
 // {kind, head, about, finding, text, at}, appended and never rewritten: a
 // finding review-fix declined or review --accept left standing, chrismo's
-// answer to a step's question, bot feedback address answered on the PR. The
-// local reviewer and the review-fix round read it so a settled finding isn't
-// raised again (#240); they get these facts, never the authoring session (#79).
+// answer to a step's question, bot feedback address answered on the PR, and
+// chrismo's own by sd act decision (#454). The local reviewer and the
+// review-fix round read it so a settled finding isn't raised again (#240);
+// they get these facts, never the authoring session (#79).
 
 use crate::git::git;
 use crate::pins::{self, Pin};
@@ -11,9 +12,10 @@ use crate::val::{at, t, text};
 use crate::{json, time};
 use serde_json::{json, Value};
 
-/// One decision of <kind> (declined, accepted, answered, bot-<action>) made
-/// at <head>: <about> is where (file:line, or the step that asked),
-/// <finding> what was raised or asked, <text> why, or the answer or reply.
+/// One decision of <kind> (declined, accepted, answered, bot-<action>, or
+/// decided: chrismo's own, all in <text>) made at <head>: <about> is where
+/// (file:line, or the step that asked), <finding> what was raised or asked,
+/// <text> why, or the answer or reply.
 pub fn entry(kind: &str, head: &str, about: &str, finding: &str, text: &str) -> Value {
     json!({"kind": kind, "head": head, "about": about, "finding": finding, "text": text})
 }
@@ -39,20 +41,21 @@ fn appended(prev: &str, entries: &[Value], now: &str) -> String {
 }
 
 /// Append <entries> to <b>'s record. Another writer moving the ref between
-/// the read and the write is retried; a failure only warns.
-pub fn append(b: &str, entries: &[Value]) {
+/// the read and the write is retried; a failure warns, and is false.
+pub fn append(b: &str, entries: &[Value]) -> bool {
     if entries.is_empty() {
-        return;
+        return true;
     }
     let now = time::now_utc().0;
     for _ in 0..3 {
         let old = pins::oid(".", b, Pin::Decisions);
         let prev = if old.is_empty() { String::new() } else { git(".", &["cat-file", "blob", &old]).stdout };
         if pins::store(".", b, Pin::Decisions, &appended(&prev, entries, &now), Some(&old)).ok {
-            return;
+            return true;
         }
     }
     eprintln!("sd: warning: couldn't record the decisions on {b}, so later review rounds won't see them");
+    false
 }
 
 const LONGEST: usize = 600;
@@ -73,6 +76,9 @@ fn line(e: &Value) -> String {
     let head: String = t(e, "head").chars().take(7).collect();
     let (kind, about) = (t(e, "kind"), t(e, "about"));
     let (finding, said) = (indented(&t(e, "finding")), indented(&text(at(e, "text"))));
+    if kind == "decided" {
+        return format!("- [{head}] chrismo decided: {said}");
+    }
     let (what, label) = match kind.as_str() {
         "declined" => (format!("declined, {about}"), "why"),
         "accepted" => (format!("accepted by chrismo, {about}"), "why"),
@@ -151,6 +157,12 @@ mod tests {
              - [abcdef0] chrismo answered the review-fix step's question: A or a?\n  answer: a, as the task says\n\
              - [fedcba9] bot feedback, b.rs:1, pushback: rename it\n  reply: the name is the issue's"
         );
+    }
+
+    #[test]
+    fn listed_shows_chrismos_own_decision_as_its_text_alone_454() {
+        let blob = appended("", &[entry("decided", "1234567890", "", "", "trust IAM\nno local checks")], "T");
+        assert_eq!(listed(&blob), "- [1234567] chrismo decided: trust IAM\n    no local checks");
     }
 
     #[test]
