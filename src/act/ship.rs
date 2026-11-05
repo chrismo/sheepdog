@@ -6,7 +6,7 @@ use super::bookkeeping::{enroll, record_lineage};
 use super::commands::status;
 use super::describe::{describe_run, stored};
 use super::hold::hold_gate;
-use super::push::push_branch;
+use super::push::{gated, push_branch};
 use super::restack::{parent_to_default, state};
 use super::review::short;
 use super::{die, no_base_why, Args};
@@ -83,13 +83,6 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
     if b == t(&s, "sync.default") {
         die(format!("not shipping {b}: it's the default branch; start a branch (sd act start <branch> \"<task>\")"));
     }
-    if on(&s, "verify.at_head") {
-        let why = format!("{}: {}", t(&s, "verify.step"), t(&s, "verify.cmd"));
-        if !a.force {
-            die(format!("not shipping {b}: verify is red at HEAD ({why}); fix it, then sd act verify, or --force to ship anyway"));
-        }
-        println!("shipping {b} with verify red at HEAD ({why}): --force");
-    }
     let pr_state = at(&s, "pr.state").as_str().unwrap_or("none").to_string();
     if !matches!(pr_state.as_str(), "none" | "OPEN") {
         die(format!("PR #{} is {}; nothing to ship", t(&s, "pr.number"), pr_state.to_lowercase()));
@@ -128,6 +121,8 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
             }
         }
     }
+    // before describe spends tokens
+    let Some(ok) = gated(b, &s, a.force, &format!("shipping {b}"), "") else { return };
     if !reviewed(&s) {
         eprintln!("sd act: warning: the local review doesn't cover HEAD (sd act review); the PR stays a draft until it does");
     }
@@ -150,7 +145,7 @@ pub fn ship(b: &str, remote: &str, a: &Args) {
         }
     };
     let (title, body) = pr_text(&desc);
-    push_branch(b, remote).unwrap_or_else(|e| die(e));
+    push_branch(ok, b, remote).unwrap_or_else(|e| die(e));
     // GH_REPO, which act::run set, points gh at settings.remote's repo.
     if pr_state == "none" {
         let o = gh::create_draft_pr(&parent, b, &title, &body);

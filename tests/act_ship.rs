@@ -488,16 +488,48 @@ fn ship_refused_while_verify_is_red_at_head_before_describe_or_push_force_ships_
     sd.verify_red("HEAD");
     let r = sd.run(&["ship"]);
     assert_ne!(r.status, 0);
-    assert_has(
-        &r.output,
-        &["not shipping feat: verify is red at HEAD (implement: make test); fix it, then sd act verify, or --force to ship anyway"],
-    );
+    let red = "verify is red at HEAD (implement: make test); fix it, then sd act verify";
+    assert_has(&r.output, &["sd act: not shipping feat:", &format!("  - {red}"), "(--force to run anyway)"]);
     assert_eq!(sd.remote("feat"), "");
     assert!(!sd.fx_exists("claude.args"));
     assert_eq!(sd.calls(), "");
     let r = sd.run(&["ship", "--force"]);
     assert_eq!(r.status, 0);
-    assert_has(&r.output, &["shipping feat with verify red at HEAD (implement: make test): --force"]);
+    assert_has(&r.output, &[&format!("sd act: warning: {red}")]);
+    assert_eq!(sd.remote("feat"), sd.rev("HEAD"));
+}
+
+// Someone else's commit on feat, taken here, then rewritten by a rebase
+// onto a moved main: the push would remove it from the remote. ship asks
+// push's gate, as sd act push does, before describe (#386).
+#[test]
+fn ship_refused_when_the_push_would_remove_someone_elses_commits_before_describe_force_ships_with_a_warning_386() {
+    let sd = sd();
+    sd.git(&["push", "-q", "-u", "origin", "feat"]);
+    sd.git_in("other", &["fetch", "-q", "origin"]);
+    sd.git_in("other", &["checkout", "-q", "-B", "feat", "origin/feat"]);
+    fs::write(sd.tmp.join("other/x.txt"), "x\n").unwrap();
+    sd.git_in("other", &["add", "x.txt"]);
+    sd.git_in("other", &["-c", "user.email=them@example.com", "-c", "user.name=Them", "commit", "-qm", "theirs"]);
+    sd.git_in("other", &["push", "-q", "origin", "feat"]);
+    sd.git(&["pull", "-q", "--ff-only", "origin", "feat"]);
+    sd.git_in("other", &["checkout", "-q", "main"]);
+    fs::write(sd.tmp.join("other/main.txt"), "m\n").unwrap();
+    sd.git_in("other", &["add", "main.txt"]);
+    sd.git_in("other", &["commit", "-qm", "main moves"]);
+    sd.git_in("other", &["push", "-q", "origin", "main"]);
+    sd.git(&["fetch", "-q", "origin"]);
+    sd.git(&["rebase", "-q", "origin/main"]);
+    let theirs = sd.remote("feat");
+    let r = sd.run(&["ship"]);
+    assert_ne!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["not shipping feat:", "would remove commits someone else made", "--force"]);
+    assert_eq!(sd.remote("feat"), theirs);
+    assert!(!sd.fx_exists("claude.args"));
+    assert_eq!(sd.calls(), "");
+    let r = sd.run(&["ship", "--force"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["sd act: warning: the push would remove commits someone else made"]);
     assert_eq!(sd.remote("feat"), sd.rev("HEAD"));
 }
 

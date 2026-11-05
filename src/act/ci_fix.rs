@@ -8,10 +8,10 @@ use super::commands::{status, tail, verify_autofix_to, Report};
 use super::editing::{guidance, run_editing_step, Outcome, Spec};
 use super::hold::{hold_gate, pr_gate};
 use super::implement::blank;
-use super::push::push_branch;
+use super::push::{gated as push_gated, push_branch};
 use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, enter_worktree, must, question_ask, question_gate,
                   question_say, going_on, spend_worded, step_session, with_stored_answer};
-use super::gate::{enforce, enforce_leaving, judge, reported, Gate, Go, Rule};
+use super::gate::{enforce, judge, reported, Gate, Go, Rule};
 use super::{cfg, die, gates, lock_recheck, state_json, Args};
 use crate::config::one_value;
 use crate::git::{git, git_out};
@@ -121,10 +121,8 @@ fn publish(b: &str, wt: &str, remote: &str, state: &Value, force: bool, kept: &s
         println!("not pushed: the restack goes first, and its push carries the fix (sd act restack, then sd act push; or sd act push to push it now)");
         return;
     }
-    if enforce_leaving(gates::push(&Derived::new(&now)), force, &format!("pushing {b}"), kept).is_none() {
-        return;
-    }
-    if let Err(e) = push_branch(b, remote) {
+    let Some(ok) = push_gated(b, &now, force, &format!("pushing {b}"), kept) else { return };
+    if let Err(e) = push_branch(ok, b, remote) {
         eprintln!("sd act: {e}");
         die(kept);
     }

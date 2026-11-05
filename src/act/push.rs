@@ -1,8 +1,11 @@
-// push (A3), and ship's and ci-fix's push.
+// push (A3), and every verb's push: push_branch takes only gated's token (#386).
 
-use super::{die, enforce, gates, plural, state_json, Go};
+use super::gate::{enforce_hinted, Gate};
+use super::{die, gates, plural, state_json, Go};
 use crate::git::{self, commits_not_ours, count, git, git_ok, git_out, made_here, remote_default, rev, strip_nl, worktree_for};
 use crate::next::{yes, Derived};
+use crate::val::t;
+use serde_json::Value;
 
 pub fn push(b: &str, remote: &str, force: bool) {
     if !git::branch_exists(b) {
@@ -19,13 +22,8 @@ pub fn push(b: &str, remote: &str, force: bool) {
         eprint!("{e}");
         die("sd state failed")
     });
-    let d = Derived::new(&s);
-    if let Some(go) = enforce(gates::push(&d), force, &format!("pushing {b}")) {
-        publish(go, b, remote);
-        // judged before push_branch's fetch: still what --force was told of
-        if yes(d.foreign_authors) {
-            seen_authors(b, &s, "/push/foreign_commits");
-        }
+    if let Some(ok) = gated(b, &s, force, &format!("pushing {b}"), "") {
+        push_branch(ok, b, remote).unwrap_or_else(|e| die(e));
     }
     // chrismo pushing is the approval of what an agent changed in CI config.
     let held = format!("branch.{b}.sd-held");
@@ -39,8 +37,33 @@ pub fn push(b: &str, remote: &str, force: bool) {
     }
 }
 
-fn publish(_: Go, b: &str, remote: &str) {
-    push_branch(b, remote).unwrap_or_else(|e| die(e));
+/// Proof gates::push let the push run: only gated makes one, and
+/// push_branch takes it, so no verb pushes past push's refusals (#386).
+#[must_use]
+pub(super) struct Cleared(Go);
+
+/// Ask gates::push on <s>, <b>'s sd state, with the calling verb's --force;
+/// a refusal ends with <left>, what it leaves behind. Forced past commits
+/// someone else made, they're recorded as looked at.
+pub(super) fn gated(b: &str, s: &Value, force: bool, doing: &str, left: &str) -> Option<Cleared> {
+    gated_hinted(b, s, force, doing, left, None)
+}
+
+/// gated, for a verb whose own --force doesn't reach push's gate: a Soft
+/// refusal ends with <hint> instead of "(--force to run anyway)".
+pub(super) fn gated_hinted(b: &str, s: &Value, force: bool, doing: &str, left: &str, hint: Option<&str>) -> Option<Cleared> {
+    let d = Derived::new(s);
+    let go = enforce_hinted(named(gates::push(&d), s), force, doing, left, hint)?;
+    if yes(d.foreign_authors) {
+        seen_authors(b, s, "/push/foreign_commits");
+    }
+    Some(Cleared(go))
+}
+
+/// <g> with a red verify naming the step and command that failed.
+fn named(g: Gate, s: &Value) -> Gate {
+    let red = format!("{} ({}: {}); fix it, then sd act verify", gates::VERIFY_RED, t(s, "verify.step"), t(s, "verify.cmd"));
+    g.worded(|w| if w == gates::VERIFY_RED { red.clone() } else { w.to_string() })
 }
 
 /// Forced past commits someone else made: chrismo has looked at them, so
@@ -61,7 +84,7 @@ pub(super) fn seen_authors(b: &str, s: &serde_json::Value, ids: &str) {
 /// Publish <b> as fetched just now. Rewritten history, or a pushed commit
 /// reset away, is force-pushed with a lease on that remote head, and only when
 /// the head is in the branch's reflog (we put it there). Err is why not.
-pub(super) fn push_branch(b: &str, remote: &str) -> Result<(), String> {
+pub(super) fn push_branch(_: Cleared, b: &str, remote: &str) -> Result<(), String> {
     let f = git(".", &["fetch", "--quiet", "--prune", remote]);
     eprint!("{}", f.stderr);
     if !f.ok {

@@ -573,6 +573,28 @@ fn a_push_refused_for_someone_elses_commits_posts_nothing_even_with_force() {
     assert_eq!(sd.gh_ops(), "nodes");
 }
 
+// address's push asks push's gate on the state after the fix (#386): a push
+// that would remove someone else's commits is refused, the commit kept and
+// nothing posted. address's --force doesn't reach push's gate: the refusal
+// points at sd act push --force.
+#[test]
+fn a_push_that_would_remove_someone_elses_commits_is_refused_even_forced_commit_kept_nothing_posted_386() {
+    let sd = sd();
+    sd.state(&[r#".push.foreign_authors = ["them@example.com"]"#]);
+    let before = sd.remote_feat();
+    let wt = sd.path("repo");
+    for args in [&["address"][..], &["address", "--force"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}: {}", r.output);
+        assert_has(&r.output, &["not pushing feat:", "would remove commits someone else made", "sd act push --force", &format!("the commit is kept in {wt}")]);
+        assert!(!r.output.contains("(--force to run anyway)"), "{}", r.output);
+        assert_eq!(sd.subject(), "Uppercase three");
+        assert_eq!(sd.remote_feat(), before);
+        assert!(sd.gh_ops().split_whitespace().all(|op| op == "nodes"), "posted: {}", sd.gh_ops());
+        sd.git(&["reset", "-q", "--hard", "origin/feat"]);
+    }
+}
+
 // @test "the agent sees the findings' text, not just their ids"
 #[test]
 fn the_agent_sees_the_findings_text_not_just_their_ids() {
