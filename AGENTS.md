@@ -84,6 +84,17 @@ sheepdog tends its own PRs, so code changes go through them:
   current push of issues is over: don't rely on it, and put notes on built
   work in the command's header comment, not there.
 
+### Filing issues
+
+Label every issue when you file it: one **Reach** label and one **Area**
+label, plus any Origin, Status or Kind that applies. Each label's description
+starts with its axis (`gh label list`), so that list is the taxonomy; don't
+copy it here. Structural refactors with no behavior change skip Reach, and
+docs-only issues skip Area. A PR that finishes an issue's last piece says
+`Closes #N`; one that finishes only a slice names what's left in the issue.
+`/issue-upkeep` sweeps for what slips through: unlabeled issues and issues
+that merged PRs have quietly finished.
+
 ### Or run sheepdog against the sandbox
 
 Dogfooding on this repo's own PRs is the default, not a rule.
