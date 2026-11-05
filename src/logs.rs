@@ -225,7 +225,7 @@ fn prune_branch(dir: &Path, p: &Policy, named: &HashSet<PathBuf>) {
         let end = end_of(&f);
         let extra_pass = end == End::Passed && p.keep == Keep::Failed && a_pass;
         a_pass |= end == End::Passed;
-        let stays = named.contains(&f) || end == End::Running;
+        let stays = named.contains(&canonical(&f)) || end == End::Running;
         if !stays && (p.keep == Keep::None || extra_pass || (p.runs > 0 && kept >= p.runs)) {
             let _ = fs::remove_file(&f);
         } else {
@@ -249,7 +249,7 @@ fn prune_all(root: &Path, p: &Policy, named: &HashSet<PathBuf>, now: SystemTime)
     let mut total: u64 = files.iter().map(|f| f.1).sum();
     for (f, len, at) in files {
         let over = p.total_bytes > 0 && total > p.total_bytes && end_of(&f) != End::Running;
-        if !named.contains(&f) && (old(at) || over) && fs::remove_file(&f).is_ok() {
+        if !named.contains(&canonical(&f)) && (old(at) || over) && fs::remove_file(&f).is_ok() {
             total -= len;
         }
     }
@@ -280,8 +280,14 @@ fn named(root: &Path) -> HashSet<PathBuf> {
         .flatten()
         .filter_map(|e| fs::read_to_string(e.path().join(REPO_FILE)).ok())
         .flat_map(|repo| verify_red::logs(repo.trim_end()))
-        .map(PathBuf::from)
+        .map(|l| canonical(Path::new(&l)))
         .collect()
+}
+
+/// A record and a pass can reach the store by different spellings, e.g.
+/// /tmp and /private/tmp.
+fn canonical(p: &Path) -> PathBuf {
+    fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
 /// A run of <kind> by <step> on <b> at <sha> in <wt>'s repo starts its log,
@@ -434,11 +440,24 @@ mod tests {
         for (n, how) in [("1.log", "exit 1"), ("2.log", "exit 1"), ("3.log", "exit 1"), ("4.log", ""), ("5.log", "exit 1")] {
             log(&d.0, n, how, 1);
         }
-        let named: HashSet<PathBuf> = [d.0.join("1.log")].into();
+        let named: HashSet<PathBuf> = [canonical(&d.0.join("1.log"))].into();
         prune_branch(&d.0, &policy(Keep::All, 3), &named);
         assert_eq!(names(&d.0), ["1.log", "3.log", "4.log", "5.log"], "the newest 3, and the named one past them");
         prune_branch(&d.0, &policy(Keep::None, 0), &named);
         assert_eq!(names(&d.0), ["1.log", "4.log"]);
+    }
+
+    #[test]
+    fn a_log_named_by_another_spelling_of_its_path_stays() {
+        let d = dir("spelled");
+        let link = d.0.with_file_name(format!("{}-link", d.0.file_name().unwrap().to_string_lossy()));
+        std::os::unix::fs::symlink(&d.0, &link).unwrap();
+        log(&d.0, "1.log", "exit 1", 1);
+        let named: HashSet<PathBuf> = [canonical(&link.join("1.log"))].into();
+        prune_branch(&d.0, &policy(Keep::None, 0), &named);
+        prune_all(&d.0, &Policy { age_secs: 1, ..policy(Keep::All, 0) }, &named, SystemTime::now() + Duration::from_secs(9));
+        let _ = fs::remove_file(&link);
+        assert_eq!(names(&d.0), ["1.log"]);
     }
 
     #[test]
@@ -460,7 +479,7 @@ mod tests {
         let newer = log(&b, "newer.log", "exit 1", 1000);
         at(&newer, 30);
         let p = Policy { age_secs: 90, total_bytes: 2500, ..policy(Keep::All, 0) };
-        prune_all(&d.0, &p, &[named.clone()].into(), SystemTime::now());
+        prune_all(&d.0, &p, &[canonical(&named)].into(), SystemTime::now());
         assert!(!old.exists() && named.exists(), "the old go, the named stay");
         assert!(!older.exists() && running.exists() && newer.exists(), "past the total, the oldest not running go");
         let p = Policy { age_secs: 1, ..p };
