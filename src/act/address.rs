@@ -6,7 +6,7 @@ use super::commands::{command, status};
 use super::editing::{guidance, run_editing_step, Outcome, Spec};
 use super::hold::{hold_gate, pr_gate};
 use super::implement::blank;
-use super::push::push_branch;
+use super::push::{gated as push_gated, push_branch, Cleared};
 use super::step::{answer_cmd, answer_store, answer_waits, commit_edits, guidance_base, question_ask, question_gate, question_say,
                   enter_worktree, going_on, spend_worded, step_session, with_stored_answer};
 use super::gates::{self, addr};
@@ -497,13 +497,23 @@ fn address_run(b: &str, wt: &str, remote: &str, a: &Args) -> bool {
     let left = if r.moved() { format!("the commit is kept in {wt}") } else { "nothing was committed".to_string() };
     pr_gate(&t(&s, "pr.number"), &t(&s, "pr.url"), "address", "pushing or posting", &left);
     lock_recheck(b, "address", "pushing", &left);
-    if let Err(e) = push_branch(b, remote) {
+    if let Err(e) = push_branch(cleared(b, wt, a.force, &left), b, remote) {
         eprintln!("sd act: {e}");
         die("not pushed, so nothing posted");
     }
     let posted = post_and_record(b, &t(&s, "pr.url"), &plan);
     unposted(b, if posted { &[] } else { &owed[..ids.len()] });
     posted
+}
+
+/// push's gate on the state after the round, with address's --force (#386).
+fn cleared(b: &str, wt: &str, force: bool, left: &str) -> Cleared {
+    let left = format!("{left}; nothing pushed or posted, so the items are still owed");
+    let now = state_json(wt, b).unwrap_or_else(|e| {
+        eprint!("{e}");
+        die(format!("sd state failed; {left}"))
+    });
+    push_gated(b, &now, force, &format!("pushing {b}"), &left).unwrap_or_else(|| die(left))
 }
 
 /// branch.<b>.sd-unposted := <items>' keys, the owed set of a round whose

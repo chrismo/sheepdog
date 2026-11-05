@@ -199,7 +199,9 @@ Verbs:
             from the remote, or ones it can't tell who made (no
             user.email: sd state's push.foreign_authors, #356, #395).
             Releases a CI config hold: chrismo pushing is the approval.
-            Refuses the default branch (#159)
+            Refuses the default branch (#159). Every verb that pushes
+            (ship, address, ci-fix) asks this gate first, with its own
+            --force (#386)
   verify   run settings.verify in the branch's worktree, zero tokens. Pass:
             one line. Fail: nonzero, the output trimmed to its last 40 lines
             for the fix step. A command that changes the tree fails too.
@@ -289,8 +291,9 @@ Verbs:
             branch (#159), when git can't
             pick the branch it was made from, and while the parent isn't on
             the remote, has merged (restack first), was closed, or can't be
-            looked up, and while verify is red at HEAD (sd state's verify,
-            #325); a merged parent with the branch already on the
+            looked up, and before describe while push's gate refuses
+            (verify red at HEAD, #325; someone else's commits, #386);
+            a merged parent with the branch already on the
             default branch ships onto it and rewrites sd-parent. Spends
             tokens unless a description for HEAD and the target is stored
   trigger   post settings.botCommand on the PR so the review bot runs, and
@@ -417,14 +420,16 @@ flags, so an --effort among them wins), and its session: "claude (model opus, ef
 <id>) is implementing <b>…" (#292).
 
 --force:
-  address         run even if the branch is unpushed, diverged or taken over
+  address         run even if the branch is unpushed, diverged or taken
+                  over, and push past push's own refusals, as ci-fix does
   restack, push, ship   run even if taken over
   restack         even past a predicted conflict (rolled back if the rebase
                   stops), a closed PR or parent, an unknown merge or
                   conflict, a stored answer, or someone else's commits;
                   and keep a change that came out different
   retarget        even while the one restack after the merged parent is owed
-  ship           ship though verify is red at HEAD
+  ship            push past push's own refusals (verify red at HEAD,
+                  someone else's commits), with a warning for each
   implement, review, describe   the same
   implement       run though the branch is already ahead of its target (or
                   that's unknown), the remote has commits it doesn't, sd

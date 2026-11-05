@@ -63,10 +63,9 @@ pub fn describe_rules(d: &Derived) -> Vec<Rule> {
     vec![spend_rule(*budget_unread, *over_budget)]
 }
 
-/// sd act push. What's on the remote is push_branch's to judge, after its
-/// own fetch: sd state doesn't fetch. Only sd act push asks this gate:
-/// ship, address and ci-fix call push_branch directly, so FOREIGN_AUTHORS
-/// (#356) doesn't hold their pushes yet (#386).
+/// sd act push, and every other push: push_branch takes push::gated's
+/// token (#386). What's on the remote is push_branch's to judge, after its
+/// own fetch: sd state doesn't fetch.
 pub fn push(d: &Derived) -> Gate {
     judge(&push_rules(d))
 }
@@ -93,12 +92,15 @@ pub fn push_rules(d: &Derived) -> Vec<Rule> {
         rule("not pushing: the restack was undone: some of the target's commits are copies here, and pushing would publish them \
               (if they aren't, git push by hand)", Level::Hard, *undone, "redo the restack (sd state's NEXT says how)"),
         rule("the PR is merged or closed", Level::Soft, !open, "reopen it, or start a new branch"),
-        rule("verify is red at HEAD", Level::Soft, *verify_red, "fix it, then sd act verify"),
+        rule(VERIFY_RED, Level::Soft, *verify_red, "fix it, then sd act verify"),
         rule("the parent branch isn't on the remote yet", Level::Soft, *parent_unpushed, "ship it first (sd act ship <parent>)"),
         rule(FOREIGN_AUTHORS, Level::Soft, yes(*foreign_authors), "look at them, then sd act push --force"),
         rule(AUTHORS_UNKNOWN, Level::Soft, foreign_authors.is_none(), "git config user.email <yours>, or look at them, then sd act push --force"),
     ]
 }
+
+/// push::gated names the step and command that failed (#386).
+pub const VERIFY_RED: &str = "verify is red at HEAD";
 
 pub const FOREIGN_AUTHORS: &str =
     "the push would remove commits someone else made from the remote (sd state --json: push.foreign_authors): look at them first";
