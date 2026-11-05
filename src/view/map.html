@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="sd-token" content="__SD_TOKEN__">
 <title>sheepdog map</title>
-<link rel="icon" type="image/png" href="/img/icon.png">
+<link rel="icon" type="image/png" href="/img/sheepdog.png">
 <style>
 :root {
   --bg: #eef1f3; --surface: #ffffff; --ink: #17212a; --muted: #5a6670; --line: #d3dade;
@@ -104,14 +104,15 @@ h2 .n { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
 .atl a:hover { border-color: var(--ink); }
 footer { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
 body.sheet footer { margin-bottom: 40vh; }
-.logo { vertical-align: middle; margin: -4px 10px 0 0; }
+.logo { vertical-align: middle; margin: 0 14px 0 0; }
+@media (max-width: 600px) { .logo { width: 56px; height: 56px; margin-right: 10px; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header id="top">
     <div class="nav"><span><a href="/">← Flock</a> · <a href="/atlas">Atlas</a></span><span class="eyebrow" id="eyebrow">loading…</span></div>
-    <h1><img class="logo" src="/img/sheepdog.png" alt="" width="40" height="40">The code</h1>
+    <h1><img class="logo" src="/img/sheepdog.png" alt="" width="100" height="100">The code</h1>
     <div class="summary" id="summary"></div>
     <div id="gh"></div>
     <div class="legend">
