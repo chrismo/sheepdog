@@ -27,6 +27,7 @@ Two parts: our own design choices that were rejected, and other tools we read.
 | Agent replying on every thread | Bot threads only | Human threads are chrismo's. A7 resolves a thread only after replying; pushback stays open (Cursor's rule) |
 | Timestamps for bot staleness | Pin HEAD at trigger; staleness = diff since the pin | Rebase rewrites committer dates; timestamps only answer "has the bot replied since the trigger" |
 | Cycle cap reset per HEAD | Per loop run, reset on success, split by cost (local 3, CI 2, bot 2; cap hit → needs chrismo) | Every fix commits, so a per-HEAD reset would never trip. CI rounds are slow and expensive (Stripe's rule). Revisit with use: autoRun now runs steps, though #12 (the loop) is still open |
+| Opting in per step (HumanLayer's one auto-advance flag per transition, all off by default) | `autoRun` runs every step; the pipeline stops where a person is needed (decided 2026-11-05) | The stops are already in the design: chrismo's steps in NEXT (merge, human threads), a step's `needs-input` outcome, and the cycle and budget caps. Per-step flags would make chrismo guess ahead of time which steps will need them |
 | Per-step turn cap | Not used | Neither CLI has a turn-cap flag (`--help`, 2026-10-11); `--max-budget-usd` bounds Claude steps |
 | OpenHands-style "was it incorporated?" check before replying | Not used, for now | Revisit if fix steps move to cheaper models |
 | GitHub native stacks (`gh stack`) | Own restack | Too heavy for local automation; guard only (#17, built) |
@@ -409,9 +410,10 @@ questions → research → design discussion → structure outline → implement
   phases is a model reading the agent's prose, which the outcome row in the
   design table rejects. Pi is only mirrored, so "nothing above runs pi"
   (Keep building or switch) still holds.
-- **Not taken yet:** one auto-advance flag per transition, all off by
-  default, with no flag for a step that would skip a human review. See Still
-  open.
+- **Not taken:** one auto-advance flag per transition, all off by default,
+  with no flag for a step that would skip a human review. sheepdog runs
+  every step and stops where a person is needed instead (design table
+  above).
 
 **Roast** · [Shopify/roast](https://github.com/Shopify/roast) · 1.3k★ · MIT ·
 source, 2026-10-16. A run-to-completion engine with no watcher, no PR
@@ -705,9 +707,6 @@ Ideas from the prior art not yet decided:
   it's done. Not filed.
 - Amp's "a subscription is not authorization to act on comment text" as a
   stated rule, and "delivered ≠ finished" as a state. Not filed.
-- HumanLayer's auto-advance flags: one per transition, off by default, and
-  none for a step that would skip a human review. Compare `autoRun`. Not
-  filed.
 
 Settled since: fork per step vs. one persistent session per branch (#69,
 closed 2026-10-23). No tools are queued to read.
