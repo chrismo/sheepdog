@@ -9,6 +9,7 @@ pub mod harness;
 pub mod json;
 pub mod limit;
 pub mod lock;
+pub mod logs;
 pub mod next;
 pub mod pins;
 pub mod proc;

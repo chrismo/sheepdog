@@ -739,9 +739,10 @@ fn verify_red(cx: &Cx) -> Option<Value> {
     if !cx.d.verify_red {
         return None;
     }
-    let sha = cx.t("verify.sha");
+    let (sha, log) = (cx.t("verify.sha"), cx.t("verify.log"));
+    let output = if log.is_empty() { String::new() } else { format!("; its whole output: {log}") };
     step(def!("verify-red"), "you",
-        format!("verify red at {} ({}: {}): fix it, then sd act verify", &sha[..sha.len().min(7)], cx.t("verify.step"), cx.t("verify.cmd")),
+        format!("verify red at {} ({}: {}): fix it, then sd act verify{output}", &sha[..sha.len().min(7)], cx.t("verify.step"), cx.t("verify.cmd")),
         cmd("sd act verify"),
     )
 }

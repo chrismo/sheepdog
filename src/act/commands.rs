@@ -3,9 +3,16 @@
 
 use super::{cfg, die, lock_recheck, plural};
 use crate::git::{git, git_out, worktree_for};
-use crate::{proc, verify_red};
+use crate::{logs, proc, verify_red};
+use std::cell::Cell;
+use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 const VERIFY_TAIL: usize = 40;
+/// Off a terminal, how often a run says it's still going.
+const HEARTBEAT_SECS: u64 = 60;
 
 fn worktree(b: &str) -> String {
     let wt = worktree_for(".", b);
@@ -145,23 +152,85 @@ pub(super) fn verify_run(wt: &str, b: &str, step: &str) -> Result<String, String
     verify_to(wt, b, step, &mut Report::Print)
 }
 
+/// <cmd>, <kind>'s, in <wt> for <step> as with_timeout_merged runs it, its
+/// output kept as it comes by the log store (src/logs.rs, #461) and, on a
+/// terminal, shown as it comes; off one, a line every HEARTBEAT_SECS says
+/// it's still going. The log's path, when one was kept.
+fn run_logged(wt: &str, b: &str, (kind, step): (&str, &str), cmd: &str, secs: u64, p: &logs::Policy) -> (proc::Out, Option<String>) {
+    let sha = git_out(wt, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let run = logs::start(wt, b, &sha, kind, step, cmd, p);
+    let path = run.as_ref().map(|r| r.path.display().to_string());
+    match &path {
+        Some(l) => eprintln!("{kind}: {cmd} (log: {l})"),
+        None => eprintln!("{kind}: {cmd}"),
+    }
+    let (run, bytes, tty) = (Arc::new(Mutex::new(run)), Arc::new(AtomicU64::new(0)), std::io::stderr().is_terminal());
+    let tee: proc::Tee = {
+        let (run, bytes) = (Arc::clone(&run), Arc::clone(&bytes));
+        Arc::new(Mutex::new(move |c: &[u8]| {
+            bytes.fetch_add(c.len() as u64, Ordering::Relaxed);
+            if let Some(r) = run.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
+                r.write(c);
+            }
+            if tty {
+                let _ = std::io::stderr().write_all(c);
+            }
+        }))
+    };
+    let (started, next) = (Instant::now(), Cell::new(HEARTBEAT_SECS));
+    let tick = || {
+        let secs = started.elapsed().as_secs();
+        if !tty && secs >= next.get() {
+            let at = path.as_deref().map_or(String::new(), |l| format!(": tail -f {l}"));
+            eprintln!("{kind}: still running after {}m, {} bytes of output{at}", secs / 60, bytes.load(Ordering::Relaxed));
+            next.set(secs + HEARTBEAT_SECS);
+        }
+    };
+    // The log's last line is written before a signal sd got ends it.
+    let o = proc::deferring_signals(|| {
+        let o = proc::with_timeout_merged_tee(secs, "sh", &["-c", cmd], Some(wt), tee, &tick);
+        if let Some(r) = run.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            let how = if o.timed_out {
+                format!("timed out after {secs}s")
+            } else if o.stopped {
+                "stopped by a signal".into()
+            } else {
+                format!("exit {}", o.code)
+            };
+            r.finish(&how);
+        }
+        o
+    });
+    (o, path)
+}
+
 /// The verdict is recorded against <wt>'s HEAD (src/verify_red.rs) when the
 /// tree was clean: a run on uncommitted edits didn't test HEAD, and a run sd
-/// stopped on a signal is no verdict.
+/// stopped on a signal is no verdict. The log store is pruned after.
 fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, String> {
     let cmd = command("verify", b);
     if cmd.is_empty() {
         return Ok(cmd);
     }
+    let policy = logs::Policy::from(|k| cfg(k, b));
+    let verdict = verify_logged(wt, b, step, cmd, &policy, r);
+    logs::prune(wt, b, &policy);
+    verdict
+}
+
+fn verify_logged(wt: &str, b: &str, step: &str, cmd: String, p: &logs::Policy, r: &mut Report) -> Result<String, String> {
     let secs = step_timeout(b);
     let before = status(wt);
-    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
+    let (o, log) = run_logged(wt, b, ("verify", step), &cmd, secs, p);
     let verdict = before.is_empty() && !o.stopped;
     if o.ok && status(wt) != before {
         r.line(&format!("verify changed files in {wt} (a formatter?); commit them and rerun"));
     } else if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
         r.say(&tap_missing(&o.stdout).unwrap_or_default());
+        if let Some(l) = &log {
+            r.line(&format!("full output: {l}"));
+        }
     } else {
         if verdict {
             verify_red::clear(wt, b);
@@ -174,7 +243,7 @@ fn verify_to(wt: &str, b: &str, step: &str, r: &mut Report) -> Result<String, St
         return Ok(cmd);
     }
     if verdict {
-        verify_red::record(wt, b, step, &cmd);
+        verify_red::record(wt, b, step, &cmd, log.as_deref());
     }
     Err(cmd)
 }

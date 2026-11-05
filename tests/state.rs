@@ -3107,6 +3107,34 @@ fn verify_red_stands_at_the_commit_it_failed_on_on_the_one_liner_and_next_325() 
     assert_has(&r.field(".errors[0]"), &["refs/sheepdog/feat/verify-red isn't a verify record"]);
 }
 
+// The log store (#461, #467): the red record names its run's whole output,
+// and a log still being written by a live sd is verify running now.
+#[test]
+fn verify_names_its_log_and_a_run_still_going_461() {
+    let sd = sd();
+    sd.feat();
+    let head = sd.git(&["rev-parse", "HEAD"]);
+    let rec = format!(r#"{{"head": "{head}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z", "log": "/l/x.log"}}"#);
+    sd.put_blob("refs/sheepdog/feat/verify-red", &rec);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".verify.log"), "/l/x.log");
+    assert_has(&r.field(".next[0].say"), &["its whole output: /l/x.log"]);
+    assert_eq!(r.field(".verifying"), "null");
+    assert_has(&sd.run(&["--long"]).output, &["log: /l/x.log"]);
+    let dir = sd.repo_logs("state", "work").join("feat");
+    fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("20261105T000000.000Z-abc-verify.log");
+    let header = format!("==> 2026-11-05T00:00:00Z feat abc verify (verify) pid {}: make test\nhalf\n", std::process::id());
+    fs::write(&f, &header).unwrap();
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".verifying.log"), f.display().to_string());
+    assert_eq!(r.field(".verifying.since"), "2026-11-05T00:00:00Z");
+    assert_eq!(r.field(".verifying.pid"), std::process::id().to_string());
+    assert_has(&sd.run(&["--long"]).output, &[&format!("verify running since 2026-11-05T00:00:00Z: tail -f {}", f.display())]);
+    fs::write(&f, header + "<== exit 0 after 1s\n").unwrap();
+    assert_eq!(sd.state(&[]).field(".verifying"), "null");
+}
+
 #[test]
 fn question_a_give_up_says_so_on_the_one_liner_and_in_long_254() {
     let sd = sd();

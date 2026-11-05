@@ -13,7 +13,7 @@ use crate::git::{self, git, git_out};
 use crate::json;
 use crate::proc;
 use crate::act::bookkeeping;
-use crate::{failed, gh, harness, limit, pins, running, time};
+use crate::{failed, gh, harness, limit, logs, pins, running, time};
 use crate::next::steps::{self, Notify};
 use crate::val::{at, on, t, text};
 use regex::Regex;
@@ -319,6 +319,14 @@ pub(super) fn basename(p: &str) -> &str {
 pub fn repo_key(repo: &str) -> String {
     let hex = sha1_smol::Sha1::from(repo).digest().to_string();
     format!("{}-{}", basename(repo), &hex[..8])
+}
+
+/// What sheepdog keeps for <repo>'s branches that are gone: their pins and
+/// logs; then the log store's limits over every repo's logs.
+fn sweep_gone(repo: &str) {
+    pins::sweep(repo);
+    logs::sweep(repo);
+    logs::prune_every_repo(&logs::Policy::from(|k| config::get_global(k, false).unwrap_or_default()));
 }
 
 fn repo_state_dir(state: &str, repo: &str) -> String {
@@ -1011,7 +1019,7 @@ impl Watch {
                 continue;
             }
             let name = basename(&repo).to_string();
-            pins::sweep(&repo);
+            sweep_gone(&repo);
             for f in config::sweep_branch_files(&repo, false) {
                 self.log(&name, "-", &format!("deleted {f}: no local branch"));
             }

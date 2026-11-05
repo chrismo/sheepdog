@@ -220,6 +220,7 @@ pub fn forget(b: &str, remove: bool) {
     unenroll(b);
     usage::append(&usage::reset_record(&time::now_utc().0, &main_worktree("."), b));
     must(pins::delete_all(".", b));
+    crate::logs::forget(".", b);
     if let Some(f) = crate::config::describe_file(".", b) {
         let _ = std::fs::remove_file(f);
     }

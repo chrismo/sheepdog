@@ -425,6 +425,14 @@ impl Sd {
         fs::write(self.cwd.join(name), content).unwrap();
     }
 
+    /// The log store's dir for the repo at tmp/<repo> under the state dir
+    /// tmp/<state> (#467): <repo>-<first 8 hex of sha1 of its path>.
+    #[allow(dead_code)]
+    pub fn repo_logs(&self, state: &str, repo: &str) -> PathBuf {
+        let hex = sha1_smol::Sha1::from(self.path(repo)).digest().to_string();
+        self.tmp.join(state).join(format!("logs/runs/{repo}-{}", &hex[..8]))
+    }
+
     /// Appends to $SHEEPDOG_STATE_DIR (tmp/state)/usage.sup a <step> on
     /// cwd's repo's <branch> that ran turns and cost <cost> (a SUP float, or
     /// null).
