@@ -230,6 +230,29 @@ fn a_second_sd_view_on_a_taken_port_opens_the_running_one() {
 }
 
 #[test]
+fn a_rebuilt_sd_view_replaces_the_older_build_on_its_port() {
+    let mut sd = sd();
+    let mut old = serve(&sd);
+    // A rebuild: the same binary with a newer mtime, a copy, not a link.
+    let newer = sd.tmp.join("rebuilt/sd-view");
+    fs::create_dir_all(newer.parent().unwrap()).unwrap();
+    fs::copy(&sd.bin, &newer).unwrap();
+    let later = std::time::SystemTime::now() + Duration::from_secs(60);
+    fs::File::options().write(true).open(&newer).unwrap().set_modified(later).unwrap();
+    sd.bin = newer;
+    let new = serve_args(&sd, &["--port", &old.port.to_string()], Stdio::null());
+    assert_eq!(new.port, old.port);
+    let t = Instant::now();
+    while old.child.try_wait().unwrap().is_none() {
+        assert!(t.elapsed() < Duration::from_secs(5), "the older build's sd view is still running");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (code, _, body) = new.ask("GET", "/api/build", &format!("127.0.0.1:{}", new.port));
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["pid"], json!(new.child.id()));
+}
+
+#[test]
 fn api_flock_serves_each_cached_branch() {
     let sd = sd();
     let ready = json!([{ "key": "ready", "who": "you", "say": "merge it", "cmd": "gh pr merge 7" }]);
