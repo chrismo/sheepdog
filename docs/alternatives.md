@@ -52,7 +52,9 @@ as the tools' own claims. Each entry opens with its repo, stars and license
 - **source:** a shallow clone, read in the code. Sortie, av, gh-stack,
   attractor (2026-10-11); Symphony at be10a1b, Roast at 40b87a5, Open SWE at
   c560ff7, Nasiko at 50b0a34, Evener at a4dcbc1, samcdavid/dotfiles at 2e73af1
-  (2026-10-16). The clones are in `~/modev/pr-workflow-prior-art/`.
+  (2026-10-16); HumanLayer at f9bd735, humanlayer-pi at f4bd3ed,
+  humanlayer-opencode at 9ff1cde (2026-11-05). The clones are in
+  `~/modev/pr-workflow-prior-art/`.
 - **docs:** the README or product docs only. Archon and Gas Town
   (2026-10-18), Amp (2026-10-17), shepherd-pr (2026-10-21), pstack (README,
   `plugin.json` and 3 of its 23 playbooks, 2026-11-03), the hosted PR loops
@@ -118,6 +120,7 @@ cell means the sources don't say, not that the feature is missing.
 | sheepdog | — | Pipeline; agents are bounded workers | Local, worktree per branch | Claude, pi | Yes: `rebase --onto` restack with a patch-id post-condition. Native GitHub stacks only guarded (#17) | Pipeline. Agents don't need to know it exists |
 | Sortie | source | Orchestrator | Fresh clone per ticket; Go | Claude, Copilot, OpenCode, Codex, Kiro, Gemini, generic ACP | No | The agent or a hook; read-only on the forge |
 | Archon | docs | Pipeline (YAML DAG workflows in the repo) | Local binary; `archon serve` web console; Docker / VPS | Claude, Codex, Pi | Not stated | `archon-pr` opens the PR; merging not stated |
+| HumanLayer | source | Server: starts the next phase's session when its flag is on and the phase looks done (an artifact exists, or a Haiku call reads the agent's last message) | Desktop app plus cloud; a daemon per host, worktree per task; an ephemeral daemon in CI | Claude (Agent SDK), Codex (its own loop on the Responses API); Claude Code, OpenCode and Pi only mirrored | No | The agent, in its `describe-pr` phase; people merge from the app's PR panel |
 | Roast (Shopify) | source | Pipeline (Ruby DSL of cogs) | Run-to-completion engine driving local agent CLIs | Pi (default), Claude Code; API-backed `chat` cog | No | Not stated |
 | agent-orchestrator | source | A Go daemon polls every 30 s and pastes CI failures and review comments into the agent's running session | Desktop app plus daemon | Claude Code through installed hooks; others not recorded | Not recorded; its tests cover suppressing reactions on a stacked child | The agent commits and pushes itself |
 | Symphony (openai) | source | Agent, via the repo's `WORKFLOW.md` and skills | Per-issue workspace, Linear polling | Codex | Not stated | Agent, through its `push` and `land` skills |
@@ -341,6 +344,74 @@ pause for human approval; runs persist and resume.
 
 - **Verdict:** closest to design rules 1–2 in philosophy, but it has a web UI
   and no stack support stated.
+
+**HumanLayer** · [humanlayer/humanlayer](https://github.com/humanlayer/humanlayer)
+· 12.8k★ (2026-11-05) · Apache-2.0 · source at f9bd735, 2026-11-05. Created
+2024-08-05. A team product: a macOS desktop app and HumanLayer Cloud (Postgres
+synced to clients through Electric), with a Bun daemon on each host that runs
+the sessions. It's a Turborepo of about 5,900 files. A task groups sessions
+and synced markdown artifacts that teammates comment on in the cloud UI. The
+workflows are phased skill chains, each phase a fresh session that writes a
+numbered artifact under `.humanlayer/tasks/<slug>/`. RPI goes research
+questions → research → design discussion → structure outline → implement →
+`describe-pr`; PRD-Oriented, Oneshot and Freeform are the other workflows.
+
+- **Who drives:** the server. When a session ends,
+  `apps/riptide-api/src/orpc/daemon/sessions/check-auto-advance.ts` starts
+  the next phase's session if four conditions hold: the task's flag for that
+  transition is on (all default off), the session carries the phase's label,
+  the phase is done, and no session for the next phase exists yet. For the
+  research phases, "done" means an artifact with the right frontmatter
+  `type` exists. For later phases, a Haiku call
+  (`packages/ai/src/agents/extract-next-step/`) reads the agent's last
+  message and pulls out the next-step prompt the agent suggested. Steps that
+  would skip a human review (design → outline, outline → implement) never
+  auto-advance.
+- **Harnesses:** Claude runs through the Claude Agent SDK. Codex runs on
+  HumanLayer's own agent loop (`@humanlayer/fold-*` and `@humanlayer/codelayer`,
+  from npm; their source isn't in this repo) against the Responses API, not
+  the Codex CLI. Claude Code, OpenCode and Pi get plugins that mirror a
+  session the user started into the cloud and accept web messages and stop.
+  For pi, the README says "the web app can't start a pi session".
+- **[humanlayer-pi](https://github.com/humanlayer/humanlayer-pi) and
+  [humanlayer-opencode](https://github.com/humanlayer/humanlayer-opencode)**
+  (39★ and 14★, no license file, last commit 2026-10-05; source read the
+  same day): the installable builds of `apps/riptide-pi-extension` and
+  `apps/riptide-opencode-plugin`. They hold a bundled JS file and a copy of
+  the RPI skills, and a publish script overwrites each repo. Both alpha.
+  They work only inside a session the user started: they send its events,
+  task files and diff to the cloud, take web messages, stop and (OpenCode)
+  tool approvals, and add comment tools. "The web app cannot start an
+  opencode session" either. Their `describe-pr` skill has the agent push
+  and run `gh pr create` / `gh pr edit` itself.
+- **PRs:** the workflow ends when the PR opens. `describe-pr` is an agent
+  phase: it commits, pushes if the branch has no upstream, opens or updates
+  the PR and writes the body. Then "Continue with normal pull request
+  review." A GitHub App's webhooks (`check_run`, `pull_request`, reviews,
+  review comments, review threads) refresh a PR panel showing checks (both
+  `CheckRun` and `StatusContext`), the unresolved-thread count, the review
+  decision and the merge state. The panel's writes (merge, update branch,
+  auto-merge, draft or ready, close) run as the App. Merge and update branch
+  send an `expectedHeadSha`, so GitHub refuses them if the branch moved.
+  No webhook starts an agent: there's no CI fix, thread reply, restack or
+  stack support.
+- **Attribution:** a `HumanLayer-Session` commit trailer ties a commit to its
+  session. A merged PR counts as a session's output only in the `committed`
+  tier, not `observed` (the branch was only seen checked out).
+- **Automations:** `humanlayer automation run` runs one session in CI with a
+  daemon that lives only for the job. The docs' recurring-agent patterns are
+  for the user to build in Actions, not shipped: skip the run while an agent
+  PR is open, and a `/iterate` PR comment reruns the agent on the branch.
+- **Verdict:** a team workspace for the work before the PR. It's sheepdog's
+  J0 and J6 grown into a planning chain with a human review between phases,
+  and it has nothing after the PR opens. The server starts each phase (rule
+  2), but the agent pushes and opens the PR. Its "done" signal for later
+  phases is a model reading the agent's prose, which the outcome row in the
+  design table rejects. Pi is only mirrored, so "nothing above runs pi"
+  (Keep building or switch) still holds.
+- **Not taken yet:** one auto-advance flag per transition, all off by
+  default, with no flag for a step that would skip a human review. See Still
+  open.
 
 **Roast** · [Shopify/roast](https://github.com/Shopify/roast) · 1.3k★ · MIT ·
 source, 2026-10-16. A run-to-completion engine with no watcher, no PR
@@ -634,6 +705,9 @@ Ideas from the prior art not yet decided:
   it's done. Not filed.
 - Amp's "a subscription is not authorization to act on comment text" as a
   stated rule, and "delivered ≠ finished" as a state. Not filed.
+- HumanLayer's auto-advance flags: one per transition, off by default, and
+  none for a step that would skip a human review. Compare `autoRun`. Not
+  filed.
 
 Settled since: fork per step vs. one persistent session per branch (#69,
 closed 2026-10-23). No tools are queued to read.
