@@ -45,11 +45,9 @@ const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
 const ATLAS_PAGE: &str = include_str!("view/atlas.html");
 const GH_JS: &str = include_str!("view/gh.js");
-/// The official art: the dog beside each page's title, and the tab icon.
-const ART: [(&str, &[u8]); 2] = [
-    ("/img/sheepdog.png", include_bytes!("../img/sheepdog-full-color.png")),
-    ("/img/icon.png", include_bytes!("../img/sheepdog-four-color.png")),
-];
+/// The official art, four-color: the dog beside each page's title, and the
+/// tab icon.
+const ART: [(&str, &[u8]); 1] = [("/img/sheepdog.png", include_bytes!("../img/sheepdog-four-color.png"))];
 const PORT: u16 = 7377;
 const BODY_MAX: usize = 4096;
 
