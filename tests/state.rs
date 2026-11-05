@@ -3978,6 +3978,15 @@ fn long_and_json_together_is_a_usage_error() {
     assert_ne!(r.status, 0);
 }
 
+// @test "--all and --json together is a usage error (#436)"
+#[test]
+fn all_and_json_together_is_a_usage_error_436() {
+    let sd = sd();
+    let r = sd.run(&["--all", "--json"]);
+    assert_ne!(r.status, 0);
+    assert!(r.output.contains("--json and --all don't combine"), "{}", r.output);
+}
+
 // ── flags: suppressions, skips, edited tests, for chrismo (#125) ─────────────
 
 // @test "flags: a suppression added on the branch, with the commit that added it"
@@ -4297,7 +4306,30 @@ fn flags_long_counts_test_edits_and_suppressions_on_one_line_instead_of_listing_
     assert!(!r.output.contains("⚑  suppression") && !r.output.contains("⚑  test-edit"), "{}", r.output);
     let lines = r.lines();
     assert_match(lines[lines.len() - 2], r"^ +⚑ +skip +t\.bats:5 +skip +[0-9a-f]{7}$");
-    assert_eq!(lines[lines.len() - 1], "  ⚑  2 test-edit and 2 suppression items not shown: sd state --json");
+    assert_eq!(lines[lines.len() - 1], "  ⚑  2 test-edit and 2 suppression items not shown: sd state --all");
+}
+
+// @test "flags: --all is --long plus every test-edit and suppression, one line each, and no count line (#436)"
+#[test]
+fn flags_all_is_long_plus_every_test_edit_and_suppression_one_line_each_and_no_count_line_436() {
+    let sd = sd();
+    sd.commit("t.bats", "@test \"one\" {\n  [ 1 -eq 1 ]\n}\n@test \"two\" {\n  true\n}");
+    sd.git(&["push", "-q", "origin", "main"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit("t.bats", "@test \"one\" {\n  [ 1 -eq 2 ]\n}\n@test \"two\" {\n  skip\n}");
+    sd.commit("a.sh", "# shellcheck disable=SC2086\necho $x\n# noqa");
+    let long = sd.run(&["--long"]);
+    let r = sd.run(&["--all"]);
+    assert_eq!(r.status, 0);
+    assert!(!r.output.contains("not shown"), "{}", r.output);
+    let (long, lines) = (long.lines(), r.lines());
+    assert_eq!(lines[..lines.len() - 5], long[..long.len() - 2], "{}", r.output);
+    let flags = &lines[lines.len() - 5..];
+    assert_match(flags[0], r"^ +⚑ +suppression +a\.sh:1 +# shellcheck disable=SC2086 +[0-9a-f]{7}$");
+    assert_match(flags[1], r"^ +⚑ +suppression +a\.sh:3 +# noqa +[0-9a-f]{7}$");
+    assert_match(flags[2], r"^ +⚑ +test-edit +t\.bats:2 \(-1\) +\[ 1 -eq 1 \] +[0-9a-f]{7}$");
+    assert_match(flags[3], r"^ +⚑ +test-edit +t\.bats:5 \(-1\) +true +[0-9a-f]{7}$");
+    assert_match(flags[4], r"^ +⚑ +skip +t\.bats:5 +skip +[0-9a-f]{7}$");
 }
 
 // ── O8 session ───────────────────────────────────────────────────────────────
