@@ -1875,7 +1875,7 @@ fn asks_or_gave_up(s: &Value) -> &'static str {
 }
 
 /// --long's lines after NEXT: owed items, review findings, the question, flags.
-fn long_lines(s: &Value) -> String {
+fn long_lines(s: &Value, verbose: bool) -> String {
     let mut out = String::new();
     let items: Vec<[String; 5]> = arr(at(s, "threads.items"))
         .iter()
@@ -1931,17 +1931,20 @@ fn long_lines(s: &Value) -> String {
             t(s, "verify.cmd")
         ));
     }
-    out.push_str(&long_flag_lines(s));
+    out.push_str(&long_flag_lines(s, verbose));
     if !at(s, "flags_error").is_null() {
         out.push_str(&format!("  ⚑  check failed: {}\n", t(s, "flags_error")));
     }
     out
 }
 
-/// The flag kinds --long counts instead of listing (#436).
+/// The flag kinds --long counts instead of listing, and --verbose lists (#436).
 const COUNTED_IN_LONG: [&str; 2] = ["test-edit", "suppression"];
 
-fn long_flag_lines(s: &Value) -> String {
+fn long_flag_lines(s: &Value, verbose: bool) -> String {
+    if verbose {
+        return flag_lines(s);
+    }
     let (counted, listed): (Vec<Value>, Vec<Value>) =
         arr(at(s, "flags")).iter().cloned().partition(|f| COUNTED_IN_LONG.contains(&t(f, "kind").as_str()));
     let mut out = flag_lines(&json!({"flags": listed}));
@@ -1955,7 +1958,7 @@ fn long_flag_lines(s: &Value) -> String {
         .map(|(k, n)| format!("{n} {k}"))
         .collect();
     let items = if counted.len() == 1 { "item" } else { "items" };
-    out.push_str(&format!("  ⚑  {} {items} not shown: sd state --json\n", counts.join(" and ")));
+    out.push_str(&format!("  ⚑  {} {items} not shown: sd state --verbose\n", counts.join(" and ")));
     out
 }
 
@@ -1981,11 +1984,12 @@ pub fn flag_lines(s: &Value) -> String {
 }
 
 pub fn run(argv: &[String]) -> ExitCode {
-    let (mut as_json, mut long, mut branch) = (false, false, String::new());
+    let (mut as_json, mut long, mut verbose, mut branch) = (false, false, false, String::new());
     for a in argv {
         match a.as_str() {
             "--json" => as_json = true,
             "--long" => long = true,
+            "--verbose" => verbose = true,
             "-h" | "--help" => {
                 print!("{HELP}");
                 return ExitCode::SUCCESS;
@@ -1994,9 +1998,10 @@ pub fn run(argv: &[String]) -> ExitCode {
             b => branch = b.to_string(),
         }
     }
-    if as_json && long {
-        die("--json and --long don't combine");
+    if as_json && (long || verbose) {
+        die(format!("--json and --{} don't combine", if verbose { "verbose" } else { "long" }));
     }
+    let long = long || verbose;
     if !git::in_repo() {
         die("not a git repository");
     }
@@ -2016,7 +2021,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     let mut out = format!("{}\n", summary(&state));
     out.push_str(&next::lines(&state["next"], long));
     if long {
-        out.push_str(&long_lines(&state));
+        out.push_str(&long_lines(&state, verbose));
     }
     print!("{out}");
     ExitCode::SUCCESS
@@ -2088,12 +2093,25 @@ mod tests {
     #[test]
     fn long_flag_lines_counts_test_edits_and_suppressions_naming_only_the_kinds_there_are_436() {
         let f = |kind: &str| json!({"kind": kind, "file": "a", "line": 1, "n": 1, "text": "x", "commits": []});
-        assert_eq!(long_flag_lines(&json!({"flags": [f("suppression")]})), "  ⚑  1 suppression item not shown: sd state --json\n");
         assert_eq!(
-            long_flag_lines(&json!({"flags": [f("test-edit"), f("skip"), f("test-edit")]})),
-            "  ⚑  skip  a:1  x  \n  ⚑  2 test-edit items not shown: sd state --json\n"
+            long_flag_lines(&json!({"flags": [f("suppression")]}), false),
+            "  ⚑  1 suppression item not shown: sd state --verbose\n"
         );
-        assert_eq!(long_flag_lines(&json!({"flags": null})), "");
+        assert_eq!(
+            long_flag_lines(&json!({"flags": [f("test-edit"), f("skip"), f("test-edit")]}), false),
+            "  ⚑  skip  a:1  x  \n  ⚑  2 test-edit items not shown: sd state --verbose\n"
+        );
+        assert_eq!(long_flag_lines(&json!({"flags": null}), false), "");
+    }
+
+    #[test]
+    fn long_flag_lines_verbose_lists_every_flag_in_order_and_counts_none_436() {
+        let f = |kind: &str| json!({"kind": kind, "file": "a", "line": 1, "n": 2, "text": "x", "commits": []});
+        assert_eq!(
+            long_flag_lines(&json!({"flags": [f("suppression"), f("skip"), f("test-edit")]}), true),
+            "  ⚑  suppression  a:1  x  \n  ⚑  skip  a:1  x  \n  ⚑  test-edit  a:1 (-2)  x  \n"
+        );
+        assert_eq!(long_flag_lines(&json!({"flags": null}), true), "");
     }
 
     #[test]
