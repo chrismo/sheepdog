@@ -6,6 +6,7 @@ mod attach;
 pub(crate) mod bookkeeping;
 mod ci_fix;
 mod commands;
+mod decision;
 mod describe;
 mod editing;
 mod follow;
@@ -81,6 +82,9 @@ pub struct Args {
     pub positionals: Vec<String>,
     pub task: String,
     pub answer: String,
+    /// decision's <text>, and the --finding it declines.
+    pub text: String,
+    pub finding: String,
     /// answer is the one stored for the question (#326), not given now.
     pub stored: bool,
     /// follow's <number>.
@@ -99,12 +103,13 @@ pub fn parse(argv: &[String]) -> Result<Args, String> {
             "--resolve" => a.resolve = true,
             "--no-implement" => a.no_implement = true,
             "--question" => a.question = true,
-            o @ ("--parent" | "--harness" | "--id" | "--profile") => {
+            o @ ("--parent" | "--harness" | "--id" | "--profile" | "--finding") => {
                 let v = it.next().ok_or(format!("{o} needs a value"))?.clone();
                 match o {
                     "--parent" => a.parent = v,
                     "--harness" => a.harness = v,
                     "--profile" => a.profiles.push(v),
+                    "--finding" => a.finding = v,
                     _ => a.ids.push(v),
                 }
             }
@@ -134,7 +139,13 @@ impl Args {
             if !(1..=2).contains(&n) || self.positionals[0].trim().is_empty() {
                 return Err("usage: sd act answer [--force] <text> [<branch>]".into());
             }
-            (self.answer, self.branch) = (self.positionals[0].clone(), second);
+            (self.answer, self.branch) = (self.positionals[0].clone(), second.clone());
+        }
+        if verb == "decision" {
+            if !(1..=2).contains(&n) || self.positionals[0].trim().is_empty() {
+                return Err("usage: sd act decision [--force] [--finding <n>] <text> [<branch>]".into());
+            }
+            (self.text, self.branch) = (self.positionals[0].clone(), second);
         }
         if verb == "follow" {
             if n != 1 || self.positionals[0].is_empty() || !self.positionals[0].bytes().all(|c| c.is_ascii_digit()) {
@@ -148,6 +159,7 @@ impl Args {
             (self.remove, "--remove", "forget"),
             (self.question, "--question", "ack"),
             (!self.profiles.is_empty(), "--profile", "start"),
+            (!self.finding.is_empty(), "--finding", "decision"),
         ];
         for (set, flag, only) in one_verb {
             if set && verb != only {
@@ -341,6 +353,7 @@ fn act(verb: &str, v: &verbs::Verb, b: &str, remote: &str, a: &Args) -> ExitCode
         "ack" => github::ack(b, &a.ids, a.question),
         "trigger" => github::trigger(b, remote, a.force),
         "answer" => answer::answer(b, remote, a, v.name),
+        "decision" => decision::decision(b, a),
         "restack" => restack::restack(b, remote, a),
         "retarget" => restack::retarget(b, a.force),
         "review" => review::review(b, remote, a.accept, a.force),
@@ -395,7 +408,7 @@ mod tests {
         assert_eq!(parse(&argv(&["--nope"])), Err("unknown option: --nope".into()));
         assert_eq!(parse(&argv(&["-"])), Err("unknown option: -".into()));
         assert_eq!(parse(&argv(&["--"])), Err("unknown option: --".into()));
-        for f in ["--parent", "--harness", "--id", "--profile"] {
+        for f in ["--parent", "--harness", "--id", "--profile", "--finding"] {
             assert_eq!(parse(&argv(&["feat", f])), Err(format!("{f} needs a value")));
         }
     }

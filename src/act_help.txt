@@ -12,6 +12,7 @@ Usage:
   sd act address  [--force] [--no-publish] [--harness <h>] [<branch>]
   sd act ack      [--id <id>]... [--question] [<branch>]
   sd act answer   [--force] <text> [<branch>]
+  sd act decision [--force] [--finding <n>] <text> [<branch>]
   sd act restack  [--force] [--resolve] [<branch>]
   sd act retarget [--force] [<branch>]
   sd act push     [--force] [<branch>]
@@ -35,6 +36,7 @@ Examples:
   sd act ack                         after reading sd state --long: the i items are done
   sd act ack --question              after answering the agent's question in its session
   sd act answer "revert the test"    answer it headless; the step that asked goes on
+  sd act decision "trust IAM"        later review rounds take it as settled
   sd act restack && sd act push      catch up with the parent, then publish
   sd act restack --resolve           the same, with the agent resolving conflicts
   sd act review                      verify, then the local reviewer; clean pins local
@@ -138,6 +140,19 @@ Verbs:
             Stored, it says whether sd watch runs it once a push or CI run
             clears the gate, or what is chrismo's to clear first. Spends
             tokens
+  decision  record chrismo's decision on the branch: <text> goes on the
+            decisions record (below) at HEAD, for the local reviewer and
+            review-fix rounds after it, and the receipt names the branch,
+            HEAD and what was recorded. --finding <n> declines instead the
+            nth finding of the review findings record (review-fix's [n]),
+            <text> its why, recorded as a review-fix round's decline is; an
+            n the record doesn't have is refused. Not the task (sd-task,
+            what the branch is for), not an answer (that goes to a standing
+            question, and the step that asked runs), not an accept (review
+            --accept passes the whole review): it runs no agent, changes no
+            code, pins nothing, acks nothing. Refuses, unless --force, while
+            a step holds the running marker: it was handed the record as it
+            stood
   restack   rebase --onto the parent (the default branch once the parent
             merged), check the branch's own change came through unchanged,
             less any commit git dropped as already on the target (named),
@@ -381,11 +396,12 @@ Decisions (#343): what was settled on a branch after its task goes on
 refs/sheepdog/<b>/decisions, one JSON line each ({kind, head, about,
 finding, text, at}), appended and never rewritten: a finding a review-fix
 round declined (with why), one review --accept left standing, chrismo's
-answer through sd act answer (with the question), and bot feedback address
-answered on the PR. The local reviewer gets them (SHEEPDOG_DECISIONS) and so
-does a review-fix round, each under "Decisions on record", so a settled
-finding isn't raised round after round. They see only these facts, never
-the branch's session. forget and sd watch's sweep drop it with the rest.
+answer through sd act answer (with the question), bot feedback address
+answered on the PR, and chrismo's own through sd act decision. The local
+reviewer gets them (SHEEPDOG_DECISIONS) and so does a review-fix round,
+each under "Decisions on record", so a settled finding isn't raised round
+after round. They see only these facts, never the branch's session. forget
+and sd watch's sweep drop it with the rest.
 
 Sessions (#69): an agent step forks the branch's session
 (branch.<b>.sd-session; claude --resume --fork-session, pi --fork) under a
