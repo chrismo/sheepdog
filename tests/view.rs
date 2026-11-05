@@ -253,6 +253,26 @@ fn a_rebuilt_sd_view_replaces_the_older_build_on_its_port() {
 }
 
 #[test]
+fn a_port_holder_naming_a_pid_sd_view_didn_t_record_is_only_opened() {
+    let sd = sd();
+    let mut bystander = spawn(std::process::Command::new("sleep").arg("30"));
+    let fake = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = fake.local_addr().unwrap().port();
+    let body = json!({"pid": bystander.id(), "build": "other"}).to_string();
+    std::thread::spawn(move || {
+        for mut s in fake.incoming().flatten() {
+            let mut buf = [0; 1024];
+            let _ = s.read(&mut buf);
+            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        }
+    });
+    let r = sd.run(&["--no-open", "--port", &port.to_string()]);
+    assert_has(&r.output, &["already running"]);
+    assert!(bystander.try_wait().unwrap().is_none(), "sd view signalled a pid it didn't record");
+    let _ = bystander.kill();
+}
+
+#[test]
 fn api_flock_serves_each_cached_branch() {
     let sd = sd();
     let ready = json!([{ "key": "ready", "who": "you", "say": "merge it", "cmd": "gh pr merge 7" }]);

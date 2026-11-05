@@ -1,7 +1,8 @@
 // sd view [<branch>] [--port <n>] [--no-open] (src/view_help.txt, #375,
 // #376): <branch>, . or a part of a cached branch's name or its PR number,
 // opens on its drill-in (view/pick.rs, #458); one already on the port is
-// opened, or replaced when GET /api/build says it's an older build. GET / is
+// opened, or replaced when GET /api/build says it's an older build and
+// names the pid sd view recorded in the state dir. GET / is
 // the Flock page, GET /api/flock its data from the watcher's cache; GET /map
 // the Map page (#378), GET /api/map its data from sheepdog's own source; GET
 // /atlas the Atlas page (#377), GET /api/atlas its data from the step table
@@ -84,7 +85,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         // Most likely our own sd view, on the port it always takes: an
         // older build gives way, the same build is opened.
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => match running(port) {
-            Some((pid, build)) if build != *BUILD => replace(pid, port),
+            Some((pid, build)) if build != *BUILD && recorded(Path::new(&state), port) == Some(pid) => replace(pid, port),
             _ => {
                 let url = format!("http://127.0.0.1:{port}/{hash}");
                 println!("sd view: already running at {url}");
@@ -103,6 +104,7 @@ pub fn run(argv: &[String]) -> ExitCode {
         cache::prune(Path::new(&pruning));
     });
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+    let _ = std::fs::create_dir_all(&state).and_then(|()| std::fs::write(pid_file(Path::new(&state), port), std::process::id().to_string()));
     let url = format!("http://127.0.0.1:{port}/{hash}");
     println!("sd view: {url} (Ctrl-C stops it)");
     if open {
@@ -152,6 +154,16 @@ fn running(port: u16) -> Option<(i32, String)> {
     s.read_to_string(&mut resp).ok()?;
     let v: serde_json::Value = serde_json::from_str(resp.split_once("\r\n\r\n")?.1).ok()?;
     Some((i32::try_from(v["pid"].as_u64()?).ok()?, v["build"].as_str()?.to_string()))
+}
+
+/// Where sd view on <port> records its pid: in the user's own state dir,
+/// so whatever holds the port can't name a pid for replace to signal.
+fn pid_file(state: &Path, port: u16) -> std::path::PathBuf {
+    state.join(format!("view-{port}.pid"))
+}
+
+fn recorded(state: &Path, port: u16) -> Option<i32> {
+    std::fs::read_to_string(pid_file(state, port)).ok()?.trim().parse().ok().filter(|&p| p > 1)
 }
 
 /// Stop the older build's sd view, <pid>, and take its port.
