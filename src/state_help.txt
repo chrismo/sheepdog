@@ -1,6 +1,6 @@
 sd state - where a branch's PR stands.
 
-Usage: sd state [--json | --long | --verbose] [<branch>]
+Usage: sd state [--json | --long | --all] [<branch>]
 
 Reports, for <branch> (default: the current one):
   task      the recorded task (branch.<b>.sd-task), else null
@@ -174,9 +174,9 @@ Output:
             (mark, type, author, excerpt, url), per open review finding
             (r, severity, file:line, body) and per flag (⚑, kind,
             file:line, the line, commits), except test-edits and
-            suppressions: one line counts those, and --verbose lists them
+            suppressions: one line counts those, and --all lists them
             (#436)
-  --verbose  --long with the test-edits and suppressions listed too
+  --all     --long with the test-edits and suppressions listed too
   --json    everything
 
 Never fetches, and writes only the PR numbers it finds (branch.<b>.sd-pr,
