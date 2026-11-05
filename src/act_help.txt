@@ -216,8 +216,11 @@ Verbs:
             whole output is kept, as it comes, in a log (0600) under
             $SHEEPDOG_STATE_DIR/logs/runs/<repo>/<branch>/, its path printed
             as the run starts and in the record (#461); settings.log* say
-            how many are kept, and how big (sd config --help). Off a
-            terminal a line every minute says it's still running
+            how many are kept, and how big (sd config --help). On a
+            terminal the output also streams as it comes. An agent's tool
+            shows output only once the command ends (and may time it out):
+            run verify in the background and tail -f the log, or ask sd
+            state --long (verifying) from another session
   autofix   run settings.autofix (formatters, lint --fix) in the branch's
             worktree, zero tokens, and commit what it changed ("autofix:
             <command>"). Nothing to commit: says so. A failing command is

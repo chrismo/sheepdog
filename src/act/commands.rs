@@ -4,15 +4,10 @@
 use super::{cfg, die, lock_recheck, plural};
 use crate::git::{git, git_out, worktree_for};
 use crate::{logs, proc, verify_red};
-use std::cell::Cell;
 use std::io::{IsTerminal, Write};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Instant;
 
 const VERIFY_TAIL: usize = 40;
-/// Off a terminal, how often a run says it's still going.
-const HEARTBEAT_SECS: u64 = 60;
 
 fn worktree(b: &str) -> String {
     let wt = worktree_for(".", b);
@@ -154,8 +149,7 @@ pub(super) fn verify_run(wt: &str, b: &str, step: &str) -> Result<String, String
 
 /// <cmd>, <kind>'s, in <wt> for <step> as with_timeout_merged runs it, its
 /// output kept as it comes by the log store (src/logs.rs, #461) and, on a
-/// terminal, shown as it comes; off one, a line every HEARTBEAT_SECS says
-/// it's still going. The log's path, when one was kept.
+/// terminal, shown as it comes. The log's path, when one was kept.
 fn run_logged(wt: &str, b: &str, (kind, step): (&str, &str), cmd: &str, secs: u64, p: &logs::Policy) -> (proc::Out, Option<String>) {
     let sha = git_out(wt, &["rev-parse", "HEAD"]).unwrap_or_default();
     let run = logs::start(wt, b, &sha, kind, step, cmd, p);
@@ -164,11 +158,10 @@ fn run_logged(wt: &str, b: &str, (kind, step): (&str, &str), cmd: &str, secs: u6
         Some(l) => eprintln!("{kind}: {cmd} (log: {l})"),
         None => eprintln!("{kind}: {cmd}"),
     }
-    let (run, bytes, tty) = (Arc::new(Mutex::new(run)), Arc::new(AtomicU64::new(0)), std::io::stderr().is_terminal());
+    let (run, tty) = (Arc::new(Mutex::new(run)), std::io::stderr().is_terminal());
     let tee: proc::Tee = {
-        let (run, bytes) = (Arc::clone(&run), Arc::clone(&bytes));
+        let run = Arc::clone(&run);
         Arc::new(Mutex::new(move |c: &[u8]| {
-            bytes.fetch_add(c.len() as u64, Ordering::Relaxed);
             if let Some(r) = run.lock().unwrap_or_else(PoisonError::into_inner).as_mut() {
                 r.write(c);
             }
@@ -177,18 +170,9 @@ fn run_logged(wt: &str, b: &str, (kind, step): (&str, &str), cmd: &str, secs: u6
             }
         }))
     };
-    let (started, next) = (Instant::now(), Cell::new(HEARTBEAT_SECS));
-    let tick = || {
-        let secs = started.elapsed().as_secs();
-        if !tty && secs >= next.get() {
-            let at = path.as_deref().map_or(String::new(), |l| format!(": tail -f {l}"));
-            eprintln!("{kind}: still running after {}m, {} bytes of output{at}", secs / 60, bytes.load(Ordering::Relaxed));
-            next.set(secs + HEARTBEAT_SECS);
-        }
-    };
     // The log's last line is written before a signal sd got ends it.
     let o = proc::deferring_signals(|| {
-        let o = proc::with_timeout_merged_tee(secs, "sh", &["-c", cmd], Some(wt), tee, &tick);
+        let o = proc::with_timeout_merged_tee(secs, "sh", &["-c", cmd], Some(wt), tee);
         if let Some(r) = run.lock().unwrap_or_else(PoisonError::into_inner).take() {
             let how = if o.timed_out {
                 format!("timed out after {secs}s")

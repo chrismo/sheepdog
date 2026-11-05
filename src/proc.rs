@@ -83,14 +83,10 @@ pub fn with_timeout_merged(secs: u64, prog: &str, args: &[&str], dir: Option<&st
 }
 
 /// with_timeout_merged, its output also handed to <tee> as it comes (a log,
-/// a terminal), and <tick> called as it waits, every 20ms.
-pub fn with_timeout_merged_tee(secs: u64, prog: &str, args: &[&str], dir: Option<&str>, tee: Tee, tick: &dyn Fn()) -> Out {
+/// a terminal).
+pub fn with_timeout_merged_tee(secs: u64, prog: &str, args: &[&str], dir: Option<&str>, tee: Tee) -> Out {
     let c = command(prog, args, dir);
-    let stopped = || {
-        tick();
-        CAUGHT.load(Ordering::SeqCst) != 0
-    };
-    deferring_signals(|| timeout_in_group(secs, c, Stderr::Merged, Some(tee), &stopped))
+    deferring_signals(|| timeout_in_group(secs, c, Stderr::Merged, Some(tee), &|| CAUGHT.load(Ordering::SeqCst) != 0))
 }
 
 type Buf = Arc<Mutex<Vec<u8>>>;
@@ -441,21 +437,20 @@ mod tests {
     }
 
     #[test]
-    fn with_timeout_merged_tee_hands_on_the_output_as_it_comes_and_ticks_461() {
+    fn with_timeout_merged_tee_hands_on_the_output_as_it_comes_461() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let s = Arc::clone(&seen);
         let tee: Tee = Arc::new(Mutex::new(move |c: &[u8]| s.lock().unwrap().extend_from_slice(c)));
-        let (early, ticks) = (Arc::new(Mutex::new(Vec::new())), std::sync::atomic::AtomicUsize::new(0));
-        let tick = || {
-            if ticks.fetch_add(1, Ordering::SeqCst) == 10 {
-                *early.lock().unwrap() = seen.lock().unwrap().clone();
-            }
-        };
-        let o = with_timeout_merged_tee(5, "sh", &["-c", "echo 1; echo 2 >&2; sleep 1; echo 3"], None, tee, &tick);
+        let peek = Arc::clone(&seen);
+        let early = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            peek.lock().unwrap().clone()
+        });
+        let o = with_timeout_merged_tee(5, "sh", &["-c", "echo 1; echo 2 >&2; sleep 1; echo 3"], None, tee);
         assert!(o.ok);
         assert_eq!(o.stdout, "1\n2\n3\n");
         assert_eq!(*seen.lock().unwrap(), b"1\n2\n3\n");
-        assert_eq!(*early.lock().unwrap(), b"1\n2\n", "the tee had the first lines while the command ran");
+        assert_eq!(early.join().unwrap(), b"1\n2\n", "the tee had the first lines while the command ran");
     }
 
     #[test]
