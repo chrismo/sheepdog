@@ -430,6 +430,28 @@ fn a_pass_sweeps_refs_sheepdog_b_whose_branch_no_longer_exists() {
     assert!(sd.refs("refs/sheepdog/also/").is_empty());
 }
 
+// The log store (#467): a pass deletes the logs of branches that are gone,
+// then the oldest past settings.logBytes.
+#[test]
+fn a_pass_sweeps_the_logs_of_gone_branches_and_prunes_past_log_bytes_467() {
+    let sd = sd();
+    sd.verb_ok("config", &["set", "--global", "settings.logBytes", "1000"]);
+    let runs = sd.repo_logs("state", "repo");
+    let log = |b: &str, name: &str, ago: u64| {
+        fs::create_dir_all(runs.join(b)).unwrap();
+        let f = runs.join(b).join(name);
+        fs::write(&f, format!("==> x\n{}\n<== exit 1 after 1s\n", "o".repeat(600))).unwrap();
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(ago);
+        fs::File::options().write(true).open(&f).unwrap().set_modified(t).unwrap();
+        f
+    };
+    let (old, new, gone) = (log("feat", "1.log", 60), log("feat", "2.log", 30), log("gone/b", "1.log", 10));
+    sd.ps_fixture("feat", &[]);
+    sd.pass();
+    assert!(!gone.exists() && !runs.join("gone").exists(), "a gone branch's logs go");
+    assert!(!old.exists() && new.exists(), "past logBytes, the oldest go");
+}
+
 // @test "the sweep keeps the pins of a branch that exists but isn't enrolled"
 #[test]
 fn the_sweep_keeps_the_pins_of_a_branch_that_exists_but_isnt_enrolled() {

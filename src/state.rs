@@ -177,14 +177,22 @@ fn failed_state(dir: &str, b: &str) -> Result<Option<Value>, ()> {
 }
 
 /// A failed verify (#325, src/verify_red.rs): {sha, step, cmd, at,
-/// at_head}, at_head while HEAD is the commit it failed on; None with no
-/// record, Err for one that isn't one.
+/// at_head, log}, at_head while HEAD is the commit it failed on, log its
+/// whole output (#461) or null; None with no record, Err for one that isn't
+/// one.
 fn verify_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
     let Some(rec) = blob_record(dir, &crate::verify_red::name(b)) else { return Ok(None) };
     let rec = rec?;
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
     let (Some(h), Some(step), Some(cmd), Some(at)) = (s("head"), s("step"), s("cmd"), s("at")) else { return Err(()) };
-    Ok(Some(json!({"sha": h, "step": step, "cmd": cmd, "at": at, "at_head": h == head})))
+    Ok(Some(json!({"sha": h, "step": step, "cmd": cmd, "at": at, "at_head": h == head, "log": s("log")})))
+}
+
+/// {record, running}: <record> (verify_state's, or null), and the verify
+/// running now on <b>, {log, pid, since} from the log store (#461), or null.
+fn with_running(record: Option<Value>, dir: &str, b: &str) -> Value {
+    let running = crate::logs::running(dir, b).map(|(log, pid, since)| json!({"log": log.display().to_string(), "pid": pid, "since": since}));
+    json!({"record": record, "running": running})
 }
 
 // ── GitHub ───────────────────────────────────────────────────────────────────
@@ -754,6 +762,7 @@ struct Facts {
     review_rounds: Value,
     question: Value,
     failed: Value,
+    /// {record, running}: the JSON's verify and verifying (with_running).
     verify: Value,
     flags: Value,
     flags_error: String,
@@ -1003,7 +1012,7 @@ fn assemble(s: &Facts) -> Value {
         "review": {"local": s.r_local, "bot": bot_pin, "accepted": accepted, "findings": findings, "github": github},
         "question": s.question,
         "failed": s.failed,
-        "verify": s.verify,
+        "verify": s.verify["record"], "verifying": s.verify["running"],
         "flags": s.flags, "flags_error": jn(&s.flags_error),
         "threads": {"owed_bot": gh(json!(ob.len())),
                     "owed_human": gh(json!(owed.iter().filter(|o| o["kind"] == "human").count())),
@@ -1596,10 +1605,10 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         }
     };
     let verify = match verify_state(dir, branch, &head) {
-        Ok(v) => v.unwrap_or(Value::Null),
+        Ok(v) => with_running(v, dir, branch),
         Err(()) => {
             errors.push(format!("verify: {} isn't a verify record", crate::verify_red::name(branch)));
-            Value::Null
+            with_running(None, dir, branch)
         }
     };
     let pin = |k: &str| pin_status(dir, branch, k, &head, &target_ref, &old_base, stackless);
@@ -1930,6 +1939,12 @@ fn long_lines(s: &Value, all: bool) -> String {
             t(s, "verify.step"),
             t(s, "verify.cmd")
         ));
+        if !t(s, "verify.log").is_empty() {
+            out.push_str(&format!("     log: {}\n", t(s, "verify.log")));
+        }
+    }
+    if !at(s, "verifying").is_null() {
+        out.push_str(&format!("  ⏳ verify running since {}: tail -f {}\n", t(s, "verifying.since"), t(s, "verifying.log")));
     }
     out.push_str(&long_flag_lines(s, all));
     if !at(s, "flags_error").is_null() {

@@ -1,5 +1,6 @@
 // The verify record (#325): refs/sheepdog/<b>/verify-red, one line of JSON,
-// {head, step, cmd, at}: settings.verify failed with <head> checked out, run
+// {head, step, cmd, at, log}, log the run's whole output (src/logs.rs, #461)
+// when one was kept: settings.verify failed with <head> checked out, run
 // by <step> (implement, address, ci-fix, review, resolve, or verify by hand).
 // Every run on a clean tree writes it: a failure records the commit it ran
 // on, a pass removes it. Keyed on the commit, so sd state calls it at_head
@@ -19,13 +20,18 @@ pub fn name(b: &str) -> String {
     pins::name(b, Pin::VerifyRed)
 }
 
-/// verify failed in <wt>: record its HEAD; a failure to record it only warns.
-pub fn record(wt: &str, b: &str, step: &str, cmd: &str) {
+/// verify failed in <wt>: record its HEAD, and <log> if one was kept; a
+/// failure to record it only warns.
+pub fn record(wt: &str, b: &str, step: &str, cmd: &str, log: Option<&str>) {
     let Some(head) = git_out(wt, &["rev-parse", "HEAD"]) else {
         eprintln!("sd: warning: couldn't read HEAD in {wt}, so the failed verify isn't recorded");
         return;
     };
-    let rec = json::to_string(&json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0})) + "\n";
+    let mut rec = json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0});
+    if let Some(l) = log {
+        rec["log"] = json!(l);
+    }
+    let rec = json::to_string(&rec) + "\n";
     if !pins::store(wt, b, Pin::VerifyRed, &rec, None).ok {
         eprintln!("sd: warning: couldn't record the failed verify on {b}, so NEXT won't show it");
     }
@@ -55,6 +61,16 @@ pub fn carry(dir: &str, b: &str, from: &str, to: &str) {
     }
 }
 
+/// The logs <repo>'s records name: the log store keeps them.
+pub fn logs(repo: &str) -> Vec<String> {
+    let refs = git_out(repo, &["for-each-ref", "--format=%(refname)", "refs/sheepdog/"]).unwrap_or_default();
+    refs.lines()
+        .filter_map(|r| r.strip_prefix("refs/sheepdog/")?.strip_suffix("/verify-red"))
+        .filter_map(|b| serde_json::from_str::<Value>(&pins::read(repo, b, Pin::VerifyRed)?).ok())
+        .filter_map(|rec| Some(rec.get("log")?.as_str()?.to_string()))
+        .collect()
+}
+
 /// HEAD's sha when the record is on it.
 pub fn at_head(wt: &str, b: &str) -> Option<String> {
     let rec: Value = serde_json::from_str(&pins::read(wt, b, Pin::VerifyRed)?).ok()?;
@@ -77,7 +93,7 @@ mod tests {
         let (old, new) = (r.git(&["rev-parse", "HEAD"]), r.git(&["rev-parse", "main"]));
         carry(&r.dir, "feat", &old, &new);
         assert_eq!(rec(&r), None);
-        record(&r.dir, "feat", "implement", "make test");
+        record(&r.dir, "feat", "implement", "make test", Some("/l/x.log"));
         let before = rec(&r).unwrap();
         carry(&r.dir, "feat", &new, &old);
         assert_eq!(rec(&r).unwrap(), before);
@@ -85,5 +101,6 @@ mod tests {
         let mut moved = before;
         moved["head"] = json!(new);
         assert_eq!(rec(&r).unwrap(), moved);
+        assert_eq!(logs(&r.dir), ["/l/x.log"]);
     }
 }

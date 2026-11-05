@@ -312,6 +312,129 @@ mod verify {
     }
 }
 
+// verify's output kept whole, one file per run (#461, the log store #467).
+mod logs {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    fn verify_cmd(sd: &Sd, c: &str) {
+        sd.set_global("settings.verify", c);
+    }
+
+    /// feat's dir under the log store: one repo, so one <repo_key> dir.
+    fn branch_dir(sd: &Sd) -> PathBuf {
+        let runs = sd.tmp.join("home/.local/state/sheepdog/logs/runs");
+        let repos: Vec<PathBuf> = fs::read_dir(&runs).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+        assert!(repos.len() <= 1, "one repo, one dir: {repos:?}");
+        repos.first().map_or(runs.join("none"), |r| r.join("feat"))
+    }
+
+    /// feat's logs, oldest first.
+    fn logs(sd: &Sd) -> Vec<PathBuf> {
+        let mut l: Vec<PathBuf> = fs::read_dir(branch_dir(sd))
+            .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "log")).collect())
+            .unwrap_or_default();
+        l.sort();
+        l
+    }
+
+    fn texts(sd: &Sd) -> Vec<String> {
+        logs(sd).iter().map(|l| fs::read_to_string(l).unwrap()).collect()
+    }
+
+    fn mode(p: &Path) -> u32 {
+        fs::metadata(p).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_run_keeps_its_whole_output_in_a_private_log_and_says_where_461() {
+        let sd = sd();
+        verify_cmd(&sd, "seq 1 60; echo 'FAIL: the end' >&2; exit 2");
+        let r = sd.run(&["verify"]);
+        assert_ne!(r.status, 0);
+        let [log] = &logs(&sd)[..] else { panic!("one log: {:?}", logs(&sd)) };
+        let path = log.display().to_string();
+        let sha12 = sd.head_sha()[..12].to_string();
+        let name = log.file_name().unwrap().to_string_lossy().into_owned();
+        assert_match(&name, &format!(r"^\d{{8}}T\d{{6}}\.\d{{3}}Z-{sha12}-verify\.log$"));
+        assert_has(&r.output, &[&format!("verify: seq 1 60; echo 'FAIL: the end' >&2; exit 2 (log: {path})")]);
+        assert_has(&r.output, &[&format!("full output: {path}")]);
+        let text = fs::read_to_string(log).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_match(lines[0], &format!(r"^==> \S+Z feat {sha12} verify \(verify\) pid \d+: seq 1 60"));
+        assert_eq!(lines[1], "1");
+        assert!(lines.contains(&"60") && lines.contains(&"FAIL: the end"));
+        assert_match(lines[lines.len() - 1], r"^<== exit 2 after \d+s$");
+        assert_eq!(mode(log), 0o600);
+        assert_eq!(mode(&branch_dir(&sd)), 0o700);
+        assert_eq!(sd.verify_red().expect("a verify-red record")["log"], path.as_str());
+    }
+
+    #[test]
+    fn the_log_is_written_as_the_output_comes_461() {
+        let sd = sd();
+        // The command reads its own log while it runs, into $HOME: the tree must stay clean.
+        verify_cmd(&sd, r#"echo first; sleep 1; cat "$HOME"/.local/state/sheepdog/logs/runs/*/feat/*.log > "$HOME/seen""#);
+        assert_eq!(sd.run(&["verify"]).status, 0);
+        let seen = fs::read_to_string(sd.tmp.join("home/seen")).unwrap();
+        assert_has(&seen, &["==> ", "first"]);
+        assert_lacks(&seen, "<== ");
+    }
+
+    #[test]
+    fn log_keep_none_keeps_no_log() {
+        let sd = sd();
+        sd.set_global("settings.logKeep", "none");
+        verify_cmd(&sd, "echo secret; false");
+        let r = sd.run(&["verify"]);
+        assert_ne!(r.status, 0);
+        assert_eq!(logs(&sd), Vec::<PathBuf>::new());
+        assert_lacks(&r.output, "log:");
+        assert!(sd.verify_red().expect("a verify-red record").get("log").is_none());
+    }
+
+    #[test]
+    fn by_default_failures_and_the_newest_pass_are_kept() {
+        let sd = sd();
+        for (c, ok) in [("echo red; false", false), ("echo green one", true), ("echo green two", true)] {
+            verify_cmd(&sd, c);
+            assert_eq!(sd.run(&["verify"]).status == 0, ok, "{c}");
+        }
+        let texts = texts(&sd);
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        assert_has(&texts[0], &["red"]);
+        assert_has(&texts[1], &["green two"]);
+    }
+
+    #[test]
+    fn log_runs_caps_a_branchs_logs_and_keeps_the_newest() {
+        let sd = sd();
+        sd.set_global("settings.logRuns", "2");
+        for n in 1..=3 {
+            verify_cmd(&sd, &format!("echo run {n}; false"));
+            assert_ne!(sd.run(&["verify"]).status, 0);
+        }
+        let texts = texts(&sd);
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        assert_has(&texts[0], &["run 2"]);
+        assert_has(&texts[1], &["run 3"]);
+    }
+
+    #[test]
+    fn log_file_bytes_caps_a_log_and_keeps_its_end() {
+        let sd = sd();
+        sd.set_global("settings.logFileBytes", "400");
+        verify_cmd(&sd, "seq 1 1000; exit 1");
+        assert_ne!(sd.run(&["verify"]).status, 0);
+        let [log] = &logs(&sd)[..] else { panic!("one log") };
+        let text = fs::read_to_string(log).unwrap();
+        assert!(has_line(&text, "1") && has_line(&text, "1000"));
+        assert!(!has_line(&text, "500"));
+        assert_has(&text, &["bytes not kept"]);
+    }
+}
+
 mod running {
     use super::*;
     use crate::common::{dead_pid, running_marker, step_refusal, Holder};

@@ -33,6 +33,21 @@ pub fn epoch_ns(t: &str) -> Option<i128> {
     Some(i128::from(secs) * 1_000_000_000 + frac)
 }
 
+/// <secs> as 59s, 14m03s, 1h02m.
+pub fn took(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m{:02}s", s / 60, s % 60),
+        s => format!("{}h{:02}m", s / 3600, s % 3600 / 60),
+    }
+}
+
+/// now_utc, its nanoseconds to the nanosecond, not the second.
+pub fn now_utc_ns() -> (String, i128) {
+    let ns = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos()) as i128;
+    (utc((ns / 1_000_000_000) as i64), ns)
+}
+
 pub fn now_utc() -> (String, i128) {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
     (utc(secs), i128::from(secs) * 1_000_000_000)
@@ -57,6 +72,13 @@ pub fn utc(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn took_reads_as_seconds_then_minutes_then_hours() {
+        for (s, want) in [(0, "0s"), (59, "59s"), (60, "1m00s"), (843, "14m03s"), (3600, "1h00m"), (3725, "1h02m")] {
+            assert_eq!(took(s), want, "{s}");
+        }
+    }
 
     #[test]
     fn epoch_ns_reads_utc_offsets_and_fractions() {

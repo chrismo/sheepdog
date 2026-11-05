@@ -13,7 +13,7 @@ use crate::git::{self, git, git_out};
 use crate::json;
 use crate::proc;
 use crate::act::bookkeeping;
-use crate::{failed, gh, harness, limit, pins, running, time};
+use crate::{failed, gh, harness, limit, logs, pins, running, time};
 use crate::next::steps::{self, Notify};
 use crate::val::{at, on, t, text};
 use regex::Regex;
@@ -319,6 +319,17 @@ pub(super) fn basename(p: &str) -> &str {
 pub fn repo_key(repo: &str) -> String {
     let hex = sha1_smol::Sha1::from(repo).digest().to_string();
     format!("{}-{}", basename(repo), &hex[..8])
+}
+
+/// <repos>, after their gone branches' pins and logs go and every repo's
+/// logs are pruned once.
+fn swept(repos: Vec<String>) -> Vec<String> {
+    for repo in repos.iter().filter(|r| Path::new(r).is_dir()) {
+        pins::sweep(repo);
+        logs::sweep(repo);
+    }
+    logs::prune_every_repo(&logs::Policy::from(|k| config::get_global(k, false).unwrap_or_default()));
+    repos
 }
 
 fn repo_state_dir(state: &str, repo: &str) -> String {
@@ -1006,12 +1017,11 @@ impl Watch {
         let mut lines = String::new();
         let (mut stopped, mut stop_line) = (false, String::new());
         let mut skipped: Vec<(String, String)> = vec![];
-        for repo in registered() {
+        for repo in swept(registered()) {
             if !Path::new(&repo).is_dir() {
                 continue;
             }
             let name = basename(&repo).to_string();
-            pins::sweep(&repo);
             for f in config::sweep_branch_files(&repo, false) {
                 self.log(&name, "-", &format!("deleted {f}: no local branch"));
             }

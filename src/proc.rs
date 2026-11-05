@@ -82,11 +82,20 @@ pub fn with_timeout_merged(secs: u64, prog: &str, args: &[&str], dir: Option<&st
     timeout(secs, command(prog, args, dir), true)
 }
 
+/// with_timeout_merged, its output also handed to <tee> as it comes (a log,
+/// a terminal).
+pub fn with_timeout_merged_tee(secs: u64, prog: &str, args: &[&str], dir: Option<&str>, tee: Tee) -> Out {
+    let c = command(prog, args, dir);
+    deferring_signals(|| timeout_in_group(secs, c, Stderr::Merged, Some(tee), &|| CAUGHT.load(Ordering::SeqCst) != 0))
+}
+
 type Buf = Arc<Mutex<Vec<u8>>>;
 
+pub type Tee = Arc<Mutex<dyn FnMut(&[u8]) + Send>>;
+
 /// Into a buffer readable before EOF: a process that ignores TERM can hold
-/// the pipe open.
-fn drain(mut r: impl Read + Send + 'static) -> (Buf, JoinHandle<()>) {
+/// the pipe open. Each chunk to <tee> too.
+fn drain(mut r: impl Read + Send + 'static, tee: Option<Tee>) -> (Buf, JoinHandle<()>) {
     let buf = Buf::default();
     let b = Arc::clone(&buf);
     let h = std::thread::spawn(move || {
@@ -94,7 +103,12 @@ fn drain(mut r: impl Read + Send + 'static) -> (Buf, JoinHandle<()>) {
         loop {
             match r.read(&mut chunk) {
                 Ok(0) => break,
-                Ok(n) => b.lock().expect("no reader panics").extend_from_slice(&chunk[..n]),
+                Ok(n) => {
+                    b.lock().expect("no reader panics").extend_from_slice(&chunk[..n]);
+                    if let Some(t) = &tee {
+                        (t.lock().unwrap_or_else(std::sync::PoisonError::into_inner))(&chunk[..n]);
+                    }
+                }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
@@ -247,7 +261,7 @@ pub fn timeout_passing_stderr(secs: u64, c: Command) -> Out {
 }
 
 fn in_group(secs: u64, c: Command, stderr: Stderr) -> Out {
-    deferring_signals(|| timeout_in_group(secs, c, stderr, &|| CAUGHT.load(Ordering::SeqCst) != 0))
+    deferring_signals(|| timeout_in_group(secs, c, stderr, None, &|| CAUGHT.load(Ordering::SeqCst) != 0))
 }
 
 /// sd ends of the HUP, INT or TERM a deferring_signals is holding, if any:
@@ -276,7 +290,7 @@ pub fn deferring_signals<T>(f: impl FnOnce() -> T) -> T {
 
 /// <stopped>: sd got a signal to pass on; the group ends as at the deadline,
 /// but it's the command's status, not a timeout.
-fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn() -> bool) -> Out {
+fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, tee: Option<Tee>, stopped: &dyn Fn() -> bool) -> Out {
     let prog = c.get_program().to_string_lossy().into_owned();
     c.stdin(Stdio::null()).process_group(0);
     let child = if stderr == Stderr::Merged {
@@ -293,10 +307,10 @@ fn timeout_in_group(secs: u64, mut c: Command, stderr: Stderr, stopped: &dyn Fn(
     drop(c);
     let Ok((mut child, merged_r)) = child else { return not_found(&prog) };
     let (out, out_h) = match merged_r {
-        Some(r) => drain(r),
-        None => drain(child.stdout.take().expect("piped")),
+        Some(r) => drain(r, tee),
+        None => drain(child.stdout.take().expect("piped"), tee),
     };
-    let (err, err_h) = child.stderr.take().map(drain).unzip();
+    let (err, err_h) = child.stderr.take().map(|e| drain(e, None)).unzip();
     let readers: Vec<JoinHandle<()>> = std::iter::once(out_h).chain(err_h).collect();
 
     // As $( ) does, wait for what it started to stop writing too, but only
@@ -423,6 +437,23 @@ mod tests {
     }
 
     #[test]
+    fn with_timeout_merged_tee_hands_on_the_output_as_it_comes_461() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = Arc::clone(&seen);
+        let tee: Tee = Arc::new(Mutex::new(move |c: &[u8]| s.lock().unwrap().extend_from_slice(c)));
+        let peek = Arc::clone(&seen);
+        let early = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            peek.lock().unwrap().clone()
+        });
+        let o = with_timeout_merged_tee(5, "sh", &["-c", "echo 1; echo 2 >&2; sleep 1; echo 3"], None, tee);
+        assert!(o.ok);
+        assert_eq!(o.stdout, "1\n2\n3\n");
+        assert_eq!(*seen.lock().unwrap(), b"1\n2\n3\n");
+        assert_eq!(early.join().unwrap(), b"1\n2\n", "the tee had the first lines while the command ran");
+    }
+
+    #[test]
     fn with_timeout_kills_the_whole_group_and_says_so() {
         let dir = std::env::temp_dir().join(format!("sd-proc-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -488,7 +519,7 @@ mod tests {
         let stop = || start.elapsed() > Duration::from_millis(300);
         let mut c = Command::new("sh");
         c.args(["-c", "echo hi; sleep 30"]);
-        let o = timeout_in_group(20, c, Stderr::Piped, &stop);
+        let o = timeout_in_group(20, c, Stderr::Piped, None, &stop);
         assert!(start.elapsed() < Duration::from_secs(10), "waited {:?}", start.elapsed());
         assert!(!o.timed_out);
         assert!(o.stopped);

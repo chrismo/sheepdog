@@ -281,6 +281,22 @@ fn forget_unenrolls_and_deletes_refs_sheepdog_branch() {
     assert_eq!(sd.pins("feat"), "");
 }
 
+// The log store (#467): forget drops the branch's logs, and no other's.
+#[test]
+fn forget_deletes_the_branchs_logs_467() {
+    let mut sd = sd();
+    sd.env.push(("SHEEPDOG_STATE_DIR".into(), sd.path("state")));
+    sd.no_prs();
+    let runs = sd.repo_logs("state", "repo");
+    for b in ["feat", "other"] {
+        fs::create_dir_all(runs.join(b)).unwrap();
+        fs::write(runs.join(b).join("1.log"), "==> x\n<== exit 1 after 1s\n").unwrap();
+    }
+    sd.ok(&["forget"]);
+    assert!(!runs.join("feat").exists());
+    assert!(runs.join("other/1.log").exists());
+}
+
 // usage.sup is keyed on the branch's name: forget starts its spend over, so
 // a branch made again under the name doesn't inherit the old one's (#349).
 #[test]

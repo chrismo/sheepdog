@@ -58,8 +58,13 @@ Layers (top wins; sd config files prints the paths):
             runs none of a branch's steps), agentSteps 2 (agent steps sd
             watch runs at once; 0 runs none), replyPrefix "🤖 ";
             protectedPaths none (unset: .sheepdog/protected-paths in the
-            base commit, else the CI config dirs, sd act --help); the other
-            settings empty
+            base commit, else the CI config dirs, sd act --help); the log
+            store's (verify's whole output, #467): logKeep failed (the
+            failures and the newest pass; all; none, no log), logRuns 5 (a
+            branch's logs), logFileBytes 8388608 (a log's head and end are
+            kept past it), logAge 1209600 (seconds) and logBytes 1073741824
+            (over every repo's logs; global file only), 0 for no limit; the
+            other settings empty
 
 Notes:
   - null in a file removes the key; a default still applies
@@ -108,6 +113,16 @@ Notes:
 "#;
 
 fn defaults() -> Value {
+    let mut d = defaults_but_logs();
+    // Apart: one json! of them all is past the macro's recursion limit.
+    for (k, v) in [("logKeep", json!("failed")), ("logRuns", json!(5)), ("logFileBytes", json!(8 << 20)),
+                   ("logAge", json!(14 * 86400)), ("logBytes", json!(1 << 30))] {
+        d["settings"][k] = v;
+    }
+    d
+}
+
+fn defaults_but_logs() -> Value {
     json!({
         "harness": "claude",
         "settings": {
@@ -187,6 +202,7 @@ const SETTINGS: &[(&str, Ty)] = &[
     ("botLogin", Ty::List), ("botIgnore", Ty::List), ("botIgnoreBody", Ty::List),
     ("implementAllow", Ty::List), ("protectedPaths", Ty::List),
     ("flags", Ty::Obj(FLAGS)),
+    ("logKeep", Ty::Enum(&["all", "failed", "none"])), ("logRuns", Ty::Whole), ("logFileBytes", Ty::Whole),
 ];
 // The watcher's settings: it reads no branch file for these, and reads
 // remote alone from inside each repo.
@@ -195,6 +211,7 @@ const GLOBAL_ONLY: &[(&str, Ty)] = &[
     ("interval", Ty::Whole), ("notify", Ty::Str),
     ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
     ("agentSteps", Ty::Whole),
+    ("logAge", Ty::Num), ("logBytes", Ty::Whole),
 ];
 
 /// Keys renamed after they shipped: reading a file moves the old key to the

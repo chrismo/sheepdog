@@ -4,6 +4,7 @@
 // build SHEEPDOG_WATCH_CLOCK fixes it, read once; a release build never
 // reads it.
 
+use crate::time::took;
 use std::sync::OnceLock;
 
 /// date '+%Y-%m-%d %H:%M:%S', local time.
@@ -92,14 +93,6 @@ pub(super) fn step_end(at: &str, repo: &str, b: &str, outcome: &str, secs: u64) 
     format!("<== {at} {repo} {b}: {outcome} ({})", took(secs))
 }
 
-fn took(secs: u64) -> String {
-    match secs {
-        s if s < 60 => format!("{s}s"),
-        s if s < 3600 => format!("{}m{:02}s", s / 60, s % 60),
-        s => format!("{}h{:02}m", s / 3600, s % 3600 / 60),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,13 +127,6 @@ mod tests {
             step_end(AT, "sheepdog", "feat", "ran sd act push: ok", 3),
             "<== 2026-11-02 09:27:10 sheepdog feat: ran sd act push: ok (3s)"
         );
-    }
-
-    #[test]
-    fn took_reads_as_seconds_then_minutes_then_hours() {
-        for (s, want) in [(0, "0s"), (59, "59s"), (60, "1m00s"), (843, "14m03s"), (3600, "1h00m"), (3725, "1h02m")] {
-            assert_eq!(took(s), want, "{s}");
-        }
     }
 
     #[test]
