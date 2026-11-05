@@ -108,6 +108,8 @@ pub enum Enforced {
     Run(Vec<String>),
 }
 
+const FORCE_HINT: &str = "(--force to run anyway)";
+
 /// What enforce does for a verb <doing> something ("restacking feat").
 pub fn decide(gate: Gate, force: bool, doing: &str) -> Enforced {
     match gate {
@@ -116,7 +118,7 @@ pub fn decide(gate: Gate, force: bool, doing: &str) -> Enforced {
         Gate::Soft(why) if !force => {
             let mut out = vec![format!("not {doing}:")];
             out.extend(why.iter().map(|w| format!("  - {w}")));
-            out.push("(--force to run anyway)".into());
+            out.push(FORCE_HINT.into());
             Enforced::Refuse(out)
         }
         Gate::Go => Enforced::Run(vec![]),
@@ -131,8 +133,19 @@ pub fn enforce(gate: Gate, force: bool, doing: &str) -> Option<Go> {
 
 /// enforce, ending a refusal with <left>, what it leaves behind, if any.
 pub fn enforce_leaving(gate: Gate, force: bool, doing: &str, left: &str) -> Option<Go> {
+    enforce_hinted(gate, force, doing, left, None)
+}
+
+/// enforce_leaving, with <hint> in place of "(--force to run anyway)" for a
+/// verb whose --force doesn't reach this gate (address's push, #386).
+pub fn enforce_hinted(gate: Gate, force: bool, doing: &str, left: &str, hint: Option<&str>) -> Option<Go> {
     match decide(gate, force, doing) {
-        Enforced::Refuse(lines) => {
+        Enforced::Refuse(mut lines) => {
+            if let (Some(h), Some(last)) = (hint, lines.last_mut()) {
+                if last == FORCE_HINT {
+                    *last = h.to_string();
+                }
+            }
             let (first, rest) = lines.split_first().map_or(("", &[][..]), |(f, r)| (f.as_str(), r));
             eprintln!("sd act: {first}");
             for l in rest {

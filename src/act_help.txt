@@ -200,8 +200,9 @@ Verbs:
             user.email: sd state's push.foreign_authors, #356, #395).
             Releases a CI config hold: chrismo pushing is the approval.
             Refuses the default branch (#159). Every verb that pushes
-            (ship, address, ci-fix) asks this gate first, with its own
-            --force (#386)
+            (ship, address, ci-fix) asks this gate first, ship and ci-fix
+            with their own --force; address's --force doesn't reach it:
+            sd act push --force does (#386)
   verify   run settings.verify in the branch's worktree, zero tokens. Pass:
             one line. Fail: nonzero, the output trimmed to its last 40 lines
             for the fix step. A command that changes the tree fails too.
@@ -421,7 +422,7 @@ flags, so an --effort among them wins), and its session: "claude (model opus, ef
 
 --force:
   address         run even if the branch is unpushed, diverged or taken
-                  over, and push past push's own refusals, as ci-fix does
+                  over; never past push's own refusals (sd act push --force)
   restack, push, ship   run even if taken over
   restack         even past a predicted conflict (rolled back if the rebase
                   stops), a closed PR or parent, an unknown merge or

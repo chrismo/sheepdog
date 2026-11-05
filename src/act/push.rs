@@ -1,6 +1,6 @@
 // push (A3), and every verb's push: push_branch takes only gated's token (#386).
 
-use super::gate::{enforce_leaving, Gate};
+use super::gate::{enforce_hinted, Gate};
 use super::{die, gates, plural, state_json, Go};
 use crate::git::{self, commits_not_ours, count, git, git_ok, git_out, made_here, remote_default, rev, strip_nl, worktree_for};
 use crate::next::{yes, Derived};
@@ -46,8 +46,14 @@ pub(super) struct Cleared(Go);
 /// a refusal ends with <left>, what it leaves behind. Forced past commits
 /// someone else made, they're recorded as looked at.
 pub(super) fn gated(b: &str, s: &Value, force: bool, doing: &str, left: &str) -> Option<Cleared> {
+    gated_hinted(b, s, force, doing, left, None)
+}
+
+/// gated, for a verb whose own --force doesn't reach push's gate: a Soft
+/// refusal ends with <hint> instead of "(--force to run anyway)".
+pub(super) fn gated_hinted(b: &str, s: &Value, force: bool, doing: &str, left: &str, hint: Option<&str>) -> Option<Cleared> {
     let d = Derived::new(s);
-    let go = enforce_leaving(named(gates::push(&d), s), force, doing, left)?;
+    let go = enforce_hinted(named(gates::push(&d), s), force, doing, left, hint)?;
     if yes(d.foreign_authors) {
         seen_authors(b, s, "/push/foreign_commits");
     }
