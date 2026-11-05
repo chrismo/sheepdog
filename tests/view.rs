@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 struct Server {
     child: Child,
     port: u16,
+    /// The URL sd view printed.
+    url: String,
 }
 
 impl Drop for Server {
@@ -71,7 +73,12 @@ fn sd() -> Sd {
 
 /// The watcher's cache file for <branch> of the repo at /src/<repo>: {"state": <state>}.
 fn cache(sd: &Sd, repo: &str, branch: &str, state: Value) {
-    let dir = sheepdog::watch::repo_key(&format!("/src/{repo}"));
+    cache_at(sd, &format!("/src/{repo}"), branch, state);
+}
+
+/// The watcher's cache file for <branch> of the repo at <path>.
+fn cache_at(sd: &Sd, path: &str, branch: &str, state: Value) {
+    let dir = sheepdog::watch::repo_key(path);
     let f = sd.tmp.join(format!("state/branches/{dir}/{branch}.json"));
     fs::create_dir_all(f.parent().unwrap()).unwrap();
     fs::write(f, json!({ "glyph": "🤖", "state": state }).to_string()).unwrap();
@@ -103,18 +110,166 @@ fn serve_logging(sd: &Sd, log: &str) -> Server {
 }
 
 fn serve_to(sd: &Sd, stderr: Stdio) -> Server {
+    serve_args(sd, &[], stderr)
+}
+
+/// sd view --no-open --port 0 <args>.
+fn serve_args(sd: &Sd, args: &[&str], stderr: Stdio) -> Server {
     let mut c = sd.command(&sd.bin);
-    c.args(["--no-open", "--port", "0"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(stderr);
+    c.args(["--no-open", "--port", "0"]).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(stderr);
     let mut child = spawn(&mut c);
     let mut line = String::new();
     BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
-    let port = regex::Regex::new(r"http://127\.0\.0\.1:(\d+)/")
+    let caps = regex::Regex::new(r"(http://127\.0\.0\.1:(\d+)/\S*)")
         .unwrap()
         .captures(&line)
-        .unwrap_or_else(|| panic!("no URL in {line:?}"))[1]
-        .parse()
-        .unwrap();
-    Server { child, port }
+        .unwrap_or_else(|| panic!("no URL in {line:?}"));
+    Server { port: caps[2].parse().unwrap(), url: caps[1].to_string(), child }
+}
+
+// sd view <branch> (#458): . or a part of a cached branch's name or its PR
+// number opens that branch's drill-in.
+
+fn pr_state(branch: &str, pr: u64) -> Value {
+    let mut s = state(branch, json!([]));
+    s["pr"]["number"] = json!(pr);
+    s
+}
+
+fn two_atlas_branches(sd: &Sd) -> String {
+    cache(sd, "sheepdog", "377-atlas-world", pr_state("377-atlas-world", 449));
+    cache(sd, "sheepdog", "377-atlas-prompt", pr_state("377-atlas-prompt", 450));
+    sheepdog::watch::repo_key("/src/sheepdog")
+}
+
+#[test]
+fn a_part_of_a_branch_name_or_its_pr_number_opens_its_drill_in() {
+    let sd = sd();
+    let key = two_atlas_branches(&sd);
+    for arg in ["atlas-W", "450", "377-atlas-prompt"] {
+        let want = if arg == "atlas-W" { "377-atlas-world" } else { "377-atlas-prompt" };
+        let s = serve_args(&sd, &[arg], Stdio::null());
+        assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/{want}", s.port), "{arg}");
+    }
+}
+
+/// A repo at <tmp>/wt on 377-atlas-world, the cwd; its cache key.
+fn on_atlas_world(sd: &mut Sd) -> String {
+    sd.git(&["init", "-q", &sd.path("wt")]);
+    sd.git_in("wt", &["checkout", "-q", "-b", "377-atlas-world"]);
+    sd.cd("wt");
+    let wt = fs::canonicalize(sd.path("wt")).unwrap();
+    sheepdog::watch::repo_key(&wt.to_string_lossy())
+}
+
+#[test]
+fn dot_opens_the_current_worktree_s_branch_in_its_own_repo() {
+    let mut sd = sd();
+    two_atlas_branches(&sd);
+    let key = on_atlas_world(&mut sd);
+    cache_at(&sd, &fs::canonicalize(sd.path("wt")).unwrap().to_string_lossy(), "377-atlas-world", pr_state("377-atlas-world", 1));
+    let s = serve_args(&sd, &["."], Stdio::null());
+    assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/377-atlas-world", s.port));
+}
+
+#[test]
+fn dot_mid_rebase_opens_the_branch_being_rebased() {
+    let mut sd = sd();
+    let key = on_atlas_world(&mut sd);
+    cache_at(&sd, &fs::canonicalize(sd.path("wt")).unwrap().to_string_lossy(), "377-atlas-world", pr_state("377-atlas-world", 1));
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sd.git(&["checkout", "-q", "--detach"]);
+    fs::create_dir(sd.cwd.join(".git/rebase-merge")).unwrap();
+    sd.write(".git/rebase-merge/head-name", "refs/heads/377-atlas-world\n");
+    let s = serve_args(&sd, &["."], Stdio::null());
+    assert_eq!(s.url, format!("http://127.0.0.1:{}/#b={key}/377-atlas-world", s.port));
+}
+
+#[test]
+fn dot_on_a_detached_head_names_no_branch() {
+    let mut sd = sd();
+    on_atlas_world(&mut sd);
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sd.git(&["checkout", "-q", "--detach"]);
+    let r = sd.run(&["--no-open", "--port", "0", "."]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &[". names no branch"]);
+}
+
+#[test]
+fn dot_matches_no_branch_of_another_repo() {
+    let mut sd = sd();
+    two_atlas_branches(&sd);
+    on_atlas_world(&mut sd);
+    let r = sd.run(&["--no-open", "--port", "0", "."]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["377-atlas-world", "matches no branch"]);
+}
+
+#[test]
+fn several_matches_or_none_are_listed_and_nothing_serves() {
+    let sd = sd();
+    two_atlas_branches(&sd);
+    let r = sd.run(&["--no-open", "--port", "0", "377-atlas"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["377-atlas", "matches 2 branches", "sheepdog 377-atlas-prompt", "sheepdog 377-atlas-world"]);
+    let r = sd.run(&["--no-open", "--port", "0", "nope"]);
+    assert_eq!(r.status, 1, "{}", r.output);
+    assert_has(&r.output, &["nope", "matches no branch"]);
+}
+
+#[test]
+fn a_second_sd_view_on_a_taken_port_opens_the_running_one() {
+    let sd = sd();
+    let key = two_atlas_branches(&sd);
+    let s = serve(&sd);
+    let port = s.port.to_string();
+    let r = sd.run(&["--no-open", "--port", &port, "450"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_has(&r.output, &["already running", &format!("http://127.0.0.1:{port}/#b={key}/377-atlas-prompt")]);
+}
+
+#[test]
+fn a_rebuilt_sd_view_replaces_the_older_build_on_its_port() {
+    let mut sd = sd();
+    let mut old = serve(&sd);
+    // A rebuild: the same binary with a newer mtime, a copy, not a link.
+    let newer = sd.tmp.join("rebuilt/sd-view");
+    fs::create_dir_all(newer.parent().unwrap()).unwrap();
+    fs::copy(&sd.bin, &newer).unwrap();
+    let later = std::time::SystemTime::now() + Duration::from_secs(60);
+    fs::File::options().write(true).open(&newer).unwrap().set_modified(later).unwrap();
+    sd.bin = newer;
+    let new = serve_args(&sd, &["--port", &old.port.to_string()], Stdio::null());
+    assert_eq!(new.port, old.port);
+    let t = Instant::now();
+    while old.child.try_wait().unwrap().is_none() {
+        assert!(t.elapsed() < Duration::from_secs(5), "the older build's sd view is still running");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let (code, _, body) = new.ask("GET", "/api/build", &format!("127.0.0.1:{}", new.port));
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["pid"], json!(new.child.id()));
+}
+
+#[test]
+fn a_port_holder_naming_a_pid_sd_view_didn_t_record_is_only_opened() {
+    let sd = sd();
+    let mut bystander = spawn(std::process::Command::new("sleep").arg("30"));
+    let fake = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = fake.local_addr().unwrap().port();
+    let body = json!({"pid": bystander.id(), "build": "other"}).to_string();
+    std::thread::spawn(move || {
+        for mut s in fake.incoming().flatten() {
+            let mut buf = [0; 1024];
+            let _ = s.read(&mut buf);
+            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        }
+    });
+    let r = sd.run(&["--no-open", "--port", &port.to_string()]);
+    assert_has(&r.output, &["already running"]);
+    assert!(bystander.try_wait().unwrap().is_none(), "sd view signalled a pid it didn't record");
+    let _ = bystander.kill();
 }
 
 #[test]

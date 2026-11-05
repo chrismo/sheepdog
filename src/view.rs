@@ -1,4 +1,8 @@
-// sd view [--port <n>] [--no-open] (src/view_help.txt, #375, #376): GET / is
+// sd view [<branch>] [--port <n>] [--no-open] (src/view_help.txt, #375,
+// #376): <branch>, . or a part of a cached branch's name or its PR number,
+// opens on its drill-in (view/pick.rs, #458); one already on the port is
+// opened, or replaced when GET /api/build says it's an older build and
+// names the pid sd view recorded in the state dir. GET / is
 // the Flock page, GET /api/flock its data from the watcher's cache; GET /map
 // the Map page (#378), GET /api/map its data from sheepdog's own source; GET
 // /atlas the Atlas page (#377), GET /api/atlas its data from the step table
@@ -22,6 +26,7 @@ mod flock;
 mod guard;
 mod links;
 mod map;
+mod pick;
 mod refresh;
 mod settings;
 mod timeline;
@@ -32,7 +37,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
-use std::time::Duration;
+use std::sync::LazyLock;
+use std::time::{Duration, UNIX_EPOCH};
 
 const HELP: &str = include_str!("view_help.txt");
 const PAGE: &str = include_str!("view/flock.html");
@@ -47,8 +53,16 @@ fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
+/// This binary's build as it started: its file's mtime, which a rebuild
+/// changes. GET /api/build serves it beside the pid.
+static BUILD: LazyLock<String> = LazyLock::new(|| {
+    let t = std::env::current_exe().and_then(std::fs::metadata).and_then(|m| m.modified());
+    t.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or_else(String::new, |d| d.as_nanos().to_string())
+});
+
 pub fn run(argv: &[String]) -> ExitCode {
-    let (mut port, mut open) = (PORT, true);
+    LazyLock::force(&BUILD);
+    let (mut port, mut open, mut target) = (PORT, true, None);
     let mut args = argv.iter();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -60,11 +74,29 @@ pub fn run(argv: &[String]) -> ExitCode {
             "--port" => {
                 port = args.next().and_then(|p| p.parse().ok()).unwrap_or_else(|| die("--port takes a number"));
             }
-            o => die(format!("unknown option: {o}")),
+            o if o.starts_with('-') || target.is_some() => die(format!("unknown option: {o}")),
+            o => target = Some(o.to_string()),
         }
     }
-    let listener = TcpListener::bind(("127.0.0.1", port)).unwrap_or_else(|e| die(format!("127.0.0.1:{port}: {e}")));
     let state = state_dir();
+    let hash = target.map_or_else(String::new, |t| format!("#b={}", branch_id(Path::new(&state), &t)));
+    let listener = match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        // Most likely our own sd view, on the port it always takes: an
+        // older build gives way, the same build is opened.
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => match running(port) {
+            Some((pid, build)) if build != *BUILD && recorded(Path::new(&state), port) == Some(pid) => replace(pid, port),
+            _ => {
+                let url = format!("http://127.0.0.1:{port}/{hash}");
+                println!("sd view: already running at {url}");
+                if open {
+                    browse(&url);
+                }
+                return ExitCode::SUCCESS;
+            }
+        },
+        Err(e) => die(format!("127.0.0.1:{port}: {e}")),
+    };
     cache::prune(Path::new(&state));
     let pruning = state.clone();
     std::thread::spawn(move || loop {
@@ -72,11 +104,11 @@ pub fn run(argv: &[String]) -> ExitCode {
         cache::prune(Path::new(&pruning));
     });
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
-    let url = format!("http://127.0.0.1:{port}/");
+    let _ = std::fs::create_dir_all(&state).and_then(|()| std::fs::write(pid_file(Path::new(&state), port), std::process::id().to_string()));
+    let url = format!("http://127.0.0.1:{port}/{hash}");
     println!("sd view: {url} (Ctrl-C stops it)");
     if open {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        let _ = Command::new(opener).arg(&url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+        browse(&url);
     }
     let token = guard::token();
     for stream in listener.incoming() {
@@ -92,6 +124,65 @@ pub fn run(argv: &[String]) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// The cached branch <target> names (. is the current worktree's), or die
+/// saying why it isn't one. . matches its branch's name exactly, in its own
+/// repo only: anything wider would open some other branch when its own
+/// isn't cached.
+fn branch_id(state: &Path, target: &str) -> String {
+    let cached = flock::cached(state);
+    if target != "." {
+        return pick::pick(&cached, target, true).unwrap_or_else(|e| die(e));
+    }
+    // Mid-rebase (a restack's conflict), the branch being rebased.
+    let Some(head) = crate::git::current_branch(".") else {
+        die(". names no branch: HEAD is detached, or this isn't a git worktree");
+    };
+    let repo = format!("{}/", crate::watch::repo_key(&crate::git::main_worktree(".")));
+    let ours: Vec<_> = cached.into_iter().filter(|c| c.id.starts_with(&repo)).collect();
+    pick::pick(&ours, &head, false).unwrap_or_else(|e| die(e))
+}
+
+/// The pid and build of the sd view holding <port>; None when what holds
+/// it doesn't answer GET /api/build (not sd view, or one built before it).
+fn running(port: u16) -> Option<(i32, String)> {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    s.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+    write!(s, "GET /api/build HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").ok()?;
+    let mut resp = String::new();
+    s.read_to_string(&mut resp).ok()?;
+    let v: serde_json::Value = serde_json::from_str(resp.split_once("\r\n\r\n")?.1).ok()?;
+    Some((i32::try_from(v["pid"].as_u64()?).ok()?, v["build"].as_str()?.to_string()))
+}
+
+/// Where sd view on <port> records its pid: in the user's own state dir,
+/// so whatever holds the port can't name a pid for replace to signal.
+fn pid_file(state: &Path, port: u16) -> std::path::PathBuf {
+    state.join(format!("view-{port}.pid"))
+}
+
+fn recorded(state: &Path, port: u16) -> Option<i32> {
+    std::fs::read_to_string(pid_file(state, port)).ok()?.trim().parse().ok().filter(|&p| p > 1)
+}
+
+/// Stop the older build's sd view, <pid>, and take its port.
+fn replace(pid: i32, port: u16) -> TcpListener {
+    // SAFETY: kill(2) takes no pointers.
+    unsafe { libc::kill(pid, libc::SIGTERM) };
+    for _ in 0..50 {
+        if let Ok(l) = TcpListener::bind(("127.0.0.1", port)) {
+            eprintln!("sd view: stopped an older build's sd view (pid {pid})");
+            return l;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    die(format!("127.0.0.1:{port}: an older build's sd view (pid {pid}) didn't stop"))
+}
+
+fn browse(url: &str) {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let _ = Command::new(opener).arg(url).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
 }
 
 /// The request line and the headers we read, or None for a request we can't read.
@@ -172,6 +263,7 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         }
         "/atlas" => ("200 OK", "text/html; charset=utf-8", ATLAS_PAGE.replace("__SD_TOKEN__", token)),
         "/api/atlas" => ("200 OK", "application/json", atlas::atlas(state).to_string()),
+        "/api/build" => ("200 OK", "application/json", serde_json::json!({"pid": std::process::id(), "build": *BUILD}).to_string()),
         "/api/branch" | "/api/timeline" => {
             let id = query.split('&').find_map(|kv| kv.strip_prefix("id=")).map(unescape).unwrap_or_default();
             let found = match route {
