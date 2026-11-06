@@ -1769,7 +1769,8 @@ fn the_pages_carry_none_of_the_generated_dashboard_tells() {
 
 // The Flock is a fence line per branch: its seven stages are posts, a tally
 // stroke on each one done, a cross on a failing one, and a paint mark in the
-// mover's color where the branch stands.
+// mover's color where the branch stands. A check of the page's source only:
+// the fence's logic is the page's JS, which no test here runs.
 #[test]
 fn the_flock_draws_each_branch_as_a_fence_line() {
     let sd = sd();

@@ -161,7 +161,8 @@ function fence(b) {
   let reach = 0;
   STAGES.forEach(([k], i) => { if (["done", "red", "cur"].includes(at(k).status)) reach = i; });
   // One label under the fence: a post's column is too narrow for two side by side.
-  const labelled = (STAGES.find(([k]) => at(k).status === "cur") || STAGES.find(([k]) => at(k).status === "red") || [])[0];
+  const first = st => STAGES.find(([k]) => at(k).status === st && at(k).text);
+  const labelled = (first("cur") || first("red") || [])[0];
   const posts = STAGES.map(([k, label]) => {
     const s = at(k), title = `${label}: ${said(k)}${s.text ? ", " + s.text : ""}`;
     const t = k === labelled && s.text ? `<span class="t">${esc(s.text)}</span>` : "";
@@ -177,11 +178,11 @@ function fence(b) {
 
 function row(b) {
   const L = b.lead;
-  return `<div class="run" style="--gc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
+  return `<article class="run" style="--gc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
     <div class="who"><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span>${prLink(b)}${usd(b)}${checked(b)}</div></div>
     ${fence(b)}
     <div class="next"><span class="say">${esc(L.say)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
-  </div>`;
+  </article>`;
 }
 
 const KEY = `<span>${MARK.todo()}to do</span><span>${MARK.done()}done</span>` +
