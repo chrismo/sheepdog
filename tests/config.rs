@@ -1742,6 +1742,7 @@ fn settings_step_prompt_typed_string_settings_empty_by_default_per_branch() {
     for k in [
         "implementPrompt",
         "reviewFixPrompt",
+        "verifyFixPrompt",
         "describePrompt",
         "addressPrompt",
         "resolvePrompt",

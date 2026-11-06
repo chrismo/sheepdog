@@ -9,7 +9,9 @@
 // restack moves the record to the commit it lands on (carry). Only sd's: a
 // rebase or reset done by hand leaves it on the commit it was on, and so
 // does a --resolve that halts mid-rebase (an attached session), as that
-// rebase is finished by hand.
+// rebase is finished by hand. tries: implement's verify-fix rounds that
+// failed (tried); a rerun on the same commit keeps it, any other new red
+// starts at none.
 
 use crate::git::git_out;
 use crate::pins::{self, Pin};
@@ -21,7 +23,8 @@ pub fn name(b: &str) -> String {
 }
 
 /// verify failed in <wt>: record its HEAD, and <log> if one was kept; a
-/// failure to record it only warns.
+/// failure to record it only warns. A record already on HEAD keeps its
+/// tries: a rerun there is the same red.
 pub fn record(wt: &str, b: &str, step: &str, cmd: &str, log: Option<&str>) {
     let Some(head) = git_out(wt, &["rev-parse", "HEAD"]) else {
         eprintln!("sd: warning: couldn't read HEAD in {wt}, so the failed verify isn't recorded");
@@ -30,6 +33,9 @@ pub fn record(wt: &str, b: &str, step: &str, cmd: &str, log: Option<&str>) {
     let mut rec = json!({"head": head, "step": step, "cmd": cmd, "at": time::now_utc().0});
     if let Some(l) = log {
         rec["log"] = json!(l);
+    }
+    if let Some(n) = on(wt, b, &head).and_then(|r| r.get("tries").cloned()) {
+        rec["tries"] = n;
     }
     let rec = json::to_string(&rec) + "\n";
     if !pins::store(wt, b, Pin::VerifyRed, &rec, None).ok {
@@ -71,11 +77,28 @@ pub fn logs(repo: &str) -> Vec<String> {
         .collect()
 }
 
+/// The record, when it's on <head>.
+fn on(dir: &str, b: &str, head: &str) -> Option<Value> {
+    let rec: Value = serde_json::from_str(&pins::read(dir, b, Pin::VerifyRed)?).ok()?;
+    (rec.get("head")?.as_str()? == head).then_some(rec)
+}
+
 /// HEAD's sha when the record is on it.
 pub fn at_head(wt: &str, b: &str) -> Option<String> {
-    let rec: Value = serde_json::from_str(&pins::read(wt, b, Pin::VerifyRed)?).ok()?;
     let head = git_out(wt, &["rev-parse", "HEAD"])?;
-    (rec.get("head")?.as_str()? == head).then_some(head)
+    on(wt, b, &head).map(|_| head)
+}
+
+/// <n> fix rounds (implement's, #325) have failed on the red that is now on
+/// HEAD: recorded on it, when the record is there; a failure only warns.
+pub fn tried(wt: &str, b: &str, n: u64) {
+    let Some(head) = git_out(wt, &["rev-parse", "HEAD"]) else { return };
+    let was = pins::oid(wt, b, Pin::VerifyRed);
+    let Some(mut rec) = on(wt, b, &head) else { return };
+    rec["tries"] = json!(n);
+    if !pins::store(wt, b, Pin::VerifyRed, &(json::to_string(&rec) + "\n"), Some(&was)).ok {
+        eprintln!("sd: warning: couldn't count the fix round on {b}'s failed verify, so NEXT may offer another");
+    }
 }
 
 #[cfg(test)]
@@ -102,5 +125,24 @@ mod tests {
         moved["head"] = json!(new);
         assert_eq!(rec(&r).unwrap(), moved);
         assert_eq!(logs(&r.dir), ["/l/x.log"]);
+    }
+
+    #[test]
+    fn tried_counts_fix_rounds_on_heads_record_which_a_rerun_there_keeps_and_a_new_commit_drops_325() {
+        let r = Repo::new();
+        tried(&r.dir, "feat", 1);
+        assert_eq!(rec(&r), None, "no record, nothing to count");
+        record(&r.dir, "feat", "implement", "make test", None);
+        assert_eq!(rec(&r).unwrap().get("tries"), None);
+        tried(&r.dir, "feat", 1);
+        assert_eq!(rec(&r).unwrap()["tries"], 1);
+        record(&r.dir, "feat", "implement", "make test", Some("/l/y.log"));
+        assert_eq!(rec(&r).unwrap()["tries"], 1, "a rerun on the same commit keeps the count");
+        assert_eq!(rec(&r).unwrap()["log"], "/l/y.log");
+        r.git(&["commit", "-q", "--allow-empty", "-m", "two"]);
+        tried(&r.dir, "feat", 2);
+        assert_eq!(rec(&r).unwrap()["tries"], 1, "a record on another commit isn't HEAD's");
+        record(&r.dir, "feat", "verify", "make test", None);
+        assert_eq!(rec(&r).unwrap().get("tries"), None, "a new commit's failure starts over");
     }
 }

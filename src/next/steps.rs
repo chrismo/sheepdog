@@ -61,8 +61,8 @@ pub const STEPS: &[StepDef] = &[
     s("implement", AGENT, Turn, None, Some("implement")).at(Build, "implement", "an agent builds the branch's recorded task").path(1),
     s("nothing", YOU, Stuck, None, None)
         .at(Build, "nothing to ship", "nothing ahead of the base and no task to implement: commit, or record a task"),
-    s("verify-red", YOU, Stuck, None, None)
-        .at(Ci, "verify", "settings.verify failed on HEAD, so nothing pushes or ships it until it passes or a new commit replaces HEAD"),
+    s("verify-red", &["agent", "you"], Stuck, None, Some("implement"))
+        .at(Ci, "verify", "settings.verify failed on HEAD, so nothing pushes or ships it until it passes: an agent fixes it (implement), or chrismo once VERIFY_ROUNDS fix rounds failed"),
     s("foreign-authors", YOU, Stuck, None, None)
         .at(Push, "others' commits", "the push would remove commits someone else made from the remote: look at them first"),
     s("ci-config", YOU, Stuck, None, None)
@@ -131,7 +131,7 @@ const STEP_SETTINGS: &[(&str, &[&str])] = &[
     ("implement", &["implementPrompt"]),
     ("review-fix", &["reviewFixPrompt", "reviewRounds"]),
     ("review-decide", &["reviewRounds"]),
-    ("verify-red", &["verify"]),
+    ("verify-red", &["verifyFixPrompt", "verify"]),
     ("ci-config", &["protectedPaths"]),
     ("bot-wait", &["botTimeout"]),
     ("bot-silent", &["botTimeout"]),

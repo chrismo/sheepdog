@@ -188,15 +188,16 @@ fn with_transcript(mut failed: Value, dir: &str, b: &str) -> Value {
 }
 
 /// A failed verify (#325, src/verify_red.rs): {sha, step, cmd, at,
-/// at_head, log}, at_head while HEAD is the commit it failed on, log its
-/// whole output (#461) or null; None with no record, Err for one that isn't
-/// one.
+/// at_head, log, tries}, at_head while HEAD is the commit it failed on, log
+/// its whole output (#461) or null, tries the fix rounds that failed on it
+/// (0 for none); None with no record, Err for one that isn't one.
 fn verify_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
     let Some(rec) = blob_record(dir, &crate::verify_red::name(b)) else { return Ok(None) };
     let rec = rec?;
     let s = |k: &str| rec.get(k).and_then(Value::as_str);
     let (Some(h), Some(step), Some(cmd), Some(at)) = (s("head"), s("step"), s("cmd"), s("at")) else { return Err(()) };
-    Ok(Some(json!({"sha": h, "step": step, "cmd": cmd, "at": at, "at_head": h == head, "log": s("log")})))
+    let tries = rec.get("tries").and_then(Value::as_u64).unwrap_or(0);
+    Ok(Some(json!({"sha": h, "step": step, "cmd": cmd, "at": at, "at_head": h == head, "log": s("log"), "tries": tries})))
 }
 
 /// {record, running}: <record> (verify_state's, or null), and the verify
