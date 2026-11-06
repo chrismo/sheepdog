@@ -3251,19 +3251,56 @@ fn committed_a_bad_file_names_the_commit_and_path_and_follows_the_repo_files_rul
         r.output,
         format!(
             "sd config: {at}: settings.interval: global file only\nsd config: {at}: settings.remote: each clone's own: global or repo file only\nsd config: {at}: settings.verfy: unknown key\nsd config: {}",
-            recover(&at)
+            off_base(&sha)
         )
     );
     let sha = sd.commit_config("[]");
     let r = sd.run(&["get", "settings.verify"]);
     let at = format!("{}:.sheepdog/config.json", short(&sha));
-    assert_eq!(r.output, format!("sd config: not a JSON object: {at}\nsd config: {}", recover(&at)));
+    assert_eq!(r.output, format!("sd config: not a JSON object: {at}\nsd config: {}", off_base(&sha)));
 }
 
-/// The line a bad committed file's errors end with: no local file overrides
-/// a commit, so the fix is a new base.
-fn recover(at: &str) -> String {
-    format!("{at}: no file here can stand in for a commit's: fix it on the default branch, then sd act restack")
+/// The line a bad committed file at feat's base <sha> ends its errors with:
+/// no local file overrides a commit, and sd act restack reads the config
+/// too, so it names the git that moves feat off it.
+fn off_base(sha: &str) -> String {
+    format!(
+        "{}:.sheepdog/config.json is feat's base: fix it on main, then git rebase --onto main {sha} feat && git update-ref refs/sheepdog/feat/base main",
+        short(sha)
+    )
+}
+
+#[test]
+fn committed_a_bad_file_at_a_branchs_base_is_left_by_the_git_its_error_names() {
+    let sd = Sd::new();
+    let bad = sd.commit_config("[]");
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &bad]);
+    sd.git(&["switch", "-q", "main"]);
+    sd.commit_config_here(r#"{"settings":{"verify":"fixed"}}"#);
+    sd.git(&["switch", "-q", "feat"]);
+    let r = sd.run(&["get", "settings.verify"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output.lines().last().unwrap(), format!("sd config: {}", off_base(&bad)));
+    sd.git(&["rebase", "-q", "--onto", "main", &bad, "feat"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", "main"]);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "fixed");
+}
+
+#[test]
+fn committed_a_bad_file_at_the_default_branchs_tip_says_to_fix_it_there() {
+    let sd = Sd::new();
+    sd.git(&["switch", "-q", "main"]);
+    let bad = sd.commit_config_here("[]");
+    for args in [&["get", "settings.verify"][..], &["get", "--no-branch", "settings.verify"]] {
+        let r = sd.run(args);
+        assert_eq!(r.status, 1);
+        assert_eq!(
+            r.output.lines().last().unwrap(),
+            format!("sd config: {}:.sheepdog/config.json is main's tip: commit a fixed one to main", short(&bad))
+        );
+    }
+    sd.commit_config_here(r#"{"settings":{"verify":"fixed"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "fixed");
 }
 
 #[test]
