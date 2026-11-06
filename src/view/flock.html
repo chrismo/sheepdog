@@ -83,7 +83,7 @@ details.tl > summary { cursor: pointer; font-weight: 700; }
 details.tl[open] > summary { margin-bottom: 10px; }
 .tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
 .tl text { font-family: var(--f-body); }
-@media (max-width: 760px) {
+@media (max-width: 820px) {
   .cols { display: none; }
   .run { grid-template-columns: 1fr; gap: 10px; }
   .fence { height: 56px; }
@@ -153,21 +153,25 @@ const MARK = {
   skip: () => "",
 };
 
+const SAID = { cur: "now", done: "done", todo: "to do", red: "failing", skip: "not set up" };
 function fence(b) {
   const at = k => b.stages.find(x => x.stage === k) || { status: "todo" };
+  const said = k => SAID[at(k).status] || at(k).status;
   let reach = 0;
   STAGES.forEach(([k], i) => { if (["done", "red", "cur"].includes(at(k).status)) reach = i; });
+  // One label under the fence: a post's column is too narrow for two side by side.
+  const labelled = b.stages.some(s => s.status === "cur") ? "cur" : "red";
   const posts = STAGES.map(([k, label]) => {
-    const s = at(k), title = `${label}: ${s.status === "cur" ? "now" : s.status}${s.text ? ", " + s.text : ""}`;
+    const s = at(k), title = `${label}: ${said(k)}${s.text ? ", " + s.text : ""}`;
+    const t = s.status === labelled && s.text ? `<span class="t">${esc(s.text)}</span>` : "";
     if (s.status === "cur") {
       const c = color(s.who);
-      return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:${c}">${splotch(b.id + k, c)}<span class="t">${esc(s.text)}</span></span>`;
+      return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:${c}">${splotch(b.id + k, c)}${t}</span>`;
     }
-    const red = s.status === "red" && s.text ? `<span class="t">${esc(s.text)}</span>` : "";
-    return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:var(--red)">${(MARK[s.status] || MARK.todo)()}${red}</span>`;
+    return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:var(--red)">${(MARK[s.status] || MARK.todo)()}${t}</span>`;
   }).join("");
-  const said = STAGES.map(([k, label]) => `${label} ${at(k).status === "cur" ? "now" : at(k).status}`).join(", ");
-  return `<div class="fence" style="--reach:${reach}" role="img" aria-label="${esc(said)}">${posts}</div>`;
+  const heard = STAGES.map(([k, label]) => `${label} ${said(k)}`).join(", ");
+  return `<div class="fence" style="--reach:${reach}" role="img" aria-label="${esc(heard)}">${posts}</div>`;
 }
 
 function row(b) {
