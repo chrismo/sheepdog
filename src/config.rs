@@ -675,7 +675,7 @@ fn off_bad_commit(dir: &str, b: &str, remote: &str, commit: &str) -> String {
         Some(d) => d.clone(),
         None => "the default branch".into(),
     };
-    if b.is_empty() || def.as_deref() == Some(b) {
+    if b.is_empty() || def.as_deref() == Some(b) || !git::branch_in(dir, b) {
         return format!("{label} is {main}'s tip: commit a fixed one to {main}");
     }
     format!("{label} is {b}'s base: fix it on the branch {b} is based on (<parent>), then git rebase --onto <parent> {commit} {b} && git update-ref refs/sheepdog/{b}/base <parent>")
