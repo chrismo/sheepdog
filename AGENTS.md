@@ -191,9 +191,12 @@ global file and `.git/sheepdog.json`: sd reads it from the branch's base
 commit, as it reads `.sheepdog/*.md`, so a change to it applies to a branch
 only once it's on main and the branch is restacked. The default branch has no
 base commit: it reads the file at its tip, the remote's first (and no
-`.sheepdog/*.md`), so a commit to main changes main's config once it's pushed. `sd config files` names
-the commit it read. Anything every clone needs goes there; a setting for one
-clone goes in `.git/sheepdog.json` (`sd config set --repo`), which overrides it.
+`.sheepdog/*.md`), so a commit to main changes main's config once it's
+pushed. `sd config files` names the commit it read. It's a protected path
+(`sd act --help`): an agent's commit that touches it holds the branch for
+chrismo, since it can widen `implementAllow`. Anything every clone needs
+goes there; a setting for one clone goes in `.git/sheepdog.json` (`sd config
+set --repo`), which overrides it.
 
 `rwx run` (a run from local edits, no push) is for chrismo to ask for; see
 "Don't launch runs with `rwx run`" above. `rwx lint .rwx/tests.yml` is free.
