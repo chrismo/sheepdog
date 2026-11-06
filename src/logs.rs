@@ -7,6 +7,8 @@
 // Pruned by settings.log* (sd config --help) after each run, by sd act
 // forget, and by the watcher's pass; never a log a verify-red record names.
 
+pub mod stream;
+
 use crate::{config, git, time, verify_red};
 use std::collections::HashSet;
 use std::fs;

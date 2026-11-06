@@ -181,9 +181,9 @@ Launched steps (#268): the pass doesn't wait for one. It runs as sd watch
 step <secs> <step> <branch>, in a session of its own (launchd's cleanup of
 the job never signals it), holding the branch's running marker as a lease:
 the marker's second line, deadline <time>, is the step's timeout plus 60s.
-Its output goes to steps.log in SHEEPDOG_STATE_DIR, between a header and
-an end line (Logs, below). The pass's line, also in status, is launched sd
-act <verb>; the next pass reports how it ended:
+Its output goes to the steps.log stream, between a header and an end line
+(Logs, below). The pass's line, also in status, is launched sd act <verb>;
+the next pass reports how it ended:
 ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
 <n>s, stopped on a usage limit (exit 75, not counted), or stopped by a
 signal. Each pass first reconciles every branch's
@@ -196,9 +196,10 @@ its PR has merged or closed is ended the same way, not counted, its edits
 left in the worktree: sd act <step>: ended, #<n> merged (or closed). A
 marker with no deadline, a step chrismo ran, is never ended or counted.
 
-Logs (#364), in SHEEPDOG_STATE_DIR, neither rotated: launchd.log is the
-job's stdout and stderr. Every line a pass writes there carries the local
-time, and each pass ends with one line, quiet pass or not:
+Logs (#364), streams in SHEEPDOG_STATE_DIR/logs/streams (#467; dir 0700,
+files 0600): launchd.log is the job's stdout and stderr. Every line a pass
+writes there carries the local time, and each pass ends with one line,
+quiet pass or not:
   2026-11-02 09:27:10 pass: 4 branches, autoRun on (2 branches off),
   1 launched, agent steps 1/2
 the enrolled branches, settings.autoRun with the branches whose own differs,
@@ -206,6 +207,12 @@ the steps launched, and the agent steps running against settings.agentSteps.
 steps.log holds each launched step's output, unchanged, between
   ==> <time> <repo> <branch>: sd act <verb>
   <== <time> <repo> <branch>: ran sd act <verb>: <how it ended> (<how long>)
+The job's pass rotates both after its last write: one at
+settings.logStreamBytes or more becomes <name>.1, each older one moves up
+one, and logStreamFiles are kept, the live one included (sd config --help).
+launchd opens launchd.log each time it starts the job; a step still writing
+goes on in steps.log.1. A launchd.log or steps.log right in
+SHEEPDOG_STATE_DIR is from before #467: sd neither writes nor reads it.
 status reads what a silent job usually comes down to, writing nothing:
   job's last pass: 3m ago (settings.interval 300s): not a vacuum by hand,
     which the first line counts; overdue once two intervals passed with no

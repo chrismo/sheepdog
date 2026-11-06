@@ -63,8 +63,11 @@ Layers (top wins; sd config files prints the paths):
             failures and the newest pass; all; none, no log), logRuns 5 (a
             branch's logs), logFileBytes 8388608 (a log's head and end are
             kept past it), logAge 1209600 (seconds) and logBytes 1073741824
-            (over every repo's logs; global file only), 0 for no limit; the
-            other settings empty
+            (over every repo's logs; global file only), 0 for no limit;
+            logStreamBytes 10485760 and logStreamFiles 3 (sd watch's
+            launchd.log and steps.log are rotated past the first, the
+            second kept, the live one included; global file only, 0 for
+            no limit); the other settings empty
 
 Notes:
   - null in a file removes the key; a default still applies
@@ -116,7 +119,8 @@ fn defaults() -> Value {
     let mut d = defaults_but_logs();
     // Apart: one json! of them all is past the macro's recursion limit.
     for (k, v) in [("logKeep", json!("failed")), ("logRuns", json!(5)), ("logFileBytes", json!(8 << 20)),
-                   ("logAge", json!(14 * 86400)), ("logBytes", json!(1 << 30))] {
+                   ("logAge", json!(14 * 86400)), ("logBytes", json!(1 << 30)),
+                   ("logStreamBytes", json!(10 << 20)), ("logStreamFiles", json!(3))] {
         d["settings"][k] = v;
     }
     d
@@ -212,6 +216,7 @@ const GLOBAL_ONLY: &[(&str, Ty)] = &[
     ("vacuumAfter", Ty::Num), ("rateLimitFloor", Ty::Whole),
     ("agentSteps", Ty::Whole),
     ("logAge", Ty::Num), ("logBytes", Ty::Whole),
+    ("logStreamBytes", Ty::Whole), ("logStreamFiles", Ty::Whole),
 ];
 
 /// Keys renamed after they shipped: reading a file moves the old key to the
