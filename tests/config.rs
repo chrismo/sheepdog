@@ -3280,7 +3280,7 @@ fn committed_a_bad_file_at_the_default_branchs_tip_says_to_fix_it_there() {
     let sd = Sd::new();
     sd.git(&["switch", "-q", "main"]);
     let bad = sd.commit_config_here("[]");
-    for args in [&["get", "settings.verify"][..], &["get", "--no-branch", "settings.verify"]] {
+    for args in [&["get", "settings.verify"][..], &["get", "--no-branch", "settings.verify"], &["get", "settings.verify", "not-made"]] {
         let r = sd.run(args);
         assert_eq!(r.status, 1);
         assert_eq!(
