@@ -25,17 +25,9 @@ use crate::proc::{self, executable, on_stderr};
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
-/// The remote's default branch as fetched: <remote>/HEAD, else main or
-/// master, remote or local.
+/// The remote's default branch as fetched: git::default_branch here.
 pub fn start_default(remote: &str) -> Option<String> {
-    let head = git_out(".", &["symbolic-ref", "-q", "--short", &format!("refs/remotes/{remote}/HEAD")]);
-    if let Some(h) = head {
-        return Some(h.strip_prefix(&format!("{remote}/")).unwrap_or(&h).to_string());
-    }
-    ["main", "master"]
-        .into_iter()
-        .find(|br| show_ref(".", &format!("refs/remotes/{remote}/{br}")) || show_ref(".", &format!("refs/heads/{br}")))
-        .map(str::to_string)
+    crate::git::default_branch(".", remote)
 }
 
 /// <b> on <remote>, else here, as a full ref.

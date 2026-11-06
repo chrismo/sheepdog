@@ -45,6 +45,14 @@ Layers (top wins; sd config files prints the paths):
   repo      <main repo>/.git/sheepdog.json, shared by every branch and
             worktree of that repo and read by no other
   profile   the same, for the names the repo file's profile key picks
+  committed .sheepdog/config.json in the commit a step reads the branch's
+            guidance from (its base pin, else where it forked from the
+            default branch), so no branch changes its own; the default
+            branch, detached HEAD, --no-branch and a branch not made yet,
+            which have no such commit, read the default branch's tip (the
+            remote's first), so a commit there changes its own once pushed;
+            it takes what the repo file does but settings.remote (#456)
+  profile   the same, for the names the committed file's profile key picks
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
             stepBudget 5 (USD per claude step; 0 is no cap), branchBudget
@@ -95,8 +103,13 @@ Notes:
     global or repo file only; a pick of a profile no file defines is an
     error on every read, naming the file that picks it. set refuses to
     write such a pick, but nothing else is checked: unset profiles.<name>
-    that a file still picks breaks its reads. A branch's pick adds to the
-    repo's: both apply, each under the file that picks it
+    that a file still picks breaks its reads, and set --repo checks a pick
+    against the default branch's tip's committed file only, so a profile
+    only a newer commit defines breaks reads on branches based before it.
+    A branch's pick adds to the repo's: both apply, each under the file
+    that picks it
+  - the committed file can't set settings.remote: each clone names its
+    own, and the committed file's commit is found with it
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -240,6 +253,9 @@ const CONFIG: &[(&str, Ty)] = &[
 enum Layer {
     Global,
     Repo,
+    /// .sheepdog/config.json: what the repo file takes, but settings.remote,
+    /// which each clone names for itself.
+    Committed,
     Branch,
     Profile,
 }
@@ -328,6 +344,7 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
             (_, Some(t), _) if layer == Layer::Global || layer == Layer::Repo => Ok(t),
             (_, _, Some(t)) if layer == Layer::Global => Ok(t),
             _ if layer == Layer::Profile => Err("not allowed in a profile"),
+            (_, Some(_), _) if layer == Layer::Committed => Err("each clone's own: global or repo file only"),
             (_, Some(_), _) => Err("global or repo file only"),
             _ => Err("global file only"),
         },
@@ -537,11 +554,7 @@ fn layer(file: &str, kind: Option<Layer>) -> Res<Value> {
     if !Path::new(file).exists() {
         return Ok(json!({}));
     }
-    let doc = fs::read_to_string(file)
-        .ok()
-        .and_then(|t| one_value(&t))
-        .filter(Value::is_object);
-    let Some(mut doc) = doc else { return err(format!("not a JSON object: {file}")) };
+    let mut doc = object(fs::read_to_string(file).ok().as_deref(), file)?;
     let renamed = rename_old_keys(&mut doc);
     if !renamed.is_empty() {
         let unsaved = if write_file(file, &doc).is_ok() { "" } else { " (couldn't update the file)" };
@@ -555,6 +568,103 @@ fn layer(file: &str, kind: Option<Layer>) -> Res<Value> {
     Ok(doc)
 }
 
+/// <text> as a JSON object, else an error naming <file>.
+fn object(text: Option<&str>, file: &str) -> Res<Value> {
+    text.and_then(one_value).filter(Value::is_object).map_or_else(|| err(format!("not a JSON object: {file}")), Ok)
+}
+
+pub const COMMITTED: &str = ".sheepdog/config.json";
+
+/// The remote the global and repo files set: what the committed layer's
+/// commit is found with (that file can't set one, so this is the remote
+/// every read gets too).
+fn local_remote(g: &Value, r: &Value) -> String {
+    match lookup(&merge(&[g, r], false), &["settings", "remote"]) {
+        Some(Value::String(s)) if !s.is_empty() => s.clone(),
+        _ => "origin".into(),
+    }
+}
+
+/// git::config_base, else why there is none. <in_repo>: whether <dir> is in
+/// a repo, which the caller has found already.
+fn committed_commit(dir: &str, b: &str, remote: &str, in_repo: bool) -> Result<String, &'static str> {
+    if !in_repo {
+        return Err("not a git repository");
+    }
+    git::config_base(dir, b, remote).ok_or("no base commit")
+}
+
+fn short(commit: &str) -> &str {
+    &commit[..commit.len().min(7)]
+}
+
+/// <commit>:.sheepdog/config.json, as errors name it.
+fn committed_label(commit: &str) -> String {
+    format!("{}:{COMMITTED}", short(commit))
+}
+
+/// The committed layer at <commit>, checked as a committed file; {} when the
+/// commit has no .sheepdog/config.json. A renamed key is read under its new
+/// name; the commit can't be rewritten.
+fn committed_doc(dir: &str, commit: &str) -> Res<Value> {
+    let Some(text) = committed_text(dir, commit) else { return Ok(json!({})) };
+    let label = committed_label(commit);
+    let mut doc = object(Some(&text), &label)?;
+    rename_old_keys(&mut doc);
+    checked(&doc, Layer::Committed, &label)?;
+    Ok(doc)
+}
+
+/// The way off a bad committed file at <commit>, <b>'s base or (for no
+/// branch or the default branch) the default branch's tip. No local file
+/// overrides a commit, and sd act restack reads the config too, so for a
+/// branch it's the git restack would run, onto its parent (a stack's
+/// parent isn't the default branch).
+fn off_bad_commit(dir: &str, b: &str, remote: &str, commit: &str) -> String {
+    let label = committed_label(commit);
+    let def = git::default_branch(dir, remote);
+    let main = match &def {
+        Some(d) if git::show_ref(dir, &format!("refs/remotes/{remote}/{d}")) => format!("{remote}/{d}"),
+        Some(d) => d.clone(),
+        None => "the default branch".into(),
+    };
+    if b.is_empty() || def.as_deref() == Some(b) || !git::branch_in(dir, b) {
+        return format!("{label} is {main}'s tip: commit a fixed one to {main}");
+    }
+    format!("{label} is {b}'s base: fix it on the branch {b} is based on (<parent>), then git rebase --onto <parent> {commit} {b} && git update-ref refs/sheepdog/{b}/base <parent>")
+}
+
+/// <commit>:.sheepdog/config.json's text, None when it has none; a commit's
+/// never changes, so it is read once a process.
+fn committed_text(dir: &str, commit: &str) -> Option<String> {
+    static SEEN: std::sync::Mutex<Vec<(String, Option<String>)>> = std::sync::Mutex::new(Vec::new());
+    if let Some((_, t)) = SEEN.lock().ok()?.iter().find(|(c, _)| c == commit) {
+        return t.clone();
+    }
+    let o = git::git(dir, &["cat-file", "blob", &format!("{commit}:{COMMITTED}")]);
+    let text = o.ok.then_some(o.stdout);
+    if let Ok(mut seen) = SEEN.lock() {
+        seen.push((commit.to_string(), text.clone()));
+    }
+    text
+}
+
+/// <b>'s committed layer and its commit (None when there's none). A bad file
+/// fails every read on its commit, as a bad local file does, and its errors
+/// end with the way off it.
+fn committed(dir: &str, b: &str, g: &Value, r: &Value, in_repo: bool) -> Res<(Value, Option<String>)> {
+    let remote = local_remote(g, r);
+    let Ok(c) = committed_commit(dir, b, &remote, in_repo) else { return Ok((json!({}), None)) };
+    match committed_doc(dir, &c) {
+        Ok(doc) => Ok((doc, Some(c))),
+        Err(Fail::Error(mut ls)) => {
+            ls.push(off_bad_commit(dir, b, &remote, &c));
+            Err(Fail::Error(ls))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 fn checked(doc: &Value, kind: Layer, file: &str) -> Res<()> {
     let ps = problems(doc, kind);
     if ps.is_empty() {
@@ -565,19 +675,21 @@ fn checked(doc: &Value, kind: Layer, file: &str) -> Res<()> {
 
 /// Every layer merged, nulls kept.
 fn files(dir: &str, b: &str, no_branch: bool) -> Res<Value> {
-    Ok(merge_docs(&layer_docs(dir, b, no_branch)?))
+    Ok(merge_docs(&layer_docs(dir, b, no_branch)?.0))
 }
 
 fn merge_docs(docs: &[(String, Value)]) -> Value {
     merge(&docs.iter().map(|(_, d)| d).collect::<Vec<_>>(), false)
 }
 
-/// The global, repo and branch files as written, each {} when missing, and
-/// their paths.
+/// The global, committed, repo and branch files as written, each {} when
+/// missing, their paths, and the committed file's commit.
 struct Files {
     g: Value,
+    c: Value,
     r: Value,
     b: Value,
+    commit: Option<String>,
     rf: Option<String>,
     bf: Option<String>,
 }
@@ -591,23 +703,30 @@ fn read_files(dir: &str, b: &str, no_branch: bool) -> Res<Files> {
     let rf = repo_file(dir);
     let bf = if b.is_empty() { None } else { Some(branch_file(dir, &b)?) };
     let read = |f: &Option<String>, kind| f.as_deref().map_or(Ok(json!({})), |f| layer(f, Some(kind)));
-    Ok(Files { g: layer(&global_file(), Some(Layer::Global))?, r: read(&rf, Layer::Repo)?, b: read(&bf, Layer::Branch)?, rf, bf })
+    let g = layer(&global_file(), Some(Layer::Global))?;
+    let r = read(&rf, Layer::Repo)?;
+    let (c, commit) = committed(dir, &b, &g, &r, rf.is_some())?;
+    Ok(Files { g, c, r, b: read(&bf, Layer::Branch)?, commit, rf, bf })
 }
 
+/// Layers, each by its name.
+type Docs = Vec<(String, Value)>;
+
 /// The layers bottom to top, named as explain shows them: the global file,
-/// the profiles the repo file picks, the repo file, the profiles the branch
-/// file picks, the branch file.
-fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<Vec<(String, Value)>> {
+/// then for each of the committed, repo and branch files the profiles it
+/// picks and then the file; and the committed file's commit.
+fn layer_docs(dir: &str, b: &str, no_branch: bool) -> Res<(Docs, Option<String>)> {
     let f = read_files(dir, b, no_branch)?;
-    let defs = profile_defs(&[&f.g, &f.r]);
+    let defs = profile_defs(&[&f.g, &f.c, &f.r]);
     let mut docs = vec![("global".to_string(), f.g)];
-    for (name, file, doc) in [("repo", &f.rf, f.r), ("branch", &f.bf, f.b)] {
+    let cf = f.commit.as_deref().map(committed_label);
+    for (name, file, doc) in [("committed", &cf, f.c), ("repo", &f.rf, f.r), ("branch", &f.bf, f.b)] {
         let names = picked(&doc);
         defined(file.as_deref().unwrap_or_default(), &names, &defs)?;
         docs.extend(names.into_iter().map(|n| (format!("profile {n}"), defs[&n].clone())));
         docs.push((name.to_string(), doc));
     }
-    Ok(docs)
+    Ok((docs, f.commit))
 }
 
 /// The profile names <doc> picks, in order.
@@ -842,6 +961,15 @@ fn trace(layers: &[(String, Value)], dflt: &Value, path: &[&str]) -> Traced {
     }
 }
 
+/// Layer <n> as explain names it: the committed layer by its commit too,
+/// unless <as_json>.
+fn shown_name(n: &str, commit: Option<&str>, as_json: bool) -> String {
+    match commit {
+        Some(c) if n == "committed" && !as_json => format!("committed {}", short(c)),
+        _ => n.to_string(),
+    }
+}
+
 fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Res<String> {
     let mut all = Vec::new();
     key_paths(Ty::Obj(CONFIG), "", &mut all);
@@ -852,7 +980,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
     if defs_only {
         let f = read_files(dir, b, no_branch)?;
         let mut ls = Vec::new();
-        leaves(&Value::Object(profile_defs(&[&f.g, &f.r])), &mut vec!["profiles".to_string()], &mut ls);
+        leaves(&Value::Object(profile_defs(&[&f.g, &f.c, &f.r])), &mut vec!["profiles".to_string()], &mut ls);
         all.extend(ls.into_iter().map(|(k, _)| k.join(".")));
         files = Some(f);
     }
@@ -865,12 +993,12 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             return err(format!("unknown key: {path}{}", did_you_mean(path, sections.chain(all.clone()))));
         }
     }
-    let docs = match files {
-        Some(f) => vec![("global".to_string(), f.g), ("repo".to_string(), f.r)],
+    let (docs, commit) = match files {
+        Some(f) => (vec![("global".to_string(), f.g), ("committed".to_string(), f.c), ("repo".to_string(), f.r)], f.commit),
         None => layer_docs(dir, b, no_branch)?,
     };
     let dflt = defaults();
-    let layers: Vec<(String, Value)> = docs.iter().rev().cloned().collect();
+    let layers: Docs = docs.iter().rev().map(|(n, d)| (shown_name(n, commit.as_deref(), as_json), d.clone())).collect();
     let trace_key = |k: &str| trace(&layers, &dflt, &k.split('.').collect::<Vec<_>>());
     let traced: Vec<_> = keys.iter().map(|k| (k.as_str(), trace_key(k))).collect();
 
@@ -923,7 +1051,7 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
             })
             .collect();
         let ws: Vec<Value> = warnings.iter().map(|(_, k, m)| json!({"path": k, "message": m})).collect();
-        let mut out = json!({ "keys": ks, "warnings": ws });
+        let mut out = json!({ "keys": ks, "warnings": ws, "committed": commit });
         if with_steps {
             let field = |v: &Value, f: &str| v.get(f).cloned().unwrap_or(Value::Null);
             out["steps"] = Value::Object(
@@ -983,29 +1111,35 @@ fn explain(dir: &str, path: &str, b: &str, no_branch: bool, as_json: bool) -> Re
 }
 
 fn paths(b: &str, no_branch: bool) -> Res<String> {
-    let path_line = |kind: &str, f: &str| {
-        let missing = if Path::new(f).exists() { "" } else { "  (missing)" };
-        format!("{kind:<6}  {f}{missing}\n")
+    let kind_line = |kind: &str, rest: &str| format!("{kind:<9}  {rest}\n");
+    let path_line = |kind: &str, f: &str, there: bool| kind_line(kind, &format!("{f}{}", if there { "" } else { "  (missing)" }));
+    let file_line = |kind: &str, f: &str| path_line(kind, f, Path::new(f).exists());
+    // The branch, else why there's none; "" for --no-branch.
+    let branch: Result<String, &str> = match (no_branch, b) {
+        (true, _) => Err(""),
+        (false, "") if !git::in_repo() => Err("(none: not a git repository)"),
+        (false, "") => git::current_branch(".").ok_or("(none: detached HEAD)"),
+        (false, b) => Ok(b.to_string()),
     };
-    let mut out = path_line("global", &global_file());
-    out += &match repo_file(".") {
-        Some(f) => path_line("repo", &f),
-        None => "repo    (none: not a git repository)\n".into(),
+    let gf = global_file();
+    let mut out = file_line("global", &gf);
+    // Read only for the remote: a broken file mustn't hide where the files are.
+    let lenient = |f: &str| object(fs::read_to_string(f).ok().as_deref(), f).unwrap_or_else(|_| json!({}));
+    let rf = repo_file(".");
+    let remote = local_remote(&lenient(&gf), &rf.as_deref().map_or_else(|| json!({}), lenient));
+    out += &match committed_commit(".", branch.as_deref().unwrap_or(""), &remote, rf.is_some()) {
+        Ok(c) => path_line("committed", &committed_label(&c), git::git_ok(".", &["cat-file", "-e", &format!("{c}:{COMMITTED}")])),
+        Err(why) => kind_line("committed", &format!("(none: {why})")),
     };
-    if no_branch {
-        return Ok(out);
+    out += &match &rf {
+        Some(f) => file_line("repo", f),
+        None => kind_line("repo", "(none: not a git repository)"),
+    };
+    match branch {
+        Ok(b) => out += &file_line("branch", &branch_file(".", &b)?),
+        Err("") => {}
+        Err(why) => out += &kind_line("branch", why),
     }
-    let mut b = b.to_string();
-    if b.is_empty() {
-        if !git::in_repo() {
-            return Ok(out + "branch  (none: not a git repository)\n");
-        }
-        match git::current_branch(".") {
-            Some(cur) => b = cur,
-            None => return Ok(out + "branch  (none: detached HEAD)\n"),
-        }
-    }
-    out += &path_line("branch", &branch_file(".", &b)?);
     Ok(out)
 }
 
@@ -1071,44 +1205,49 @@ fn warn_inherited_effort(step: &str, h: &str, hb: &Value, sb: &Value) {
     }
 }
 
-fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer)> {
+/// The file, its layer, and its branch ("" for the global and repo files).
+fn target_file(global: bool, repo: bool, b: &str) -> Res<(String, Layer, String)> {
     if global {
-        return Ok((global_file(), Layer::Global));
+        return Ok((global_file(), Layer::Global, String::new()));
     }
     if repo {
         let Some(f) = repo_file(".") else { return err("not a git repository") };
-        return Ok((f, Layer::Repo));
+        return Ok((f, Layer::Repo, String::new()));
     }
     let b = branch_arg(b)?;
     if !git::branch_exists(&b) {
         return err(format!("no such branch: {b}"));
     }
-    Ok((branch_file(".", &b)?, Layer::Branch))
+    Ok((branch_file(".", &b)?, Layer::Branch, b))
 }
 
 /// A write to a pick must name defined profiles: one that doesn't fails
 /// every read for its branch.
-fn write(file: &str, kind: Layer, doc: &Value, segs: &[String]) -> Res<()> {
+fn write(file: &str, kind: Layer, doc: &Value, segs: &[String], b: &str) -> Res<()> {
     if segs[0] == "profile" {
-        pick_ok(file, kind, doc)?;
+        pick_ok(file, kind, doc, b)?;
     } else {
         checked(doc, kind, file)?;
     }
     write_file(file, doc)
 }
 
-fn pick_ok(file: &str, kind: Layer, doc: &Value) -> Res<()> {
+/// <b>: the branch whose committed layer may define the pick ("" for the
+/// repo file's, read from the default branch's tip).
+fn pick_ok(file: &str, kind: Layer, doc: &Value, b: &str) -> Res<()> {
     checked(doc, kind, file)?;
     let names = picked(doc);
     if names.is_empty() {
         return Ok(());
     }
     let g = layer(&global_file(), Some(Layer::Global))?;
+    let rf = repo_file(".");
     let r = match kind {
         Layer::Repo => doc.clone(),
-        _ => repo_file(".").map_or(Ok(json!({})), |f| layer(&f, Some(Layer::Repo)))?,
+        _ => rf.as_deref().map_or(Ok(json!({})), |f| layer(f, Some(Layer::Repo)))?,
     };
-    defined(file, &names, &profile_defs(&[&g, &r]))
+    let (c, _) = committed(".", b, &g, &r, rf.is_some())?;
+    defined(file, &names, &profile_defs(&[&g, &c, &r]))
 }
 
 /// <names> as <b>'s profile pick in its branch file, a list for more than
@@ -1124,7 +1263,7 @@ pub fn set_branch_profile(b: &str, names: &[String], dry: bool) -> Result<(), Ve
             _ => json!(names),
         };
         put(&mut doc, &["profile".to_string()], pick);
-        pick_ok(&file, Layer::Branch, &doc)?;
+        pick_ok(&file, Layer::Branch, &doc, b)?;
         if !dry {
             write_file(&file, &doc)?;
         }
@@ -1149,7 +1288,7 @@ fn write_file(file: &str, doc: &Value) -> Res<()> {
         })
 }
 
-fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<()> {
+fn set(file: &str, kind: Layer, b: &str, path: &str, value: &str, as_json: bool) -> Res<()> {
     let segs = segments(path)?;
     let v = if as_json {
         match one_value(value) {
@@ -1171,7 +1310,7 @@ fn set(file: &str, kind: Layer, path: &str, value: &str, as_json: bool) -> Res<(
         }
     }
     put(&mut doc, &segs, v);
-    write(file, kind, &doc, &segs)
+    write(file, kind, &doc, &segs, b)
 }
 
 /// <value> as the boolean or number its key's type is; None leaves it a
@@ -1185,11 +1324,11 @@ fn typed(ty: Option<Ty>, value: &str) -> Option<Value> {
     }
 }
 
-fn unset(file: &str, kind: Layer, path: &str) -> Res<()> {
+fn unset(file: &str, kind: Layer, b: &str, path: &str) -> Res<()> {
     let segs = segments(path)?;
     let mut doc = layer(file, None)?;
     remove(&mut doc, &segs);
-    write(file, kind, &doc, &segs)
+    write(file, kind, &doc, &segs, b)
 }
 
 fn remove<S: AsRef<str>>(doc: &mut Value, path: &[S]) -> Option<Value> {
@@ -1349,17 +1488,17 @@ fn cli(argv: &[String]) -> Res<String> {
             if ["--global", "--repo", "--branch"].iter().filter(|f| has(f)).count() > 1 {
                 return err(format!("{verb} takes at most one of --global, --repo and --branch"));
             }
-            let (file, kind) = target_file(has("--global"), has("--repo"), &branch_opt)?;
+            let (file, kind, b) = target_file(has("--global"), has("--repo"), &branch_opt)?;
             if verb == "unset" {
                 if n != 1 {
                     needs(verb, "<path>");
                 }
-                unset(&file, kind, arg(0))?;
+                unset(&file, kind, &b, arg(0))?;
             } else {
                 if n != 2 {
                     needs(verb, "<path> <value>");
                 }
-                set(&file, kind, arg(0), arg(1), has("--json"))?;
+                set(&file, kind, &b, arg(0), arg(1), has("--json"))?;
             }
             Ok(String::new())
         }
@@ -1377,7 +1516,7 @@ fn get_cmd(args: &[&str], flags: &[&str], branch_opt: &str) -> Res<String> {
         if args.len() != 1 {
             needs("get", "<path> alone with --global, --repo or --branch");
         }
-        let (file, kind) = target_file(has("--global"), has("--repo"), branch_opt)?;
+        let (file, kind, _) = target_file(has("--global"), has("--repo"), branch_opt)?;
         return get_layer(&file, kind, arg(0), has("--json"));
     }
     if !(args.len() == 1 || args.len() == 2) {
@@ -1448,6 +1587,15 @@ mod tests {
             ["settings.interval: global file only", "settings.remote: global or repo file only"]
         );
         assert!(probs(json!({"settings": {"remote": "x", "interval": 5}}), Layer::Global).is_empty());
+    }
+
+    #[test]
+    fn a_committed_file_takes_what_a_repo_file_does_but_remote() {
+        assert!(probs(json!({"settings": {"verify": "make"}, "profile": "p", "profiles": {"p": {}}}), Layer::Committed).is_empty());
+        assert_eq!(
+            probs(json!({"settings": {"remote": "fork"}}), Layer::Committed),
+            ["settings.remote: each clone's own: global or repo file only"]
+        );
     }
 
     #[test]

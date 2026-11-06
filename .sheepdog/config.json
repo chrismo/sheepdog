@@ -1,0 +1,12 @@
+{
+  "settings": {
+    "verify": "cargo test --no-run",
+    "implementAllow": [
+      "Bash(cargo test --test *)",
+      "Bash(cargo test --lib *)",
+      "Bash(cargo clippy *)",
+      "Bash(rwx results *)",
+      "Bash(rwx logs *)"
+    ]
+  }
+}
