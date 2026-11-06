@@ -189,7 +189,9 @@ which this repo commits in `.sheepdog/config.json` with `settings.verify`.
 `.sheepdog/config.json` is the committed config layer (#456), between the
 global file and `.git/sheepdog.json`: sd reads it from the branch's base
 commit, as it reads `.sheepdog/*.md`, so a change to it applies to a branch
-only once it's on main and the branch is restacked. `sd config files` names
+only once it's on main and the branch is restacked. The default branch has no
+base commit: it reads its own tip's file (and no `.sheepdog/*.md`), so a
+commit to main changes main's config at once. `sd config files` names
 the commit it read. Anything every clone needs goes there; a setting for one
 clone goes in `.git/sheepdog.json` (`sd config set --repo`), which overrides it.
 

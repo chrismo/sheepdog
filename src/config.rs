@@ -47,9 +47,10 @@ Layers (top wins; sd config files prints the paths):
   profile   the same, for the names the repo file's profile key picks
   committed .sheepdog/config.json in the commit a step reads the branch's
             guidance from (its base pin, else where it forked from the
-            default branch; for the default branch, detached HEAD and
-            --no-branch, the default branch's tip), so no branch changes its
-            own; it takes what the repo file does (#456)
+            default branch), so no branch changes its own; the default
+            branch, detached HEAD and --no-branch, which have no such
+            commit, read the default branch's tip, so a commit there does
+            change its own; it takes what the repo file does (#456)
   profile   the same, for the names the committed file's profile key picks
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
