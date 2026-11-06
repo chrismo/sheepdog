@@ -620,7 +620,7 @@ fn object(text: Option<&str>, file: &str) -> Res<Value> {
     text.and_then(one_value).filter(Value::is_object).map_or_else(|| err(format!("not a JSON object: {file}")), Ok)
 }
 
-const COMMITTED: &str = ".sheepdog/config.json";
+pub const COMMITTED: &str = ".sheepdog/config.json";
 
 /// The remote the global and repo files set: what the committed layer's
 /// commit is found with (that file can't set one, so this is the remote

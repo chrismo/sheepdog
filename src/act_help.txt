@@ -383,8 +383,10 @@ then sd act push, which releases it. A later agent commit there holds it
 again. Protected paths: settings.protectedPaths; else
 .sheepdog/protected-paths in the base commit (one per line, # comments);
 else .github/workflows/ .github/actions/ .rwx/ .captain/ .circleci/
-.gitlab-ci.yml .buildkite/; unless the setting is set,
-.sheepdog/protected-paths itself too. Each covers itself and what's under it.
+.gitlab-ci.yml .buildkite/; unless the setting is set, also
+.sheepdog/protected-paths itself and .sheepdog/config.json (the committed
+config, which can set the setting and implementAllow). Each covers itself
+and what's under it.
 
 Questions (#167): when implement, a review-fix round, address or ci-fix
 needs chrismo (outcome needs-input, or an item marked ask), the question is

@@ -15,8 +15,9 @@ const PROTECTED_FILE: &str = ".sheepdog/protected-paths";
 /// .sheepdog/protected-paths in the <base> commit, which the branch's agent
 /// can't rewrite (one per line, # comments); else the defaults. An empty
 /// <base> skips the file, as step_guidance does. Unless the setting is set,
-/// the file is itself protected: an agent emptying it would unprotect every
-/// branch after it merges.
+/// the file is itself protected, and so is the committed config (#456), which
+/// can set the setting and implementAllow: an agent editing either would
+/// change every branch after it merges.
 fn protected_paths(b: &str, base: &str) -> Vec<String> {
     let set = match crate::config::get_text("settings.protectedPaths", b, false) {
         Ok(set) => Some(set),
@@ -42,7 +43,7 @@ fn paths_in(dir: &str, set: Option<&str>, base: &str) -> Vec<String> {
     } else {
         PROTECTED_DEFAULT.iter().map(|p| p.to_string()).collect()
     };
-    paths.push(PROTECTED_FILE.to_string());
+    paths.extend([PROTECTED_FILE, crate::config::COMMITTED].map(str::to_string));
     paths
 }
 
@@ -207,7 +208,7 @@ mod tests {
             paths_in(&r.dir, None, "HEAD"),
             strings(&[
                 ".github/workflows/", ".github/actions/", ".rwx/", ".captain/", ".circleci/", ".gitlab-ci.yml", ".buildkite/",
-                ".sheepdog/protected-paths"
+                ".sheepdog/protected-paths", ".sheepdog/config.json"
             ])
         );
     }
@@ -219,9 +220,9 @@ mod tests {
         commit(&r, ".sheepdog/protected-paths", "# ours\n.github/\n\n  deploy/pipeline.yml  # the deploy\n");
         let base = r.git(&["rev-parse", "HEAD"]);
         commit(&r, ".sheepdog/protected-paths", "nothing\n");
-        assert_eq!(paths_in(&r.dir, None, &base), strings(&[".github/", "deploy/pipeline.yml", ".sheepdog/protected-paths"]));
+        assert_eq!(paths_in(&r.dir, None, &base), strings(&[".github/", "deploy/pipeline.yml", ".sheepdog/protected-paths", ".sheepdog/config.json"]));
         commit(&r, ".sheepdog/protected-paths", "# none\n");
-        assert_eq!(paths_in(&r.dir, None, "HEAD"), strings(&[".sheepdog/protected-paths"]));
+        assert_eq!(paths_in(&r.dir, None, "HEAD"), strings(&[".sheepdog/protected-paths", ".sheepdog/config.json"]));
         // No base: the default list.
         assert_eq!(paths_in(&r.dir, None, ""), paths_in(&r.dir, None, "HEAD~3"));
     }
