@@ -33,7 +33,7 @@
 @media (prefers-color-scheme: dark) { :root[data-pal="heather"]:not([data-theme="light"]) { --bg: #1b1915; --surface: #25221d; --ink: #ece7dc; --muted: #a39d90; --line: #38342c; --you: #e3b23c; --agent: #b58ac8; --run: #9bbd6a; --wait: #8db0c4; --red: #e0705f; --done: #7f7a6f; color-scheme: dark; } }
 :root[data-pal="heather"][data-theme="dark"] { --bg: #1b1915; --surface: #25221d; --ink: #ece7dc; --muted: #a39d90; --line: #38342c; --you: #e3b23c; --agent: #b58ac8; --run: #9bbd6a; --wait: #8db0c4; --red: #e0705f; --done: #7f7a6f; color-scheme: dark; }
 
-/* Lamplight: dark-first night watch: lantern amber, dusk violet, moonlight on water */
+/* Lamplight: night watch: lantern amber, dusk violet, moonlight on water */
 :root[data-pal="lamp"] { --bg: #ecebf1; --surface: #f8f7fb; --ink: #1f1b24; --muted: #625c6a; --line: #d9d6e2; --you: #aa5f0a; --agent: #7d4cc4; --run: #2d7a3f; --wait: #23708a; --red: #c0392b; --done: #8e8796; }
 @media (prefers-color-scheme: dark) { :root[data-pal="lamp"]:not([data-theme="light"]) { --bg: #15131a; --surface: #1f1c25; --ink: #efe9df; --muted: #a59fae; --line: #332f3b; --you: #ffb347; --agent: #c3a3ff; --run: #8fd39a; --wait: #7ccbe3; --red: #ff6b5e; --done: #6f6a78; color-scheme: dark; } }
 :root[data-pal="lamp"][data-theme="dark"] { --bg: #15131a; --surface: #1f1c25; --ink: #efe9df; --muted: #a59fae; --line: #332f3b; --you: #ffb347; --agent: #c3a3ff; --run: #8fd39a; --wait: #7ccbe3; --red: #ff6b5e; --done: #6f6a78; color-scheme: dark; }
