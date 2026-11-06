@@ -43,7 +43,9 @@ fn block(state: &str) -> String {
     lines.extend(failure_lines(&repos));
     lines.push(launchd_line(launchctl_print()));
     lines.push(crate::stamp::status_line());
-    lines.push(format!("logs: {state}/launchd.log, {state}/steps.log"));
+    let streams = crate::logs::stream::dir();
+    let log = |name| streams.join(name).display().to_string();
+    lines.push(format!("logs: {}, {}", log(crate::logs::stream::LAUNCHD), log(crate::logs::stream::STEPS)));
     lines.iter().map(|l| format!("{l}\n")).collect()
 }
 

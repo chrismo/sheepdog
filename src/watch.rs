@@ -10,6 +10,7 @@ pub use pass::repo_key;
 
 use crate::config::{self, state_dir};
 use crate::git::{git_out, rebase_head};
+use crate::logs;
 use crate::proc::{self, executable};
 use std::fs;
 use std::io::Write;
@@ -168,9 +169,14 @@ fn install() -> ExitCode {
             die(format!("can't create {d}: {e}"));
         }
     }
+    // Before launchd makes it by the umask.
+    let (streams, launchd) = (logs::stream::dir(), logs::stream::LAUNCHD);
+    if let Err(e) = logs::stream::open(&streams, launchd) {
+        die(format!("can't make {}/{launchd}: {e}", streams.display()));
+    }
     // 0600 whatever the umask, as the bash's mktemp made it.
     let tmp = format!("{plist_file}.{}.tmp", std::process::id());
-    let text = plist(&prog, &interval, &path, &format!("{state}/launchd.log"));
+    let text = plist(&prog, &interval, &path, &streams.join(launchd).to_string_lossy());
     let wrote = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp);
     if let Err(e) = wrote.and_then(|mut f| f.write_all(text.as_bytes())) {
         let _ = fs::remove_file(&tmp);

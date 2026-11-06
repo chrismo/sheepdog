@@ -18,6 +18,7 @@ use serde_json::Value;
 use sheepdog::next::steps;
 use sheepdog::{running, time};
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -122,6 +123,11 @@ fn name_of(p: &Path) -> &str {
 /// `$(cat <p> 2>/dev/null)`: its text, chomped, or "" when there's none.
 fn cat(p: &Path) -> String {
     chomp(&fs::read_to_string(p).unwrap_or_default())
+}
+
+/// <p>'s permission bits.
+fn mode(p: &Path) -> u32 {
+    fs::metadata(p).unwrap_or_else(|e| panic!("{}: {e}", p.display())).mode() & 0o777
 }
 
 fn executable(p: &str) -> bool {
@@ -3014,7 +3020,24 @@ fn install_paths_are_xml_escaped() {
     sd.env.iter_mut().find(|(k, _)| k == "SHEEPDOG_STATE_DIR").unwrap().1 = state.clone();
     sd.ok(&["install"]);
     lint(&plist);
-    assert_eq!(extract(&plist, "StandardOutPath"), format!("{state}/launchd.log"));
+    assert_eq!(extract(&plist, "StandardOutPath"), format!("{state}/logs/streams/launchd.log"));
+}
+
+// The log store's streams (#467): install makes launchd.log before launchd
+// can, private, as launchd would make it by the umask.
+#[test]
+fn install_makes_the_launchd_log_stream_private_before_the_job_starts_467() {
+    if no_plutil() {
+        return;
+    }
+    let mut sd = sd();
+    let plist = sd.setup_launchd();
+    sd.ok(&["install"]);
+    let log = sd.tmp.join("state/logs/streams/launchd.log");
+    assert_eq!(extract(&plist, "StandardOutPath"), log.to_string_lossy());
+    assert_eq!(extract(&plist, "StandardErrorPath"), log.to_string_lossy());
+    assert_eq!(mode(&log), 0o600);
+    assert_eq!(mode(log.parent().unwrap()), 0o700);
 }
 
 // ── settings via sd config: the global file over the defaults ───────────────
@@ -3191,7 +3214,7 @@ impl Sd {
 
     /// What the steps the pass launched printed.
     fn steps_log(&self) -> String {
-        cat(&self.tmp.join("state/steps.log"))
+        cat(&self.tmp.join("state/logs/streams/steps.log"))
     }
 
     /// <b>'s failure record (#242), else "".
@@ -3988,6 +4011,42 @@ fn log_a_launched_steps_output_sits_between_a_header_and_an_end_line_in_steps_lo
     assert_match(&log, r"ran sd act push: ok \(\ds\)$");
 }
 
+// The log store's streams (#467).
+#[test]
+fn a_launched_steps_output_goes_to_the_steps_log_stream_private_467() {
+    let sd = sd();
+    sd.dispatching();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    sd.settle("feat");
+    let _ = sd.acts();
+    let streams = sd.tmp.join("state/logs/streams");
+    assert_has(&sd.steps_log(), &["did push\n"]);
+    assert_eq!(mode(&streams.join("steps.log")), 0o600);
+    assert_eq!(mode(&streams), 0o700);
+    assert!(!sd.tmp.join("state/steps.log").exists(), "not where it was");
+}
+
+#[test]
+fn a_pass_rotates_the_streams_past_log_stream_bytes_keeping_log_stream_files_467() {
+    let sd = sd();
+    sd.verb_ok("config", &["set", "--global", "settings.logStreamBytes", "10"]);
+    sd.verb_ok("config", &["set", "--global", "settings.logStreamFiles", "2"]);
+    let streams = sd.tmp.join("state/logs/streams");
+    fs::create_dir_all(&streams).unwrap();
+    fs::write(streams.join("steps.log"), "a step's output\n").unwrap();
+    fs::write(streams.join("steps.log.1"), "older\n").unwrap();
+    fs::write(streams.join("launchd.log"), "short\n").unwrap();
+    sd.ps_fixture("feat", &[]);
+    sd.pass();
+    assert_eq!(cat(&streams.join("steps.log.1")), "a step's output");
+    assert!(!streams.join("steps.log.2").exists(), "two kept, the live one included");
+    assert_eq!(cat(&streams.join("steps.log")), "");
+    assert_eq!(mode(&streams.join("steps.log")), 0o600);
+    assert_eq!(cat(&streams.join("launchd.log")), "short", "under the size, it stays");
+    assert_eq!(mode(&streams.join("launchd.log")), 0o600);
+}
+
 #[test]
 fn status_adds_the_jobs_diagnosis_after_the_pass_364() {
     let sd = sd();
@@ -4001,7 +4060,7 @@ fn status_adds_the_jobs_diagnosis_after_the_pass_364() {
     assert_lacks(&block, "usage limit");
     assert_lacks(&block, "failures");
     assert_has(&block, &["launchd: com.sheepdog.watch loaded, state not running, 510 runs, last exit 0, every 300 seconds; program /h/.local/bin/sd\n"]);
-    assert_has(&block, &[&format!("logs: {0}/launchd.log, {0}/steps.log", sd.path("state"))]);
+    assert_has(&block, &[&format!("logs: {0}/logs/streams/launchd.log, {0}/logs/streams/steps.log", sd.path("state"))]);
     assert_eq!(sd.launchctl(), format!("print gui/{}/com.sheepdog.watch", uid()));
     let r = sd.run(&["status"]);
     assert_has(&r.output, &["repo  feat  ✅"]);

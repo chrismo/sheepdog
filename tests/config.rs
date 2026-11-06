@@ -1960,6 +1960,16 @@ fn validate_vacuum_after_can_only_be_set_in_the_global_file_as_whole_seconds() {
     global_file_only("vacuumAfter", r#"{"settings":{"vacuumAfter":60}}"#);
 }
 
+// The log store's streams (#467): sd watch's launchd.log and steps.log.
+#[test]
+fn validate_the_log_stream_limits_default_to_10_mib_by_3_and_are_global_file_only() {
+    let sd = Sd::new();
+    assert_eq!(sd.out(&["get", "settings.logStreamBytes"]), "10485760");
+    assert_eq!(sd.out(&["get", "settings.logStreamFiles"]), "3");
+    global_file_only("logStreamBytes", r#"{"settings":{"logStreamBytes":1000}}"#);
+    global_file_only("logStreamFiles", r#"{"settings":{"logStreamFiles":2}}"#);
+}
+
 #[test]
 fn validate_rate_limit_floor_can_only_be_set_in_the_global_file_as_whole_points() {
     global_file_only("rateLimitFloor", r#"{"settings":{"rateLimitFloor":50}}"#);

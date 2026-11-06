@@ -791,7 +791,7 @@ impl Watch {
 
     /// Launch the branch's first NEXT step when it's one a pass runs: one
     /// attempt, under the watch timeout, waiting only till its lease is
-    /// taken. Its output goes to steps.log in the state dir; its pass line
+    /// taken. Its output goes to the steps.log stream; its pass line
     /// to stderr, the job's log. Not while sd state reports errors or is
     /// unsure. Only the job's pass launches, and not while the rate limit
     /// stops it (<launch> false); a refresh, a vacuum or a stopped pass
@@ -847,7 +847,7 @@ impl Watch {
     /// `sd watch step` for <step> on <b>, in a session of its own, so the
     /// pass's end and launchd's cleanup of its job leave it running.
     fn launch(&self, repo: &str, step: &str, b: &str) -> std::io::Result<()> {
-        let log = fs::OpenOptions::new().create(true).append(true).open(format!("{}/steps.log", self.state))?;
+        let log = logs::stream::open(&logs::stream::dir(), logs::stream::STEPS)?;
         let mut c = Command::new(proc::sd_itself()?);
         c.args(["watch", "step", &self.timeout.to_string(), step, b])
             .current_dir(repo)
@@ -1121,6 +1121,9 @@ pub fn pass() -> ExitCode {
     let mut w = Watch::new();
     w.dispatch = true;
     w.pass();
+    if let Err(e) = logs::stream::rotate_all(|k| config::get_global(k, false).unwrap_or_default()) {
+        log::say(&format!("sd watch: couldn't rotate the logs in {}: {e}", logs::stream::dir().display()));
+    }
     ExitCode::SUCCESS
 }
 
