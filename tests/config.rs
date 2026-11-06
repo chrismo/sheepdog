@@ -3265,7 +3265,7 @@ fn committed_a_bad_file_names_the_commit_and_path_and_follows_the_repo_files_rul
 /// too, so it names the git that moves feat off it.
 fn off_base(sha: &str) -> String {
     format!(
-        "{}:.sheepdog/config.json is feat's base: fix it on main, then git rebase --onto main {sha} feat && git update-ref refs/sheepdog/feat/base main",
+        "{}:.sheepdog/config.json is feat's base: fix it on the branch feat is based on (<parent>), then git rebase --onto <parent> {sha} feat && git update-ref refs/sheepdog/feat/base <parent>",
         short(sha)
     )
 }
