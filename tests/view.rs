@@ -1686,15 +1686,10 @@ fn the_pages_carry_the_sheepdog_art_which_sd_view_serves() {
         assert_has(&s.get(page).2, &[r#"<link rel="icon" type="image/png" href="/img/sheepdog.png">"#, r#"src="/img/sheepdog.png""#]);
     }
     let (path, file) = ("/img/sheepdog.png", "sheepdog-four-color.png");
-    let mut c = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
-    write!(c, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", s.port).unwrap();
-    let mut resp = Vec::new();
-    c.read_to_end(&mut resp).unwrap();
-    let at = resp.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
-    let head = String::from_utf8_lossy(&resp[..at]).to_lowercase();
+    let (head, body) = get_bytes(&s, path);
     assert_has(&head, &["200 ok", "content-type: image/png"]);
     let want = fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("img").join(file)).unwrap();
-    assert!(resp[at + 4..] == want[..], "{path} isn't img/{file}");
+    assert!(body == want, "{path} isn't img/{file}");
     assert_eq!(s.ask("GET", path, &format!("evil.example:{}", s.port)).0, 403, "{path}");
 }
 
