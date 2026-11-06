@@ -19,10 +19,10 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   stops moving. Each branch is a fence line, grouped by who moves next: its
   seven stages are posts, a tally stroke on each one done, a cross on a
   failing one, and a paint mark in the mover's color where it stands; a
-  stage not set up has no post. A branch's timeline has its PR's commits, CI and merge from
-  GitHub (gh). A branch is there from its first pass, and stays until the
-  watcher drops its cache: after it's unenrolled, or once its merge is
-  notified.
+  stage not set up has no post. A branch's timeline has its PR's commits,
+  CI and merge from GitHub (gh). A branch is there from its first pass, and
+  stays until the watcher drops its cache: after it's unenrolled, or once
+  its merge is notified.
 
   The Atlas (/atlas, linked from the Flock and the Map) is the workflow
   itself, generated from the code so it can't drift: every NEXT step by the

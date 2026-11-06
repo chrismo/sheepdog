@@ -172,7 +172,7 @@ function fence(b) {
 
 function row(b) {
   const L = b.lead;
-  return `<div class="run" style="--gc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" role="link" aria-label="${esc(b.branch)}: open">
+  return `<div class="run" style="--gc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
     <div class="who"><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span>${prLink(b)}${usd(b)}${checked(b)}</div></div>
     ${fence(b)}
     <div class="next"><span class="say">${esc(L.say)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
