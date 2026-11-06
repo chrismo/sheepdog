@@ -253,12 +253,15 @@ fn trusted_base_in(dir: &str, b: &str, refs: &BaseRefs) -> Option<String> {
 }
 
 /// The commit <b>'s committed config is read from: trusted_base, else for
-/// no branch ("") or the default branch, the default branch's tip, the
-/// remote's or else the local one. None when neither qualifies.
+/// no branch (""), the default branch or a branch not made yet (sd act start
+/// checks its profile pick first: it has no commits of its own), the default
+/// branch's tip, the remote's or else the local one. None when neither
+/// qualifies.
 pub fn config_base(dir: &str, b: &str, remote: &str) -> Option<String> {
     let refs = BaseRefs::read(dir, b, remote);
     let base = if b.is_empty() { None } else { trusted_base_in(dir, b, &refs) };
-    base.or_else(|| (b.is_empty() || refs.default_branch().as_deref() == Some(b)).then(|| refs.default_tip()).flatten())
+    let tip = b.is_empty() || refs.sha(&format!("refs/heads/{b}")).is_none() || refs.default_branch().as_deref() == Some(b);
+    base.or_else(|| tip.then(|| refs.default_tip()).flatten())
 }
 
 /// One entry of git worktree list --porcelain. branch is the branch checked

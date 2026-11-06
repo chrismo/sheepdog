@@ -48,10 +48,10 @@ Layers (top wins; sd config files prints the paths):
   committed .sheepdog/config.json in the commit a step reads the branch's
             guidance from (its base pin, else where it forked from the
             default branch), so no branch changes its own; the default
-            branch, detached HEAD and --no-branch, which have no such
-            commit, read the default branch's tip, so a commit there does
-            change its own; it takes what the repo file does but
-            settings.remote (#456)
+            branch, detached HEAD, --no-branch and a branch not made yet,
+            which have no such commit, read the default branch's tip (the
+            remote's first), so a commit there changes its own once pushed;
+            it takes what the repo file does but settings.remote (#456)
   profile   the same, for the names the committed file's profile key picks
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
@@ -1171,7 +1171,7 @@ fn paths(b: &str, no_branch: bool) -> Res<String> {
     let gf = global_file();
     let mut out = file_line("global", &gf);
     // Read only for the remote: a broken file mustn't hide where the files are.
-    let lenient = |f: &str| layer(f, None).unwrap_or_else(|_| json!({}));
+    let lenient = |f: &str| object(fs::read_to_string(f).ok().as_deref(), f).unwrap_or_else(|_| json!({}));
     let rf = repo_file(".");
     let remote = local_remote(&lenient(&gf), &rf.as_deref().map_or_else(|| json!({}), lenient));
     out += &match committed_commit(".", branch.as_deref().unwrap_or(""), &remote, rf.is_some()) {
