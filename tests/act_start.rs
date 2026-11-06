@@ -816,6 +816,19 @@ fn start_profile_is_in_the_branch_file_before_implement_so_its_first_verify_is_t
 }
 
 #[test]
+fn start_profile_a_profile_only_the_committed_config_defines_456() {
+    let sd = sd();
+    fs::create_dir(sd.cwd.join(".sheepdog")).unwrap();
+    sd.write(".sheepdog/config.json", r#"{"profiles": {"billing": {"settings": {"verify": "echo billing-verify"}}}}"#);
+    sd.git(&["add", ".sheepdog/config.json"]);
+    sd.git(&["commit", "-qm", "config"]);
+    sd.git(&["push", "-q", "origin", "main"]);
+    let r = sd.run_sep(&["start", "--no-implement", "--profile", "billing", "feat-x"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_eq!(chomp(&sd.verb_ok("config", &["get", "settings.verify", "feat-x"])), "echo billing-verify");
+}
+
+#[test]
 fn start_profile_twice_writes_a_list_the_later_winning_293() {
     let sd = sd();
     sd.write_global(
