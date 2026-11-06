@@ -48,17 +48,18 @@ const GH_JS: &str = include_str!("view/gh.js");
 /// The files the pages load as they are: the look (theme.css, its picks in
 /// theme.js), the fonts it names (fonts/, each under the SIL Open Font
 /// License beside it), and the official art, four-color: the dog beside each
-/// page's title, and the tab icon.
-const FILES: [(&str, &str, &[u8]); 9] = [
-    ("/theme.css", "text/css; charset=utf-8", include_bytes!("view/theme.css")),
-    ("/theme.js", "text/javascript; charset=utf-8", include_bytes!("view/theme.js")),
-    ("/fonts/atkinson-hyperlegible-next.woff2", "font/woff2", include_bytes!("../fonts/atkinson-hyperlegible-next.woff2")),
-    ("/fonts/atkinson-hyperlegible-mono.woff2", "font/woff2", include_bytes!("../fonts/atkinson-hyperlegible-mono.woff2")),
-    ("/fonts/londrina-solid.woff2", "font/woff2", include_bytes!("../fonts/londrina-solid.woff2")),
-    ("/fonts/alfa-slab-one.woff2", "font/woff2", include_bytes!("../fonts/alfa-slab-one.woff2")),
-    ("/fonts/big-shoulders-display.woff2", "font/woff2", include_bytes!("../fonts/big-shoulders-display.woff2")),
-    ("/fonts/familjen-grotesk.woff2", "font/woff2", include_bytes!("../fonts/familjen-grotesk.woff2")),
-    ("/img/sheepdog.png", "image/png", include_bytes!("../img/sheepdog-four-color.png")),
+/// page's title, and the tab icon. Each with its Cache-Control: the look
+/// changes with a build and must show at once; the fonts and art don't.
+const FILES: [(&str, &str, &str, &[u8]); 9] = [
+    ("/theme.css", "text/css; charset=utf-8", NO_STORE, include_bytes!("view/theme.css")),
+    ("/theme.js", "text/javascript; charset=utf-8", NO_STORE, include_bytes!("view/theme.js")),
+    ("/fonts/atkinson-hyperlegible-next.woff2", "font/woff2", A_DAY, include_bytes!("../fonts/atkinson-hyperlegible-next.woff2")),
+    ("/fonts/atkinson-hyperlegible-mono.woff2", "font/woff2", A_DAY, include_bytes!("../fonts/atkinson-hyperlegible-mono.woff2")),
+    ("/fonts/londrina-solid.woff2", "font/woff2", A_DAY, include_bytes!("../fonts/londrina-solid.woff2")),
+    ("/fonts/alfa-slab-one.woff2", "font/woff2", A_DAY, include_bytes!("../fonts/alfa-slab-one.woff2")),
+    ("/fonts/big-shoulders-display.woff2", "font/woff2", A_DAY, include_bytes!("../fonts/big-shoulders-display.woff2")),
+    ("/fonts/familjen-grotesk.woff2", "font/woff2", A_DAY, include_bytes!("../fonts/familjen-grotesk.woff2")),
+    ("/img/sheepdog.png", "image/png", A_DAY, include_bytes!("../img/sheepdog-four-color.png")),
 ];
 const PORT: u16 = 7377;
 const BODY_MAX: usize = 4096;
@@ -254,23 +255,27 @@ fn write(route: &str, req: &Request, port: u16, token: &str, state: &Path) -> (&
     (status, "text/plain", body)
 }
 
-/// Every route sd view serves, behind the one Host check.
-fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, Vec<u8>) {
+const NO_STORE: &str = "no-store";
+const A_DAY: &str = "max-age=86400";
+
+/// Every route sd view serves, behind the one Host check: the status, the
+/// content type, the Cache-Control and the body.
+fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str, &'static str, &'static str, Vec<u8>) {
     let ours = guard::hosts(port);
     if !ours.contains(&req.host) {
-        return ("403 Forbidden", "text/plain", format!("sd view answers to {} only\n", ours.join(" or ")).into());
+        return ("403 Forbidden", "text/plain", NO_STORE, format!("sd view answers to {} only\n", ours.join(" or ")).into());
     }
     let (route, query) = req.path.split_once('?').unwrap_or((&req.path, ""));
     let (status, ctype, body) = if WRITES.contains(&route) {
         write(route, req, port, token, state)
     } else if req.method != "GET" {
         ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into())
-    } else if let Some((_, ctype, bytes)) = FILES.iter().find(|(p, ..)| *p == route) {
-        return ("200 OK", ctype, bytes.to_vec());
+    } else if let Some((_, ctype, cache, bytes)) = FILES.iter().find(|(p, ..)| *p == route) {
+        return ("200 OK", ctype, cache, bytes.to_vec());
     } else {
         get(route, query, token, state)
     };
-    (status, ctype, body.into_bytes())
+    (status, ctype, NO_STORE, body.into_bytes())
 }
 
 fn get(route: &str, query: &str, token: &str, state: &Path) -> (&'static str, &'static str, String) {
@@ -326,10 +331,7 @@ fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let mut r = BufReader::new((&stream).take(16 * 1024));
     let Some(req) = read_request(&mut r) else { return };
-    let (status, ctype, body) = respond(&req, port, token, state);
-    // Fonts and art don't change between builds; the pages, theme.css and
-    // theme.js do, and a rebuilt sd view must show at once.
-    let cache = if ctype.starts_with("font/") || ctype == "image/png" { "max-age=86400" } else { "no-store" };
+    let (status, ctype, cache, body) = respond(&req, port, token, state);
     let mut w = &stream;
     let _ = write!(
         w,

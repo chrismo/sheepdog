@@ -169,7 +169,8 @@ function fence(b) {
       const c = color(s.who);
       return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:${c}">${splotch(b.id + k, c)}${t}</span>`;
     }
-    return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:var(--red)">${(MARK[s.status] || MARK.todo)()}${t}</span>`;
+    const name = s.status === "skip" ? "" : ` data-s="${label}"`;
+    return `<span class="p"${name} title="${esc(title)}" style="--pc:var(--red)">${(MARK[s.status] || MARK.todo)()}${t}</span>`;
   }).join("");
   const heard = STAGES.map(([k, label]) => `${label} ${said(k)}`).join(", ");
   return `<div class="fence" style="--reach:${reach}" role="img" aria-label="${esc(heard)}">${posts}</div>`;

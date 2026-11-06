@@ -1750,6 +1750,11 @@ fn sd_view_serves_every_font_the_look_names_from_fonts() {
         assert_has(&fs::read_to_string(&license).unwrap_or_else(|e| panic!("{}: {e}", license.display())), &["SIL Open Font License"]);
     }
     assert_eq!(s.get("/fonts/nope.woff2").0, 404);
+    assert_has(&get_bytes(&s, "/img/sheepdog.png").0, &["cache-control: max-age="]);
+    // What a rebuild changes must show at once.
+    for path in ["/", "/atlas", "/map", "/theme.css", "/theme.js", "/gh.js"] {
+        assert_has(&get_bytes(&s, path).0, &["cache-control: no-store"]);
+    }
 }
 
 // The tells of a generated dashboard (stripes and bars of color, pills,
