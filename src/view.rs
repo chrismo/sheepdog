@@ -327,10 +327,13 @@ fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     let mut r = BufReader::new((&stream).take(16 * 1024));
     let Some(req) = read_request(&mut r) else { return };
     let (status, ctype, body) = respond(&req, port, token, state);
+    // Fonts and art don't change between builds; the pages, theme.css and
+    // theme.js do, and a rebuilt sd view must show at once.
+    let cache = if ctype.starts_with("font/") || ctype == "image/png" { "max-age=86400" } else { "no-store" };
     let mut w = &stream;
     let _ = write!(
         w,
-        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     let _ = w.write_all(&body);

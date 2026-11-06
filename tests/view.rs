@@ -1744,7 +1744,7 @@ fn sd_view_serves_every_font_the_look_names_from_fonts() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
     for file in &named {
         let (head, body) = get_bytes(&s, &format!("/fonts/{file}"));
-        assert_has(&head, &["200 ok", "content-type: font/woff2"]);
+        assert_has(&head, &["200 ok", "content-type: font/woff2", "cache-control: max-age="]);
         assert!(body == fs::read(dir.join(file)).unwrap(), "/fonts/{file} isn't fonts/{file}");
         let license = dir.join(file.replace(".woff2", ".OFL.txt"));
         assert_has(&fs::read_to_string(&license).unwrap_or_else(|e| panic!("{}: {e}", license.display())), &["SIL Open Font License"]);

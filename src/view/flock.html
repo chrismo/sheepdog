@@ -86,9 +86,8 @@ details.tl[open] > summary { margin-bottom: 10px; }
 @media (max-width: 820px) {
   .cols { display: none; }
   .run { grid-template-columns: 1fr; gap: 10px; }
-  .fence { height: 56px; }
+  .fence { height: 56px; margin-bottom: 12px; }
   .fence .p::before { content: attr(data-s); position: absolute; top: -4px; font-size: 0.66rem; color: var(--muted); }
-  .fence .p .t { display: none; }
 }
 </style>
 </head>
@@ -185,8 +184,10 @@ function row(b) {
   </article>`;
 }
 
-const KEY = `<span>${MARK.todo()}to do</span><span>${MARK.done()}done</span>` +
-  `<span>${splotch("key", "var(--muted)")}where it stands, painted the color of whoever moves next</span><span>${MARK.red()}failing</span>`;
+const MOVERS = [["you", "you"], ["agent", "the agent"], ["run", "sheepdog"], ["wait", "no one: waiting"]];
+const KEY = `<span>${MARK.todo()}to do</span><span>${MARK.done()}done</span><span>${MARK.red()}failing</span><span>no post: not set up</span>` +
+  `<span>${splotch("key", "var(--muted)")}where it stands, painted for who moves next: ` +
+  MOVERS.map(([w, name]) => `<b style="color:${color(w)}">${name}</b>`).join(", ") + `</span>`;
 
 function render(f) {
   const bs = f.branches, repos = new Set(bs.map(b => b.repo)).size;
