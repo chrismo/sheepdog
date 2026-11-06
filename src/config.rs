@@ -605,24 +605,32 @@ fn committed_label(commit: &str) -> String {
 
 /// The committed layer at <commit>, checked as a committed file; {} when the
 /// commit has no .sheepdog/config.json. A renamed key is read under its new
-/// name; the commit can't be rewritten. A bad file fails every read on its
-/// base, as a bad local file does, and its errors name the way out.
+/// name; the commit can't be rewritten.
 fn committed_doc(dir: &str, commit: &str) -> Res<Value> {
     let Some(text) = committed_text(dir, commit) else { return Ok(json!({})) };
     let label = committed_label(commit);
-    let read = || {
-        let mut doc = object(Some(&text), &label)?;
-        rename_old_keys(&mut doc);
-        checked(&doc, Layer::Committed, &label)?;
-        Ok(doc)
+    let mut doc = object(Some(&text), &label)?;
+    rename_old_keys(&mut doc);
+    checked(&doc, Layer::Committed, &label)?;
+    Ok(doc)
+}
+
+/// The way off a bad committed file at <commit>, <b>'s base or (for no
+/// branch or the default branch) the default branch's tip. No local file
+/// overrides a commit, and sd act restack reads the config too, so for a
+/// branch it's the git restack would run.
+fn off_bad_commit(dir: &str, b: &str, remote: &str, commit: &str) -> String {
+    let label = committed_label(commit);
+    let def = git::default_branch(dir, remote);
+    let main = match &def {
+        Some(d) if git::show_ref(dir, &format!("refs/remotes/{remote}/{d}")) => format!("{remote}/{d}"),
+        Some(d) => d.clone(),
+        None => "the default branch".into(),
     };
-    read().map_err(|e| match e {
-        Fail::Error(mut ls) => {
-            ls.push(format!("{label}: no file here can stand in for a commit's: fix it on the default branch, then sd act restack"));
-            Fail::Error(ls)
-        }
-        e => e,
-    })
+    if b.is_empty() || def.as_deref() == Some(b) {
+        return format!("{label} is {main}'s tip: commit a fixed one to {main}");
+    }
+    format!("{label} is {b}'s base: fix it on {main}, then git rebase --onto {main} {commit} {b} && git update-ref refs/sheepdog/{b}/base {main}")
 }
 
 /// <commit>:.sheepdog/config.json's text, None when it has none; a commit's
@@ -640,11 +648,19 @@ fn committed_text(dir: &str, commit: &str) -> Option<String> {
     text
 }
 
-/// <b>'s committed layer and its commit (None when there's none).
+/// <b>'s committed layer and its commit (None when there's none). A bad file
+/// fails every read on its commit, as a bad local file does, and its errors
+/// end with the way off it.
 fn committed(dir: &str, b: &str, g: &Value, r: &Value, in_repo: bool) -> Res<(Value, Option<String>)> {
-    match committed_commit(dir, b, &local_remote(g, r), in_repo) {
-        Ok(c) => Ok((committed_doc(dir, &c)?, Some(c))),
-        Err(_) => Ok((json!({}), None)),
+    let remote = local_remote(g, r);
+    let Ok(c) = committed_commit(dir, b, &remote, in_repo) else { return Ok((json!({}), None)) };
+    match committed_doc(dir, &c) {
+        Ok(doc) => Ok((doc, Some(c))),
+        Err(Fail::Error(mut ls)) => {
+            ls.push(off_bad_commit(dir, b, &remote, &c));
+            Err(Fail::Error(ls))
+        }
+        Err(e) => Err(e),
     }
 }
 
