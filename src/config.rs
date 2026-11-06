@@ -134,7 +134,7 @@ fn defaults_but_logs() -> Value {
             "forkLimit": 100000, "reviewRounds": 3, "botTimeout": 3600, "interval": 300,
             "vacuumAfter": 604800, "rateLimitFloor": 250, "autoRun": false, "agentSteps": 2, "replyPrefix": "🤖 ",
             "verify": "", "autofix": "", "localReview": "", "botCommand": "", "notify": "",
-            "reviewPrompt": "", "implementPrompt": "", "reviewFixPrompt": "", "describePrompt": "",
+            "reviewPrompt": "", "implementPrompt": "", "reviewFixPrompt": "", "verifyFixPrompt": "", "describePrompt": "",
             "addressPrompt": "", "resolvePrompt": "", "ciFixPrompt": "",
             "botLogin": [], "botIgnore": [], "botIgnoreBody": [], "implementAllow": [],
             "flags": {
@@ -200,7 +200,7 @@ const SETTINGS: &[(&str, Ty)] = &[
     ("forkLimit", Ty::Whole), ("reviewRounds", Ty::Whole), ("replyPrefix", Ty::Str),
     ("verify", Ty::Str), ("autofix", Ty::Str), ("localReview", Ty::Str), ("botCommand", Ty::Str),
     ("botTimeout", Ty::Num), ("autoRun", Ty::Bool),
-    ("reviewPrompt", Ty::Str), ("implementPrompt", Ty::Str), ("reviewFixPrompt", Ty::Str),
+    ("reviewPrompt", Ty::Str), ("implementPrompt", Ty::Str), ("reviewFixPrompt", Ty::Str), ("verifyFixPrompt", Ty::Str),
     ("describePrompt", Ty::Str), ("addressPrompt", Ty::Str), ("resolvePrompt", Ty::Str),
     ("ciFixPrompt", Ty::Str),
     ("botLogin", Ty::List), ("botIgnore", Ty::List), ("botIgnoreBody", Ty::List),

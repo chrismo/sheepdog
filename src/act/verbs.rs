@@ -74,7 +74,7 @@ use Scope::{None as Nothing, Remote, Worktree};
 pub const VERBS: &[Verb] = &[
     // its sd act implement is a verb of its own
     v("start", Nothing, false, true, ""),
-    gated(v("implement", Worktree, true, true, "").reads(&[p("implement", "implementPrompt", "implement.md"), p("review-fix", "reviewFixPrompt", "review-fix.md")]), |steps| steps.iter().any(|s| (s["key"] == "implement" || s["key"] == "review-fix") && s["who"] == "agent"), gates::implement_rules),
+    gated(v("implement", Worktree, true, true, "").reads(&[p("implement", "implementPrompt", "implement.md"), p("review-fix", "reviewFixPrompt", "review-fix.md"), p("verify-fix", "verifyFixPrompt", "verify-fix.md")]), |steps| steps.iter().any(|s| ["implement", "review-fix", "verify-red"].iter().any(|k| s["key"] == *k) && s["who"] == "agent"), gates::implement_rules),
     v("follow", Nothing, false, false, ""),
     v("fetch", Worktree, false, false, "fetching"),
     v("enroll", Nothing, false, false, ""),
@@ -198,7 +198,7 @@ mod tests {
             assert_eq!(!v.prompts.is_empty(), v.agent && !borrows, "{}", v.name);
         }
         let steps = |n: &str| find(n).unwrap().prompts.iter().map(|p| p.step).collect::<Vec<_>>();
-        assert_eq!(steps("implement"), ["implement", "review-fix"]);
+        assert_eq!(steps("implement"), ["implement", "review-fix", "verify-fix"]);
         assert_eq!(steps("restack --resolve"), ["resolve"]);
         assert_eq!(prompt("review-fix").file, "review-fix.md");
         assert_eq!(prompt("review-fix").setting, "reviewFixPrompt");
