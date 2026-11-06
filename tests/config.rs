@@ -3239,7 +3239,7 @@ fn committed_a_bad_file_names_the_commit_and_path_and_follows_the_repo_files_rul
     assert_eq!(
         r.output,
         format!(
-            "sd config: {at}: settings.interval: global file only\nsd config: {at}: settings.verfy: unknown key\nsd config: {}",
+            "sd config: {at}: settings.interval: global file only\nsd config: {at}: settings.remote: each clone's own: global or repo file only\nsd config: {at}: settings.verfy: unknown key\nsd config: {}",
             recover(&at)
         )
     );
