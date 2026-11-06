@@ -1,8 +1,7 @@
 // The pages' GitHub-data line (#401): the data's age, "asking GitHub…" while
 // a fetch runs, and the refresh button. Each page loads it before its own script.
 document.head.insertAdjacentHTML("beforeend", `<style>
-.ghline { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-.refresh { font: inherit; font-size: 0.78rem; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 0.1rem 0.5rem; cursor: pointer; }
+.ghline { display: flex; gap: 0.5rem; align-items: baseline; flex-wrap: wrap; }
 </style>`);
 const TOKEN = document.querySelector('meta[name="sd-token"]').content;
 const ago = iso => {
@@ -13,7 +12,7 @@ const ago = iso => {
 let refused = "";
 const refreshBtn = () => `<button class="refresh" type="button" data-refresh>${refused || "refresh"}</button>`;
 const ghLine = d => `<p class="none ghline">${d.fetched ? `GitHub data ${ago(d.fetched)} old` : d.error ? "No answer from GitHub yet" : "Not asked GitHub yet"}` +
-  `${d.refreshing ? " · asking GitHub…" : ""} ${refreshBtn()}</p>`;
+  `${d.refreshing ? ", asking GitHub…" : ""} ${refreshBtn()}</p>`;
 async function refreshGh() {
   const say = text => document.querySelectorAll("[data-refresh]").forEach(b => (b.textContent = text));
   let r;

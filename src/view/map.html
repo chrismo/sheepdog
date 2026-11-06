@@ -1,119 +1,85 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-pal="fleece" data-face="londrina">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="sd-token" content="__SD_TOKEN__">
 <title>sheepdog map</title>
 <link rel="icon" type="image/png" href="/img/sheepdog.png">
+<link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
 <style>
-:root {
-  --bg: #eef1f3; --surface: #ffffff; --ink: #17212a; --muted: #5a6670; --line: #d3dade;
-  --you: #a87414; --agent: #b0532b; --run: #4c7d36; --wait: #3d6fa8; --red: #c2412d; --done: #7d8a93;
-  --f-body: "Atkinson Hyperlegible", "Avenir Next", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
-  --f-mono: ui-monospace, "SF Mono", Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
-    --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
-  --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.4; }
-.wrap {
-  max-width: 1200px; margin: 0 auto; display: grid; gap: 22px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 28px 48px;
-}
-h1 { font-size: clamp(1.7rem, 4.5vw, 2.4rem); letter-spacing: -0.02em; margin: 0; line-height: 1.1; }
-h2 { font-size: 1rem; margin: 0; display: flex; align-items: baseline; gap: 8px; font-family: var(--f-mono); }
-h2 .n { font-size: 0.8rem; color: var(--muted); font-weight: 400; }
-.eyebrow { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.eyebrow.stale { color: var(--red); }
-.nav { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.nav a { font-size: 0.88rem; color: var(--muted); text-decoration: none; }
-.nav a:hover { color: var(--ink); }
-#top { display: grid; gap: 10px; }
-.summary { display: flex; flex-wrap: wrap; gap: 8px; }
-.sum { display: inline-flex; gap: 8px; align-items: baseline; border: 1.5px solid var(--sc); border-radius: 999px; padding: 4px 12px; font-size: 0.88rem; }
-.sum b { font-size: 1.15rem; color: var(--sc); font-variant-numeric: tabular-nums; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); align-items: center; }
-.legend .k { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; margin-right: 5px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); position: relative; }
+.wrap { max-width: 1200px; }
+#top { display: grid; gap: 22px; }
+.tally { display: flex; flex-wrap: wrap; gap: 8px 28px; align-items: baseline; }
+.tally span { color: var(--muted); }
+.tally b { font-family: var(--f-display); font-weight: var(--w-display); font-size: 2.4rem; line-height: 0.9; color: var(--sc); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 0.85rem; color: var(--muted); align-items: center; }
+.legend .k { display: inline-block; width: 13px; height: 13px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--line); background: var(--surface); }
 .legend .k.h { background: repeating-linear-gradient(45deg, var(--agent) 0 2px, var(--surface) 2px 5px); border-color: var(--agent); }
-.legend .k.i { border: 0; border-radius: 50%; background: var(--wait); }
-#trend { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
-.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: grid; gap: 4px; }
-.tile .lbl, .tile .d, .tnote { font-size: 0.78rem; color: var(--muted); }
-.tile b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
-.tile svg { width: 100%; height: 44px; display: block; overflow: visible; }
-.tile path { fill: none; stroke: var(--sc); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-.tile .hit { fill: transparent; }
-.tile .hit:hover { fill: var(--line); opacity: 0.5; }
+.legend .k.i { border: 0; background: var(--wait); width: 9px; }
+#trend { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 36px; border-top: 2px solid var(--ink); padding-top: 12px; }
+.series { display: grid; gap: 2px; align-content: start; }
+.series .lbl, .series .d, .tnote { font-size: 0.8rem; color: var(--muted); }
+.series b { font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.9rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.series svg { width: 100%; height: 44px; display: block; overflow: visible; margin: 4px 0; }
+.series path { fill: none; stroke: var(--sc); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.series .hit { fill: transparent; }
+.series .hit:hover { fill: var(--line); opacity: 0.5; }
 .tnote { grid-column: 1 / -1; margin: 0; }
-#groups { display: grid; gap: 26px; }
+#groups { display: grid; gap: 30px; }
 .group { display: grid; gap: 10px; }
+.group h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.6rem; line-height: 1; }
+.group h2 .n { font-family: var(--f-body); font-weight: 400; font-size: 0.85rem; color: var(--muted); }
 .tiles { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
 .sq {
   position: relative; width: var(--s); height: var(--s); padding: 0; flex: none;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 3px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--line); cursor: pointer;
   font: inherit; color: var(--muted); text-align: left;
 }
 .sq.over { border-color: var(--agent); }
 .sq:hover, .sq.on { border-color: var(--ink); }
-.sq.on { box-shadow: 0 0 0 2px var(--ink); }
-.sq:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
-.sq .h { position: absolute; left: 0; right: 0; bottom: 0; height: var(--h); border-radius: 0 0 2px 2px;
+.sq.on { outline: 2px solid var(--ink); outline-offset: 1px; }
+.sq .h { position: absolute; left: 0; right: 0; bottom: 0; height: var(--h);
   background: repeating-linear-gradient(45deg, var(--agent) 0 2px, transparent 2px 6px); }
 .sq .nm { position: absolute; left: 5px; top: 3px; right: 5px; font-family: var(--f-mono); font-size: 0.66rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.sq .i { position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-  background: var(--wait); color: var(--surface); font: 700 10px/16px var(--f-mono); text-align: center; z-index: 1; }
-#sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; max-height: 60vh; overflow-y: auto; z-index: 5;
-  background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
-  padding: 14px max(16px, env(safe-area-inset-right, 0px)) max(18px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-}
-#sheet[hidden] { display: none; }
+.sq .i { position: absolute; top: -1px; right: -1px; min-width: 15px; height: 15px; padding: 0 3px;
+  background: var(--wait); color: var(--surface); font: 700 10px/15px var(--f-mono); text-align: center; z-index: 1; }
 .sbody { max-width: 1200px; margin: 0 auto; display: grid; gap: 12px; }
 .shead { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.shead b { font-family: var(--f-mono); font-size: 1rem; overflow-wrap: anywhere; }
-.x { font: inherit; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px; }
-.big { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; }
-.big span { font-size: 0.8rem; color: var(--muted); }
-.big b { font-size: 1.5rem; font-variant-numeric: tabular-nums; color: var(--ink); margin-right: 4px; }
-.head { font-size: 0.82rem; color: var(--muted); margin: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.shead b { font-family: var(--f-mono); font-size: 1.05rem; overflow-wrap: anywhere; }
+.big { display: flex; gap: 22px; flex-wrap: wrap; align-items: baseline; }
+.big span { font-size: 0.82rem; color: var(--muted); }
+.big b { font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.8rem; line-height: 1; font-variant-numeric: tabular-nums; color: var(--ink); margin-right: 5px; }
+.head { font-size: 0.84rem; color: var(--muted); margin: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
 .head.all { display: block; }
 .bars { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; font-size: 0.8rem; }
-.bar code { font-family: var(--f-mono); overflow-wrap: anywhere; }
+.bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; font-size: 0.82rem; }
+.bar code { overflow-wrap: anywhere; }
 .bar .v { font-family: var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
-.bar .track { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line); position: relative; overflow: hidden; }
-.bar .track i { position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--agent); border-radius: 3px; }
+.bar .track { grid-column: 1 / -1; height: 6px; background: var(--line); position: relative; overflow: hidden; }
+.bar .track i { position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--agent); }
 .bar .track::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--cap); width: 2px; background: var(--ink); }
-.iss { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 0.82rem; }
-.iss li { border-left: 3px solid var(--wait); padding-left: 8px; overflow-wrap: anywhere; }
-.iss a { color: var(--ink); }
-.none { color: var(--muted); font-size: 0.85rem; margin: 0; }
-.atl { margin: 0; font-size: 0.82rem; color: var(--muted); line-height: 1.8; }
-.atl a { font-family: var(--f-mono); font-size: 0.78rem; color: var(--ink); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; text-decoration: none; margin-right: 2px; }
-.atl a:hover { border-color: var(--ink); }
-footer { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
-body.sheet footer { margin-bottom: 40vh; }
-.logo { vertical-align: middle; margin: 0 14px 0 0; }
-@media (max-width: 600px) { .logo { width: 56px; height: 56px; margin-right: 10px; } }
+.iss { list-style: none; margin: 0; padding: 0; display: grid; font-size: 0.84rem; }
+.iss li { padding: 5px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.iss li:last-child { border-bottom: 0; }
+.iss a { font-weight: 700; color: var(--wait); }
+.atl { margin: 0; font-size: 0.84rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.atl a { font-family: var(--f-mono); font-size: 0.8rem; color: var(--ink); }
+footer { overflow-wrap: anywhere; }
+body.sheet footer, body.sheet #look { margin-bottom: 40vh; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header id="top">
-    <div class="nav"><span><a href="/">← Flock</a> · <a href="/atlas">Atlas</a></span><span class="eyebrow" id="eyebrow">loading…</span></div>
-    <h1><img class="logo" src="/img/sheepdog.png" alt="" width="100" height="100">The code</h1>
-    <div class="summary" id="summary"></div>
+    <div class="mast">
+      <img src="/img/sheepdog.png" alt="" width="92" height="92">
+      <h1>The code</h1>
+      <div class="sub" id="sub">Reading the code</div>
+      <nav class="pages"><a href="/">Flock</a><a href="/atlas">Atlas</a><a href="/map" aria-current="page">Map</a></nav>
+    </div>
+    <div class="tally" id="summary"></div>
     <div id="gh"></div>
     <div class="legend">
       <span><i class="k"></i>a file: area is lines</span>
@@ -124,6 +90,7 @@ body.sheet footer { margin-bottom: 40vh; }
   <section id="trend" aria-label="trend"></section>
   <div id="groups"></div>
   <footer id="foot"></footer>
+  <div id="look"></div>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script src="/gh.js"></script>
@@ -146,7 +113,7 @@ function tile(f, maxLines) {
   const badge = f.issues.length ? `<span class="i">${f.issues.length}</span>` : "";
   const label = s >= 52 ? `<span class="nm">${esc(name)}</span>` : "";
   return `<button class="sq${f.over.length ? " over" : ""}" type="button" style="--s:${s}px" data-p="${esc(f.path)}" ` +
-    `title="${esc(f.path)} · ${fmt(f.lines)} lines" aria-label="${esc(f.path)}, ${f.lines} lines">${hatch}${label}${badge}</button>`;
+    `title="${esc(f.path)}, ${fmt(f.lines)} lines" aria-label="${esc(f.path)}, ${f.lines} lines">${hatch}${label}${badge}</button>`;
 }
 
 function render(m) {
@@ -156,14 +123,14 @@ function render(m) {
   files = Object.fromEntries(all.map(f => [f.path, f]));
   const lines = all.reduce((n, f) => n + f.lines, 0);
   const maxLines = Math.max(1, ...all.map(f => f.lines));
-  const eb = $("eyebrow");
-  eb.classList.remove("stale");
-  eb.textContent = `${all.length} files · src/`;
-  const chips = [[fmt(lines), "lines", "--ink"], [m.ratchet, "over the cap", "--agent"]];
+  const sub = $("sub");
+  sub.classList.remove("stale");
+  sub.textContent = `${all.length} files under src/, grouped by the stage they serve.`;
+  const chips = [[fmt(lines), "lines", "--ink"], [m.ratchet, "functions over the cap", "--agent"]];
   if (m.issues !== null) chips.push([m.issues, "open issues", "--wait"]);
-  $("summary").innerHTML = chips.map(([n, what, c]) => `<span class="sum" style="--sc:var(${c})"><b>${n}</b>${what}</span>`).join("");
+  $("summary").innerHTML = chips.map(([n, what, c]) => `<span style="--sc:var(${c})"><b>${n}</b>${what}</span>`).join("");
   $("groups").innerHTML = m.groups.length ? m.groups.map(g =>
-    `<section class="group"><h2>${esc(g.name)}<span class="n">${fmt(g.lines)}</span></h2>` +
+    `<section class="group"><h2>${esc(g.name)}<span class="n">${fmt(g.lines)} lines</span></h2>` +
     `<div class="tiles">${g.files.map(f => tile(f, maxLines)).join("")}</div></section>`).join("")
     : `<p class="none">No source here: sd runs from ${esc(m.root)}, which has no src/.</p>`;
   $("gh").innerHTML = ghLine(m);
@@ -187,14 +154,14 @@ function spark(points, key) {
   const x = i => (n > 1 ? i * step : W).toFixed(1), y = v => (H - 2 - (v / max) * (H - 4)).toFixed(1);
   const d = points.map((p, i) => `${i ? "L" : "M"}${x(i)} ${y(p[key])}`).join(" ");
   const hits = points.map((p, i) => `<rect class="hit" x="${(x(i) - step / 2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${H}">` +
-    `<title>${esc(p.date)} · ${fmt(p[key])}</title></rect>`).join("");
+    `<title>${esc(p.date)}: ${fmt(p[key])}</title></rect>`).join("");
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${fmt(points[0][key])} to ${fmt(points[n - 1][key])}"><path d="${d}"/>${hits}</svg>`;
 }
 
-function trendTile(points, [key, what, c]) {
+function trendSeries(points, [key, what, c]) {
   const first = points[0], last = points[points.length - 1], d = last[key] - first[key];
   const delta = d ? `${d > 0 ? "+" : "−"}${fmt(Math.abs(d))} since ${esc(first.date)}` : `flat since ${esc(first.date)}`;
-  return `<div class="tile" style="--sc:var(${c})"><span class="lbl">${what}</span><b>${fmt(last[key])}</b>${spark(points, key)}<span class="d">${delta}</span></div>`;
+  return `<div class="series" style="--sc:var(${c})"><span class="lbl">${what}</span><b>${fmt(last[key])}</b>${spark(points, key)}<span class="d">${delta}</span></div>`;
 }
 
 function renderTrend(t) {
@@ -204,8 +171,8 @@ function renderTrend(t) {
     return;
   }
   const note = [`${t.points.length} days, the last commit of each since ${esc(t.points[0].date)}`, t.fetched && `sampled ${ago(t.fetched)} ago`,
-    t.refreshing && "sampling again…", t.error && esc(t.error)].filter(Boolean).join(" · ");
-  el.innerHTML = SERIES.map(s => trendTile(t.points, s)).join("") + `<p class="tnote">${note}</p>`;
+    t.refreshing && "sampling again…", t.error && esc(t.error)].filter(Boolean).join("; ");
+  el.innerHTML = SERIES.map(s => trendSeries(t.points, s)).join("") + `<p class="tnote">${note}.</p>`;
 }
 
 function bars(over) {
@@ -230,7 +197,7 @@ function showFile(path) {
     ${f.head ? `<p class="head" data-more>${esc(f.head)}</p>` : ""}
     ${f.over.length ? `<ul class="bars">${bars(f.over)}</ul>` : ""}
     ${iss ? `<ul class="iss">${iss}</ul>` : ""}
-    ${f.steps?.length ? `<p class="atl">Atlas steps here: ${f.steps.map(k => `<a href="/atlas#k=${encodeURIComponent(k)}">${esc(k)}</a>`).join(" ")}</p>` : ""}`;
+    ${f.steps?.length ? `<p class="atl"><span>Atlas steps here:</span>${f.steps.map(k => `<a href="/atlas#k=${encodeURIComponent(k)}">${esc(k)}</a>`).join("")}</p>` : ""}`;
   $("sheet").hidden = false;
   document.body.classList.add("sheet");
 }
@@ -283,9 +250,9 @@ async function load() {
     again = setTimeout(load, m.refreshing || m.trend.refreshing ? 1000 : 60000);
   } catch (e) {
     if (mine !== seq) return;
-    const eb = $("eyebrow");
-    eb.classList.add("stale");
-    eb.textContent = `can't reach sd view (${e.message})`;
+    const sub = $("sub");
+    sub.classList.add("stale");
+    sub.textContent = `can't reach sd view (${e.message})`;
     again = setTimeout(load, 60000);
   }
 }

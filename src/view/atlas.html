@@ -1,152 +1,104 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-pal="fleece" data-face="londrina">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="sd-token" content="__SD_TOKEN__">
 <title>sheepdog atlas</title>
 <link rel="icon" type="image/png" href="/img/sheepdog.png">
+<link rel="stylesheet" href="/theme.css">
+<script src="/theme.js"></script>
 <style>
-:root {
-  --bg: #eef1f3; --surface: #ffffff; --ink: #17212a; --muted: #5a6670; --line: #d3dade;
-  --you: #a87414; --agent: #b0532b; --run: #4c7d36; --wait: #3d6fa8; --red: #c2412d; --done: #7d8a93;
-  --f-body: "Atkinson Hyperlegible", "Avenir Next", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
-  --f-mono: ui-monospace, "SF Mono", Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
-    --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740;
-  --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark;
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.4; }
-.wrap {
-  max-width: 900px; margin: 0 auto; display: grid; gap: 22px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
-  padding-block: 28px 48px;
-}
-h1 { font-size: clamp(1.7rem, 4.5vw, 2.4rem); letter-spacing: -0.02em; margin: 0; line-height: 1.1; }
-h2 { font-size: 0.74rem; margin: 0; font-family: var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; display: flex; gap: 8px; align-items: baseline; }
-h2 .n { color: var(--muted); }
-.eyebrow { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.eyebrow.stale { color: var(--red); }
-.nav { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.nav a { font-size: 0.88rem; color: var(--muted); text-decoration: none; }
-.nav a:hover { color: var(--ink); }
-#top { display: grid; gap: 10px; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.8rem; color: var(--muted); align-items: center; }
-.legend i { display: inline-block; width: 22px; height: 12px; border-radius: 4px; vertical-align: -2px; margin-right: 5px; border: 1.5px solid var(--run); }
-.legend i.when { border-color: var(--muted); border-style: dashed; }
-.legend i.ex { border-radius: 0; border-color: var(--muted); border-width: 0 0 1.5px 0; }
-section { display: grid; gap: 10px; }
-.intro { margin: 0; font-size: 0.8rem; color: var(--muted); }
-.layer { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; }
-.layer h4 { margin: 0; padding-top: 7px; font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
-.layer h4 .sub { display: block; font-family: var(--f-body); text-transform: none; letter-spacing: 0; font-size: 0.74rem; margin-top: 2px; }
-button.row, button.hold, button.stage { font: inherit; color: inherit; text-align: left; cursor: pointer; background: var(--surface); border: 1px solid var(--line); }
-button.row:focus-visible, button.hold:focus-visible, button.stage:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
-.hold { border-radius: 6px; padding: 8px 10px; display: grid; gap: 2px; }
-.hold.on, .row.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+.wrap { max-width: 920px; }
+#top { display: grid; gap: 22px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.85rem; color: var(--muted); align-items: baseline; }
+.legend span { display: inline-flex; gap: 8px; align-items: baseline; }
+.legend .ex { font-family: var(--f-mono); color: var(--ink); border-bottom: 1px solid var(--line); }
+section { display: grid; gap: 12px; }
+h2 { margin: 0; display: flex; gap: 12px; align-items: baseline; font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.9rem; line-height: 1; }
+h2 .n { font-family: var(--f-body); font-weight: 400; font-size: 0.9rem; color: var(--muted); }
+h2 .tog { margin-left: auto; font-family: var(--f-body); font-weight: 400; }
+.tog[aria-pressed="true"] { color: var(--ink); font-weight: 700; }
+h4 { margin: 0; padding-top: 6px; font-size: 0.85rem; font-weight: 700; }
+h4 .sub { display: block; font-weight: 400; color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+.layer, .band { display: grid; grid-template-columns: 110px 1fr; gap: 12px; align-items: start; }
+button.row, button.ps, button.stage { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.on { outline: 2px solid var(--ink); outline-offset: 1px; }
 .key { font-family: var(--f-mono); font-size: 0.86rem; font-weight: 600; }
-.mean { font-size: 0.8rem; color: var(--muted); }
-#stages { display: grid; gap: 0; }
-.stage { width: 100%; display: grid; grid-template-columns: 24px 1fr auto; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 8px; position: relative; }
-.stage + .stage, .steps + .stage { margin-top: 10px; }
-.stage::before { content: ""; position: absolute; left: 25px; top: -11px; height: 10px; width: 2px; background: var(--line); }
-.stage:first-child::before { display: none; }
-.stage .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); justify-self: center; }
-.stage.open .dot { border-color: var(--ink); background: var(--ink); }
-.stage .name { font-weight: 700; display: flex; gap: 10px; align-items: baseline; }
-.stage .name .n { font-family: var(--f-mono); font-size: 0.8rem; color: var(--muted); font-weight: 400; }
-.stage .kinds { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
-.stage .what { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; min-width: 0; }
-.stage .what .name { min-width: 6.5em; }
-.world { display: flex; flex-wrap: wrap; gap: 4px 2px; align-items: baseline; font-size: 0.84rem; }
-.world .w { border: 1.5px solid var(--run); border-radius: 4px; padding: 0 6px; white-space: nowrap; }
+.mean { font-size: 0.82rem; color: var(--muted); }
+#stages { display: grid; }
+.stage { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: baseline; padding: 14px 4px 12px; background: none; border: 0; border-top: 1px solid var(--line); }
+.stage:hover { background: var(--surface); }
+.stage.open { border-top: 2px solid var(--ink); }
+.stage .name { font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.45rem; line-height: 1; display: flex; gap: 10px; align-items: baseline; min-width: 6em; }
+.stage .name .n { font-family: var(--f-body); font-weight: 400; font-size: 0.82rem; color: var(--muted); }
+.stage .kinds { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
+.stage .what { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; min-width: 0; }
+.world { display: flex; flex-wrap: wrap; gap: 6px 0; align-items: center; font-size: 0.86rem; }
+.world .w { font-family: var(--f-mono); border: 1.5px solid var(--run); padding: 0 6px; white-space: nowrap; }
 .world .w.when { border-color: var(--muted); border-style: dashed; color: var(--muted); }
-.world .arr { color: var(--muted); padding: 0 2px; }
-.steps { margin: 0; padding: 0 0 0 36px; display: grid; gap: 10px; margin-top: 8px; }
+.rail { display: inline-block; width: 16px; border-top: 2px dashed var(--line); }
+.steps { margin: 0; padding: 4px 0 18px 4px; display: grid; gap: 14px; }
 .steps[hidden] { display: none; }
-.band { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; }
-.band h4 { margin: 0; padding-top: 7px; font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
-.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 4px; align-items: center; }
-.chain .arr { color: var(--muted); font-size: 0.9rem; padding: 0 2px; }
-button.pill { font: inherit; color: inherit; cursor: pointer; background: var(--surface); border: 1.5px solid var(--line); border-radius: 6px; padding: 5px 10px; display: grid; gap: 1px; text-align: left; }
-button.pill:focus-visible, .tog:focus-visible { outline: 2px solid var(--wait); outline-offset: 2px; }
-.pill.on { border-color: var(--ink) !important; box-shadow: 0 0 0 1px var(--ink) !important; }
-.pill { border-color: var(--run); box-shadow: inset 0 0 0 1px var(--run); }
-.pill.when { border-color: var(--muted); border-style: dashed; box-shadow: none; }
-.pill .key { font-size: 0.84rem; }
-.pill .verb { font-family: var(--f-mono); font-size: 0.7rem; color: var(--muted); }
-.pill.when .key { color: var(--muted); }
-.off { display: grid; gap: 2px; padding: 10px 0 2px; border-top: 1px solid var(--line); }
-.off h4 { margin: 0; font-family: var(--f-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
-.off p { margin: 0; font-size: 0.8rem; color: var(--muted); }
-.band.ex h4 { padding-top: 8px; }
-.flat { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.row { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 7px 10px; border-radius: 6px; border-width: 0 0 1px 0 !important; background: none !important; }
-.row .verb { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
+.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 0; align-items: center; }
+.chain li { display: flex; align-items: center; }
+.chain li + li::before { content: ""; width: 16px; border-top: 2px dashed var(--line); }
+button.ps { background: var(--surface); border: 1.5px solid var(--run); padding: 5px 10px; display: grid; gap: 1px; }
+.ps.when { border-color: var(--muted); border-style: dashed; }
+.ps .key { font-size: 0.84rem; }
+.ps .verb { font-family: var(--f-mono); font-size: 0.72rem; color: var(--muted); }
+.ps.when .key { color: var(--muted); }
+.off { display: grid; gap: 2px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.off p { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.flat { list-style: none; margin: 0; padding: 0; display: grid; }
+.row { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; padding: 7px 4px; background: none; border: 0; border-bottom: 1px solid var(--line); }
+.row:hover { background: var(--surface); }
+.row .verb { font-family: var(--f-mono); font-size: 0.76rem; color: var(--muted); white-space: nowrap; }
 .row .mean { display: block; }
-.numbered .row { border-width: 1px !important; background: var(--surface) !important; grid-template-columns: 20px 1fr auto; }
-.numbered .row .n { font-family: var(--f-mono); font-size: 0.74rem; color: var(--muted); }
-.tog { font: inherit; font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.04em; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; cursor: pointer; margin-left: auto; text-transform: none; }
-.tog[aria-pressed="true"] { color: var(--ink); border-color: var(--ink); }
-#sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; max-height: 70vh; overflow-y: auto; z-index: 5;
-  background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12);
-  padding: 14px max(16px, env(safe-area-inset-right, 0px)) max(18px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
-}
-#sheet[hidden] { display: none; }
-.sbody { max-width: 900px; margin: 0 auto; display: grid; gap: 14px; }
+.numbered .row { grid-template-columns: 22px 1fr auto; }
+.numbered .row .n { font-family: var(--f-display); font-weight: var(--w-display); color: var(--muted); }
+.sbody { max-width: 920px; margin: 0 auto; display: grid; gap: 12px; }
 .shead { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-.shead b { font-family: var(--f-mono); font-size: 1.05rem; overflow-wrap: anywhere; }
-.shead .sub { font-size: 0.8rem; color: var(--muted); margin-left: 10px; }
-.x { font: inherit; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px; }
-.sheet-mean { margin: 0; font-size: 0.92rem; }
-h3 { margin: 0; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-weight: 400; }
-.rules { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 0.84rem; align-items: baseline; }
+.shead b { font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.7rem; line-height: 1; overflow-wrap: anywhere; }
+.shead .sub { font-size: 0.84rem; color: var(--muted); margin-left: 12px; }
+.sheet-mean { margin: 0; font-size: 0.95rem; }
+#sbody h3 { margin-top: 6px; }
+.rules { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; font-size: 0.86rem; align-items: baseline; }
 .rule { display: contents; }
-.lv { font-family: var(--f-mono); font-size: 0.7rem; padding: 2px 7px; border-radius: 999px; border: 1.5px solid var(--lc); color: var(--lc); white-space: nowrap; justify-self: start; }
-.lv.Hard, .lv.Limit { background: var(--lc); color: var(--surface); }
-.rules .clears, .rules .applies { grid-column: 2; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
-@media (max-width: 600px) { .rules { grid-template-columns: 1fr; } .rules .clears, .rules .applies { grid-column: 1; } }
-.none { color: var(--muted); font-size: 0.85rem; margin: 0; }
-.links { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.84rem; }
-.links a { font-family: var(--f-mono); font-size: 0.8rem; color: var(--ink); }
-.links .sub { font-size: 0.74rem; color: var(--muted); margin-left: 6px; }
-.settings { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr max-content max-content; gap: 4px 12px; font-size: 0.84rem; align-items: baseline; }
+.lv { font-size: 0.8rem; font-weight: 700; color: var(--lc); white-space: nowrap; justify-self: start; }
+.lv.Hard, .lv.Limit { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.rules .clears, .rules .applies { grid-column: 2; font-size: 0.8rem; color: var(--muted); margin-bottom: 6px; }
+@media (max-width: 600px) { .rules { grid-template-columns: 1fr; } .rules .clears, .rules .applies { grid-column: 1; } .layer, .band { grid-template-columns: 1fr; } }
+.links { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.86rem; }
+.links a { font-family: var(--f-mono); font-size: 0.82rem; }
+.links .sub { font-size: 0.76rem; color: var(--muted); margin-left: 6px; }
+.settings { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr max-content max-content; gap: 4px 14px; font-size: 0.86rem; align-items: baseline; }
 .setting { display: contents; }
-.setting .path { font-family: var(--f-mono); font-size: 0.8rem; }
-.setting .val { font-family: var(--f-mono); font-size: 0.8rem; overflow-wrap: anywhere; }
-.setting .layer { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
-.copy { font: inherit; font-size: 0.74rem; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; cursor: pointer; white-space: nowrap; }
-.copy:hover { color: var(--ink); border-color: var(--ink); }
+.setting .path, .setting .val { font-size: 0.82rem; overflow-wrap: anywhere; }
+.setting .val { font-family: var(--f-mono); }
+.setting .layer { font-size: 0.76rem; color: var(--muted); font-style: italic; white-space: nowrap; }
 @media (max-width: 600px) { .settings { grid-template-columns: 1fr max-content; } .setting .val { grid-column: 1 / -1; } }
-footer { font-size: 0.78rem; color: var(--muted); }
-body.sheet footer { margin-bottom: 50vh; }
-.logo { vertical-align: middle; margin: 0 14px 0 0; }
-@media (max-width: 600px) { .logo { width: 56px; height: 56px; margin-right: 10px; } }
+body.sheet footer, body.sheet #look { margin-bottom: 50vh; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header id="top">
-    <div class="nav"><span><a href="/">← Flock</a> · <a href="/map">Map →</a></span><span class="eyebrow" id="eyebrow">loading…</span></div>
-    <h1><img class="logo" src="/img/sheepdog.png" alt="" width="100" height="100">The workflow</h1>
+    <div class="mast">
+      <img src="/img/sheepdog.png" alt="" width="92" height="92">
+      <h1>The workflow</h1>
+      <div class="sub" id="sub">Loading the workflow</div>
+      <nav class="pages"><a href="/">Flock</a><a href="/atlas" aria-current="page">Atlas</a><a href="/map">Map</a></nav>
+    </div>
     <div class="legend">
-      <span><i></i>the path: what a stage does when nothing is wrong</span>
-      <span><i class="when"></i>a path step taken only when its condition holds</span>
-      <span><i class="ex"></i>off the path: what NEXT offers instead, and whose move it is</span>
+      <span><span class="world"><span class="w">push</span></span>the path: what a stage does when nothing is wrong</span>
+      <span><span class="world"><span class="w when">behind</span></span>a path step taken only when its condition holds</span>
+      <span><span class="ex">off the path</span>what NEXT offers instead, and whose move it is</span>
     </div>
   </header>
   <section><h2>NEXT's list<span class="n" id="nsteps"></span><button class="tog" type="button" id="order" aria-pressed="false" title="list each stage's steps in the order NEXT checks them">check order</button></h2><div id="stages"></div></section>
   <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a row for its steps, a step for the branches at it now, what stops its verb, the settings that tune it, with this repo's values (sd config explain), and its files in the Map. The path is in time order; exceptions stay in the order NEXT checks them.</footer>
+  <div id="look"></div>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script>
@@ -166,7 +118,7 @@ const WAITS = [["you", "chrismo moves"], ["agent", "an agent moves"], ["run", "s
 const by = s => s.verb ? "sd act " + esc(s.verb) : esc(s.who.join(" / "));
 const row = (s, i) => `<li><button class="row" type="button" data-k="${esc(s.key)}">${i == null ? "" : `<span class="n">${i + 1}</span>`}` +
   `<span><span class="key">${esc(s.key)}</span><span class="mean">${esc(s.meaning)}</span></span><span class="verb">${by(s)}</span></button></li>`;
-const pill = s => `<li><button class="pill${s.when ? " when" : ""}" type="button" data-k="${esc(s.key)}" title="${esc(s.meaning)}">` +
+const pathStep = s => `<li><button class="ps${s.when ? " when" : ""}" type="button" data-k="${esc(s.key)}" title="${esc(s.meaning)}">` +
   `<span class="key">${esc(s.key)}</span><span class="verb">${s.when ? "when " + esc(s.when) : by(s)}</span></button></li>`;
 
 // A stage's path steps in the order atlas.rs gives, declared on each row.
@@ -176,7 +128,7 @@ const pathOf = st => st.path.map(k => st.steps.find(s => s.key === k)).filter(Bo
 // with their meaning, one band per actor they wait on.
 function bands(st) {
   const steps = st.steps, on = pathOf(st);
-  const path = on.length ? `<div class="band"><h4>path</h4><ul class="chain">${on.map(pill).join(`<li class="arr" aria-hidden="true">→</li>`)}</ul></div>` : "";
+  const path = on.length ? `<div class="band"><h4>path</h4><ul class="chain">${on.map(pathStep).join("")}</ul></div>` : "";
   const off = steps.some(s => s.path == null) ? `<div class="off"><h4>off the path</h4>` +
     `<p>When the stage can't take its next path step, NEXT offers one of these instead. The label says whose move gets it back on.</p></div>` : "";
   return path + off + WAITS.map(([w, name]) => {
@@ -189,24 +141,24 @@ const checkOrder = () => $("order").getAttribute("aria-pressed") === "true";
 const off = st => { const n = st.steps.length - st.path.length; return n ? `${n} off the path` : ""; };
 // The world: a stage's path words, a conditional one dashed with its condition on hover.
 const word = w => `<span class="w${w.when ? " when" : ""}"${w.when ? ` title="when ${esc(w.when)}"` : ""}>${esc(w.label)}</span>`;
-const world = st => `<span class="world">${pathOf(st).map(word).join(`<span class="arr" aria-hidden="true">→</span>`)}</span>`;
+const world = st => `<span class="world">${pathOf(st).map(word).join(`<span class="rail" aria-hidden="true"></span>`)}</span>`;
 
 function render(a) {
   data = a;
   const all = a.stages.reduce((n, s) => n + s.steps.length, 0);
   $("nsteps").textContent = `${a.holds.length + all} steps`;
-  $("eyebrow").classList.remove("stale");
-  $("eyebrow").textContent = `${a.holds.length + all} steps · ${a.stages.length} stages · ${a.verbs.filter(v => v.rules).length} gates`;
+  $("sub").classList.remove("stale");
+  $("sub").textContent = `${a.holds.length + all} steps NEXT can offer, in ${a.stages.length} stages; ${a.verbs.filter(v => v.rules).length} of the verbs have a gate.`;
   const layer = ([h, name, sub]) => {
     const of = a.holds.filter(s => s.hold === h);
     return of.length ? `<div class="layer"><h4>${name}<span class="sub">${sub}</span></h4><ul class="flat">${of.map(s => row(s)).join("")}</ul></div>` : "";
   };
   const flat = checkOrder();
-  const before = `<button class="stage" type="button" data-s="list"><span class="dot"></span>` +
+  const before = `<button class="stage" type="button" data-s="list">` +
     `<span class="name">Before the stages<span class="n">${a.holds.length} steps</span></span><span class="kinds">in no stage: where each sits in the list</span></button>` +
     `<div class="steps" data-s="list" hidden>${flat ? `<ul class="flat numbered">${a.holds.map(row).join("")}</ul>` : HOLDS.map(layer).join("")}</div>`;
   $("stages").innerHTML = before + a.stages.map(s =>
-    `<button class="stage" type="button" data-s="${esc(s.stage)}"><span class="dot"></span>` +
+    `<button class="stage" type="button" data-s="${esc(s.stage)}">` +
     `<span class="what"><span class="name">${NAME[s.stage] || esc(s.stage)}</span>${world(s)}</span>` +
     `<span class="kinds">${off(s)}</span></button><div class="steps" data-s="${esc(s.stage)}" hidden>` +
     (flat ? `<ul class="flat numbered">${s.steps.map(row).join("")}</ul>` : bands(s)) + `</div>`).join("");
@@ -276,7 +228,7 @@ function showStep(k) {
   document.querySelectorAll(".on").forEach(e => e.classList.remove("on"));
   document.querySelector(`[data-k="${CSS.escape(k)}"]`)?.classList.add("on");
   const where = NAME[stageOf(k)] || "before the stages";
-  $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))} · ${esc(where)}${s.glyph ? " · " + esc(s.glyph) : ""}</span></span>` +
+  $("sbody").innerHTML = `<div class="shead"><span><b>${esc(s.key)}</b><span class="sub">${esc(s.who.join(" / "))}, ${esc(where)}${s.glyph ? ", tab glyph " + esc(s.glyph) : ""}</span></span>` +
     `<button class="x" type="button" data-close aria-label="close">✕</button></div><p class="sheet-mean">${esc(s.meaning)}</p>${branchesHtml(s)}${rulesHtml(v)}${promptHtml(s)}${settingsHtml(s)}${filesHtml(s)}`;
   $("sheet").hidden = false;
   document.body.classList.add("sheet");
@@ -334,8 +286,8 @@ async function load() {
     again = setTimeout(load, 60000);
   } catch (e) {
     if (mine !== seq) return;
-    $("eyebrow").classList.add("stale");
-    $("eyebrow").textContent = `can't reach sd view (${e.message})`;
+    $("sub").classList.add("stale");
+    $("sub").textContent = `can't reach sd view (${e.message})`;
     again = setTimeout(load, 60000);
   }
 }

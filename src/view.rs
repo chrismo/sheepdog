@@ -45,9 +45,21 @@ const PAGE: &str = include_str!("view/flock.html");
 const MAP_PAGE: &str = include_str!("view/map.html");
 const ATLAS_PAGE: &str = include_str!("view/atlas.html");
 const GH_JS: &str = include_str!("view/gh.js");
-/// The official art, four-color: the dog beside each page's title, and the
-/// tab icon.
-const ART: [(&str, &[u8]); 1] = [("/img/sheepdog.png", include_bytes!("../img/sheepdog-four-color.png"))];
+/// The files the pages load as they are: the look (theme.css, its picks in
+/// theme.js), the fonts it names (fonts/, each under the SIL Open Font
+/// License beside it), and the official art, four-color: the dog beside each
+/// page's title, and the tab icon.
+const FILES: [(&str, &str, &[u8]); 9] = [
+    ("/theme.css", "text/css; charset=utf-8", include_bytes!("view/theme.css")),
+    ("/theme.js", "text/javascript; charset=utf-8", include_bytes!("view/theme.js")),
+    ("/fonts/atkinson-hyperlegible-next.woff2", "font/woff2", include_bytes!("../fonts/atkinson-hyperlegible-next.woff2")),
+    ("/fonts/atkinson-hyperlegible-mono.woff2", "font/woff2", include_bytes!("../fonts/atkinson-hyperlegible-mono.woff2")),
+    ("/fonts/londrina-solid.woff2", "font/woff2", include_bytes!("../fonts/londrina-solid.woff2")),
+    ("/fonts/alfa-slab-one.woff2", "font/woff2", include_bytes!("../fonts/alfa-slab-one.woff2")),
+    ("/fonts/big-shoulders-display.woff2", "font/woff2", include_bytes!("../fonts/big-shoulders-display.woff2")),
+    ("/fonts/familjen-grotesk.woff2", "font/woff2", include_bytes!("../fonts/familjen-grotesk.woff2")),
+    ("/img/sheepdog.png", "image/png", include_bytes!("../img/sheepdog-four-color.png")),
+];
 const PORT: u16 = 7377;
 const BODY_MAX: usize = 4096;
 
@@ -253,8 +265,8 @@ fn respond(req: &Request, port: u16, token: &str, state: &Path) -> (&'static str
         write(route, req, port, token, state)
     } else if req.method != "GET" {
         ("405 Method Not Allowed", "text/plain", "sd view serves GET only\n".into())
-    } else if let Some((_, png)) = ART.iter().find(|(p, _)| *p == route) {
-        return ("200 OK", "image/png", png.to_vec());
+    } else if let Some((_, ctype, bytes)) = FILES.iter().find(|(p, ..)| *p == route) {
+        return ("200 OK", ctype, bytes.to_vec());
     } else {
         get(route, query, token, state)
     };

@@ -1697,3 +1697,88 @@ fn the_pages_carry_the_sheepdog_art_which_sd_view_serves() {
     assert!(resp[at + 4..] == want[..], "{path} isn't img/{file}");
     assert_eq!(s.ask("GET", path, &format!("evil.example:{}", s.port)).0, 403, "{path}");
 }
+
+/// GET <path>: the lowercased head and the body's bytes.
+fn get_bytes(s: &Server, path: &str) -> (String, Vec<u8>) {
+    let mut c = TcpStream::connect(("127.0.0.1", s.port)).unwrap();
+    write!(c, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n", s.port).unwrap();
+    let mut resp = Vec::new();
+    c.read_to_end(&mut resp).unwrap();
+    let at = resp.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    (String::from_utf8_lossy(&resp[..at]).to_lowercase(), resp[at + 4..].to_vec())
+}
+
+// The look (theme.css, theme.js): one stylesheet for the three pages, four
+// palettes and four display faces to pick from, Fleece & Raddle and
+// Londrina Solid unless the viewer picked others.
+
+#[test]
+fn the_pages_share_one_look_with_four_palettes_and_four_faces() {
+    let sd = sd();
+    let s = serve(&sd);
+    for page in ["/", "/atlas", "/map"] {
+        let body = s.get(page).2;
+        assert_has(&body, &[r#"<html lang="en" data-pal="fleece" data-face="londrina">"#, r#"<link rel="stylesheet" href="/theme.css">"#, r#"<script src="/theme.js">"#, r#"<div id="look">"#]);
+        assert!(!body.contains("--bg:"), "{page} defines its own colors: they belong in theme.css");
+    }
+    let (code, head, css) = s.get("/theme.css");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: text/css"]);
+    for pal in ["drystone", "fleece", "heather", "lamp"] {
+        assert_has(&css, &[&format!(r#":root[data-pal="{pal}"]"#), "--bg:", &format!(r#":root[data-pal="{pal}"][data-theme="dark"]"#)]);
+    }
+    for face in ["londrina", "alfa", "shoulders", "familjen"] {
+        assert_has(&css, &[&format!(r#":root[data-face="{face}"]"#), "--f-display:"]);
+    }
+    let (code, head, js) = s.get("/theme.js");
+    assert_eq!(code, 200, "{head}");
+    assert_has(&head.to_lowercase(), &["content-type: text/javascript"]);
+    assert_has(&js, &["Drystone", "Fleece & Raddle", "Heather Moor", "Lamplight", "Londrina Solid", "Alfa Slab One", "Big Shoulders Display", "Familjen Grotesk", "localStorage"]);
+}
+
+// The fonts are compiled in (fonts/, each with its OFL license): the page
+// is served from 127.0.0.1 and mustn't need the network to look right.
+#[test]
+fn sd_view_serves_every_font_the_look_names_from_fonts() {
+    let sd = sd();
+    let s = serve(&sd);
+    let css = s.get("/theme.css").2;
+    let re = regex::Regex::new(r"url\(/fonts/([a-z-]+\.woff2)\)").unwrap();
+    let named: Vec<String> = re.captures_iter(&css).map(|c| c[1].to_string()).collect();
+    assert!(named.len() >= 6, "theme.css names {named:?}");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fonts");
+    for file in &named {
+        let (head, body) = get_bytes(&s, &format!("/fonts/{file}"));
+        assert_has(&head, &["200 ok", "content-type: font/woff2"]);
+        assert!(body == fs::read(dir.join(file)).unwrap(), "/fonts/{file} isn't fonts/{file}");
+        let license = dir.join(file.replace(".woff2", ".OFL.txt"));
+        assert_has(&fs::read_to_string(&license).unwrap_or_else(|e| panic!("{}: {e}", license.display())), &["SIL Open Font License"]);
+    }
+    assert_eq!(s.get("/fonts/nope.woff2").0, 404);
+}
+
+// The tells of a generated dashboard (stripes and bars of color, pills,
+// tracked uppercase labels, pulsing dots, arrows on links, "a · b · c"):
+// none of them on any page.
+#[test]
+fn the_pages_carry_none_of_the_generated_dashboard_tells() {
+    let sd = sd();
+    let s = serve(&sd);
+    for path in ["/", "/atlas", "/map", "/theme.css", "/theme.js", "/gh.js"] {
+        let body = s.get(path).2;
+        for tell in ["text-transform: uppercase", "letter-spacing: 0.08em", "999px", "border-top: 3px", "border-left: 3px", "@keyframes", "box-shadow", "→", "←", "·"] {
+            assert!(!body.contains(tell), "{path} has {tell:?}");
+        }
+    }
+}
+
+// The Flock is a fence line per branch: its seven stages are posts, a tally
+// stroke on each one done, a cross on a failing one, and a paint mark in the
+// mover's color where the branch stands.
+#[test]
+fn the_flock_draws_each_branch_as_a_fence_line() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &["function splotch", "class=\"fence\" style=\"--reach:"]);
+    assert!(!body.contains("class=\"card\""), "the Flock still draws cards");
+}

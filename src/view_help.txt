@@ -16,7 +16,10 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
 
   The page reads the state each sd watch pass caches, and asks again every
   30s. It shows the last pass's time: with the watcher stopped, that time
-  stops moving. A branch's timeline has its PR's commits, CI and merge from
+  stops moving. Each branch is a fence line, grouped by who moves next: its
+  seven stages are posts, a tally stroke on each one done, a cross on a
+  failing one, and a paint mark in the mover's color where it stands; a
+  stage not set up has no post. A branch's timeline has its PR's commits, CI and merge from
   GitHub (gh). A branch is there from its first pass, and stays until the
   watcher drops its cache: after it's unenrolled, or once its merge is
   notified.
@@ -69,7 +72,7 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   no page open nothing is asked. A file not fetched for a week is deleted.
   The Map and a branch's timeline show its age and have a refresh button.
   While the Flock is open, a branch whose cached state is a minute old is
-  checked again (sd watch refresh), one at a time, and its card shows when;
+  checked again (sd watch refresh), one at a time, and its row shows when;
   its refresh button checks every branch again.
 
   A branch's drill-in has a button for NEXT's first step when it's the
@@ -88,6 +91,13 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   <branch>, so the value goes through sd config's own checks and lands in
   the branch's file. The rest, interval among them (global file only), it
   shows.
+
+  The foot of each page picks its look: four palettes (Drystone, Fleece &
+  Raddle, Heather Moor, Lamplight), four display faces (Londrina Solid,
+  Alfa Slab One, Big Shoulders Display, Familjen Grotesk), and light or
+  dark. The picks are this browser's own (localStorage); without them, it's
+  Fleece & Raddle and Londrina Solid, light or dark as the system is. The
+  fonts are compiled into sd (fonts/), so the pages need no network.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser

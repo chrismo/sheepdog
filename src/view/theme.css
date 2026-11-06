@@ -1,0 +1,85 @@
+/* The fonts are fonts/'s, each under the SIL Open Font License beside it. */
+
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 200 800; font-display: swap; src: url(/fonts/atkinson-hyperlegible-next.woff2) format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Mono"; font-weight: 200 800; font-display: swap; src: url(/fonts/atkinson-hyperlegible-mono.woff2) format("woff2"); }
+@font-face { font-family: "Londrina Solid"; font-weight: 900; font-display: swap; src: url(/fonts/londrina-solid.woff2) format("woff2"); }
+@font-face { font-family: "Alfa Slab One"; font-weight: 400; font-display: swap; src: url(/fonts/alfa-slab-one.woff2) format("woff2"); }
+@font-face { font-family: "Big Shoulders Display"; font-weight: 800; font-display: swap; src: url(/fonts/big-shoulders-display.woff2) format("woff2"); }
+@font-face { font-family: "Familjen Grotesk"; font-weight: 700; font-display: swap; src: url(/fonts/familjen-grotesk.woff2) format("woff2"); }
+
+:root {
+  --f-body: "Atkinson Hyperlegible Next", "Avenir Next", "Segoe UI", sans-serif;
+  --f-mono: "Atkinson Hyperlegible Mono", ui-monospace, Menlo, monospace;
+}
+:root[data-face="londrina"] { --f-display: "Londrina Solid", "Avenir Next", sans-serif; --w-display: 900; }
+:root[data-face="alfa"] { --f-display: "Alfa Slab One", Rockwell, serif; --w-display: 400; }
+:root[data-face="shoulders"] { --f-display: "Big Shoulders Display", Impact, sans-serif; --w-display: 800; }
+:root[data-face="familjen"] { --f-display: "Familjen Grotesk", "Avenir Next", sans-serif; --w-display: 700; }
+
+/* Each palette: bg, surface, ink, muted, line; then who moves (you, agent,
+   run: sheepdog, wait), red for failing, done for what's behind. */
+/* Drystone: cool dry-stone-wall greys; sd view's colors before these */
+:root[data-pal="drystone"] { --bg: #eef1f3; --surface: #ffffff; --ink: #17212a; --muted: #5a6670; --line: #d3dade; --you: #9e6d13; --agent: #b0532b; --run: #4c7d36; --wait: #3d6fa8; --red: #c2412d; --done: #7d8a93; }
+@media (prefers-color-scheme: dark) { :root[data-pal="drystone"]:not([data-theme="light"]) { --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740; --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark; } }
+:root[data-pal="drystone"][data-theme="dark"] { --bg: #12181d; --surface: #1a2229; --ink: #e4eaee; --muted: #9aa7b1; --line: #2c3740; --you: #d9a443; --agent: #e0835a; --run: #7fb465; --wait: #6f9fd6; --red: #ef7a62; --done: #75828c; color-scheme: dark; }
+
+/* Fleece & Raddle: the dog's coat for neutrals; sheep-marking paint for status */
+:root[data-pal="fleece"] { --bg: #efe9ea; --surface: #faf7f7; --ink: #2b2427; --muted: #6b5f63; --line: #dcd2d4; --you: #c0306a; --agent: #b85119; --run: #2f7d4f; --wait: #2f5fa8; --red: #b3261e; --done: #8a7f83; }
+@media (prefers-color-scheme: dark) { :root[data-pal="fleece"]:not([data-theme="light"]) { --bg: #1e191b; --surface: #2a2326; --ink: #f3efeb; --muted: #a99ea1; --line: #3d3438; --you: #f07aa6; --agent: #f0945a; --run: #6cc08a; --wait: #7ba7ec; --red: #f0706a; --done: #847c7f; color-scheme: dark; } }
+:root[data-pal="fleece"][data-theme="dark"] { --bg: #1e191b; --surface: #2a2326; --ink: #f3efeb; --muted: #a99ea1; --line: #3d3438; --you: #f07aa6; --agent: #f0945a; --run: #6cc08a; --wait: #7ba7ec; --red: #f0706a; --done: #847c7f; color-scheme: dark; }
+
+/* Heather Moor: Borders hillside: oat, peat, gorse, heather, moss, loch */
+:root[data-pal="heather"] { --bg: #e8eae2; --surface: #f6f7f2; --ink: #26231f; --muted: #67625a; --line: #d2d5c9; --you: #916800; --agent: #7b4a8e; --run: #4f6f2f; --wait: #46667a; --red: #a8322b; --done: #8b877c; }
+@media (prefers-color-scheme: dark) { :root[data-pal="heather"]:not([data-theme="light"]) { --bg: #1b1915; --surface: #25221d; --ink: #ece7dc; --muted: #a39d90; --line: #38342c; --you: #e3b23c; --agent: #b58ac8; --run: #9bbd6a; --wait: #8db0c4; --red: #e0705f; --done: #7f7a6f; color-scheme: dark; } }
+:root[data-pal="heather"][data-theme="dark"] { --bg: #1b1915; --surface: #25221d; --ink: #ece7dc; --muted: #a39d90; --line: #38342c; --you: #e3b23c; --agent: #b58ac8; --run: #9bbd6a; --wait: #8db0c4; --red: #e0705f; --done: #7f7a6f; color-scheme: dark; }
+
+/* Lamplight: dark-first night watch: lantern amber, dusk violet, moonlight on water */
+:root[data-pal="lamp"] { --bg: #ecebf1; --surface: #f8f7fb; --ink: #1f1b24; --muted: #625c6a; --line: #d9d6e2; --you: #aa5f0a; --agent: #7d4cc4; --run: #2d7a3f; --wait: #23708a; --red: #c0392b; --done: #8e8796; }
+@media (prefers-color-scheme: dark) { :root[data-pal="lamp"]:not([data-theme="light"]) { --bg: #15131a; --surface: #1f1c25; --ink: #efe9df; --muted: #a59fae; --line: #332f3b; --you: #ffb347; --agent: #c3a3ff; --run: #8fd39a; --wait: #7ccbe3; --red: #ff6b5e; --done: #6f6a78; color-scheme: dark; } }
+:root[data-pal="lamp"][data-theme="dark"] { --bg: #15131a; --surface: #1f1c25; --ink: #efe9df; --muted: #a59fae; --line: #332f3b; --you: #ffb347; --agent: #c3a3ff; --run: #8fd39a; --wait: #7ccbe3; --red: #ff6b5e; --done: #6f6a78; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.4; }
+a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+a:hover { text-decoration-thickness: 2px; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+code { font-family: var(--f-mono); }
+.wrap {
+  margin: 0 auto; display: grid; gap: 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 32px 48px;
+}
+
+.mast { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 18px; align-items: end; }
+.mast img { width: 92px; height: 92px; grid-row: span 2; }
+h1 { margin: 0; font-family: var(--f-display); font-weight: var(--w-display); font-size: clamp(2.6rem, 8vw, 4.2rem); line-height: 0.88; letter-spacing: 0.01em; overflow-wrap: anywhere; }
+.sub { color: var(--muted); }
+.mast .sub { grid-column: 2; }
+.sub.stale { color: var(--red); }
+.pages { grid-column: 3; grid-row: 1 / span 2; align-self: start; display: flex; gap: 18px; }
+.pages a[aria-current] { text-decoration: none; font-weight: 700; }
+h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+.none { color: var(--muted); font-size: 0.85rem; margin: 0; }
+footer { font-size: 0.8rem; color: var(--muted); }
+
+.copy, .refresh, .tog { font: inherit; font-size: 0.8rem; color: var(--muted); background: none; border: 0; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; white-space: nowrap; }
+.copy:hover, .refresh:hover, .tog:hover { color: var(--ink); }
+
+#sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; max-height: 66vh; overflow-y: auto; z-index: 5;
+  background: var(--surface); border-top: 2px solid var(--ink);
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) max(18px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+}
+#sheet[hidden] { display: none; }
+.x { font: inherit; background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 1.1rem; padding: 0 4px; }
+
+.look { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.8rem; color: var(--muted); }
+.look label { display: inline-flex; gap: 6px; align-items: baseline; }
+.look select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 0; padding: 1px 4px; }
+
+@media (max-width: 760px) {
+  .mast { grid-template-columns: auto 1fr; }
+  .mast img { width: 64px; height: 64px; }
+  .pages { grid-column: 1 / -1; grid-row: auto; }
+}
