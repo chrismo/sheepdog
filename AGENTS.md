@@ -183,8 +183,15 @@ rwx logs --task cargo-test <run-id>
 sheepdog itself reads no CI's logs (#452): ci-fix's agent reads RWX's by
 this repo's `.sheepdog/ci-fix.md`, a copy of `lib/prompts/ci-fix.md` plus
 the rwx steps (edit both together). The agent may run them only with
-`Bash(rwx results *)` and `Bash(rwx logs *)` in `settings.implementAllow`
-at the repo layer (`.git/sheepdog.json`, not committed).
+`Bash(rwx results *)` and `Bash(rwx logs *)` in `settings.implementAllow`,
+which this repo commits in `.sheepdog/config.json` with `settings.verify`.
+
+`.sheepdog/config.json` is the committed config layer (#456), between the
+global file and `.git/sheepdog.json`: sd reads it from the branch's base
+commit, as it reads `.sheepdog/*.md`, so a change to it applies to a branch
+only once it's on main and the branch is restacked. `sd config files` names
+the commit it read. Anything every clone needs goes there; a setting for one
+clone goes in `.git/sheepdog.json` (`sd config set --repo`), which overrides it.
 
 `rwx run` (a run from local edits, no push) is for chrismo to ask for; see
 "Don't launch runs with `rwx run`" above. `rwx lint .rwx/tests.yml` is free.

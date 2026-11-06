@@ -3,9 +3,8 @@
 // chrismo (#167).
 
 use super::commands::step_timeout;
-use super::start::start_default;
 use super::{cfg, die, gates, lock_recheck, or_die, repo_remote, Gate};
-use crate::git::{git, git_out, rev, show_ref, worktree_for, worktree_mark};
+use crate::git::{git, git_out, rev, worktree_for, worktree_mark};
 use crate::pins::{self, Pin};
 use crate::val::{at, on, t};
 use crate::{config, decisions, harness, json, next, rules, state};
@@ -148,24 +147,10 @@ pub fn step_store(b: &str, s: &Session, ran: &str) {
     must(&["config", &format!("branch.{b}.sd-harness"), &s.harness]);
 }
 
-/// The commit a step reads repo guidance (.sheepdog/, relative prompt paths)
-/// from, which the branch's agent can't rewrite: the base pin, else where
-/// the branch forked from the default branch, the remote's or else the local
-/// one, unless the branch is the default branch: sheepdog pushes it, so
-/// neither ref is clear of its commits. Empty when none qualifies: the
-/// branch's own commits are never trusted for its guidance.
+/// git::trusted_base for <b> here, "" for none: the branch's own commits are
+/// never trusted for its guidance.
 pub fn guidance_base(b: &str) -> String {
-    if let Some(base) = git_out(".", &["rev-parse", "-q", "--verify", &format!("refs/sheepdog/{b}/base")]) {
-        return base;
-    }
-    let remote = repo_remote();
-    let Some(def) = start_default(&remote).filter(|d| d != b) else { return String::new() };
-    let head = format!("refs/heads/{b}");
-    [format!("refs/remotes/{remote}/{def}"), format!("refs/heads/{def}")]
-        .iter()
-        .filter(|r| show_ref(".", r))
-        .find_map(|r| git_out(".", &["merge-base", &head, r]))
-        .unwrap_or_default()
+    crate::git::trusted_base(".", b, &repo_remote()).unwrap_or_default()
 }
 
 /// rules::agent_rules from <b>'s settings.verify and settings.implementAllow.
