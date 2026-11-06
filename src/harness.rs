@@ -574,7 +574,7 @@ fn tail(s: &str, n: usize) -> &str {
 
 /// The file the harness keeps <sid>'s transcript in, if it wrote one: the
 /// first match two levels down, as find -maxdepth 2 looked.
-fn transcript(h: &str, sid: &str) -> Option<PathBuf> {
+pub fn transcript(h: &str, sid: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let dir = |var: &str, default: &str| {
         std::env::var(var).ok().filter(|d| !d.is_empty()).unwrap_or_else(|| format!("{home}/{default}"))

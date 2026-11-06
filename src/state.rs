@@ -176,6 +176,17 @@ fn failed_state(dir: &str, b: &str) -> Result<Option<Value>, ()> {
     Ok(Some(json!({"step": step, "harness": h, "count": count, "since": since, "at": at, "error": error})))
 }
 
+/// <failed> with transcript (#467): the path of the file the harness keeps
+/// the failed step's session in, never copied; null with none.
+fn with_transcript(mut failed: Value, dir: &str, b: &str) -> Value {
+    let t = |k: &str| failed[k].as_str().unwrap_or_default().to_string();
+    let path = usage::failed_session(&main_worktree(dir), b, &t("step"), &t("harness"), &t("at"))
+        .and_then(|sid| crate::harness::transcript(&t("harness"), &sid))
+        .map(|p| p.display().to_string());
+    failed["transcript"] = json!(path);
+    failed
+}
+
 /// A failed verify (#325, src/verify_red.rs): {sha, step, cmd, at,
 /// at_head, log}, at_head while HEAD is the commit it failed on, log its
 /// whole output (#461) or null; None with no record, Err for one that isn't
@@ -1598,7 +1609,7 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
         }
     };
     let failed = match failed_state(dir, branch) {
-        Ok(f) => f.unwrap_or(Value::Null),
+        Ok(f) => f.map_or(Value::Null, |f| with_transcript(f, dir, branch)),
         Err(()) => {
             errors.push(format!("failed: refs/sheepdog/{branch}/failed isn't a failure record"));
             Value::Null
@@ -1930,6 +1941,9 @@ fn long_lines(s: &Value, all: bool) -> String {
             t(s, "failed.at"),
             t(s, "failed.error")
         ));
+        if !t(s, "failed.transcript").is_empty() {
+            out.push_str(&format!("     transcript: {}\n", t(s, "failed.transcript")));
+        }
     }
     if on(s, "verify.at_head") {
         let sha = t(s, "verify.sha");

@@ -372,13 +372,22 @@ fn hold_step(d: &Derived, s: &Value) -> Option<Value> {
     } else if d.failed_out {
         step(def!("failed"), "you",
             format!(
-                "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it",
-                t("failed.count"), t("failed.harness"), t("failed.step"), t("failed.at"), t("failed.error")
+                "{} agent steps failed in a row, the last {} {} at {}: {}; fix what fails, then rerun it{}",
+                t("failed.count"), t("failed.harness"), t("failed.step"), t("failed.at"), t("failed.error"), its_transcript(s)
             ),
             rerun(&t("failed.step")).or_else(|| cmd(format!("git update-ref -d refs/sheepdog/{}/failed", t("branch")))),
         )
     } else {
         None
+    }
+}
+
+/// "; its transcript: <path>" for a failed step whose transcript sd state
+/// found (#467); "" with none.
+fn its_transcript(s: &Value) -> String {
+    match val::t(s, "failed.transcript") {
+        p if p.is_empty() => p,
+        p => format!("; its transcript: {p}"),
     }
 }
 

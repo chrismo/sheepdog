@@ -3076,6 +3076,47 @@ fn failed_agent_steps_show_on_the_one_liner_and_in_long_three_in_a_row_hand_the_
     assert_has(&r.field(".errors[0]"), &["refs/sheepdog/feat/failed isn't a failure record"]);
 }
 
+// #467 rule 3: the transcript stays where the harness keeps it. The failed
+// step's session is usage.sup's row for it (a failed step's fork isn't
+// branch.<b>.sd-session), and sd state points at its file.
+#[test]
+fn failed_names_the_failed_steps_transcript_from_its_usage_row_467() {
+    let mut sd = sd();
+    sd.env.push(("CLAUDE_CONFIG_DIR".into(), sd.path("claude")));
+    sd.feat();
+    let row = |time: &str, sid: &str, status: i32| {
+        format!(r#"{{time:{time},repo:"{}",branch:"feat",step:"implement",harness:"claude",session:"{sid}",mode:"fork",status:{status},cost_usd:1.}}"#, sd.path("work"))
+    };
+    sd.append_usage(&row("2026-11-05T10:00:00Z", "s-old", 1));
+    sd.append_usage(&row("2026-11-05T10:05:00Z", "s-fail", 1));
+    sd.append_usage(&row("2026-11-05T10:09:00Z", "s-limit", 75)); // the limit stopped it: not counted
+    let dir = sd.tmp.join("claude/projects/-work");
+    fs::create_dir_all(&dir).unwrap();
+    for sid in ["s-old", "s-limit"] {
+        fs::write(dir.join(format!("{sid}.jsonl")), "{}\n").unwrap();
+    }
+    sd.put_blob(
+        "refs/sheepdog/feat/failed",
+        r#"{"step": "implement", "harness": "claude", "count": 3, "since": "2026-11-05T10:00:00Z", "at": "2026-11-05T10:05:00Z", "error": "boom"}"#,
+    );
+    // The harness cleaned it up: none, not an error.
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".failed.transcript"), "null");
+    assert_eq!(r.errors(), "");
+    let t = dir.join("s-fail.jsonl");
+    fs::write(&t, "{}\n").unwrap();
+    let t = t.display().to_string();
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".failed.transcript"), t);
+    assert_has(&r.field(r#".next[] | select(.key == "failed") | .say"#), &[&format!("; its transcript: {t}")]);
+    assert_has(&sd.run(&["--long"]).output, &[&format!("transcript: {t}")]);
+    // The step succeeded: no failure record, so no transcript.
+    sd.git(&["update-ref", "-d", "refs/sheepdog/feat/failed"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".failed"), "null");
+    assert_lacks(&sd.run(&["--long"]).output, "transcript:");
+}
+
 #[test]
 fn verify_red_stands_at_the_commit_it_failed_on_on_the_one_liner_and_next_325() {
     let sd = sd();
