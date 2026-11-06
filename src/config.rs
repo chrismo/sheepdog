@@ -50,7 +50,8 @@ Layers (top wins; sd config files prints the paths):
             default branch), so no branch changes its own; the default
             branch, detached HEAD and --no-branch, which have no such
             commit, read the default branch's tip, so a commit there does
-            change its own; it takes what the repo file does (#456)
+            change its own; it takes what the repo file does but
+            settings.remote (#456)
   profile   the same, for the names the committed file's profile key picks
   global    ~/.config/sheepdog/config.json ($SHEEPDOG_CONFIG, $XDG_CONFIG_HOME)
   defaults  harness claude; settings.remote origin, stepTimeout 1800,
@@ -110,8 +111,8 @@ Notes:
     only a newer commit defines breaks reads on branches based before it.
     A branch's pick adds to the repo's: both apply, each under the file
     that picks it
-  - the committed file's commit is found with the remote the global and
-    repo files set: the committed file's own settings.remote isn't used
+  - the committed file can't set settings.remote: each clone names its
+    own, and the committed file's commit is found with it
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
     pointed at its GitHub repo (GH_REPO); a fork's clone keeps everything
     on the fork with sd config set --repo settings.remote fork
@@ -257,6 +258,9 @@ const CONFIG: &[(&str, Ty)] = &[
 enum Layer {
     Global,
     Repo,
+    /// .sheepdog/config.json: what the repo file takes, but settings.remote,
+    /// which each clone names for itself.
+    Committed,
     Branch,
     Profile,
 }
@@ -345,6 +349,7 @@ fn field(ty: Ty, k: &str, layer: Layer) -> Result<Ty, &'static str> {
             (_, Some(t), _) if layer == Layer::Global || layer == Layer::Repo => Ok(t),
             (_, _, Some(t)) if layer == Layer::Global => Ok(t),
             _ if layer == Layer::Profile => Err("not allowed in a profile"),
+            (_, Some(_), _) if layer == Layer::Committed => Err("each clone's own: global or repo file only"),
             (_, Some(_), _) => Err("global or repo file only"),
             _ => Err("global file only"),
         },
@@ -618,7 +623,8 @@ fn object(text: Option<&str>, file: &str) -> Res<Value> {
 const COMMITTED: &str = ".sheepdog/config.json";
 
 /// The remote the global and repo files set: what the committed layer's
-/// commit is found with, so that file can't move its own commit.
+/// commit is found with (that file can't set one, so this is the remote
+/// every read gets too).
 fn local_remote(g: &Value, r: &Value) -> String {
     match lookup(&merge(&[g, r], false), &["settings", "remote"]) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
@@ -644,7 +650,7 @@ fn committed_label(commit: &str) -> String {
     format!("{}:{COMMITTED}", short(commit))
 }
 
-/// The committed layer at <commit>, checked as a repo file; {} when the
+/// The committed layer at <commit>, checked as a committed file; {} when the
 /// commit has no .sheepdog/config.json. A renamed key is read under its new
 /// name; the commit can't be rewritten. A bad file fails every read on its
 /// base, as a bad local file does, and its errors name the way out.
@@ -654,7 +660,7 @@ fn committed_doc(dir: &str, commit: &str) -> Res<Value> {
     let read = || {
         let mut doc = object(Some(&text), &label)?;
         rename_old_keys(&mut doc);
-        checked(&doc, Layer::Repo, &label)?;
+        checked(&doc, Layer::Committed, &label)?;
         Ok(doc)
     };
     read().map_err(|e| match e {
@@ -1623,6 +1629,15 @@ mod tests {
             ["settings.interval: global file only", "settings.remote: global or repo file only"]
         );
         assert!(probs(json!({"settings": {"remote": "x", "interval": 5}}), Layer::Global).is_empty());
+    }
+
+    #[test]
+    fn a_committed_file_takes_what_a_repo_file_does_but_remote() {
+        assert!(probs(json!({"settings": {"verify": "make"}, "profile": "p", "profiles": {"p": {}}}), Layer::Committed).is_empty());
+        assert_eq!(
+            probs(json!({"settings": {"remote": "fork"}}), Layer::Committed),
+            ["settings.remote: each clone's own: global or repo file only"]
+        );
     }
 
     #[test]
