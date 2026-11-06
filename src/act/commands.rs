@@ -212,9 +212,7 @@ fn verify_logged(wt: &str, b: &str, step: &str, cmd: String, p: &logs::Policy, r
     } else if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
         r.say(&tap_missing(&o.stdout).unwrap_or_default());
-        if let Some(l) = &log {
-            r.line(&format!("full output: {l}"));
-        }
+        say_log(r, log.as_deref());
     } else {
         if verdict {
             verify_red::clear(wt, b);
@@ -230,6 +228,12 @@ fn verify_logged(wt: &str, b: &str, step: &str, cmd: String, p: &logs::Policy, r
         verify_red::record(wt, b, step, &cmd, log.as_deref());
     }
     Err(cmd)
+}
+
+fn say_log(r: &mut Report, log: Option<&str>) {
+    if let Some(l) = log {
+        r.line(&format!("full output: {l}"));
+    }
 }
 
 pub fn verify(b: &str) {
@@ -266,12 +270,12 @@ fn autofix_run(wt: &str, b: &str, step: Option<&str>, r: &mut Report) -> Result<
     if !status(wt).is_empty() {
         die(format!("{wt} has uncommitted changes; autofix needs a clean tree to commit from"));
     }
-    let secs = step_timeout(b);
-    let o = proc::with_timeout_merged(secs, "sh", &["-c", &cmd], Some(wt));
+    let (o, log) = autofix_logged(wt, b, step, &cmd);
     let changed = status(wt).lines().count();
     let left = format!("autofix's changes are left in {wt}");
     if !o.ok {
         r.say(&tail(&o.stdout, VERIFY_TAIL));
+        say_log(r, log.as_deref());
         if let Some(step) = step.filter(|_| changed > 0) {
             // A revert would throw an attached session's edits away too.
             lock_recheck(b, step, "reverting", &left);
@@ -303,6 +307,14 @@ fn autofix_run(wt: &str, b: &str, step: Option<&str>, r: &mut Report) -> Result<
     let sha = git_out(wt, &["rev-parse", "--short", "HEAD"]).unwrap_or_default();
     r.line(&format!("autofix committed {sha}: {} ({cmd})", plural(changed, "file")));
     Ok(Some(sha))
+}
+
+/// run_logged as kind autofix, then <b>'s logs pruned.
+fn autofix_logged(wt: &str, b: &str, step: Option<&str>, cmd: &str) -> (proc::Out, Option<String>) {
+    let policy = logs::Policy::from(|k| cfg(k, b));
+    let ran = run_logged(wt, b, ("autofix", step.unwrap_or("autofix")), cmd, step_timeout(b), &policy);
+    logs::prune(wt, b, &policy);
+    ran
 }
 
 /// verify; when it fails, autofix, and when that committed something, verify

@@ -3176,6 +3176,19 @@ fn verify_names_its_log_and_a_run_still_going_461() {
     assert_eq!(sd.state(&[]).field(".verifying"), "null");
 }
 
+// An autofix's log shares the branch's dir; one running isn't verify running.
+#[test]
+fn an_autofix_running_is_not_verifying_467() {
+    let sd = sd();
+    sd.feat();
+    let dir = sd.repo_logs("state", "work").join("feat");
+    fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("20261105T000000.000Z-abc-autofix.log");
+    fs::write(&f, format!("==> 2026-11-05T00:00:00Z feat abc autofix (autofix) pid {}: cargo fmt\n", std::process::id())).unwrap();
+    assert_eq!(sd.state(&[]).field(".verifying"), "null");
+    assert!(!sd.run(&["--long"]).output.contains("verify running"));
+}
+
 #[test]
 fn question_a_give_up_says_so_on_the_one_liner_and_in_long_254() {
     let sd = sd();
