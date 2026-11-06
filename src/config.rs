@@ -618,7 +618,8 @@ fn committed_doc(dir: &str, commit: &str) -> Res<Value> {
 /// The way off a bad committed file at <commit>, <b>'s base or (for no
 /// branch or the default branch) the default branch's tip. No local file
 /// overrides a commit, and sd act restack reads the config too, so for a
-/// branch it's the git restack would run.
+/// branch it's the git restack would run, onto its parent (a stack's
+/// parent isn't the default branch).
 fn off_bad_commit(dir: &str, b: &str, remote: &str, commit: &str) -> String {
     let label = committed_label(commit);
     let def = git::default_branch(dir, remote);
@@ -630,7 +631,7 @@ fn off_bad_commit(dir: &str, b: &str, remote: &str, commit: &str) -> String {
     if b.is_empty() || def.as_deref() == Some(b) {
         return format!("{label} is {main}'s tip: commit a fixed one to {main}");
     }
-    format!("{label} is {b}'s base: fix it on {main}, then git rebase --onto {main} {commit} {b} && git update-ref refs/sheepdog/{b}/base {main}")
+    format!("{label} is {b}'s base: fix it on the branch {b} is based on (<parent>), then git rebase --onto <parent> {commit} {b} && git update-ref refs/sheepdog/{b}/base <parent>")
 }
 
 /// <commit>:.sheepdog/config.json's text, None when it has none; a commit's
