@@ -155,15 +155,16 @@ const MARK = {
 
 const SAID = { cur: "now", done: "done", todo: "to do", red: "failing", skip: "not set up" };
 function fence(b) {
+  if (!b.stages?.length) return "<div></div>";
   const at = k => b.stages.find(x => x.stage === k) || { status: "todo" };
   const said = k => SAID[at(k).status] || at(k).status;
   let reach = 0;
   STAGES.forEach(([k], i) => { if (["done", "red", "cur"].includes(at(k).status)) reach = i; });
   // One label under the fence: a post's column is too narrow for two side by side.
-  const labelled = b.stages.some(s => s.status === "cur") ? "cur" : "red";
+  const labelled = (STAGES.find(([k]) => at(k).status === "cur") || STAGES.find(([k]) => at(k).status === "red") || [])[0];
   const posts = STAGES.map(([k, label]) => {
     const s = at(k), title = `${label}: ${said(k)}${s.text ? ", " + s.text : ""}`;
-    const t = s.status === labelled && s.text ? `<span class="t">${esc(s.text)}</span>` : "";
+    const t = k === labelled && s.text ? `<span class="t">${esc(s.text)}</span>` : "";
     if (s.status === "cur") {
       const c = color(s.who);
       return `<span class="p" data-s="${label}" title="${esc(title)}" style="--pc:${c}">${splotch(b.id + k, c)}${t}</span>`;
@@ -353,7 +354,7 @@ function renderDetail(b) {
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span class="lead">${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)}, <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>Back to the flock</button>
     <div class="dhead"><h1>${esc(b.branch)}</h1><div class="sub" id="dsub">${esc(b.repo)}</div>
-      <div class="meta">${prLink(b)}${usd(b)}${checked(b)}</div>${b.stages ? fence(b) : ""}</div>
+      <div class="meta">${prLink(b)}${usd(b)}${checked(b)}</div>${fence(b)}</div>
     <div class="dgrid">
       <div class="col"><div class="part flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div>${settingsHtml(b)}</div>
       <div class="col"><div class="part"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}${actLine(b)}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
