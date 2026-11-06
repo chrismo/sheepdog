@@ -14,13 +14,12 @@ use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, Once, PoisonError};
 
 pub fn file(dir: &str, b: &str) -> Option<String> {
-    let common = git::common_dir(dir)?;
-    Some(format!("{common}/sheepdog/{}.running", b.replace('/', "__")))
+    crate::config::branch_path(dir, b, ".running")
 }
 
 /// Where a step the watcher launched writes how it ended (#268).
 pub fn outcome_file(dir: &str, b: &str) -> Option<String> {
-    file(dir, b)?.strip_suffix(".running").map(|f| format!("{f}.outcome"))
+    crate::config::branch_path(dir, b, ".outcome")
 }
 
 /// When <pid> started, by ps, else nothing. It tells a marker's process from
@@ -290,6 +289,28 @@ mod tests {
 
     fn path(f: &Path) -> &str {
         f.to_str().unwrap()
+    }
+
+    #[test]
+    fn a_branch_with_a_slash_and_one_with_two_underscores_get_their_own_files() {
+        let r = crate::test_support::Repo::new();
+        assert_ne!(file(&r.dir, "x/y"), file(&r.dir, "x__y"));
+        assert_ne!(outcome_file(&r.dir, "x/y"), outcome_file(&r.dir, "x__y"));
+        assert!(outcome_file(&r.dir, "x/y").unwrap().ends_with("/sheepdog/x%2Fy.outcome"));
+    }
+
+    #[test]
+    fn an_old_named_marker_or_outcome_is_still_found_until_it_goes() {
+        let r = crate::test_support::Repo::new();
+        let dir = format!("{}/.git/sheepdog", r.dir);
+        fs::create_dir_all(&dir).unwrap();
+        for ext in ["running", "outcome"] {
+            fs::write(format!("{dir}/x__y.{ext}"), "").unwrap();
+        }
+        assert_eq!(file(&r.dir, "x/y").unwrap(), format!("{dir}/x__y.running"));
+        assert_eq!(outcome_file(&r.dir, "x/y").unwrap(), format!("{dir}/x__y.outcome"));
+        fs::remove_file(format!("{dir}/x__y.outcome")).unwrap();
+        assert_eq!(outcome_file(&r.dir, "x/y").unwrap(), format!("{dir}/x%2Fy.outcome"));
     }
 
     #[test]

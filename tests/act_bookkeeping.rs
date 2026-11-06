@@ -340,6 +340,18 @@ fn forget_deletes_the_branchs_stored_description_too_153() {
     assert!(sd.cwd.join(".git/sheepdog/other.describe.json").exists());
 }
 
+// A launched step's outcome is the branch's too (#467 slice 4).
+#[test]
+fn forget_deletes_the_branchs_step_outcome_467() {
+    let sd = sd();
+    fs::create_dir_all(sd.cwd.join(".git/sheepdog")).unwrap();
+    sd.write(".git/sheepdog/feat.outcome", "push: ok\n");
+    sd.write(".git/sheepdog/other.outcome", "push: ok\n");
+    assert_eq!(sd.run(&["forget"]).status, 0);
+    assert!(!sd.cwd.join(".git/sheepdog/feat.outcome").exists());
+    assert!(sd.cwd.join(".git/sheepdog/other.outcome").exists());
+}
+
 // @test "forget --remove: a merged branch's worktree is removed and the branch deleted (#153)"
 #[test]
 fn forget_remove_a_merged_branchs_worktree_is_removed_and_the_branch_deleted_153() {

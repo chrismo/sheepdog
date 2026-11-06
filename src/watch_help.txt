@@ -139,11 +139,15 @@ notifies, once; one for no local branch is only a pass line. sd watch vacuum
 doesn't wait for the clock, vacuumAfter 0 included, but counts only these
 reasons and skips a branch sd state is unsure of, as a pass does.
 
-Branch files (#283): each pass deletes, in every registered repo, the files
-in $GIT_COMMON_DIR/sheepdog that no local branch owns: a branch's sd config
-file (<branch>.json) and its stored description (<branch>.describe.json),
-which a branch -D leaves behind. A branch that exists keeps both, enrolled
-or not. Only vacuum prints them; vacuum --dry-run lists them.
+Branch files (#283, #467): each pass deletes, in every registered repo, the
+files in $GIT_COMMON_DIR/sheepdog that no local branch owns, which a branch
+-D leaves behind: a branch's sd config file (<branch>.json), its stored
+description (<branch>.describe.json), a launched step's outcome
+(<branch>.outcome) and a dead step's running marker (<branch>.running); a
+live step's marker stays. <branch> is the name with % as %25 and / as %2F;
+a file an older sd named with / as __ is still read, and kept while its
+branch exists. A branch that exists keeps them all, enrolled or not. Only
+vacuum prints them; vacuum --dry-run lists them.
 
 Dispatch (#267): off unless the branch's settings.autoRun is true. It layers
 like any setting: sd config set --global settings.autoRun true turns it on

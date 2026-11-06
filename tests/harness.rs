@@ -699,14 +699,14 @@ fn harness_run_while_the_step_runs_the_branchs_marker_names_the_step_a_live_pid_
     assert!(sd.markers().is_empty());
 }
 
-// @test "harness_run: the marker is per branch, HARNESS_BRANCH's when set, / made __ (#170)"
+// @test "harness_run: the marker is per branch, HARNESS_BRANCH's when set, / made %2F (#170, #467)"
 #[test]
 fn harness_run_the_marker_is_per_branch_harness_branchs_when_set_made_170() {
     let sd = sd();
     sd.step(&[("HARNESS_BRANCH", "team/x")], &["pi", "sid1", "new", "30", "do it", "{}"]);
     let head = sd.fx_read("marker").lines().next().unwrap_or_default().to_string();
     let f: Vec<&str> = head.split(' ').collect();
-    assert_eq!(format!("{} {}", f[0], f[2]), "team__x.running agent");
+    assert_eq!(format!("{} {}", f[0], f[2]), "team%2Fx.running agent");
     assert!(sd.markers().is_empty());
 }
 
