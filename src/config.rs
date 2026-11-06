@@ -59,7 +59,7 @@ Layers (top wins; sd config files prints the paths):
             watch runs at once; 0 runs none), replyPrefix "🤖 ";
             protectedPaths none (unset: .sheepdog/protected-paths in the
             base commit, else the CI config dirs, sd act --help); the log
-            store's (verify's whole output, #467): logKeep failed (the
+            store's (verify and autofix output, #467): logKeep failed (the
             failures and the newest pass; all; none, no log), logRuns 5 (a
             branch's logs), logFileBytes 8388608 (a log's head and end are
             kept past it), logAge 1209600 (seconds) and logBytes 1073741824

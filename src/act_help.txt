@@ -225,8 +225,9 @@ Verbs:
             worktree, zero tokens, and commit what it changed ("autofix:
             <command>"). Nothing to commit: says so. A failing command is
             nonzero with its output's tail, its changes left uncommitted.
-            implement and address run it when verify fails, then verify
-            again (A11), and ci-fix runs it first
+            Its whole output is kept in a log as verify's is, named
+            autofix (#467). implement and address run it when verify
+            fails, then verify again (A11), and ci-fix runs it first
   ci-fix    CI is red on HEAD: verify and autofix first (zero tokens; a
             fix there is pushed as is), else hand the agent the failing
             checks as GitHub reports them, whatever CI posted them (each

@@ -312,7 +312,7 @@ mod verify {
     }
 }
 
-// verify's output kept whole, one file per run (#461, the log store #467).
+// verify's and autofix's output kept whole, one file per run (#461, the log store #467).
 mod logs {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
@@ -432,6 +432,43 @@ mod logs {
         assert!(has_line(&text, "1") && has_line(&text, "1000"));
         assert!(!has_line(&text, "500"));
         assert_has(&text, &["bytes not kept"]);
+    }
+
+    #[test]
+    fn a_failing_autofix_keeps_its_whole_output_in_a_private_log_and_says_where_467() {
+        let sd = sd();
+        sd.set_global("settings.autofix", "seq 1 60; echo 'lint: unfixable' >&2; exit 2");
+        let r = sd.run(&["autofix"]);
+        assert_ne!(r.status, 0);
+        let [log] = &logs(&sd)[..] else { panic!("one log: {:?}", logs(&sd)) };
+        let path = log.display().to_string();
+        let sha12 = sd.head_sha()[..12].to_string();
+        let name = log.file_name().unwrap().to_string_lossy().into_owned();
+        assert_match(&name, &format!(r"^\d{{8}}T\d{{6}}\.\d{{3}}Z-{sha12}-autofix\.log$"));
+        assert_has(&r.output, &[&format!("autofix: seq 1 60; echo 'lint: unfixable' >&2; exit 2 (log: {path})")]);
+        assert_has(&r.output, &[&format!("full output: {path}")]);
+        let text = fs::read_to_string(log).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_match(lines[0], &format!(r"^==> \S+Z feat {sha12} autofix \(autofix\) pid \d+: seq 1 60"));
+        assert_eq!(lines[1], "1");
+        assert!(lines.contains(&"60") && lines.contains(&"lint: unfixable"));
+        assert_match(lines[lines.len() - 1], r"^<== exit 2 after \d+s$");
+        assert_eq!(mode(log), 0o600);
+        assert_eq!(mode(&branch_dir(&sd)), 0o700);
+        assert!(sd.verify_red().is_none(), "a failed autofix makes no verify-red record");
+    }
+
+    #[test]
+    fn by_default_a_failed_autofix_and_the_newest_pass_are_kept_467() {
+        let sd = sd();
+        for (c, ok) in [("echo red; false", false), ("echo green one", true), ("echo green two", true)] {
+            sd.set_global("settings.autofix", c);
+            assert_eq!(sd.run(&["autofix"]).status == 0, ok, "{c}");
+        }
+        let texts = texts(&sd);
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        assert_has(&texts[0], &["red"]);
+        assert_has(&texts[1], &["green two"]);
     }
 }
 
@@ -767,6 +804,22 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         assert_eq!(sd.git(&["log", "-2", "--format=%s"]).lines().last(), Some("add d"));
         assert_eq!(sd.git(&["status", "--porcelain"]), "");
         assert!(sd.verify_red().is_none(), "autofix's commit passed verify: nothing red at HEAD");
+    }
+
+    // logKeep all: by default the second verify is the newest pass, and
+    // autofix's passing log is pruned.
+    #[test]
+    fn implement_autofix_inside_the_step_keeps_a_log_naming_the_step_467() {
+        let sd = implement_setup();
+        sd.set_global("settings.logKeep", "all");
+        autofix_cmd(&sd, "sed -i.bak 's/ *$//' file.txt && rm file.txt.bak; echo fixed-it");
+        assert_eq!(sd.run(IMPLEMENT).status, 0);
+        let repo = fs::read_dir(sd.tmp.join("state/logs/runs")).unwrap().flatten().next().unwrap().path();
+        let logs: Vec<_> = fs::read_dir(repo.join("feat")).unwrap().flatten().map(|e| e.path()).collect();
+        let fix = logs.iter().find(|l| l.to_string_lossy().ends_with("-autofix-implement.log")).unwrap_or_else(|| panic!("{logs:?}"));
+        let text = fs::read_to_string(fix).unwrap();
+        assert_match(text.lines().next().unwrap(), r"^==> \S+Z feat \w{12} autofix \(implement\) pid ");
+        assert_has(&text, &["fixed-it", "<== exit 0 after "]);
     }
 
     // @test "implement: a failed verify with no autofix fails as before"
