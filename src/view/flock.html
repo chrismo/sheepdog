@@ -11,7 +11,7 @@
 <style>
 .wrap { max-width: 1200px; gap: 40px; }
 .key { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--muted); font-size: 0.85rem; align-items: center; }
-.key span { display: inline-flex; gap: 6px; align-items: center; }
+.key > span { display: inline-flex; gap: 6px; align-items: center; }
 .key svg { width: 26px; height: 26px; overflow: visible; }
 #top { display: grid; gap: 22px; }
 #groups { display: grid; gap: 44px; }
@@ -186,8 +186,8 @@ function row(b) {
 
 const MOVERS = [["you", "you"], ["agent", "the agent"], ["run", "sheepdog"], ["wait", "no one: waiting"]];
 const KEY = `<span>${MARK.todo()}to do</span><span>${MARK.done()}done</span><span>${MARK.red()}failing</span><span>no post: not set up</span>` +
-  `<span>${splotch("key", "var(--muted)")}where it stands, painted for who moves next: ` +
-  MOVERS.map(([w, name]) => `<b style="color:${color(w)}">${name}</b>`).join(", ") + `</span>`;
+  `<span>${splotch("key", "var(--muted)")}<span>where it stands, painted for who moves next: ` +
+  MOVERS.map(([w, name]) => `<b style="color:${color(w)}">${name}</b>`).join(", ") + `</span></span>`;
 
 function render(f) {
   const bs = f.branches, repos = new Set(bs.map(b => b.repo)).size;
