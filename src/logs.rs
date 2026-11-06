@@ -166,10 +166,14 @@ enum End {
     Failed,
 }
 
-fn head(f: &Path) -> Option<(u32, String)> {
+fn first_line(f: &Path) -> Option<String> {
     let mut first = Vec::new();
     io::BufReader::new(fs::File::open(f).ok()?).read_until(b'\n', &mut first).ok()?;
-    let first = String::from_utf8_lossy(&first);
+    Some(String::from_utf8_lossy(&first).into_owned())
+}
+
+fn head(f: &Path) -> Option<(u32, String)> {
+    let first = first_line(f)?;
     let since = first.split(' ').nth(1)?.to_string();
     let pid = first.split(" pid ").nth(1)?.split(':').next()?.parse().ok()?;
     Some((pid, since))
@@ -346,11 +350,20 @@ pub fn prune_every_repo(p: &Policy) {
     prune_all(&root, p, &named(&root), SystemTime::now());
 }
 
-/// The newest of <b>'s logs in <wt>'s repo still being written, by a live
-/// sd: (path, pid, since).
-pub fn running(wt: &str, b: &str) -> Option<(PathBuf, u32, String)> {
+/// The <kind> its first line names.
+fn kind_of(f: &Path) -> Option<String> {
+    first_line(f)?.split(' ').nth(4).map(str::to_string)
+}
+
+/// The newest of <b>'s <kind> logs in <wt>'s repo still being written, by a
+/// live sd: (path, pid, since).
+pub fn running(wt: &str, b: &str, kind: &str) -> Option<(PathBuf, u32, String)> {
     let dir = branch_dir(&root(), &git::main_worktree(wt), b);
-    logs_in(&dir).into_iter().rev().filter(|f| end_of(f) == End::Running).find_map(|f| head(&f).map(|(pid, since)| (f, pid, since)))
+    logs_in(&dir)
+        .into_iter()
+        .rev()
+        .filter(|f| kind_of(f).as_deref() == Some(kind) && end_of(f) == End::Running)
+        .find_map(|f| head(&f).map(|(pid, since)| (f, pid, since)))
 }
 
 #[cfg(test)]

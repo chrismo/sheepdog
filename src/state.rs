@@ -202,7 +202,7 @@ fn verify_state(dir: &str, b: &str, head: &str) -> Result<Option<Value>, ()> {
 /// {record, running}: <record> (verify_state's, or null), and the verify
 /// running now on <b>, {log, pid, since} from the log store (#461), or null.
 fn with_running(record: Option<Value>, dir: &str, b: &str) -> Value {
-    let running = crate::logs::running(dir, b).map(|(log, pid, since)| json!({"log": log.display().to_string(), "pid": pid, "since": since}));
+    let running = crate::logs::running(dir, b, "verify").map(|(log, pid, since)| json!({"log": log.display().to_string(), "pid": pid, "since": since}));
     json!({"record": record, "running": running})
 }
 
