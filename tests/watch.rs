@@ -12,7 +12,7 @@
 
 mod common;
 
-use common::{assert_has, assert_lacks, assert_match, chomp, jq, output, Run, Sd};
+use common::{assert_has, assert_lacks, assert_match, chomp, dead_pid, jq, output, running_marker, Holder, Run, Sd};
 use regex::Regex;
 use serde_json::Value;
 use sheepdog::next::steps;
@@ -472,10 +472,38 @@ fn a_pass_deletes_the_branch_config_and_describe_files_whose_branch_no_longer_ex
     sd.git(&["branch", "x__y"]);
     let dir = sd.tmp.join("repo/.git/sheepdog");
     fs::create_dir_all(&dir).unwrap();
-    let kept = ["feat.json", "feat.describe.json", "a%2Fb.json", "a__b.describe.json", "x__y.json", "x__y.describe.json", "gone.running"];
+    let kept = ["feat.json", "feat.describe.json", "a%2Fb.json", "a__b.describe.json", "x__y.json", "x__y.describe.json"];
     let swept = ["gone.json", "gone.describe.json", "also%2Fgone.json", "also__gone.describe.json"];
     for f in kept.iter().chain(&swept) {
         fs::write(dir.join(f), "{}\n").unwrap();
+    }
+    sd.ps_fixture("feat", &[]);
+    sd.pass();
+    for f in kept {
+        assert!(dir.join(f).exists(), "{f} was deleted");
+    }
+    for f in swept {
+        assert!(!dir.join(f).exists(), "{f} was kept");
+    }
+}
+
+// A launched step's outcome, and a dead step's marker, go with their branch
+// as its config file does; a live step's marker stays, even on a gone branch
+// (#467 slice 4).
+#[test]
+fn a_pass_deletes_the_outcome_and_dead_marker_of_a_branch_that_no_longer_exists_467() {
+    let sd = sd();
+    sd.git(&["branch", "a/b"]);
+    let git = sd.tmp.join("repo/.git");
+    let dir = git.join("sheepdog");
+    fs::create_dir_all(&dir).unwrap();
+    let holder = Holder::new();
+    running_marker(&git, "live/gone", "push", holder.pid());
+    running_marker(&git, "dead/gone", "push", dead_pid());
+    let kept = ["a%2Fb.outcome", "a__b.outcome", "live%2Fgone.running"];
+    let swept = ["gone.outcome", "also%2Fgone.outcome", "also__gone.outcome", "dead%2Fgone.running"];
+    for f in kept.iter().chain(&swept).filter(|f| f.ends_with(".outcome")) {
+        fs::write(dir.join(f), "push: ok\n").unwrap();
     }
     sd.ps_fixture("feat", &[]);
     sd.pass();

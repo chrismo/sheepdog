@@ -221,7 +221,7 @@ pub fn forget(b: &str, remove: bool) {
     usage::append(&usage::reset_record(&time::now_utc().0, &main_worktree("."), b));
     must(pins::delete_all(".", b));
     crate::logs::forget(".", b);
-    if let Some(f) = crate::config::describe_file(".", b) {
+    for f in [crate::config::describe_file(".", b), running::outcome_file(".", b)].into_iter().flatten() {
         let _ = std::fs::remove_file(f);
     }
     println!("forgot {b}");

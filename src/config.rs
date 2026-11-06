@@ -470,12 +470,38 @@ fn repo_file(dir: &str) -> Option<String> {
     git::common_dir(dir).map(|common| format!("{common}/sheepdog.json"))
 }
 
-fn branch_file_name(b: &str) -> String {
-    format!("{}.json", b.replace('%', "%25").replace('/', "%2F"))
+/// <b> as one file name: % as %25, / as %2F.
+pub fn encode_branch(b: &str) -> String {
+    b.replace('%', "%25").replace('/', "%2F")
 }
 
-fn describe_file_name(b: &str) -> String {
-    format!("{}.describe.json", b.replace('/', "__"))
+/// Every % in an encoded name starts %25 or %2F, so undoing %2F first
+/// leaves each %25 whole.
+pub fn decode_branch(name: &str) -> String {
+    name.replace("%2F", "/").replace("%25", "%")
+}
+
+fn branch_file_name(b: &str) -> String {
+    format!("{}.json", encode_branch(b))
+}
+
+/// <b>'s file name before #467 slice 4, / as __: two branches could share it.
+fn old_branch_name(b: &str) -> String {
+    b.replace('/', "__")
+}
+
+/// The files kept per branch in $GIT_COMMON_DIR/sheepdog, by suffix, and
+/// whether one was named by old_branch_name before.
+const BRANCH_FILES: [(&str, bool); 4] = [(".json", false), (".describe.json", true), (".running", true), (".outcome", true)];
+
+/// <b>'s file ending <suffix> in $GIT_COMMON_DIR/sheepdog; None outside a
+/// repo. While only its old name exists, that one: a file an older build
+/// wrote, or a step it still has in flight will write, is still found.
+pub fn branch_path(dir: &str, b: &str, suffix: &str) -> Option<String> {
+    let common = git::common_dir(dir)?;
+    let at = |name: String| format!("{common}/sheepdog/{name}{suffix}");
+    let (new, old) = (at(encode_branch(b)), at(old_branch_name(b)));
+    Some(if !Path::new(&new).exists() && Path::new(&old).exists() { old } else { new })
 }
 
 fn branch_file(dir: &str, b: &str) -> Res<String> {
@@ -490,15 +516,16 @@ pub fn branch_config_file(dir: &str, b: &str) -> Option<String> {
 /// Where sd act describe stores <b>'s description, beside its branch file;
 /// None outside a repo.
 pub fn describe_file(dir: &str, b: &str) -> Option<String> {
-    git::common_dir(dir).map(|common| format!("{common}/sheepdog/{}", describe_file_name(b)))
+    branch_path(dir, b, ".describe.json")
 }
 
-/// Every *.json in $GIT_COMMON_DIR/sheepdog that no local branch owns as its
-/// branch or describe file, as sheepdog/<file>, sorted; unless <dry>,
-/// deleted, and only those deleted returned. Any other .json kept there
-/// would be deleted too. Matched against each branch's own names, never
-/// decoded: x__y.describe.json may be x/y's or x__y's. The directory is read
-/// before the branches, so a branch made in between keeps its new file.
+/// Every file in $GIT_COMMON_DIR/sheepdog of a kind BRANCH_FILES names that
+/// no local branch owns, by its name or its old one, but a live step's
+/// marker, as sheepdog/<file>, sorted; unless <dry>, deleted, and only those
+/// deleted returned. Any other .json kept there would be deleted too.
+/// Matched against each branch's own names, never decoded: x__y.outcome may
+/// be x/y's old name or x__y's. The directory is read before the branches,
+/// so a branch made in between keeps its new file.
 pub fn sweep_branch_files(dir: &str, dry: bool) -> Vec<String> {
     let Some(common) = git::common_dir(dir) else { return vec![] };
     let Ok(entries) = fs::read_dir(format!("{common}/sheepdog")) else { return vec![] };
@@ -507,14 +534,29 @@ pub fn sweep_branch_files(dir: &str, dry: bool) -> Vec<String> {
     if !heads.ok {
         return vec![];
     }
-    let owned: std::collections::HashSet<String> =
-        heads.stdout.lines().flat_map(|b| [branch_file_name(b), describe_file_name(b)]).collect();
-    let mut gone: Vec<String> = files.into_iter().filter(|f| f.ends_with(".json") && !owned.contains(f)).collect();
+    let mut owned = owned_names(heads.stdout.lines());
+    owned.extend(crate::running::leases(dir).into_iter().filter(|l| l.live).map(|l| l.file.rsplit('/').next().unwrap_or("").to_string()));
+    let swept = |f: &String| BRANCH_FILES.iter().any(|(s, _)| f.ends_with(s)) && !owned.contains(f);
+    let mut gone: Vec<String> = files.into_iter().filter(swept).collect();
     gone.sort();
     if !dry {
         gone.retain(|f| fs::remove_file(format!("{common}/sheepdog/{f}")).is_ok());
     }
     gone.into_iter().map(|f| format!("sheepdog/{f}")).collect()
+}
+
+/// Every name a file of <branches> may have in $GIT_COMMON_DIR/sheepdog.
+fn owned_names<'a>(branches: impl Iterator<Item = &'a str>) -> std::collections::HashSet<String> {
+    let mut owned = std::collections::HashSet::new();
+    for b in branches {
+        for (suffix, was_old) in BRANCH_FILES {
+            owned.insert(format!("{}{suffix}", encode_branch(b)));
+            if was_old {
+                owned.insert(format!("{}{suffix}", old_branch_name(b)));
+            }
+        }
+    }
+    owned
 }
 
 fn branch_arg(b: &str) -> Res<String> {
@@ -1426,6 +1468,18 @@ mod tests {
         put(&mut d, &["a".into()], json!(3));
         put(&mut d, &["c".into(), "d".into()], json!(4));
         assert_eq!(d.to_string(), r#"{"a":3,"b":2,"c":{"d":4}}"#);
+    }
+
+    #[test]
+    fn a_branch_name_round_trips_through_its_file_name_one_file_per_branch() {
+        let names = ["feat", "a/b", "a__b", "a%2Fb", "%", "x/y__z%25"];
+        let encoded: Vec<String> = names.iter().map(|b| encode_branch(b)).collect();
+        for (b, e) in names.iter().zip(&encoded) {
+            assert!(!e.contains('/'), "{e}");
+            assert_eq!(decode_branch(e), *b);
+        }
+        assert_eq!(encoded.iter().collect::<std::collections::HashSet<_>>().len(), names.len());
+        assert_eq!(encode_branch("a/b"), "a%2Fb");
     }
 
     #[test]

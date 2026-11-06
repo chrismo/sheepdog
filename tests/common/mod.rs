@@ -139,7 +139,7 @@ pub fn lock_by(pid: u32) -> String {
 /// <step> run by <pid> since 2026-10-18T14:03:00Z; its path.
 pub fn running_marker(git: &Path, b: &str, step: &str, pid: u32) -> PathBuf {
     fs::create_dir_all(git.join("sheepdog")).unwrap();
-    let marker = git.join(format!("sheepdog/{}.running", b.replace('/', "__")));
+    let marker = git.join(format!("sheepdog/{}.running", sheepdog::config::encode_branch(b)));
     let pid = pid.to_string();
     let start = sheepdog::running::proc_start(&pid);
     fs::write(&marker, format!("{pid} {step} 2026-10-18T14:03:00Z {start}\n")).unwrap();

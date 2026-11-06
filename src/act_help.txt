@@ -102,15 +102,16 @@ Verbs:
             branch file and stored description too (#283)
   forget    the branch is done (merged, abandoned): unenroll it and delete
             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
-            its stored description and its logs (#467), and start its spend
-            over (a reset row in usage.sup, #349). --remove, once its PR
-            merged: also remove its worktree and delete the branch, which
-            ends sd state's merged step (#153). Refuses, changing nothing,
-            unless the PR merged with the branch's tip in it, and when the
-            worktree has uncommitted or untracked changes or is attached.
-            The main worktree is never removed: it is switched to the
-            default branch. Ignored files (.env, build output) go with a
-            removed worktree; it names them
+            its stored description, its launched step's outcome and its
+            logs (#467), and start its spend over (a reset row in
+            usage.sup, #349). --remove, once its PR merged: also remove its
+            worktree and delete the branch, which ends sd state's merged
+            step (#153). Refuses, changing nothing, unless the PR merged
+            with the branch's tip in it, and when the worktree has
+            uncommitted or untracked changes or is attached. The main
+            worktree is never removed: it is switched to the default
+            branch. Ignored files (.env, build output) go with a removed
+            worktree; it names them
   unregister  take this repo (or <path>, e.g. one that's gone) off the
             watcher's list; refuses while any branch is still enrolled
   address   hand owed bot feedback to an agent, then commit, verify, push,

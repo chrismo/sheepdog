@@ -76,9 +76,9 @@ fn auto_run_line(on: bool, overrides: &[String]) -> String {
     format!("autoRun {global}; {other} on {n} branch{}: {}", if n == 1 { "" } else { "es" }, overrides.join(", "))
 }
 
-/// The branch a marker file names: <b>.running, / written as __.
+/// The branch a marker file names: <b>.running, <b> encoded.
 fn branch_of(marker: &str) -> String {
-    basename(marker).strip_suffix(".running").unwrap_or(marker).replace("__", "/")
+    config::decode_branch(basename(marker).strip_suffix(".running").unwrap_or(marker))
 }
 
 fn running_lines(repos: &[(String, String)]) -> Vec<String> {
@@ -206,7 +206,8 @@ mod tests {
     #[test]
     fn branch_of_undoes_the_markers_file_name() {
         assert_eq!(branch_of("/r/.git/sheepdog/feat.running"), "feat");
-        assert_eq!(branch_of("/r/.git/sheepdog/cm__x.running"), "cm/x");
+        assert_eq!(branch_of("/r/.git/sheepdog/cm%2Fx.running"), "cm/x");
+        assert_eq!(branch_of("/r/.git/sheepdog/cm__x.running"), "cm__x");
     }
 
     const LOADED: &str = "gui/501/com.sheepdog.watch = {\n\tactive count = 0\n\tstate = not running\n\n\tprogram = /h/sd\n\truns = 510\n\tlast exit code = 0\n\trun interval = 300 seconds\n}\n";
