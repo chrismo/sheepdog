@@ -138,9 +138,12 @@ Reports, for <branch> (default: the current one):
             (#121, #349)
   failed    agent steps that failed (or returned nothing usable) in a row
             on the branch (refs/sheepdog/<b>/failed): {step, harness,
-            count, since, at, error}, the last one's; a step that succeeds
-            removes it. After 3, NEXT hands the agent's steps to chrismo
-            (#242)
+            count, since, at, error, transcript}, the last one's; a step
+            that succeeds removes it. After 3, NEXT hands the agent's steps
+            to chrismo (#242). transcript: the file the harness keeps that
+            step's session in (its usage.sup row names the session, #467),
+            to read in place; null when sd counted the failure (a timeout,
+            a crash) or the harness cleaned it up
   verify    the last failed settings.verify (refs/sheepdog/<b>/verify-red):
             {sha (the commit it ran on), step (the verb that ran it), cmd,
             at, at_head, log (its whole output, kept by the log store, #461;

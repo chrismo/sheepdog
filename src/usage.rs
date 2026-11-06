@@ -192,6 +192,28 @@ pub fn spend(repo: &str, b: &str) -> Option<Spend> {
     }
 }
 
+/// The session the failure record's step ran in (#467): the last failed row
+/// for <repo>'s <b> with its step (null is "agent") and harness, at or
+/// before its <at>. A failed step's fork never becomes branch.<b>.sd-session,
+/// so only this row names it.
+pub fn failed_session(repo: &str, b: &str, step: &str, harness: &str, at: &str) -> Option<String> {
+    let text = fs::read(file()).ok()?;
+    failed_session_in(&String::from_utf8_lossy(&text), repo, b, step, harness, at)
+}
+
+fn failed_session_in(text: &str, repo: &str, b: &str, step: &str, harness: &str, at: &str) -> Option<String> {
+    let mut rows = text.lines().filter(|l| shaped(l)).filter_map(sup_record).filter(|r| {
+        let field = |k: &str| r.get(k).and_then(Value::as_str);
+        r.get("status").and_then(Value::as_i64).is_some_and(|s| s != 0)
+            && field("repo") == Some(repo)
+            && field("branch") == Some(b)
+            && field("harness") == Some(harness)
+            && field("step").unwrap_or("agent") == step
+            && field("time").is_some_and(|t| t <= at)
+    });
+    rows.next_back()?.get("session")?.as_str().map(str::to_string)
+}
+
 /// One step, as the harness saw it.
 pub struct Step<'a> {
     pub time: &'a str,
@@ -451,6 +473,31 @@ mod tests {
         assert_eq!(s, Spend { usd: 0.5, unknown: vec![], skipped: 0, stray: vec![] });
         assert_eq!(spend_in(&text, "/r", "other").unwrap().usd, 2.0);
         assert_eq!(reset_record("2026-10-31T00:00:00Z", "/r", "feat"), r#"{time:2026-10-31T00:00:00Z,repo:"/r",branch:"feat",reset:true}"#);
+    }
+
+    #[test]
+    fn the_failed_steps_session_is_its_last_failed_row_at_or_before_the_record_467() {
+        let r = |time: &str, repo: &str, b: &str, step: &str, h: &str, sid: &str, status: i32| {
+            format!("{{time:{time},repo:\"{repo}\",branch:\"{b}\",step:{step},harness:\"{h}\",session:\"{sid}\",mode:\"fork\",status:{status}}}\n")
+        };
+        let text = [
+            r("2026-11-05T10:00:00Z", "/r", "feat", "\"implement\"", "claude", "old", 1),
+            r("2026-11-05T10:05:00Z", "/r", "feat", "\"implement\"", "claude", "it", 1),
+            r("2026-11-05T10:05:00Z", "/r", "feat", "\"implement\"", "claude", "ok", 0),
+            r("2026-11-05T10:05:00Z", "/r", "feat", "\"review\"", "claude", "review", 1),
+            r("2026-11-05T10:05:00Z", "/r", "feat", "\"implement\"", "pi", "pi", 1),
+            r("2026-11-05T10:05:00Z", "/r", "other", "\"implement\"", "claude", "other", 1),
+            r("2026-11-05T10:05:00Z", "/elsewhere", "feat", "\"implement\"", "claude", "elsewhere", 1),
+            r("2026-11-05T10:09:00Z", "/r", "feat", "\"implement\"", "claude", "later", 75),
+            r("2026-11-05T10:00:00Z", "/r", "feat", "null", "claude", "unnamed", 1),
+            "not sup {\n".into(),
+        ]
+        .concat();
+        let at = "2026-11-05T10:05:00Z";
+        assert_eq!(failed_session_in(&text, "/r", "feat", "implement", "claude", at).as_deref(), Some("it"));
+        assert_eq!(failed_session_in(&text, "/r", "feat", "agent", "claude", at).as_deref(), Some("unnamed"));
+        // sd counted it (a timeout, a crash): no harness session to point at.
+        assert_eq!(failed_session_in(&text, "/r", "feat", "implement", "sd", at), None);
     }
 
     #[test]
