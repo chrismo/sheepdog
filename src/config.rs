@@ -101,8 +101,11 @@ Notes:
     global or repo file only; a pick of a profile no file defines is an
     error on every read, naming the file that picks it. set refuses to
     write such a pick, but nothing else is checked: unset profiles.<name>
-    that a file still picks breaks its reads. A branch's pick adds to the
-    repo's: both apply, each under the file that picks it
+    that a file still picks breaks its reads, and set --repo checks a pick
+    against the default branch's tip's committed file only, so a profile
+    only a newer commit defines breaks reads on branches based before it.
+    A branch's pick adds to the repo's: both apply, each under the file
+    that picks it
   - the committed file's commit is found with the remote the global and
     repo files set: the committed file's own settings.remote isn't used
   - settings.remote is the remote sheepdog fetches and pushes, and gh is
@@ -595,14 +598,24 @@ fn committed_label(commit: &str) -> String {
 
 /// The committed layer at <commit>, checked as a repo file; {} when the
 /// commit has no .sheepdog/config.json. A renamed key is read under its new
-/// name; the commit can't be rewritten.
+/// name; the commit can't be rewritten. A bad file fails every read on its
+/// base, as a bad local file does, and its errors name the way out.
 fn committed_doc(dir: &str, commit: &str) -> Res<Value> {
     let Some(text) = committed_text(dir, commit) else { return Ok(json!({})) };
     let label = committed_label(commit);
-    let mut doc = object(Some(&text), &label)?;
-    rename_old_keys(&mut doc);
-    checked(&doc, Layer::Repo, &label)?;
-    Ok(doc)
+    let read = || {
+        let mut doc = object(Some(&text), &label)?;
+        rename_old_keys(&mut doc);
+        checked(&doc, Layer::Repo, &label)?;
+        Ok(doc)
+    };
+    read().map_err(|e| match e {
+        Fail::Error(mut ls) => {
+            ls.push(format!("{label}: no file here can stand in for a commit's: fix it on the default branch, then sd act restack"));
+            Fail::Error(ls)
+        }
+        e => e,
+    })
 }
 
 /// <commit>:.sheepdog/config.json's text, None when it has none; a commit's

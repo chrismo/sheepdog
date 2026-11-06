@@ -3238,11 +3238,21 @@ fn committed_a_bad_file_names_the_commit_and_path_and_follows_the_repo_files_rul
     let at = format!("{}:.sheepdog/config.json", short(&sha));
     assert_eq!(
         r.output,
-        format!("sd config: {at}: settings.interval: global file only\nsd config: {at}: settings.verfy: unknown key")
+        format!(
+            "sd config: {at}: settings.interval: global file only\nsd config: {at}: settings.verfy: unknown key\nsd config: {}",
+            recover(&at)
+        )
     );
     let sha = sd.commit_config("[]");
     let r = sd.run(&["get", "settings.verify"]);
-    assert_eq!(r.output, format!("sd config: not a JSON object: {}:.sheepdog/config.json", short(&sha)));
+    let at = format!("{}:.sheepdog/config.json", short(&sha));
+    assert_eq!(r.output, format!("sd config: not a JSON object: {at}\nsd config: {}", recover(&at)));
+}
+
+/// The line a bad committed file's errors end with: no local file overrides
+/// a commit, so the fix is a new base.
+fn recover(at: &str) -> String {
+    format!("{at}: no file here can stand in for a commit's: fix it on the default branch, then sd act restack")
 }
 
 #[test]
