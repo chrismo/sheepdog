@@ -65,14 +65,19 @@ Verbs:
             leaves the edits uncommitted, for chrismo to answer in the
             session (sd act attach). Review findings recorded on HEAD (sd
             act review) go into the prompt, each answered on its own (see
-            review). Refuses, at zero tokens, a branch already ahead of its
-            target with no findings to fix: NEXT offers implement only
-            before the branch's first commit (#241); and unless --force, the
-            task when sd state can't read the target, the remote has commits
-            the branch doesn't, or sd state has errors, and either on a
-            merged or closed PR. A fix round past settings.reviewRounds is
-            chrismo's, even with --force. NEXT asks the same gate (#348).
-            Spends tokens
+            review). A verify red on HEAD (sd state's verify) comes first: a
+            verify-fix round (#325) reruns verify and autofix, at zero tokens,
+            and only if HEAD is still red hands what they printed to the
+            agent (settings.verifyFixPrompt guidance). A fix verify still
+            rejects counts a round on the new HEAD's red (verify.tries);
+            after 2, the red is chrismo's, unless --force. Refuses, at zero
+            tokens, a branch already ahead of its target with nothing to
+            fix: NEXT offers implement only before the branch's first commit
+            (#241); and unless --force, the task when sd state can't read the
+            target, the remote has commits the branch doesn't, or sd state
+            has errors, and any round on a merged or closed PR. A fix round
+            past settings.reviewRounds is chrismo's, even with --force. NEXT
+            asks the same gate (#348). Spends tokens
   follow   a teammate's PR <number>, to review it (#250): its head
             (refs/pull/<number>/head, a fork's PR too) on the branch
             review/<number>, in a worktree beside the main one with the

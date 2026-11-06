@@ -28,7 +28,7 @@ fn resumes(b: &str, q: &Value) -> Result<Resume, String> {
         ));
     }
     match step.as_str() {
-        "implement" | "review-fix" => Ok(Resume::Implement),
+        "implement" | "review-fix" | "verify-fix" => Ok(Resume::Implement),
         "address" => Ok(Resume::Address),
         "ci-fix" => Ok(Resume::CiFix),
         "resolve" => Err("can't answer resolve: its rebase rolled back, so there's nothing to go on from; \
@@ -71,9 +71,10 @@ mod tests {
     }
 
     #[test]
-    fn resumes_the_step_that_asked_a_review_fix_round_as_implement() {
+    fn resumes_the_step_that_asked_a_review_fix_or_verify_fix_round_as_implement() {
         assert_eq!(resumes("feat", &q("implement", true)), Ok(Resume::Implement));
         assert_eq!(resumes("feat", &q("review-fix", true)), Ok(Resume::Implement));
+        assert_eq!(resumes("feat", &q("verify-fix", true)), Ok(Resume::Implement));
         assert_eq!(resumes("feat", &q("address", true)), Ok(Resume::Address));
         assert_eq!(resumes("feat", &q("ci-fix", true)), Ok(Resume::CiFix));
         assert!(resumes("feat", &q("resolve", true)).is_err_and(|e| e.starts_with("can't answer resolve: its rebase rolled back")));

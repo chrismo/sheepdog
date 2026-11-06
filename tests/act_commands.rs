@@ -896,4 +896,70 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         assert_eq!(r.status, 0);
         assert!(!sd.exists("autofix-ran"));
     }
+
+    /// implement_setup's first run: the agent's "d  " committed, verify red
+    /// on it, with a verify that prints the line it rejects.
+    fn red_setup() -> Sd {
+        let sd = implement_setup();
+        sd.set_global("settings.verify", "! grep -n ' $' file.txt");
+        assert_ne!(sd.run(IMPLEMENT).status, 0);
+        assert_eq!(sd.verify_red().expect("a verify-red record")["head"], sd.head_sha().as_str());
+        fs::remove_file(sd.tmp.join("fx/claude.args")).unwrap();
+        sd
+    }
+
+    impl Sd {
+        fn result(&self, json: &str) {
+            fs::write(self.tmp.join("fx/result.json"), format!("{json}\n")).unwrap();
+        }
+
+        fn prompt(&self) -> String {
+            fs::read_to_string(self.tmp.join("fx/claude.args")).unwrap_or_default()
+        }
+    }
+
+    #[test]
+    fn implement_a_red_verify_at_head_goes_to_the_agent_with_what_verify_printed_and_its_fix_clears_it_325() {
+        let sd = red_setup();
+        sd.agent("#!/usr/bin/env bash\nprintf \"%s\\n\" a b c d > file.txt\n");
+        sd.result(r#"{"outcome": "done", "summary": "trimmed d", "commit_message": "trim d"}"#);
+        let r = sd.run(&["implement"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_has(&sd.prompt(), &["The repo's own checks failed", "4:d  ", "add a fourth line"]);
+        assert_lacks(&sd.prompt(), "Implement the task below");
+        assert_eq!(sd.subject(), "trim d");
+        assert!(sd.verify_red().is_none());
+    }
+
+    #[test]
+    fn implement_a_red_verify_that_passes_when_rerun_is_cleared_without_the_agent_325() {
+        let sd = red_setup();
+        sd.set_global("settings.verify", "true");
+        let r = sd.run(&["implement"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_has(&r.output, &["verify passed"]);
+        assert_eq!(sd.prompt(), "", "the agent never ran");
+        assert!(sd.verify_red().is_none());
+    }
+
+    #[test]
+    fn implement_a_fix_round_verify_still_rejects_counts_and_past_verify_rounds_its_refused_unless_forced_325() {
+        let sd = red_setup();
+        sd.agent("#!/usr/bin/env bash\necho \"e  \" >> file.txt\n");
+        sd.result(r#"{"outcome": "done", "summary": "added e", "commit_message": "add e"}"#);
+        for round in 1..=2 {
+            let r = sd.run(&["implement"]);
+            assert_ne!(r.status, 0);
+            assert_has(&r.output, &["verify failed", &format!("fix round {round} of 2")]);
+            let rec = sd.verify_red().expect("a verify-red record");
+            assert_eq!((rec["head"].as_str(), rec["tries"].as_u64()), (Some(sd.head_sha().as_str()), Some(round)));
+        }
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["had its 2 fix rounds"]);
+        assert_eq!(sd.subject(), "add e", "nothing ran");
+        let r = sd.run(IMPLEMENT);
+        assert_has(&r.output, &["verify failed"]);
+        assert_eq!(sd.verify_red().unwrap()["tries"], 3);
+    }
 }
