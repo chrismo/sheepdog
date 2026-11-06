@@ -95,7 +95,7 @@ fn base(s: &Value, stage: &str) -> (&'static str, String) {
         "review" if covers(s, "review.accepted") => ("done", "accepted".into()),
         "review" if on(s, "review.findings.at_head") && n(s, "review.findings.n") > 0.0 => (
             "red",
-            format!("{} · round {}", count(n(s, "review.findings.n"), "finding"), n(s, "review.findings.round")),
+            format!("{}, round {}", count(n(s, "review.findings.n"), "finding"), n(s, "review.findings.round")),
         ),
         "bot" => bot(s),
         "threads" if !pr => ("todo", String::new()),
@@ -258,7 +258,7 @@ mod tests {
     fn review_findings_at_head_are_red() {
         let s = with(open(), "review", json!({"local": {"status": "uncovered"},
             "findings": {"at_head": true, "n": 2, "round": 3}}));
-        assert_eq!(one(s, "review"), "red:2 findings · round 3");
+        assert_eq!(one(s, "review"), "red:2 findings, round 3");
         let s = with(open(), "review", json!({"local": {"status": "uncovered"},
             "findings": {"at_head": false, "n": 2, "round": 3}}));
         assert_eq!(one(s, "review"), "todo:");
