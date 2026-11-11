@@ -102,7 +102,7 @@ pub fn timeline(c: &super::flock::Cached, usage: &str, state: &Path) -> Value {
         None => json!({"data": null, "error": null, "fetched": null, "refreshing": false}),
     };
     json!({"agent": agent(usage, repo_dir, &c.branch), "github": gh["data"], "error": gh["error"],
-           "fetched": gh["fetched"], "refreshing": gh["refreshing"]})
+           "fetched": gh["fetched"], "refreshing": gh["refreshing"], "pr": (!url.is_empty()).then_some(&url)})
 }
 
 #[cfg(test)]

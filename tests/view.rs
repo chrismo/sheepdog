@@ -514,6 +514,8 @@ fn a_branch_s_timeline_has_its_agent_steps_and_its_pr_s_history() {
           "ci": [{ "name": "lint", "result": "SUCCESS", "start": "2026-10-31T11:01:00Z", "end": "2026-10-31T11:03:00Z" }] },
     ]));
     assert_eq!(t["error"], Value::Null);
+    // #474: the page links each commit and the PR from the PR's URL.
+    assert_eq!(t["pr"], "https://github.com/o/r/pull/7");
     let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
     // -F would send an all-digit repo name as a number.
     assert_has(&log, &["api graphql", "-f owner=o", "-f repo=r", "-F number=7"]);
@@ -532,7 +534,7 @@ fn a_timeline_without_github_still_has_its_agent_steps() {
     let s = serve(&sd);
     let id = |b: &str| format!("{}/{b}", sheepdog::watch::repo_key("/src/sheepdog"));
     let (_, no_pr) = timeline(&s, &id("a"));
-    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"]), (1, &Value::Null, &Value::Null));    let (_, gh_down) = timeline(&s, &id("b"));
+    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"], &no_pr["pr"]), (1, &Value::Null, &Value::Null, &Value::Null));    let (_, gh_down) = timeline(&s, &id("b"));
     assert_eq!((gh_down["agent"].as_array().unwrap().len(), &gh_down["github"]), (1, &Value::Null));
     assert_eq!(gh_down["error"], "gh: rate limit exceeded");
     assert_eq!(timeline(&s, "nope/x").0, 404);
@@ -1931,6 +1933,16 @@ fn a_row_says_how_long_its_branch_has_sat_and_the_timeline_ends_at_now() {
     let sd = sd();
     let body = serve(&sd).get("/").2;
     assert_has(&body, &["b.since", "${inStep(b)}", "function tlSvg(ev, now)", ">now</text>", "tlSvg(ev, now)"]);
+}
+
+// #474: in the timeline each commit links to itself on GitHub and the PR's
+// events to the PR, and the agent's runs are totalled by step under it.
+#[test]
+fn the_timeline_links_commits_and_the_pr_and_totals_the_agent_s_runs() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &[".tl a", "cursor: pointer", "/commit/${c.sha}", "href: t.pr", "<a href=\"${esc(x.href)}\" target=\"_blank\"",
+                        "function costHtml(agent)", "costHtml(t.agent"]);
 }
 
 #[test]
