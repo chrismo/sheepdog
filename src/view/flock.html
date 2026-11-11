@@ -218,7 +218,8 @@ function flowNode(k, x, y, w, name, sub, f, st, href) {
   const mark = lit ? placed(splotch(k, c), x + w - 30, y - 10) : st === "done" ? placed(MARK.done(), x + w - 30, y + 8) : st === "red" ? placed(MARK.red(), x + w - 30, y + 8) : "";
   const runs = f.count ? `<text x="${x + w - (mark ? 32 : 8)}" y="${y + 20}" text-anchor="end" font-size="12" font-weight="700" fill="var(--agent)">×${f.count}</text>` : "";
   const skip = st === "skip";
-  const title = `${name}: ${lit ? "now" : SAID[st] || st}${sub && !skip ? ", " + sub : ""}${f.count ? `, ${f.count} agent run${f.count > 1 ? "s" : ""}` : ""}`;
+  const said = lit ? "now" : SAID[st];
+  const title = `${name}: ${[said, sub !== said && sub, f.count && `${f.count} agent run${f.count > 1 ? "s" : ""}`].filter(Boolean).join(", ")}`;
   return `<a href="${href}"><g><title>${esc(title)}</title>` +
     `<rect x="${x}" y="${y}" width="${w}" height="${NH}" fill="var(--surface)" stroke="${c}" stroke-width="${lit ? 3 : 1.5}"${skip ? ` stroke-dasharray="4 4"` : ""}/>` +
     `<text x="${x + 10}" y="${y + 20}" font-size="14" font-weight="700" fill="var(${skip ? "--muted" : "--ink"})">${esc(name)}</text>` +
@@ -237,9 +238,11 @@ function flowSvg(flow, stages) {
   s += arrow(`M340,${rv + 23} L352,${rv + 23} L352,${push + 18} L189,${push + 18}`);
   STAGES.forEach(([k, label], i) => {
     const st = at(k), sub = st.text || (st.status === "skip" ? "not set up" : "");
-    s += flowNode(k, 16, sy(i), 170, label, sub, flow[k] || {}, st.status, `/atlas#s=${encodeURIComponent(k)}`);
+    // A fix key lights its loop in flow but the stage on the fence: paint both.
+    const f = { ...flow[k], who: flow[k]?.who || st.who };
+    s += flowNode(k, 16, sy(i), 170, label, sub, f, st.status, `/atlas#s=${encodeURIComponent(k)}`);
   });
-  for (const [k, from, name, sub, key] of LOOPS) s += flowNode(k, 212, sy(row(from)), 128, name, sub, flow[k] || {}, "todo", `/atlas#k=${encodeURIComponent(key)}`);
+  for (const [k, from, name, sub, key] of LOOPS) s += flowNode(k, 212, sy(row(from)), 128, name, sub, flow[k] || {}, "", `/atlas#k=${encodeURIComponent(key)}`);
   const h = sy(STAGES.length - 1) + NH + 16;
   return `<svg viewBox="0 0 360 ${h}" role="img" aria-label="The PR's flow: the seven stages and the two fix loops; a painted node is where it is now">${s}</svg>`;
 }
