@@ -514,6 +514,8 @@ fn a_branch_s_timeline_has_its_agent_steps_and_its_pr_s_history() {
           "ci": [{ "name": "lint", "result": "SUCCESS", "start": "2026-10-31T11:01:00Z", "end": "2026-10-31T11:03:00Z" }] },
     ]));
     assert_eq!(t["error"], Value::Null);
+    // #474: the page links each commit and the PR from the PR's URL.
+    assert_eq!(t["pr"], "https://github.com/o/r/pull/7");
     let log = fs::read_to_string(sd.tmp.join("gh.log")).unwrap();
     // -F would send an all-digit repo name as a number.
     assert_has(&log, &["api graphql", "-f owner=o", "-f repo=r", "-F number=7"]);
@@ -532,7 +534,7 @@ fn a_timeline_without_github_still_has_its_agent_steps() {
     let s = serve(&sd);
     let id = |b: &str| format!("{}/{b}", sheepdog::watch::repo_key("/src/sheepdog"));
     let (_, no_pr) = timeline(&s, &id("a"));
-    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"]), (1, &Value::Null, &Value::Null));
+    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"], &no_pr["pr"]), (1, &Value::Null, &Value::Null, &Value::Null));
     let (_, gh_down) = timeline(&s, &id("b"));
     assert_eq!((gh_down["agent"].as_array().unwrap().len(), &gh_down["github"]), (1, &Value::Null));
     assert_eq!(gh_down["error"], "gh: rate limit exceeded");
@@ -1402,6 +1404,41 @@ fn each_flock_card_says_when_its_branch_was_checked() {
     assert_match(checked, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$");
 }
 
+// #473: how long a branch has sat in its step, from the end of its last
+// agent run (usage.sup) or its head's commit, whichever is later; here no
+// head, so the run's end alone.
+#[test]
+fn each_flock_card_says_since_when_its_branch_has_sat_in_its_step() {
+    let sd = sd();
+    cache(&sd, "sheepdog", "ran", state("ran", json!([])));
+    cache(&sd, "sheepdog", "never", state("never", json!([])));
+    let rec = |at: &str, b: &str| format!("{{time:{at},repo:\"/src/sheepdog\",branch:\"{b}\",step:\"review\",status:0,cost_usd:0.5,duration_ms:60000}}");
+    let usage = [rec("2026-10-29T04:27:39Z", "ran"), rec("2026-10-29T04:29:49Z", "ran"), rec("2026-11-01T00:00:00Z", "other")];
+    fs::write(sd.tmp.join("state/usage.sup"), usage.join("\n") + "\n").unwrap();
+    let f = serve(&sd).flock();
+    let since: Vec<(String, Value)> = f["branches"].as_array().unwrap().iter()
+        .map(|b| (b["branch"].as_str().unwrap().to_string(), b["since"].clone())).collect();
+    assert_eq!(since, [("never".into(), Value::Null), ("ran".into(), json!("2026-10-29T04:29:49Z"))]);
+}
+
+// A commit made by hand after the last agent run moves it on: the later of
+// the run's end and the head's commit (its committer date, so a rebase's).
+#[test]
+fn a_head_committed_after_the_last_agent_run_is_the_since() {
+    let sd = sd();
+    let repo = sd.path("repos/r");
+    sd.git(&["init", "-q", &repo]);
+    sd.git(&["config", "--global", "--add", "sheepdog.repo", &repo]);
+    sd.git_with(&[("GIT_COMMITTER_DATE", "2026-11-01T06:00:00Z")], None, &["-C", &repo, "commit", "-q", "--allow-empty", "-m", "by hand"]);
+    let mut st = state("b", json!([]));
+    st["head"] = json!(sd.git_in("repos/r", &["rev-parse", "HEAD"]));
+    cache_at(&sd, &repo, "b", st);
+    let run = format!("{{time:2026-10-29T04:29:49Z,repo:\"{repo}\",branch:\"b\",step:\"review\",status:0,cost_usd:0.5,duration_ms:60000}}");
+    fs::write(sd.tmp.join("state/usage.sup"), run + "\n").unwrap();
+    let f = serve(&sd).flock();
+    assert_eq!(f["branches"][0]["since"], "2026-11-01T06:00:00Z", "{f}");
+}
+
 #[test]
 fn a_cache_file_written_in_the_future_is_refreshed_once() {
     let mut sd = sd();
@@ -1888,6 +1925,26 @@ fn the_flock_filters_by_who_repo_and_text_in_the_hash() {
     assert_eq!(body.matches("minute old").count(), 1, "the foot repeats the header's minute-old line");
     let r = sd.run(&["--help"]);
     assert_has(&r.output, &["A group's count shows only that group", "(/ focuses it, Escape clears it)", "#who=you&repo=kinsite&q=fact"]);
+}
+
+// #473: a row says how long its branch has sat in its step (the card's
+// since), and the drill-in's timeline runs on to a "now" marker, so an idle
+// week shows as a folded gap with its length. Page source only, as above.
+#[test]
+fn a_row_says_how_long_its_branch_has_sat_and_the_timeline_ends_at_now() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &["b.since", "${inStep(b)}", "function tlSvg(ev, now)", ">now</text>", "ev.length ? tlSvg(ev, now) :"]);
+}
+
+// #474: in the timeline each commit links to itself on GitHub and the PR's
+// events to the PR, and the agent's runs are totalled by step under it.
+#[test]
+fn the_timeline_links_commits_and_the_pr_and_totals_the_agent_s_runs() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &[".tl a", "cursor: pointer", "/commit/${c.sha}", "href: t.pr", "<a href=\"${esc(x.href)}\" target=\"_blank\"",
+                        "function costHtml(agent)", "costHtml(t.agent"]);
 }
 
 #[test]

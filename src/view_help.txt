@@ -29,6 +29,11 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   that repo; the text box (/ focuses it, Escape clears it) keeps branches
   whose name, repo or PR number has its letters in order. The filter is in
   the URL (#who=you&repo=kinsite&q=fact), so it links and reloads.
+  Each row says how long its branch has sat in its step: since its last
+  agent run ended or its head was committed, whichever is later. The
+  timeline runs on to a now marker, so an idle stretch is a fold with its
+  length. Its commits and the PR open on GitHub, and under it the agent's
+  runs are totalled by step: how many, how long, what they cost.
 
   The Atlas (/atlas, linked from the Flock and the Map) is the workflow
   itself, generated from the code so it can't drift: every NEXT step by the

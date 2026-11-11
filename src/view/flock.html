@@ -44,6 +44,7 @@
 .fence .p .t { position: absolute; top: 100%; margin-top: -6px; font-size: 0.7rem; white-space: nowrap; color: var(--pc); font-weight: 700; max-width: 11em; overflow: hidden; text-overflow: ellipsis; }
 .next { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .next .say { font-weight: 700; color: var(--gc); }
+.next .age { font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.15rem; line-height: 1; color: var(--muted); margin-left: 10px; }
 .cmd { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .cmd code { font-size: 0.8rem; overflow-wrap: anywhere; }
 .empty { color: var(--muted); }
@@ -97,6 +98,16 @@ details.tl > summary { cursor: pointer; font-weight: 700; }
 details.tl[open] > summary { margin-bottom: 10px; }
 .tl svg { width: 100%; max-width: 560px; height: auto; display: block; }
 .tl text { font-family: var(--f-body); }
+.tl svg g { cursor: help; }
+.tl a g { cursor: pointer; }
+.tl a text { text-decoration: underline; }
+.cost { border-collapse: collapse; font-size: 0.85rem; margin-top: 18px; font-variant-numeric: tabular-nums; }
+.cost caption { text-align: left; font-weight: 700; padding-bottom: 6px; }
+.cost td { padding: 3px 16px 3px 0; color: var(--muted); text-align: right; white-space: nowrap; }
+.cost td:first-child { color: var(--ink); text-align: left; }
+.cost td:last-child { width: 120px; padding-right: 0; }
+.cost .bar { display: block; height: 6px; background: var(--agent); }
+.cost tr.all td { border-top: 1px solid var(--line); color: var(--ink); font-weight: 700; padding-top: 6px; }
 @media (max-width: 820px) {
   .cols { display: none; }
   .run { grid-template-columns: 1fr; gap: 10px; }
@@ -191,12 +202,18 @@ function fence(b) {
   return `<div class="fence" style="--reach:${reach}" role="img" aria-label="${esc(heard)}">${posts}</div>`;
 }
 
+const sat = iso => {
+  const m = Math.max(0, Date.now() - Date.parse(iso));
+  return m >= 864e5 ? `${Math.floor(m / 864e5)}d` : m >= 36e5 ? `${Math.floor(m / 36e5)}h` : `${Math.max(1, Math.floor(m / 6e4))}m`;
+};
+const inStep = b => b.since ? `<span class="age" title="${esc(`in this step since about ${new Date(b.since).toLocaleString()}`)}">${sat(b.since)}</span>` : "";
+
 function row(b) {
   const L = b.lead;
   return `<article class="run" style="--gc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
     <div class="who"><a class="b" href="#b=${encodeURIComponent(b.id)}">${esc(b.branch)}</a><div class="meta"><span>${esc(b.repo)}</span>${prLink(b)}${usd(b)}${checked(b)}</div></div>
     ${fence(b)}
-    <div class="next"><span class="say">${esc(L.say)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
+    <div class="next"><span class="say">${esc(L.say)}${inStep(b)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
   </article>`;
 }
 
@@ -450,7 +467,7 @@ function renderDetail(b) {
 const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["pr", "PR", "--done"]];
 const GAP = 20 * 60e3, FOLD = 30, LX = 58, LW = 74;
 const ms = t => Date.parse(t);
-const span = m => m >= 36e5 ? `${Math.floor(m / 36e5)}h ${Math.round(m % 36e5 / 6e4)}m` : `${Math.round(m / 6e4)}m`;
+const span = m => m < 6e4 ? `${Math.floor(m / 1e3)}s` : m >= 864e5 ? `${Math.floor(m / 864e5)}d ${Math.floor(m % 864e5 / 36e5)}h` : m >= 36e5 ? `${Math.floor(m / 36e5)}h ${Math.round(m % 36e5 / 6e4)}m` : `${Math.round(m / 6e4)}m`;
 const ciColor = r => r === "SUCCESS" ? "var(--run)" : /FAIL|ERROR|TIMED|CANCEL|ACTION/.test(r || "") ? "var(--red)" : "var(--wait)";
 
 function tlEvents(t) {
@@ -459,10 +476,11 @@ function tlEvents(t) {
     return { lane: 0, s: end - (a.ms || 0), e: end, label: step, c: bad ? "var(--red)" : "var(--agent)",
       tip: `${step}${bad ? (a.status === 75 ? " (usage limit)" : ` (exit ${a.status})`) : ""}, ${a.ms ? span(a.ms) : "?"}${typeof a.usd === "number" ? `, $${a.usd.toFixed(2)}` : ""}` };
   });
-  const g = t.github;
+  const g = t.github, repo = t.pr?.replace(/\/pull\/\d+$/, "");
   if (g) {
     for (const c of g.commits) {
-      ev.push({ lane: 1, s: ms(c.at), e: ms(c.at), label: c.sha.slice(0, 7), c: "var(--run)", tip: `commit ${c.sha.slice(0, 7)}: ${c.title}` });
+      ev.push({ lane: 1, s: ms(c.at), e: ms(c.at), label: c.sha.slice(0, 7), c: "var(--run)", tip: `commit ${c.sha.slice(0, 7)}: ${c.title}`,
+        href: repo && `${repo}/commit/${c.sha}` });
       for (const k of c.ci) {
         // An open check is a point, and a commit status (no start) spans from its commit only when that's
         // under GAP: committedDate isn't the push, and a bar mustn't bridge a wait that should fold.
@@ -471,14 +489,16 @@ function tlEvents(t) {
         ev.push({ lane: 2, s, e, label: "", c: ciColor(k.result), tip: `${k.name}: ${k.result || "running"} on ${c.sha.slice(0, 7)}` });
       }
     }
-    if (g.opened) ev.push({ lane: 3, s: ms(g.opened), e: ms(g.opened), label: "opened", c: "var(--done)", tip: "PR opened" });
-    if (g.merged) ev.push({ lane: 3, s: ms(g.merged.at), e: ms(g.merged.at), label: "merged", c: "var(--done)", tip: `merged by ${g.merged.by || "?"}` });
+    if (g.opened) ev.push({ lane: 3, s: ms(g.opened), e: ms(g.opened), label: "opened", c: "var(--done)", tip: "PR opened", href: t.pr });
+    if (g.merged) ev.push({ lane: 3, s: ms(g.merged.at), e: ms(g.merged.at), label: "merged", c: "var(--done)", tip: `merged by ${g.merged.by || "?"}`, href: t.pr });
   }
   return ev.filter(x => !isNaN(x.s) && !isNaN(x.e));
 }
 
-function tlSvg(ev) {
-  const iv = ev.map(x => [x.s, x.e]).sort((a, b) => a[0] - b[0]), cl = [];
+const tlTime = (t, y) => `<text x="0" y="${y + 4}" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</text>`;
+
+function tlSvg(ev, now) {
+  const iv = [...ev.map(x => [x.s, x.e]), [now, now]].sort((a, b) => a[0] - b[0]), cl = [];
   for (const [a, b] of iv) {
     const last = cl[cl.length - 1];
     if (last && a - last.e <= GAP) last.e = Math.max(last.e, b); else cl.push({ s: a, e: b });
@@ -494,10 +514,10 @@ function tlSvg(ev) {
   let day = "";
   cl.forEach((c, i) => {
     const d = new Date(c.s), dd = d.toLocaleDateString([], { month: "short", day: "numeric" });
-    const hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    s += `<text x="0" y="${c.y + 4}" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${hm}</text>` +
+    if (c.s < now) s += tlTime(c.s, c.y) +
       (dd !== day ? `<text x="0" y="${c.y + 16}" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${dd}</text>` : "");
     day = dd;
+    if (c.h >= 60 && c.e < now) s += tlTime(c.e, c.y + c.h);
     const next = cl[i + 1];
     if (next) s += `<rect x="0" y="${c.y + c.h + 6}" width="${W}" height="${FOLD - 12}" rx="4" fill="var(--line)" opacity="0.45"/>` +
       `<text x="${W / 2}" y="${c.y + c.h + FOLD / 2 + 4}" text-anchor="middle" font-size="10.5" fill="var(--muted)">⋯ ${span(next.s - c.e)} ⋯</text>`;
@@ -505,13 +525,34 @@ function tlSvg(ev) {
   for (const x of ev) {
     const cx = LX + x.lane * LW + 8, ya = y(x.s), h = y(x.e) - ya;
     const mark = h < 5 ? `<circle cx="${cx}" cy="${ya}" r="5" fill="${x.c}"/>` : `<rect x="${cx - 5}" y="${ya}" width="10" height="${h}" rx="3" fill="${x.c}"/>`;
-    s += `<g><title>${esc(x.tip)}</title>${mark}${x.label ? `<text x="${cx + 9}" y="${ya + 4}" font-size="10" fill="var(--ink)">${esc(x.label)}</text>` : ""}</g>`;
+    const g = `<g><title>${esc(x.tip)}</title>${mark}${x.label ? `<text x="${cx + 9}" y="${ya + 4}" font-size="10" fill="var(--ink)">${esc(x.label)}</text>` : ""}</g>`;
+    s += x.href ? `<a href="${esc(x.href)}" target="_blank" rel="noopener">${g}</a>` : g;
   }
+  const yn = y(now);
+  s += `<line x1="${LX}" y1="${yn}" x2="${W}" y2="${yn}" stroke="var(--ink)" stroke-width="1.5"/>` +
+    `<text x="0" y="${yn + 4}" font-size="11" font-weight="700" fill="var(--ink)">now</text>`;
   return `<svg viewBox="0 -2 ${W} ${y0 - FOLD + 14}" role="img" aria-label="The branch's timeline: agent steps, commits, CI and the PR, top to bottom">${s}</svg>`;
 }
 
+function costHtml(agent) {
+  const by = new Map();
+  for (const a of agent) {
+    const k = a.step || "agent", r = by.get(k) || { n: 0, ms: 0, usd: 0 };
+    r.n++;
+    r.ms += a.ms || 0;
+    r.usd += a.usd || 0;
+    by.set(k, r);
+  }
+  if (!by.size) return "";
+  const rows = [...by].sort((a, b) => b[1].usd - a[1].usd);
+  const all = rows.reduce((t, [, r]) => ({ n: t.n + r.n, ms: t.ms + r.ms, usd: t.usd + r.usd }), { n: 0, ms: 0, usd: 0 });
+  const tr = (name, r, cls = "") => `<tr${cls}><td>${esc(name)}</td><td>${r.n > 1 ? `×${r.n}` : ""}</td><td>${r.ms ? span(r.ms) : ""}</td><td>$${r.usd.toFixed(2)}</td>` +
+    `<td>${cls ? "" : `<span class="bar" style="width:${Math.max(2, r.usd / (all.usd || 1) * 100)}%"></span>`}</td></tr>`;
+  return `<table class="cost"><caption>The agent's runs</caption>${rows.map(([k, r]) => tr(k, r)).join("")}${rows.length > 1 ? tr("in all", all, ` class="all"`) : ""}</table>`;
+}
+
 // Only the latest load draws and retries, for the branch still open.
-let tlAgain, tlSeq = 0, tlDrawn = "";
+let tlAgain, tlSeq = 0, tlDrawn = "", tlAt = 0;
 async function loadTimeline(id) {
   clearTimeout(tlAgain);
   const mine = ++tlSeq, current = () => mine === tlSeq && openId() === id;
@@ -529,11 +570,16 @@ async function loadTimeline(id) {
     const pr = t.github || t.error || t.refreshing || t.fetched;
     const down = t.error ? `<p class="none">GitHub didn't answer${t.github ? ", so its part is the last answer" : ", so this is the agent's steps only"} (${esc(t.error)})</p>` : "";
     const note = cut + down + (pr ? ghLine(t) : `<p class="none">No PR yet: the agent's steps only.</p>`);
-    const svg = ev.length ? tlSvg(ev) : `<p class="none">Nothing recorded for this branch yet.</p>`;
-    // Redrawn only when it changed: a redraw loses the hover and the scroll.
-    if (!body.querySelector(".tlsvg")) { body.innerHTML = `<div class="tlnote"></div><div class="tlsvg"></div>`; tlDrawn = ""; }
+    // Redrawn only when it changed, or every 10 minutes to move "now": a redraw loses the hover and the scroll.
+    if (!body.querySelector(".tlsvg")) { body.innerHTML = `<div class="tlnote"></div><div class="tlsvg"></div><div class="tlruns"></div>`; tlDrawn = ""; }
     body.querySelector(".tlnote").innerHTML = note;
-    if (svg !== tlDrawn) { body.querySelector(".tlsvg").innerHTML = svg; tlDrawn = svg; }
+    body.querySelector(".tlruns").innerHTML = costHtml(t.agent);
+    const drawn = JSON.stringify(ev), now = Date.now();
+    if (drawn !== tlDrawn || now - tlAt >= 6e5) {
+      body.querySelector(".tlsvg").innerHTML = ev.length ? tlSvg(ev, now) : `<p class="none">Nothing recorded for this branch yet.</p>`;
+      tlDrawn = drawn;
+      tlAt = now;
+    }
     if (t.refreshing) tlAgain = setTimeout(() => { if ($("tl").open && openId() === id && !document.hidden) loadTimeline(id); }, 1000);
   } catch (e) {
     if (current()) body.innerHTML = `<p class="none">can't reach sd view (${esc(e.message)})</p>`;

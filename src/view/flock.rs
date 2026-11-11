@@ -180,18 +180,22 @@ pub fn card(c: &Cached) -> Value {
 }
 
 /// GET /api/flock: {at: the last pass's time or null, branches: [card with
-/// checked, and acting: the key of the step the page is running on it, or
-/// null], refreshing, held: why no branch is checked, or null}.
+/// checked, since (timeline::since), and acting: the key of the step the
+/// page is running on it, or null], refreshing, held: why no branch is
+/// checked, or null}.
 pub fn flock(state: &Path) -> Value {
     let at = fs::read_to_string(state.join("last-pass"))
         .ok()
         .and_then(|s| s.lines().next().and_then(|l| l.strip_prefix("last pass: ")).map(str::to_string));
     let cached = cached(state);
+    let (runs, repos) = (super::timeline::last_runs(&super::branch::usage(state)), crate::watch::registered());
     let cards: Vec<Value> = cached
         .iter()
         .map(|c| {
             let mut card = card(c);
             card["checked"] = json!(super::refresh::checked(state, c));
+            let repo = repos.iter().find(|r| c.id.split_once('/').is_some_and(|(d, _)| crate::watch::repo_key(r) == d));
+            card["since"] = super::timeline::since(&runs, c, repo.map(String::as_str));
             card["acting"] = super::act::running(&c.id);
             card
         })

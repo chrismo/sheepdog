@@ -3,9 +3,15 @@
 
 use super::{branch, cache};
 use crate::gh;
+use crate::git::git_out;
+use crate::time::utc;
+use crate::usage::{shaped, sup_record};
 use crate::val::{at, t};
+use crate::watch::repo_key;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 /// A stalled gh mustn't hold the next fetch up for long.
 const GH_SECS: u64 = 20;
@@ -24,6 +30,45 @@ fn agent(usage: &str, repo_dir: &str, b: &str) -> Vec<Value> {
             json!({"step": f("step"), "end": f("time"), "ms": f("duration_ms"), "status": f("status"), "usd": f("cost_usd")})
         })
         .collect()
+}
+
+/// Each branch's last agent run's end since its last reset row (as
+/// branch::records), keyed by (repo dir, branch).
+pub(super) fn last_runs(usage: &str) -> HashMap<(String, String), String> {
+    let mut out = HashMap::new();
+    for r in usage.lines().filter(|l| shaped(l)).filter_map(sup_record) {
+        let field = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or_default();
+        let key = (repo_key(field("repo")), field("branch").to_string());
+        if r.get("reset").is_some_and(|v| v == true) {
+            out.remove(&key);
+        } else if !field("time").is_empty() {
+            out.insert(key, field("time").to_string());
+        }
+    }
+    out
+}
+
+/// The committer date, so a rebase's, in UTC; kept by SHA, which fixes it,
+/// a miss too.
+fn committed(repo: &str, sha: &str) -> Option<String> {
+    static SEEN: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
+    if let Some(at) = SEEN.lock().ok()?.get_or_insert_with(HashMap::new).get(sha) {
+        return at.clone();
+    }
+    let at = git_out(repo, &["log", "-1", "--format=%ct", sha, "--"]).and_then(|s| s.parse().ok()).map(utc);
+    SEEN.lock().ok()?.get_or_insert_with(HashMap::new).insert(sha.to_string(), at.clone());
+    at
+}
+
+/// Since when the branch has sat in its step (#473): the later of its last
+/// agent run's end and its head's commit; null when neither is known. <repo>
+/// is its registered repo.
+pub(super) fn since(runs: &HashMap<(String, String), String>, c: &super::flock::Cached, repo: Option<&str>) -> Value {
+    let dir = c.id.split_once('/').map_or("", |(d, _)| d);
+    let run = runs.get(&(dir.to_string(), c.branch.clone())).cloned();
+    let head = c.doc.as_ref().map(|d| t(d, "state.head")).filter(|h| !h.is_empty());
+    let commit = repo.zip(head).and_then(|(r, h)| committed(r, &h));
+    run.into_iter().chain(commit).max().map_or(Value::Null, Value::String)
 }
 
 fn check(c: &Value) -> Value {
@@ -80,7 +125,7 @@ pub fn timeline(c: &super::flock::Cached, usage: &str, state: &Path) -> Value {
         None => json!({"data": null, "error": null, "fetched": null, "refreshing": false}),
     };
     json!({"agent": agent(usage, repo_dir, &c.branch), "github": gh["data"], "error": gh["error"],
-           "fetched": gh["fetched"], "refreshing": gh["refreshing"]})
+           "fetched": gh["fetched"], "refreshing": gh["refreshing"], "pr": (!url.is_empty()).then_some(&url)})
 }
 
 #[cfg(test)]
@@ -99,6 +144,23 @@ mod tests {
         let pr = |total: u64| json!({"commits": {"totalCount": total, "nodes": [{"commit": {"oid": "a"}}]}});
         assert_eq!(history(&pr(140))["total"], 140);
         assert_eq!(history(&pr(1))["total"], Value::Null);
+    }
+
+    #[test]
+    fn a_branch_s_last_run_is_the_last_since_any_reset() {
+        let rec = |at: &str, b: &str, extra: &str| format!("{{time:{at},repo:\"/src/r\",branch:\"{b}\",{extra}}}");
+        let key = |b: &str| (crate::watch::repo_key("/src/r"), b.to_string());
+        let u = [
+            rec("2026-10-29T04:00:00Z", "b", "step:\"review\""),
+            rec("2026-10-29T05:00:00Z", "b", "step:\"describe\""),
+            rec("2026-10-29T06:00:00Z", "c", "step:\"review\""),
+        ]
+        .join("\n");
+        let runs = last_runs(&u);
+        assert_eq!(runs.get(&key("b")).map(String::as_str), Some("2026-10-29T05:00:00Z"));
+        assert_eq!(runs.get(&key("c")).map(String::as_str), Some("2026-10-29T06:00:00Z"));
+        assert_eq!(last_runs(&(u + "\n" + &rec("2026-10-30T00:00:00Z", "b", "reset:true"))).get(&key("b")), None);
+        assert!(last_runs("").is_empty());
     }
 
     #[test]
