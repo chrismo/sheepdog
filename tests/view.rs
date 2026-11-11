@@ -1805,7 +1805,8 @@ fn a_flock_row_s_branch_links_to_its_drill_in_and_the_tab_names_it() {
 // the top line only that repo, and the text box keeps the branches whose
 // name, repo or PR number has its letters in order. The filter is in the
 // hash beside #b=, so it links, reloads and survives a drill-in and back;
-// render() puts focus back on the row or button it redrew.
+// render() puts focus back on the row or button it redrew. A check of the
+// page's source only, as for the fence: no test here runs the page's JS.
 #[test]
 fn the_flock_filters_by_who_repo_and_text_in_the_hash() {
     let sd = sd();
