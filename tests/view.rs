@@ -252,6 +252,57 @@ fn a_rebuilt_sd_view_replaces_the_older_build_on_its_port() {
     assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["pid"], json!(new.child.id()));
 }
 
+/// GET /api/build's {pid, build} on <port>, or None while nothing answers.
+fn build_on(port: u16) -> Option<Value> {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    write!(s, "GET /api/build HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").ok()?;
+    let mut resp = String::new();
+    s.read_to_string(&mut resp).ok()?;
+    serde_json::from_str(resp.split_once("\r\n\r\n")?.1).ok()
+}
+
+#[test]
+fn a_running_sd_view_restarts_itself_on_a_rebuild() {
+    let mut sd = sd();
+    let copy = sd.tmp.join("built/sd-view");
+    fs::create_dir_all(copy.parent().unwrap()).unwrap();
+    fs::copy(&sd.bin, &copy).unwrap();
+    sd.bin = copy.clone();
+    sd.env.push(("SHEEPDOG_VIEW_RECHECK_MS".into(), "100".into()));
+    // Its stdout is closed once the URL is read, as a closed terminal's is.
+    let log = sd.path("view.log");
+    let mut s = serve_logging(&sd, &log);
+    let before = build_on(s.port).unwrap();
+    // A rebuild writes a new file in its place, as cargo does: macOS kills
+    // a binary whose running file was opened for writing.
+    let rebuilt = sd.tmp.join("built/sd-view.new");
+    fs::copy(&copy, &rebuilt).unwrap();
+    let later = std::time::SystemTime::now() + Duration::from_secs(60);
+    fs::File::options().write(true).open(&rebuilt).unwrap().set_modified(later).unwrap();
+    fs::rename(&rebuilt, &copy).unwrap();
+    let t = Instant::now();
+    let after = loop {
+        match build_on(s.port) {
+            Some(b) if b["build"] != before["build"] => break b,
+            _ => {}
+        }
+        if t.elapsed() > Duration::from_secs(10) {
+            let exit = s.child.try_wait();
+            panic!("sd view still serves {before} ({exit:?}):\n{}", fs::read_to_string(&log).unwrap());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(after["pid"], json!(s.child.id()), "it restarts in place, not as another process");
+}
+
+#[test]
+fn the_pages_reload_on_a_new_build() {
+    let s = serve(&sd());
+    let (code, _, js) = s.get("/theme.js");
+    assert_eq!(code, 200);
+    assert_has(&js, &["/api/build", "location.reload()"]);
+}
+
 #[test]
 fn a_port_holder_naming_a_pid_sd_view_didn_t_record_is_only_opened() {
     let sd = sd();

@@ -2,7 +2,9 @@
 // #376): <branch>, . or a part of a cached branch's name or its PR number,
 // opens on its drill-in (view/pick.rs, #458); one already on the port is
 // opened, or replaced when GET /api/build says it's an older build and
-// names the pid sd view recorded in the state dir. GET / is
+// names the pid sd view recorded in the state dir. A running one execs its
+// rebuilt binary in place (#496), and the pages reload on the new build
+// (theme.js). GET / is
 // the Flock page, GET /api/flock its data from the watcher's cache; GET /map
 // the Map page (#378), GET /api/map its data from sheepdog's own source; GET
 // /atlas the Atlas page (#377), GET /api/atlas its data from the step table
@@ -35,7 +37,7 @@ use crate::config::state_dir;
 use guard::Request;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::LazyLock;
 use std::time::{Duration, UNIX_EPOCH};
@@ -69,12 +71,19 @@ fn die(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1)
 }
 
+/// This binary's path as it started: on Linux, current_exe() names a
+/// rebuilt binary's old, deleted file.
+static EXE: LazyLock<Option<PathBuf>> = LazyLock::new(|| std::env::current_exe().ok());
+
 /// This binary's build as it started: its file's mtime, which a rebuild
 /// changes. GET /api/build serves it beside the pid.
-static BUILD: LazyLock<String> = LazyLock::new(|| {
-    let t = std::env::current_exe().and_then(std::fs::metadata).and_then(|m| m.modified());
-    t.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or_else(String::new, |d| d.as_nanos().to_string())
-});
+static BUILD: LazyLock<String> = LazyLock::new(|| built().unwrap_or_default());
+
+/// The mtime of the file at EXE now.
+fn built() -> Option<String> {
+    let t = std::fs::metadata(EXE.as_ref()?).and_then(|m| m.modified()).ok()?;
+    Some(t.duration_since(UNIX_EPOCH).ok()?.as_nanos().to_string())
+}
 
 pub fn run(argv: &[String]) -> ExitCode {
     LazyLock::force(&BUILD);
@@ -122,10 +131,13 @@ pub fn run(argv: &[String]) -> ExitCode {
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let _ = std::fs::create_dir_all(&state).and_then(|()| std::fs::write(pid_file(Path::new(&state), port), std::process::id().to_string()));
     let url = format!("http://127.0.0.1:{port}/{hash}");
-    println!("sd view: {url} (Ctrl-C stops it)");
+    // Restarted, its terminal may be gone: println! would panic.
+    let _ = writeln!(std::io::stdout(), "sd view: {url} (Ctrl-C stops it)");
     if open {
         browse(&url);
     }
+    let argc = argv.len();
+    std::thread::spawn(move || restart_on_rebuild(port, argc));
     let token = guard::token();
     for stream in listener.incoming() {
         match stream {
@@ -194,6 +206,50 @@ fn replace(pid: i32, port: u16) -> TcpListener {
         std::thread::sleep(Duration::from_millis(100));
     }
     die(format!("127.0.0.1:{port}: an older build's sd view (pid {pid}) didn't stop"))
+}
+
+/// Once a rebuild has replaced this binary and it holds still for a look,
+/// run the new one in this process (#496): the same pid and port, no
+/// browser. Not while a step or refresh it started runs: it would be
+/// orphaned, its result never read.
+fn restart_on_rebuild(port: u16, argc: usize) {
+    let every = Duration::from_millis(recheck_ms());
+    let mut last = None;
+    loop {
+        std::thread::sleep(every);
+        let now = built();
+        if settled(&BUILD, last.as_deref(), now.as_deref()) {
+            if let (Some(_step), Some(_refresh)) = (act::idle(), refresh::idle()) {
+                let e = reexec(port, argc);
+                let _ = writeln!(std::io::stderr(), "sd view: couldn't restart on the new build: {e}");
+                return;
+            }
+        }
+        last = now;
+    }
+}
+
+fn recheck_ms() -> u64 {
+    let v = if cfg!(debug_assertions) { std::env::var("SHEEPDOG_VIEW_RECHECK_MS").ok() } else { None };
+    v.and_then(|v| v.parse().ok()).unwrap_or(2000)
+}
+
+/// A build other than <build>, the same at the last look as now.
+fn settled(build: &str, last: Option<&str>, now: Option<&str>) -> bool {
+    now.is_some_and(|n| n != build && last == Some(n))
+}
+
+/// Replace this process with sd view from EXE, as it was run but for its
+/// own <argc> arguments: those become --no-open and this <port>. Returns
+/// only on failure.
+fn reexec(port: u16, argc: usize) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    let all: Vec<_> = std::env::args_os().collect();
+    let (Some(exe), Some((argv0, verb))) = (EXE.as_ref(), all[..all.len().saturating_sub(argc)].split_first()) else {
+        return std::io::Error::other("no path to this binary");
+    };
+    let _ = writeln!(std::io::stderr(), "sd view: a new build of sd; restarting on port {port}");
+    Command::new(exe).arg0(argv0).args(verb).args(["--no-open", "--port", &port.to_string()]).exec()
 }
 
 fn browse(url: &str) {
@@ -343,4 +399,19 @@ fn serve(stream: TcpStream, port: u16, token: &str, state: &Path) {
     // connection, which can lose the response: drain them first.
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let _ = std::io::copy(&mut r, &mut std::io::sink());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::settled;
+
+    #[test]
+    fn a_new_build_restarts_once_it_holds_still_for_a_look() {
+        assert!(!settled("1", Some("1"), Some("1")), "the build it started with");
+        assert!(!settled("1", Some("1"), Some("2")), "just changed: it may still be writing");
+        assert!(!settled("1", Some("2"), Some("3")), "still changing");
+        assert!(settled("1", Some("2"), Some("2")));
+        assert!(!settled("1", Some("2"), None), "no file there now, mid-replace");
+        assert!(!settled("1", None, None));
+    }
 }

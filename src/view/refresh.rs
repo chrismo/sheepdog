@@ -35,6 +35,12 @@ fn branches() -> MutexGuard<'static, Branches> {
     BRANCHES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// The refresh slot while no refresh runs; none starts while it's held.
+pub fn idle() -> Option<impl Sized> {
+    let b = branches();
+    b.running.is_none().then_some(b)
+}
+
 /// Frees the one refresh slot when it ends, even by a panic.
 struct Running;
 
