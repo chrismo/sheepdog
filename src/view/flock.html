@@ -18,6 +18,13 @@
 .group { display: grid; gap: 10px; }
 .group h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-size: 1.15rem; }
 .group h2 .n { font-family: var(--f-display); font-weight: var(--w-display); font-size: 2.6rem; line-height: 0.8; color: var(--gc); min-width: 0.6em; }
+.flt { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.flt[aria-pressed="true"] { color: var(--ink); font-weight: 700; text-decoration-style: solid; }
+.group h2 .flt { display: flex; align-items: baseline; gap: 10px; text-decoration: none; }
+.group h2 .flt:hover .nm, .group h2 .flt[aria-pressed="true"] .nm { text-decoration: underline; }
+.group.off h2, .group.off h2 .n { color: var(--muted); }
+.group h2 .hid { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+#q { font: inherit; font-size: 0.9rem; width: min(100%, 360px); padding: 5px 8px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); color: var(--ink); }
 .sheet { display: grid; gap: 2px; }
 .cols, .run { display: grid; grid-template-columns: minmax(170px, 1.25fr) minmax(330px, 2.4fr) minmax(190px, 1.6fr); gap: 0 20px; align-items: center; }
 .cols { color: var(--muted); font-size: 0.78rem; padding: 0 14px; }
@@ -101,6 +108,7 @@ details.tl[open] > summary { margin-bottom: 10px; }
       <div class="sub" id="sub">Loading the flock</div>
       <nav class="pages"><a href="/" aria-current="page">Flock</a><a href="/atlas">Atlas</a><a href="/map">Map</a></nav>
     </div>
+    <input id="q" type="search" placeholder="type / to filter by branch, repo or PR" autocomplete="off" spellcheck="false" aria-label="filter the flock">
     <div id="fresh"></div>
     <div class="key" id="key"></div>
   </header>
@@ -191,21 +199,69 @@ const KEY = `<span>${MARK.todo()}to do</span><span>${MARK.done()}done</span><spa
   `<span>${splotch("key", "var(--muted)")}<span>where it stands, painted for who moves next: ` +
   MOVERS.map(([w, name]) => `<b style="color:${color(w)}">${name}</b>`).join(", ") + `</span></span>`;
 
+// The list's hash holds the filter (#who=you&repo=kinsite&q=fact); a drill-in's #b= leaves F as it was.
+let F = { who: "", repo: "", q: "" }, last = null;
+function fuzzy(q, s) {
+  s = s.toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => {
+    let i = 0;
+    for (const c of s) if (c === t[i]) i++;
+    return i === t.length;
+  });
+}
+const shownBy = b => (!F.repo || b.repo === F.repo) && fuzzy(F.q, `${b.branch} ${b.repo} ${b.pr ? "#" + b.pr.number : ""}`);
+function filterHash() {
+  return new URLSearchParams(Object.entries(F).filter(([, v]) => v)).toString();
+}
+function readFilter() {
+  const p = new URLSearchParams(location.hash.slice(1));
+  F = { who: p.get("who") || "", repo: p.get("repo") || "", q: p.get("q") || "" };
+  $("q").value = F.q;
+}
+function setFilter(patch) {
+  F = { ...F, ...patch };
+  const h = filterHash();
+  history.replaceState(null, "", h ? "#" + h : location.pathname + location.search);
+  if (last) render(last);
+}
+
+function repoLine(bs) {
+  const repos = [...new Set(bs.map(b => b.repo))];
+  const btn = r => `<button class="flt" type="button" data-repo="${esc(r)}" aria-pressed="${F.repo === r}">${esc(r)}</button>`;
+  const named = repos.length > 1 ? `${repos.slice(0, -1).map(btn).join(", ")} and ${btn(repos.at(-1))}` : btn(repos[0]);
+  return `${bs.length} branch${bs.length === 1 ? "" : "es"} in ${named}.`;
+}
+
+function groupHtml([w, name], bs, head) {
+  const all = bs.filter(b => group(b) === w);
+  if (!all.length) return "";
+  const off = F.who && F.who !== w, list = off ? [] : all.filter(shownBy), hid = all.length - list.length;
+  return `<section class="group${off ? " off" : ""}" style="--gc:${color(w)}"><h2><button class="flt" type="button" data-who="${w}" aria-pressed="${F.who === w}"><span class="n">${all.length}</span><span class="nm">${name}</span></button>` +
+    `${hid && !off ? `<span class="hid">${hid} hidden</span>` : ""}</h2>${list.length ? `<div class="sheet">${head}${list.map(row).join("")}</div>` : ""}</section>`;
+}
+
+function keepFocus(draw) {
+  const a = document.activeElement, r = a?.closest(".run[data-id]");
+  const sel = r ? `.run[data-id="${CSS.escape(r.dataset.id)}"]${a === r ? "" : " .b"}`
+    : a?.dataset?.who ? `[data-who="${a.dataset.who}"]` : a?.dataset?.repo ? `[data-repo="${CSS.escape(a.dataset.repo)}"]` : "";
+  draw();
+  if (sel) document.querySelector(sel)?.focus({ preventScroll: true });
+}
+
 function render(f) {
-  const bs = f.branches, repos = new Set(bs.map(b => b.repo)).size;
+  last = f;
+  const bs = f.branches;
   const sub = $("sub");
   sub.classList.remove("stale");
-  sub.textContent = bs.length ? `${bs.length} branch${bs.length === 1 ? "" : "es"} in ${repos} repo${repos === 1 ? "" : "s"}.` : "No branches yet.";
   $("key").innerHTML = bs.length ? KEY : "";
   const head = `<div class="cols" aria-hidden="true"><span>Branch</span><span class="posts">${STAGES.map(s => `<span>${s[1]}</span>`).join("")}</span><span>Next move</span></div>`;
-  $("groups").innerHTML = bs.length ? GROUPS.map(([w, name]) => {
-    const list = bs.filter(b => group(b) === w);
-    if (!list.length) return "";
-    return `<section class="group" style="--gc:${color(w)}"><h2><span class="n">${list.length}</span>${name}</h2><div class="sheet">${head}${list.map(row).join("")}</div></section>`;
-  }).join("") : `<p class="empty">No cached branches yet: enroll one (sd act enroll), and let sd watch make a pass.</p>`;
+  keepFocus(() => {
+    sub.innerHTML = bs.length ? repoLine(bs) : "No branches yet.";
+    $("groups").innerHTML = bs.length ? GROUPS.map(g => groupHtml(g, bs, head)).join("")
+      : `<p class="empty">No cached branches yet: enroll one (sd act enroll), and let sd watch make a pass.</p>`;
+  });
   $("fresh").innerHTML = bs.length ? `<p class="none ghline">${f.held ? esc(f.held) : f.refreshing ? "Checking a branch now." : "A branch is checked again once it's a minute old."} ${refreshBtn()}</p>` : "";
-  $("foot").textContent =
-    `sd watch's last pass: ${f.at || "none yet"}. While this page is open, a branch a minute old is checked again, one at a time. The paint marks are each branch's NEXT steps.`;
+  $("foot").textContent = `sd watch's last pass: ${f.at || "none yet"}. The paint marks are each branch's NEXT steps.`;
 }
 
 const NH = 46;
@@ -498,7 +554,7 @@ function route() {
   const id = openId();
   document.body.classList.toggle("drill", !!id);
   $("detail").hidden = !id;
-  if (!id) document.title = "sheepdog flock";
+  if (!id) { document.title = "sheepdog flock"; readFilter(); if (last) render(last); }
   if (id) { $("dmain").innerHTML = ""; shown = ""; $("tl").open = false; $("tlbody").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
@@ -540,7 +596,9 @@ document.addEventListener("click", async e => {
     setTimeout(() => (b.textContent = "copy"), 1400);
     return;
   }
-  if (e.target.closest("[data-back]")) { location.hash = ""; return; }
+  if (e.target.closest("[data-back]")) { location.hash = filterHash(); return; }
+  const ft = e.target.closest("[data-who], [data-repo]");
+  if (ft) { const k = ft.dataset.who ? "who" : "repo"; setFilter({ [k]: F[k] === ft.dataset[k] ? "" : ft.dataset[k] }); return; }
   if (e.target.closest("[data-refresh]")) { refreshGh().then(() => poll(true), () => {}); return; }
   const a = e.target.closest("[data-act]");
   if (a) { runStep(a); return; }
@@ -556,9 +614,12 @@ document.addEventListener("change", e => {
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.matches?.("input[data-path]")) { setConfig(e.target.dataset.path, e.target.value); e.target.blur(); return; }
-  if (e.key === "Escape" && openId()) location.hash = "";
+  if (e.target.id === "q") { if (e.key === "Escape") { e.target.value = ""; setFilter({ q: "" }); e.target.blur(); } return; }
+  if (e.key === "/" && !openId() && !e.target.matches?.("input, textarea, select")) { e.preventDefault(); $("q").focus(); return; }
+  if (e.key === "Escape" && openId()) location.hash = filterHash();
   else if (e.key === "Enter" && e.target.matches?.(".run[data-id]")) openCard(e.target);
 });
+$("q").addEventListener("input", e => setFilter({ q: e.target.value }));
 $("tl").addEventListener("toggle", () => { if ($("tl").open && openId()) loadTimeline(openId()); });
 window.addEventListener("hashchange", route);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(true); });
