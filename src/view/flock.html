@@ -337,10 +337,15 @@ function settingRow(k) {
   else if (typeof k.value === "boolean") v = `<span class="edit"><input type="checkbox" data-set="${esc(k.path)}" aria-label="${esc(name)}"${k.value ? " checked" : ""}></span>`;
   else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="setbtn" type="button" data-set="${esc(k.path)}">set</button></span>`;
   // A value that won't fit beside its name in the 400px column goes under it.
-  const long = name.length + showVal(k.value).length > 36 ? ` class="long"` : "";
-  const focus = k.set ? ` tabindex="0" title="click for the sd config command that changes it"` : "";
+  const long = name.length + showVal(k.value).length + k.source.length > 44 ? ` class="long"` : "";
+  const focus = k.set ? ` tabindex="0" data-setting="${esc(k.path)}" title="click for the sd config command that changes it"` : "";
   const how = k.set ? `<span class="how">${copyBtn(k.set)}</span>` : "";
   return `<li${long}${focus}><span class="k">${esc(name)}</span>${v}${layer}${how}</li>`;
+}
+// A row's command shows while it has focus, which a redraw would drop.
+const openSetting = () => document.activeElement?.closest?.("#dmain [data-setting]")?.dataset.setting;
+function reopenSetting(path) {
+  if (path) document.querySelector(`#dmain [data-setting="${CSS.escape(path)}"]`)?.focus({ preventScroll: true });
 }
 // The last set's word and whether "all settings" is open, per branch: the
 // drill-in is redrawn whole, so both are drawn from here, not left in the old DOM.
@@ -430,7 +435,8 @@ function renderDetail(b) {
   if (more) moreOpen = { id: shownId, open: more.open };
   if (moreOpen.id !== b.id) moreOpen = { id: b.id, open: false };
   shownId = b.id;
-  const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span class="lead">${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)}, <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
+  const open = openSetting();
+  const next =(b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span class="lead">${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)}, <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>Back to the flock</button>
     <div class="dhead"><h1>${esc(b.branch)}</h1><div class="sub" id="dsub">${esc(b.repo)}</div>
       <div class="meta">${prLink(b)}${usd(b)}${checked(b)}</div>${fence(b)}</div>
@@ -438,6 +444,7 @@ function renderDetail(b) {
       <div class="col"><div class="part flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow, b.stages) : `<p class="none">${esc(b.lead.say)}</p>`}</div>${settingsHtml(b)}</div>
       <div class="col"><div class="part"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}${actLine(b)}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
+  reopenSetting(open);
 }
 
 const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["pr", "PR", "--done"]];
