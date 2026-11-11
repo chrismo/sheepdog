@@ -419,7 +419,7 @@ fn drilling_into_a_branch_serves_its_flow_next_and_owed() {
     let (code, b) = branch(&s, &id);
     assert_eq!(code, 200, "{b}");
     assert_eq!(b["branch"], "feat/x");
-    let counts: Vec<String> = ["implement", "review", "fix", "cifix"].iter().map(|k| b["flow"][k]["count"].to_string()).collect();
+    let counts: Vec<String> = ["build", "review", "fix", "cifix"].iter().map(|k| b["flow"][k]["count"].to_string()).collect();
     assert_eq!(counts, ["1", "2", "1", "1"]);
     assert_eq!(b["flow"]["fix"]["who"], "agent");
     assert_eq!(b["flow"]["ci"]["who"], "wait");
@@ -1782,4 +1782,12 @@ fn the_flock_draws_each_branch_as_a_fence_line() {
     let body = serve(&sd).get("/").2;
     assert_has(&body, &["function splotch", "class=\"fence\" style=\"--reach:"]);
     assert!(!body.contains("class=\"card\""), "the Flock still draws cards");
+}
+
+#[test]
+fn the_drill_in_s_flow_draws_the_fence_s_stages_and_links_them_to_the_atlas() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &["function flowSvg(flow, stages)", "STAGES.forEach", "`/atlas#s=${"]);
+    assert!(!body.contains("Commit & push"), "the Flow still has its own stage names");
 }

@@ -207,37 +207,41 @@ function render(f) {
     `sd watch's last pass: ${f.at || "none yet"}. While this page is open, a branch a minute old is checked again, one at a time. The paint marks are each branch's NEXT steps.`;
 }
 
-const FLOW = {
-  implement: { x: 16, y: 16, w: 170, name: "Implement", sub: "agent builds the task", role: "agent" },
-  push: { x: 16, y: 96, w: 170, name: "Commit & push", sub: "sheepdog", role: "run" },
-  ci: { x: 16, y: 176, w: 170, name: "CI", sub: "tests on the PR", role: "wait" },
-  review: { x: 16, y: 256, w: 170, name: "Local review", sub: "agent reviews", role: "agent" },
-  threads: { x: 16, y: 336, w: 170, name: "Bot & threads", sub: "bot review, replies", role: "agent" },
-  merge: { x: 16, y: 416, w: 170, name: "Merge", sub: "you", role: "you" },
-  cifix: { x: 212, y: 176, w: 128, name: "ci-fix", sub: "when CI is red", role: "agent" },
-  fix: { x: 212, y: 256, w: 128, name: "Fix findings", sub: "when review finds", role: "agent" },
-};
 const NH = 46;
+const sy = i => 16 + i * 64;
+const LOOPS = [["cifix", "ci", "ci-fix", "when CI is red", "ci-red"], ["fix", "review", "Fix findings", "when review finds", "review-fix"]];
 const arrow = (d, c = "var(--muted)") => `<path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" marker-end="url(#ah)"/>`;
+const placed = (svg, x, y) => svg.replace("<svg ", `<svg x="${x}" y="${y}" width="30" height="30" `);
 
-function flowSvg(flow) {
-  const N = FLOW;
+function flowNode(k, x, y, w, name, sub, f, st, href) {
+  const lit = !!f.who, c = lit ? color(f.who) : st === "red" ? "var(--red)" : st === "done" ? "var(--done)" : "var(--line)";
+  const mark = lit ? placed(splotch(k, c), x + w - 30, y - 10) : st === "done" ? placed(MARK.done(), x + w - 30, y + 8) : st === "red" ? placed(MARK.red(), x + w - 30, y + 8) : "";
+  const runs = f.count ? `<text x="${x + w - (mark ? 32 : 8)}" y="${y + 20}" text-anchor="end" font-size="12" font-weight="700" fill="var(--agent)">×${f.count}</text>` : "";
+  const skip = st === "skip";
+  const title = `${name}: ${lit ? "now" : SAID[st] || st}${sub && !skip ? ", " + sub : ""}${f.count ? `, ${f.count} agent run${f.count > 1 ? "s" : ""}` : ""}`;
+  return `<a href="${href}"><g><title>${esc(title)}</title>` +
+    `<rect x="${x}" y="${y}" width="${w}" height="${NH}" fill="var(--surface)" stroke="${c}" stroke-width="${lit ? 3 : 1.5}"${skip ? ` stroke-dasharray="4 4"` : ""}/>` +
+    `<text x="${x + 10}" y="${y + 20}" font-size="14" font-weight="700" fill="var(${skip ? "--muted" : "--ink"})">${esc(name)}</text>` +
+    `<text x="${x + 10}" y="${y + 36}" font-size="10.5" fill="var(--muted)">${esc(sub)}</text>${runs}${mark}</g></a>`;
+}
+
+function flowSvg(flow, stages) {
+  const at = k => stages.find(x => x.stage === k) || { status: "todo" };
+  const row = k => STAGES.findIndex(([s]) => s === k);
+  const push = sy(row("push")), ci = sy(row("ci")), rv = sy(row("review"));
   let s = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted)"/></marker></defs>`;
-  for (const [a, b] of [["implement", "push"], ["push", "ci"], ["ci", "review"], ["review", "threads"], ["threads", "merge"]]) s += arrow(`M101,${N[a].y + NH} L101,${N[b].y - 3}`);
-  s += arrow(`M186,${N.ci.y + 23} L${N.cifix.x - 3},${N.ci.y + 23}`, "var(--red)");
-  s += arrow(`M186,${N.review.y + 23} L${N.fix.x - 3},${N.review.y + 23}`);
-  s += arrow(`M276,${N.cifix.y} L276,128 L189,128`);
-  s += arrow(`M340,${N.fix.y + 23} L352,${N.fix.y + 23} L352,110 L189,110`);
-  for (const [k, n] of Object.entries(N)) {
-    const f = flow[k] || {}, lit = !!f.who, c = lit ? color(f.who) : "var(--line)";
-    const paint = lit ? splotch(k, c).replace("<svg ", `<svg x="${n.x + n.w - 30}" y="${n.y - 10}" width="30" height="30" `) : "";
-    const runs = f.count ? `<text x="${n.x + n.w - (lit ? 30 : 8)}" y="${n.y + 20}" text-anchor="end" font-size="12" font-weight="700" fill="${color(n.role)}">×${f.count}</text>` : "";
-    s += `<g><title>${esc(n.name)}${f.count ? `: ${f.count} agent run${f.count > 1 ? "s" : ""}` : ""}${lit ? " (now)" : ""}</title>` +
-      `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${NH}" fill="var(--surface)" stroke="${c}" stroke-width="${lit ? 3 : 1.5}"/>` +
-      `<text x="${n.x + 10}" y="${n.y + 20}" font-size="14" font-weight="700" fill="var(--ink)">${n.name}</text>` +
-      `<text x="${n.x + 10}" y="${n.y + 36}" font-size="10.5" fill="var(--muted)">${n.sub}</text>${runs}${paint}</g>`;
-  }
-  return `<svg viewBox="0 0 360 472" role="img" aria-label="The PR's flow; lit nodes are where it is now">${s}</svg>`;
+  for (let i = 0; i + 1 < STAGES.length; i++) s += arrow(`M101,${sy(i) + NH} L101,${sy(i + 1) - 3}`);
+  s += arrow(`M186,${ci + 23} L209,${ci + 23}`, "var(--red)");
+  s += arrow(`M186,${rv + 23} L209,${rv + 23}`);
+  s += arrow(`M276,${ci} L276,${push + 32} L189,${push + 32}`);
+  s += arrow(`M340,${rv + 23} L352,${rv + 23} L352,${push + 18} L189,${push + 18}`);
+  STAGES.forEach(([k, label], i) => {
+    const st = at(k), sub = st.text || (st.status === "skip" ? "not set up" : "");
+    s += flowNode(k, 16, sy(i), 170, label, sub, flow[k] || {}, st.status, `/atlas#s=${encodeURIComponent(k)}`);
+  });
+  for (const [k, from, name, sub, key] of LOOPS) s += flowNode(k, 212, sy(row(from)), 128, name, sub, flow[k] || {}, "todo", `/atlas#k=${encodeURIComponent(key)}`);
+  const h = sy(STAGES.length - 1) + NH + 16;
+  return `<svg viewBox="0 0 360 ${h}" role="img" aria-label="The PR's flow: the seven stages and the two fix loops; a painted node is where it is now">${s}</svg>`;
 }
 
 function owedHtml(o) {
@@ -359,7 +363,7 @@ function renderDetail(b) {
     <div class="dhead"><h1>${esc(b.branch)}</h1><div class="sub" id="dsub">${esc(b.repo)}</div>
       <div class="meta">${prLink(b)}${usd(b)}${checked(b)}</div>${fence(b)}</div>
     <div class="dgrid">
-      <div class="col"><div class="part flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow) : `<p class="none">${esc(b.lead.say)}</p>`}</div>${settingsHtml(b)}</div>
+      <div class="col"><div class="part flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow, b.stages) : `<p class="none">${esc(b.lead.say)}</p>`}</div>${settingsHtml(b)}</div>
       <div class="col"><div class="part"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}${actLine(b)}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
 }

@@ -10,19 +10,15 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// Implement → push → CI → review → bot & threads → merge, and the two
-/// loops back to push.
-pub const NODES: [&str; 8] = ["implement", "push", "ci", "review", "threads", "merge", "cifix", "fix"];
+/// The fence's seven stages, and the two loops back to push: ci-fix off CI,
+/// fix findings off review.
+pub const NODES: [&str; 9] = ["build", "push", "ci", "review", "bot", "threads", "merge", "cifix", "fix"];
 
 fn key_node(key: &str, s: &Value) -> Option<&'static str> {
     match (key, t(s, "question.step").as_str()) {
         ("ci-red", _) | ("answer", "ci-fix") => Some("cifix"),
         ("review-fix", _) => Some("fix"),
-        (k, _) => match flock::step_stage(k, s)? {
-            "build" => Some("implement"),
-            "bot" => Some("threads"),
-            s => Some(s),
-        },
+        (k, _) => flock::step_stage(k, s),
     }
 }
 
@@ -51,7 +47,7 @@ fn counts(usage: &str, repo_dir: &str, branch: &str) -> Map<String, Value> {
     for r in records(usage, repo_dir, branch) {
         let node = match r.get("step").and_then(Value::as_str).unwrap_or_default() {
             "implement" if reviewed => "fix",
-            "implement" => "implement",
+            "implement" => "build",
             "review" => {
                 reviewed = true;
                 "review"
@@ -137,9 +133,15 @@ mod tests {
     }
 
     #[test]
+    fn the_flow_s_nodes_are_the_fence_s_stages_and_the_two_fix_loops() {
+        assert_eq!(NODES[..7], flock::STAGES);
+        assert_eq!(NODES[7..], ["cifix", "fix"]);
+    }
+
+    #[test]
     fn an_implement_after_the_first_review_is_a_fix() {
         let u = ["implement", "review", "implement", "review", "implement"].map(|s| rec("/src/r", "b", s));
-        assert_eq!((count_of(&u, "implement"), count_of(&u, "review"), count_of(&u, "fix")), (1, 2, 2));
+        assert_eq!((count_of(&u, "build"), count_of(&u, "review"), count_of(&u, "fix")), (1, 2, 2));
     }
 
     #[test]
@@ -153,7 +155,7 @@ mod tests {
         let u = [rec("/src/r", "b", "implement"), rec("/src/r", "b", "review"),
                  "{time:2026-10-31T11:00:00Z,repo:\"/src/r\",branch:\"b\",reset:true}".into(),
                  rec("/src/r", "b", "implement")];
-        assert_eq!((count_of(&u, "implement"), count_of(&u, "review"), count_of(&u, "fix")), (1, 0, 0));
+        assert_eq!((count_of(&u, "build"), count_of(&u, "review"), count_of(&u, "fix")), (1, 0, 0));
     }
 
     #[test]
@@ -165,10 +167,13 @@ mod tests {
     }
 
     #[test]
-    fn bot_and_thread_steps_light_the_threads_node_and_address_counts_there() {
+    fn bot_steps_light_the_bot_node_thread_steps_the_threads_node_and_address_counts_there() {
         let s = json!({"next": [{"key": "bot", "who": "agent"}]});
         assert_eq!(t(&flow(&s, "", "r-0", "b"), "threads.who"), "agent");
-        for k in ["bot-trigger", "bot-wait", "bot-silent", "human", "read"] {
+        for k in ["bot-trigger", "bot-wait", "bot-silent"] {
+            assert_eq!(key_node(k, &Value::Null), Some("bot"), "{k}");
+        }
+        for k in ["bot", "human", "read"] {
             assert_eq!(key_node(k, &Value::Null), Some("threads"), "{k}");
         }
         assert_eq!(count_of(&[rec("/src/r", "b", "address")], "threads"), 1);
