@@ -3129,7 +3129,10 @@ fn verify_red_stands_at_the_commit_it_failed_on_on_the_one_liner_and_next_325() 
     assert_eq!(r.field(".verify.step"), "implement");
     assert_eq!(r.field(".verify.cmd"), "make test");
     assert_eq!(r.field(".verify.at_head"), "true");
+    assert_eq!(r.field(".verify.tries"), "0");
     assert_eq!(r.field(r#"[.next[].key] | join(" ")"#), "verify-red");
+    sd.put_blob("refs/sheepdog/feat/verify-red", &rec.replace('}', r#", "tries": 2}"#));
+    assert_eq!(sd.state(&[]).field(".verify.tries"), "2");
     let r = sd.run(&[]);
     assert_has(&r.output, &["✗ verify red"]);
     let r = sd.run(&["--long"]);
@@ -3155,7 +3158,8 @@ fn verify_names_its_log_and_a_run_still_going_461() {
     let sd = sd();
     sd.feat();
     let head = sd.git(&["rev-parse", "HEAD"]);
-    let rec = format!(r#"{{"head": "{head}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z", "log": "/l/x.log"}}"#);
+    // its fix rounds spent, so chrismo's step, which names the log
+    let rec = format!(r#"{{"head": "{head}", "step": "implement", "cmd": "make test", "at": "2026-10-29T12:00:00Z", "log": "/l/x.log", "tries": 2}}"#);
     sd.put_blob("refs/sheepdog/feat/verify-red", &rec);
     let r = sd.state(&[]);
     assert_eq!(r.field(".verify.log"), "/l/x.log");

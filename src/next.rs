@@ -84,10 +84,12 @@
 // After FAIL_LIMIT agent steps failed in a row (failed, #242), the agent
 // steps go to chrismo the same way.
 //
-// A verify that failed on HEAD (verify.at_head, #325) is chrismo's step in
-// place of push, open-pr, draft, review and bot-trigger: nothing publishes or
-// reviews a commit verify rejected (review would only rerun verify and fail
-// again), and ready, as an end state, is listed only alone.
+// A verify that failed on HEAD (verify.at_head, #325) is a step in place of
+// push, open-pr, draft, review and bot-trigger: nothing publishes or reviews
+// a commit verify rejected (review would only rerun verify and fail again),
+// and ready, as an end state, is listed only alone. It's the agent's, a fix
+// round of sd act implement, until VERIFY_ROUNDS of them failed on it
+// (verify.tries), then chrismo's.
 //
 // A followed PR (mode reviewer, sd act follow, #250) is a teammate's: none of
 // the author's steps, only its own list (reviewer below). The author's pushes
@@ -138,6 +140,9 @@ fn agent(hold: &Option<Value>, def: &StepDef, say: impl Into<String>, cmd: &str)
 }
 
 pub const FAIL_LIMIT: f64 = 3.0;
+
+/// The fix rounds a red verify gets before it's chrismo's (#325).
+pub const VERIFY_ROUNDS: f64 = 2.0;
 
 fn rerun(step: &str) -> Option<String> {
     match step {
@@ -414,6 +419,7 @@ struct Cx<'a> {
     last_review: Option<Value>,
     implement: Gate,
     fixes: bool,
+    verify_fix: bool,
     addr: Gate,
     addr_why: String,
     ci_fix: Gate,
@@ -435,6 +441,7 @@ impl Cx<'_> {
         };
         let implement = crate::act::gates::implement(d);
         let fixes = crate::act::gates::implement_fixes(d) && implement.runs();
+        let verify_fix = crate::act::gates::implement_verifies(d) && implement.runs();
         let ci_rules = crate::act::gates::ci_fix_rules(d);
         let (ci_fix, ci_once) = (crate::act::judge(&ci_rules), crate::act::gates::ci_fix_once(&ci_rules));
         let ci_waits = if let (Gate::Soft(why), "ci-fix") = (&ci_fix, d.asking.as_str()) { why.join("; ") } else { String::new() };
@@ -447,6 +454,7 @@ impl Cx<'_> {
             last_review: last_review(s),
             implement,
             fixes,
+            verify_fix,
             addr: crate::act::gates::address(d),
             addr_why: refusal(crate::act::address_said(crate::act::gates::address(d), s)),
             ci_fix,
@@ -749,11 +757,13 @@ fn verify_red(cx: &Cx) -> Option<Value> {
         return None;
     }
     let (sha, log) = (cx.t("verify.sha"), cx.t("verify.log"));
+    let red = format!("verify red at {} ({}: {})", &sha[..sha.len().min(7)], cx.t("verify.step"), cx.t("verify.cmd"));
+    let tries = val::n(cx.s, "verify.tries");
+    if cx.verify_fix {
+        return agent(&cx.hold, def!("verify-red"), format!("{red}: the agent fixes it, round {} of {VERIFY_ROUNDS}", tries + 1.0), "sd act implement");
+    }
     let output = if log.is_empty() { String::new() } else { format!("; its whole output: {log}") };
-    step(def!("verify-red"), "you",
-        format!("verify red at {} ({}: {}): fix it, then sd act verify{output}", &sha[..sha.len().min(7)], cx.t("verify.step"), cx.t("verify.cmd")),
-        cmd("sd act verify"),
-    )
+    step(def!("verify-red"), "you", format!("{red} after {tries} fix rounds: fix it, then sd act verify{output}"), cmd("sd act verify"))
 }
 
 fn foreign_authors(cx: &Cx) -> Option<Value> {

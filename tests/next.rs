@@ -996,15 +996,24 @@ fn red(at_head: bool) -> String {
 }
 
 #[test]
-fn verify_red_at_head_chrismo_s_step_in_place_of_push_and_ship_325() {
+fn verify_red_at_head_the_agent_s_step_in_place_of_push_and_ship_until_its_fix_rounds_fail_then_chrismo_s_325() {
     let unpushed = ".push.ahead = 1";
     assert_eq!(keys(&e![unpushed, &red(true)]), "verify-red");
-    assert_eq!(step("verify-red", "who", &e![&red(true)]), "you");
+    assert_eq!(step("verify-red", "who", &e![&red(true)]), "agent");
     assert_eq!(
         step("verify-red", "say", &e![&red(true)]),
-        "verify red at 0123456 (implement: make test): fix it, then sd act verify"
+        "verify red at 0123456 (implement: make test): the agent fixes it, round 1 of 2"
     );
-    assert_eq!(step("verify-red", "cmd", &e![&red(true)]), "sd act verify");
+    assert_eq!(step("verify-red", "cmd", &e![&red(true)]), "sd act implement");
+    assert_eq!(step("verify-red", "say", &e![&red(true), ".verify.tries = 1"]), "verify red at 0123456 (implement: make test): the agent fixes it, round 2 of 2");
+    // two fix rounds failed: chrismo's
+    let spent = e![&red(true), ".verify.tries = 2"];
+    assert_eq!(keys(&spent), "verify-red");
+    assert_eq!(step("verify-red", "who", &spent), "you");
+    assert_eq!(step("verify-red", "say", &spent), "verify red at 0123456 (implement: make test) after 2 fix rounds: fix it, then sd act verify");
+    assert_eq!(step("verify-red", "cmd", &spent), "sd act verify");
+    // past the budget, the agent's round is chrismo's, as every agent step is
+    assert_eq!(keys(&e![r#".spend = {"usd": 30, "budget": 25}"#, &red(true)]), "budget");
     // no PR yet: no push, no ship
     assert_eq!(keys(&e![".pr = null", r#".push = {"remote_sha": null, "ahead": 1, "behind": 0, "foreign_authors": []}"#, &red(true)]), "verify-red");
     // a pushed draft isn't marked ready

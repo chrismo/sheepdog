@@ -1,17 +1,19 @@
-// implement (J0) and its review-fix rounds: the agent works the recorded
-// task, or the local review's open findings about HEAD, in the branch's
-// session; the pipeline commits its edits, then runs verify. Whether it runs
-// is gates::implement's, which NEXT asks too (#348): the task only before the
-// branch's first commit (#241), a fix round only below settings.reviewRounds.
+// implement (J0) and its fix rounds: the agent works the recorded task, the
+// local review's open findings about HEAD, or what verify printed failing on
+// HEAD (#325), in the branch's session; the pipeline commits its edits, then
+// runs verify. Whether it runs is gates::implement's, which NEXT asks too
+// (#348): the task only before the branch's first commit (#241), a review-fix
+// round only below settings.reviewRounds, a verify-fix round only below
+// VERIFY_ROUNDS.
 
-use super::commands::status;
+use super::commands::{status, verify_autofix_to, Report};
 use super::editing::{guidance, run_editing_step, Outcome, Spec};
 use super::step::{agent_rules, answer_cmd, commit_edits, guidance_base, enter_worktree, question_ask, question_gate, question_say,
                   spend_worded, step_session};
 use super::gates::{self, imp};
 use super::{die, enforce, plural, state_json, Args};
 use crate::git::{git, git_out};
-use crate::next::Derived;
+use crate::next::{Derived, VERIFY_ROUNDS};
 use crate::pins::{self, Pin};
 use crate::val::{at, sj, t, text};
 use crate::{decisions, json};
@@ -42,6 +44,14 @@ outcome "done", "needs-input" (anything you marked ask: your edits are left
 uncommitted for the owner) or "gave-up" (you can't make sense of them; say why
 in summary). What you decline goes to the next review round, or to the owner
 when you decline them all."#;
+
+const VERIFY_FIX_CONTRACT: &str = r#"Edit files, but do not commit, push, or run gh: the pipeline commits your edits
+with your commit_message and runs the repo's checks again.
+
+Return outcome "done" when you changed something, with a one-line
+commit_message; "needs-input" when you need a decision from the task's author
+(put the question in summary and leave your edits in place); or "gave-up" when
+you can't make sense of the failure (say why in summary)."#;
 
 const DECIDED: &str = "A finding one of these settles you may decline, citing it, unless the change since that commit reopens it.";
 
@@ -191,14 +201,60 @@ fn declines(fs: &[Map<String, Value>], head: &str) -> Vec<Value> {
     fs.iter().filter(declined).map(decision).collect()
 }
 
-/// The agent's commit message, else for a fix round its own, else the task's
-/// first line.
-fn commit_message(result: &Value, fixing: bool, task: &str) -> String {
-    match at(result, "commit_message").as_str() {
-        Some(m) if !blank(m) => m.to_string(),
-        _ if fixing => "Fix the local review findings".into(),
-        _ => task.lines().next().unwrap_or("").to_string(),
+#[derive(Clone, Copy, PartialEq)]
+enum Round {
+    Task,
+    ReviewFix,
+    VerifyFix,
+}
+
+impl Round {
+    fn of(d: &Derived) -> Round {
+        if gates::implement_verifies(d) {
+            Round::VerifyFix
+        } else if gates::implement_fixes(d) {
+            Round::ReviewFix
+        } else {
+            Round::Task
+        }
     }
+
+    /// The step its question is recorded as, and its guidance's.
+    fn step(self) -> &'static str {
+        match self {
+            Round::Task => "implement",
+            Round::ReviewFix => "review-fix",
+            Round::VerifyFix => "verify-fix",
+        }
+    }
+}
+
+/// The agent's commit message, else a fix round's own, else the task's
+/// first line.
+fn commit_message(result: &Value, round: Round, task: &str) -> String {
+    match (at(result, "commit_message").as_str(), round) {
+        (Some(m), _) if !blank(m) => m.to_string(),
+        (_, Round::ReviewFix) => "Fix the local review findings".into(),
+        (_, Round::VerifyFix) => "Fix what the repo's checks reject".into(),
+        (_, Round::Task) => task.lines().next().unwrap_or("").to_string(),
+    }
+}
+
+/// A verify-fix round's zero-token pass: verify and autofix on HEAD again.
+/// None when that passed, as said; else what they printed, for the agent.
+fn rerun(b: &str, wt: &str) -> Option<String> {
+    let mut out = String::new();
+    let (verified, _) = verify_autofix_to(wt, b, "implement", &mut Report::Keep(&mut out));
+    if verified.is_ok() {
+        print!("{out}");
+        println!("{b}: verify passed on a rerun: no fix round needed");
+        return None;
+    }
+    if !status(wt).is_empty() {
+        print!("{out}");
+        die(format!("verify changed files in {wt} (a formatter?); commit them, then sd act verify"));
+    }
+    Some(out)
 }
 
 /// <why>, one of gates::implement's reasons, in record <s>'s words.
@@ -210,6 +266,9 @@ fn worded(why: &str, s: &Value) -> String {
         imp::CAPPED => format!(
             "the review findings on {b} had their {} rounds (settings.reviewRounds): fix them by hand, raise it, or sd act review --accept",
             t(s, "review.findings.cap")
+        ),
+        imp::VERIFY_CAPPED => format!(
+            "the red verify on {b} had its {VERIFY_ROUNDS} fix rounds: fix it by hand, then sd act verify; or sd act implement --force for another"
         ),
         imp::CLOSED => format!("PR #{} is {}", t(s, "pr.number"), text(at(s, "pr.state")).to_lowercase()),
         imp::ERRORS => format!("{why}: {}", sj(at(s, "errors"), "; ")),
@@ -246,27 +305,41 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     let d = Derived::new(&s);
     let gate = spend_worded(gates::implement(&d).worded(|w| worded(w, &s)), &s, "implement", b);
     let Some(_go) = enforce(gate, a.force, &format!("implementing {b}")) else { return };
-    let fixing = gates::implement_fixes(&d);
+    let round = Round::of(&d);
+    let fixing = round == Round::ReviewFix;
     let findings_ref = format!("refs/sheepdog/{b}/findings");
     let (fs, fix) = if fixing { findings(b, &findings_ref) } else { (vec![], None) };
-    let qstep = if fixing { "review-fix" } else { "implement" };
+    let qstep = round.step();
     question_gate(b, qstep, a.force, answering);
     let verify = super::cfg("settings.verify", b);
     if !verify.is_empty() && agent_rules(b).is_empty() {
         eprintln!("sd act: warning: verify ({verify}) isn't plain words, so the agent may not run it; allow what it may run in settings.implementAllow");
     }
+    // An answer goes to the session that has verify's output, with the
+    // agent's edits in the worktree, so verify doesn't run first.
+    let red = match round {
+        Round::VerifyFix if !answering => match rerun(b, wt) {
+            Some(out) => out,
+            None => return,
+        },
+        _ => String::new(),
+    };
     let sess = step_session(b, "implement", &a.harness, answering);
     let base = guidance_base(b);
-    let (prompt, schema) = if fixing {
-        let g = guidance(b, &base, "review-fix");
-        let task = if task.is_empty() { "(none recorded)" } else { &task };
-        let decided = decisions::section(&decisions::on_record(b), DECIDED);
-        let list = listed(&fs);
-        let p = format!("{g}\n\n{REVIEW_FIX_CONTRACT}\n\nFindings:\n{list}{decided}\n\nThe task this branch was made for, for context:\n{task}");
-        (p, REVIEW_FIX_SCHEMA)
-    } else {
-        let g = guidance(b, &base, "implement");
-        (format!("{g}\n\n{IMPLEMENT_CONTRACT}\n\nTask:\n{task}"), IMPLEMENT_SCHEMA)
+    let g = guidance(b, &base, qstep);
+    let context = if task.is_empty() { "(none recorded)" } else { &task };
+    let (prompt, schema) = match round {
+        Round::ReviewFix => {
+            let decided = decisions::section(&decisions::on_record(b), DECIDED);
+            let list = listed(&fs);
+            let p = format!("{g}\n\n{REVIEW_FIX_CONTRACT}\n\nFindings:\n{list}{decided}\n\nThe task this branch was made for, for context:\n{context}");
+            (p, REVIEW_FIX_SCHEMA)
+        }
+        Round::VerifyFix => {
+            let p = format!("{g}\n\n{VERIFY_FIX_CONTRACT}\n\nThe checks ({verify}) failed on HEAD:\n{red}\nThe task this branch was made for, for context:\n{context}");
+            (p, IMPLEMENT_SCHEMA)
+        }
+        Round::Task => (format!("{g}\n\n{IMPLEMENT_CONTRACT}\n\nTask:\n{task}"), IMPLEMENT_SCHEMA),
     };
     let r = run_editing_step(Spec {
         b,
@@ -301,7 +374,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     }
     let summary = &r.summary;
     if r.dirty() {
-        commit_edits(b, "implement", wt, &commit_message(&r.result, fixing, &task));
+        commit_edits(b, "implement", wt, &commit_message(&r.result, round, &task));
     } else if !changed && !fixing {
         r.changed_nothing("done");
     }
@@ -318,9 +391,13 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         println!("{}", report(&answers));
     }
     r.print_log();
-    if let Err(cmd) = r.verify() {
+    let Err(cmd) = r.verify() else { return };
+    if round != Round::VerifyFix {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}"));
     }
+    let n = at(&s, "verify.tries").as_u64().unwrap_or(0) + 1;
+    crate::verify_red::tried(wt, b, n);
+    die(format!("verify failed ({cmd}) after fix round {n} of {VERIFY_ROUNDS}; the commit is kept in {wt}"));
 }
 
 /// The agent needs input on <b>: <q>, recorded as <qstep>'s question.
@@ -437,9 +514,10 @@ mod tests {
 
     #[test]
     fn commit_message_is_the_agents_else_the_rounds_else_the_tasks_first_line() {
-        assert_eq!(commit_message(&json!({"commit_message": "Add c"}), true, "t"), "Add c");
-        assert_eq!(commit_message(&json!({"commit_message": " "}), true, "t"), "Fix the local review findings");
-        assert_eq!(commit_message(&json!({"commit_message": null}), false, "add a line\n\nmore"), "add a line");
-        assert_eq!(commit_message(&json!({}), false, ""), "");
+        assert_eq!(commit_message(&json!({"commit_message": "Add c"}), Round::ReviewFix, "t"), "Add c");
+        assert_eq!(commit_message(&json!({"commit_message": " "}), Round::ReviewFix, "t"), "Fix the local review findings");
+        assert_eq!(commit_message(&json!({"commit_message": null}), Round::VerifyFix, "t"), "Fix what the repo's checks reject");
+        assert_eq!(commit_message(&json!({"commit_message": null}), Round::Task, "add a line\n\nmore"), "add a line");
+        assert_eq!(commit_message(&json!({}), Round::Task, ""), "");
     }
 }

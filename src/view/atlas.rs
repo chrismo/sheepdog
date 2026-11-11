@@ -55,13 +55,15 @@ fn step(d: &StepDef, traced: &[Value], links: &Links) -> Value {
 
 /// The prompt <d>'s agent reads, as its verb declares it (src/act/verbs.rs):
 /// the one for <d>'s key, else the verb's only one; null where no agent runs.
+/// verify-red's is implement's verify-fix round (#325).
 fn prompt_of(d: &StepDef) -> Value {
     let Some(v) = d.verb.and_then(|step| VERBS.iter().find(|v| v.step() == step)) else { return Value::Null };
     let only = match v.prompts {
         [one] => Some(one),
         _ => None,
     };
-    v.prompts.iter().find(|p| p.step == d.key).or(only).map_or(Value::Null, |p| {
+    let key = if d.key == "verify-red" { "verify-fix" } else { d.key };
+    v.prompts.iter().find(|p| p.step == key).or(only).map_or(Value::Null, |p| {
         json!({"file": format!("lib/prompts/{}", p.file), "setting": format!("settings.{}", p.setting), "convention": crate::guidance::convention(p.setting)})
     })
 }
@@ -502,6 +504,7 @@ mod tests {
             json!({"file": "lib/prompts/review-fix.md", "setting": "settings.reviewFixPrompt", "convention": ".sheepdog/review-fix.md"})
         );
         assert_eq!(prompt("implement")["file"], "lib/prompts/implement.md");
+        assert_eq!(prompt("verify-red")["file"], "lib/prompts/verify-fix.md");
         assert_eq!(prompt("conflict")["file"], "lib/prompts/resolve.md");
         assert_eq!(prompt("bot")["setting"], "settings.addressPrompt");
         assert_eq!(prompt("push"), Value::Null);

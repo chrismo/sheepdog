@@ -97,6 +97,8 @@ derived! {
     tasked: bool,
     /// verify failed on HEAD, with the PR open or not made yet (#325).
     verify_red: bool,
+    /// verify_red, and fewer than VERIFY_ROUNDS fix rounds failed on it.
+    verify_fix_due: bool,
 
     // Local vs remote (O4).
     /// The remote has commits this copy never had.
@@ -222,7 +224,7 @@ derived! {
 
     // An agent's question (#167, #326).
     /// The step whose question stands at HEAD, else empty.
-    asking: String => |r: &mut arb::Rng| r.pick(&["", "address", "ci-fix", "implement", "review-fix", "review", "resolve"]).to_string(),
+    asking: String => |r: &mut arb::Rng| r.pick(&["", "address", "ci-fix", "implement", "review-fix", "verify-fix", "review", "resolve"]).to_string(),
     /// chrismo's answer is stored for it.
     stored: bool,
     /// An address question with nothing owed: moot.
@@ -370,6 +372,7 @@ impl Derived {
         self.merge_state = j.g("pr.merge_state").as_str().unwrap_or("UNKNOWN").to_string();
         self.tasked = j.g("task").as_str().is_some_and(|x| !x.is_empty());
         self.verify_red = self.open && j.on("verify.at_head");
+        self.verify_fix_due = self.verify_red && j.n("verify.tries") < super::VERIFY_ROUNDS;
     }
 
     fn push(&mut self, j: &J) {

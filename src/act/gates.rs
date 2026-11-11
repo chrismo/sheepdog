@@ -49,7 +49,7 @@ pub fn describe_rules(d: &Derived) -> Vec<Rule> {
         budget_unread, over_budget,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
-        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
+        merge_state: _, tasked: _, verify_red: _, verify_fix_due: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
         taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _, chase: _,
         undone: _, up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
@@ -72,7 +72,7 @@ pub fn push(d: &Derived) -> Gate {
 
 pub fn push_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
-        open, verify_red, undone, parent_unpushed, foreign_authors,
+        open, verify_red, undone, parent_unpushed, foreign_authors, verify_fix_due: _,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
         merge_state: _, tasked: _, foreign: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _,
@@ -141,7 +141,7 @@ pub fn address_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
         pr_null, merged, closed, owed_bot, locked, sync_conflict, up_to_date, unpushed, behind_remote, ci_pending,
         unposted, own_base: _, running: _, reviewer: _, open: _, has_pr: _, errors: _, stale: _, lagging: _,
-        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _,
+        owed_human: _, bot_blocking: _, info: _, draft: _, review_required: _, merge_state: _, tasked: _, verify_red: _, verify_fix_due: _, foreign: _, foreign_authors: _,
         reset_away: _, dropping: _, taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _,
         empty: _, chase: _, undone: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
@@ -187,6 +187,7 @@ pub fn address_pushes(d: &Derived) -> bool {
 pub mod imp {
     pub const NO_TASK: &str = "no task recorded";
     pub const CAPPED: &str = "the review findings had settings.reviewRounds rounds";
+    pub const VERIFY_CAPPED: &str = "the red verify had its fix rounds (VERIFY_ROUNDS)";
     pub const CLOSED: &str = "the PR is merged or closed";
     pub const ERRORS: &str = "sd state has errors, so the PR may be wrong";
     pub const AHEAD_UNKNOWN: &str = "how far ahead of the target is unknown";
@@ -200,20 +201,27 @@ pub fn implement_fixes(d: &Derived) -> bool {
     d.fixing && !yes(d.findings_declined)
 }
 
-/// sd act implement: the task, before the branch's first commit (#241), or
-/// a review-fix round below settings.reviewRounds. Its question and a dirty
-/// worktree are step.rs's, as for every agent step.
+/// Whether sd act implement runs a verify-fix round (#325): verify is red at
+/// HEAD. It goes before a review-fix round, as review won't run on a red.
+pub fn implement_verifies(d: &Derived) -> bool {
+    d.verify_red
+}
+
+/// sd act implement: the task, before the branch's first commit (#241), a
+/// verify-fix round below VERIFY_ROUNDS, or a review-fix round below
+/// settings.reviewRounds. Its question and a dirty worktree are step.rs's,
+/// as for every agent step.
 pub fn implement(d: &Derived) -> Gate {
     judge(&implement_rules(d))
 }
 
 pub fn implement_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
-        open, errors, tasked, behind_remote, ahead_target, fix_due, asking,
-        fixing: _, findings_declined: _,
+        open, errors, tasked, behind_remote, ahead_target, fix_due, asking, verify_fix_due,
+        fixing: _, findings_declined: _, verify_red: _,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, stale: _, lagging: _, locked: _,
         owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _,
-        verify_red: _, foreign: _, foreign_authors: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
+        foreign: _, foreign_authors: _, reset_away: _, dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _,
         push_dirty: _, parent_unpushed: _, empty: _, chase: _, undone: _, up_to_date: _, behind_target: _, sync_conflict: _,
         conflict: _, chase_behind: _, gh_behind: _, gh_restack: _, by_tree: _, old_base_null: _, no_base: _,
         restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _, ci_verdict: _, ci_blocked: _,
@@ -222,14 +230,17 @@ pub fn implement_rules(d: &Derived) -> Vec<Rule> {
         resume: _, resume_ci: _, answer_pending: _, dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _,
         rv_fetch: _, rv_current: _, rv_pending: _, rv_submitted: _, rv_local: _,
     } = d;
-    let task = !implement_fixes(d);
+    let verifies = implement_verifies(d);
+    let fixes = !verifies && implement_fixes(d);
+    let task = !verifies && !fixes;
     // with its own question standing, what's ahead is its work in progress
     let unasked = task && asking != "implement";
     // only ci-fix's NEXT reads yours (#355)
     let rule = |name, level, refuses: bool, clears| Rule { name, level, refuses, clears, yours: true };
     vec![
         rule(imp::NO_TASK, Level::Hard, task && !tasked, "git config branch.<b>.sd-task \"<task>\""),
-        rule(imp::CAPPED, Level::Hard, !task && !fix_due, "raise settings.reviewRounds, fix them by hand, or sd act review --accept"),
+        rule(imp::CAPPED, Level::Hard, fixes && !fix_due, "raise settings.reviewRounds, fix them by hand, or sd act review --accept"),
+        rule(imp::VERIFY_CAPPED, Level::Soft, verifies && !verify_fix_due, "fix it by hand, then sd act verify; or sd act implement --force for another round"),
         rule(imp::CLOSED, Level::Soft, !open, "reopen it, or start a new branch"),
         rule(imp::ERRORS, Level::Soft, task && *errors, "sd state --json says why"),
         rule(imp::AHEAD_UNKNOWN, Level::Soft, unasked && ahead_target.is_none(), "sd state's errors say why"),
@@ -249,7 +260,7 @@ pub fn ci_fix(d: &Derived) -> Gate {
 /// HEAD: an answer is stored meanwhile (#326), and --force runs anyway.
 pub fn ci_fix_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
-        pr_null, has_pr, to_push, unpushed, ci_held, verify_red, ci_verdict, ci_for_head, undone, parent_unpushed,
+        pr_null, has_pr, to_push, unpushed, ci_held, verify_red, verify_fix_due: _, ci_verdict, ci_for_head, undone, parent_unpushed,
         own_base: _, running: _, reviewer: _, open: _, merged: _, closed: _, errors: _, stale: _, lagging: _, locked: _,
         owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _, merge_state: _, tasked: _,
         foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _, taken: _, held: _, push_dirty: _,
@@ -363,7 +374,7 @@ pub fn findings_clear(d: &Derived) -> &'static str {
 
 pub fn review_rules(d: &Derived) -> Vec<Rule> {
     let Derived {
-        reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, answer_pending, ahead_target,
+        reviewer, push_dirty, old_base_null, open, any_cover, fixing, verify_red, verify_fix_due: _, answer_pending, ahead_target,
         rv_yours, rv_fetch, rv_current, rv_submitted, rv_local,
         own_base: _, running: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _, lagging: _,
         locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
@@ -411,7 +422,7 @@ pub fn accept_rules(d: &Derived) -> Vec<Rule> {
         old_base_null,
         own_base: _, running: _, reviewer: _, pr_null: _, open: _, has_pr: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
-        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
+        merge_state: _, tasked: _, verify_red: _, verify_fix_due: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
         taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _, ahead_target: _, chase: _, undone: _,
         up_to_date: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _, gh_restack: _,
         by_tree: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, parent_merged: _, parent_abandoned: _,
@@ -468,7 +479,7 @@ pub fn restack_rules(d: &Derived, resolve: bool) -> Vec<Rule> {
         restack_foreign, answer_pending, undone,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, merged: _, closed: _, errors: _, stale: _, lagging: _,
         locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
-        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _,
+        merge_state: _, tasked: _, verify_red: _, verify_fix_due: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _,
         dropping: _, taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
         ahead_target: _, chase: _, behind_target: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, no_base: _, restack_due: _, stacked: _, parent_closed: _, ci_verdict: _, ci_blocked: _,
@@ -517,7 +528,7 @@ pub fn retarget_rules(d: &Derived) -> Vec<Rule> {
         chase, up_to_date,
         own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
         lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
-        merge_state: _, tasked: _, verify_red: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
+        merge_state: _, tasked: _, verify_red: _, verify_fix_due: _, foreign: _, foreign_authors: _, behind_remote: _, reset_away: _, dropping: _,
         taken: _, held: _, unpushed: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
         undone: _, behind_target: _, sync_conflict: _, conflict: _, chase_behind: _, gh_behind: _,
         gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
@@ -722,6 +733,19 @@ mod tests {
     }
 
     #[test]
+    fn implement_a_red_verify_at_head_is_its_round_before_findings_and_the_task_soft_past_verify_rounds_325() {
+        // ahead, untasked, sd state errors: none of the task's reasons hold a fix round
+        let red = Derived { verify_red: true, verify_fix_due: true, tasked: false, errors: true, ahead_target: Some(true), ..fresh() };
+        assert_eq!(implement(&red), Gate::Go);
+        assert!(implement_verifies(&red));
+        let both = Derived { verify_red: true, verify_fix_due: true, ..findings() };
+        assert!(implement_verifies(&both));
+        assert_eq!(implement(&Derived { fix_due: false, ..both }), Gate::Go, "review's cap isn't the red's");
+        assert_eq!(implement(&Derived { verify_fix_due: false, ..red }), soft(&[imp::VERIFY_CAPPED]));
+        assert!(!implement_verifies(&fresh()));
+    }
+
+    #[test]
     fn implement_a_fix_round_past_settings_review_rounds_is_hard_even_forced() {
         let capped = Derived { fix_due: false, ..findings() };
         assert_eq!(implement(&capped), Gate::Hard(imp::CAPPED.into()));
@@ -732,6 +756,9 @@ mod tests {
     fn implement_never_runs_a_fix_round_past_the_cap_or_the_task_untasked_on_generated_states() {
         check("implement past the cap or with no task", |d| {
             let runs = implement(d).runs();
+            if implement_verifies(d) {
+                return if runs && !d.verify_fix_due { Err("a verify-fix round past VERIFY_ROUNDS runs".into()) } else { Ok(()) };
+            }
             match (implement_fixes(d), runs) {
                 (true, true) if !d.fix_due => Err("a fix round past the cap runs".into()),
                 (false, true) if !d.tasked => Err("the task runs with none recorded".into()),
