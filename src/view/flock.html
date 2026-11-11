@@ -467,7 +467,7 @@ function renderDetail(b) {
 const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["pr", "PR", "--done"]];
 const GAP = 20 * 60e3, FOLD = 30, LX = 58, LW = 74;
 const ms = t => Date.parse(t);
-const span = m => m < 6e4 ? `${Math.round(m / 1e3)}s` : m >= 864e5 ? `${Math.floor(m / 864e5)}d ${Math.floor(m % 864e5 / 36e5)}h` : m >= 36e5 ? `${Math.floor(m / 36e5)}h ${Math.round(m % 36e5 / 6e4)}m` : `${Math.round(m / 6e4)}m`;
+const span = m => m < 6e4 ? `${Math.floor(m / 1e3)}s` : m >= 864e5 ? `${Math.floor(m / 864e5)}d ${Math.floor(m % 864e5 / 36e5)}h` : m >= 36e5 ? `${Math.floor(m / 36e5)}h ${Math.round(m % 36e5 / 6e4)}m` : `${Math.round(m / 6e4)}m`;
 const ciColor = r => r === "SUCCESS" ? "var(--run)" : /FAIL|ERROR|TIMED|CANCEL|ACTION/.test(r || "") ? "var(--red)" : "var(--wait)";
 
 function tlEvents(t) {

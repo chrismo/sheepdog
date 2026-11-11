@@ -534,7 +534,8 @@ fn a_timeline_without_github_still_has_its_agent_steps() {
     let s = serve(&sd);
     let id = |b: &str| format!("{}/{b}", sheepdog::watch::repo_key("/src/sheepdog"));
     let (_, no_pr) = timeline(&s, &id("a"));
-    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"], &no_pr["pr"]), (1, &Value::Null, &Value::Null, &Value::Null));    let (_, gh_down) = timeline(&s, &id("b"));
+    assert_eq!((no_pr["agent"].as_array().unwrap().len(), &no_pr["github"], &no_pr["error"], &no_pr["pr"]), (1, &Value::Null, &Value::Null, &Value::Null));
+    let (_, gh_down) = timeline(&s, &id("b"));
     assert_eq!((gh_down["agent"].as_array().unwrap().len(), &gh_down["github"]), (1, &Value::Null));
     assert_eq!(gh_down["error"], "gh: rate limit exceeded");
     assert_eq!(timeline(&s, "nope/x").0, 404);
@@ -1404,7 +1405,8 @@ fn each_flock_card_says_when_its_branch_was_checked() {
 }
 
 // #473: how long a branch has sat in its step, from the end of its last
-// agent run (usage.sup), the latest event sd view has without asking GitHub.
+// agent run (usage.sup) or its head's commit, whichever is later; here no
+// head, so the run's end alone.
 #[test]
 fn each_flock_card_says_since_when_its_branch_has_sat_in_its_step() {
     let sd = sd();
@@ -1932,7 +1934,7 @@ fn the_flock_filters_by_who_repo_and_text_in_the_hash() {
 fn a_row_says_how_long_its_branch_has_sat_and_the_timeline_ends_at_now() {
     let sd = sd();
     let body = serve(&sd).get("/").2;
-    assert_has(&body, &["b.since", "${inStep(b)}", "function tlSvg(ev, now)", ">now</text>", "tlSvg(ev, now)"]);
+    assert_has(&body, &["b.since", "${inStep(b)}", "function tlSvg(ev, now)", ">now</text>", "ev.length ? tlSvg(ev, now) :"]);
 }
 
 // #474: in the timeline each commit links to itself on GitHub and the PR's
