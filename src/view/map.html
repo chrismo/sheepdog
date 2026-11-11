@@ -68,6 +68,11 @@
 .atl a { font-family: var(--f-mono); font-size: 0.8rem; color: var(--ink); }
 footer { overflow-wrap: anywhere; }
 body.sheet footer, body.sheet #look { margin-bottom: 40vh; }
+.find { font: inherit; color: var(--ink); background: none; border: 0; border-bottom: 1.5px solid var(--line); border-radius: 0; padding: 4px 0; width: min(100%, 340px); }
+.find:focus-visible { outline: none; border-bottom-color: var(--ink); }
+.find::placeholder { color: var(--muted); }
+.group[hidden] { display: none; }
+.sq.miss { opacity: 0.25; }
 </style>
 </head>
 <body>
@@ -88,6 +93,8 @@ body.sheet footer, body.sheet #look { margin-bottom: 40vh; }
     </div>
   </header>
   <section id="trend" aria-label="trend"></section>
+  <input id="q" class="find" type="search" placeholder="find a file" aria-label="find a file by its path" title="/ to find, Escape to clear" autocomplete="off" spellcheck="false">
+  <p class="none" id="nomatch" hidden>No file's path holds that.</p>
   <div id="groups"></div>
   <footer id="foot"></footer>
   <div id="look"></div>
@@ -133,6 +140,7 @@ function render(m) {
     `<section class="group"><h2>${esc(g.name)}<span class="n">${fmt(g.lines)} lines</span></h2>` +
     `<div class="tiles">${g.files.map(f => tile(f, maxLines)).join("")}</div></section>`).join("")
     : `<p class="none">No source here: sd runs from ${esc(m.root)}, which has no src/.</p>`;
+  narrow();
   $("gh").innerHTML = ghLine(m);
   renderTrend(m.trend);
   const down = !m.error ? "" : m.issues === null ? `Open issues left out: ${m.error}. ` : `The open issues are GitHub's last answer: ${m.error}. `;
@@ -164,10 +172,14 @@ function trendSeries(points, [key, what, c]) {
   return `<div class="series" style="--sc:var(${c})"><span class="lbl">${what}</span><b>${fmt(last[key])}</b>${spark(points, key)}<span class="d">${delta}</span></div>`;
 }
 
+// Must match trendSeries' height, so the files below don't move when the sample lands (#478).
+const emptySeries = ([, what]) =>
+  `<div class="series"><span class="lbl">${what}</span><b>&nbsp;</b><svg viewBox="0 0 200 44" preserveAspectRatio="none" aria-hidden="true"><path d="M0 42H200" style="stroke:var(--line)"/></svg><span class="d">&nbsp;</span></div>`;
+
 function renderTrend(t) {
   const el = $("trend");
   if (!t.points.length) {
-    el.innerHTML = `<p class="none">${t.error ? `No trend: ${esc(t.error)}` : "Sampling git history…"}</p>`;
+    el.innerHTML = SERIES.map(emptySeries).join("") + `<p class="tnote">${t.error ? `No trend: ${esc(t.error)}` : "Sampling git history…"}</p>`;
     return;
   }
   const note = [`${t.points.length} days, the last commit of each since ${esc(t.points[0].date)}`, t.fetched && `sampled ${ago(t.fetched)} ago`,
@@ -206,15 +218,44 @@ function hideFile() {
   $("sheet").hidden = true;
   document.body.classList.remove("sheet");
   document.querySelectorAll(".sq.on").forEach(e => e.classList.remove("on"));
-  if (location.hash) history.replaceState(null, "", location.pathname);
+  if (location.hash) setHash({ q: hashed().q });
 }
 
-// #p=<path> opens that file's detail (the Atlas links here), its tile scrolled to.
+// #p=<path> opens that file's detail (the Atlas links here), its tile scrolled to;
+// q=<text> beside it, or alone, is the find box's.
+function hashed() {
+  const h = {};
+  for (const [, k, v] of location.hash.matchAll(/[#&](p|q)=([^&]*)/g)) {
+    try { h[k] = decodeURIComponent(v); } catch {}
+  }
+  return h;
+}
+const hashOf = h => Object.entries(h).filter(([, v]) => v).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+const setHash = h => { const s = hashOf(h); history.replaceState(null, "", s ? "#" + s : location.pathname); };
+
+function narrow() {
+  const q = $("q").value.trim().toLowerCase();
+  let shown = 0;
+  document.querySelectorAll(".group").forEach(g => {
+    const sqs = [...g.querySelectorAll(".sq")];
+    sqs.forEach(sq => sq.classList.toggle("miss", !sq.dataset.p.toLowerCase().includes(q)));
+    g.hidden = sqs.every(sq => sq.classList.contains("miss"));
+    shown += !g.hidden;
+  });
+  $("nomatch").hidden = !q || shown > 0;
+}
+
+function find(v) {
+  $("q").value = v;
+  setHash({ p: hashed().p, q: v });
+  narrow();
+}
+$("q").addEventListener("input", e => find(e.target.value));
+
 let routed = false;
 function route() {
-  const m = location.hash.match(/^#p=(.+)$/);
-  let p = null;
-  try { p = m && decodeURIComponent(m[1]); } catch { return; }
+  const { p, q = "" } = hashed();
+  if ($("q").value !== q) { $("q").value = q; narrow(); }
   if (!p || !files[p]) return;
   showFile(p);
   document.querySelector(".sq.on")?.scrollIntoView({ block: "center" });
@@ -225,7 +266,7 @@ document.addEventListener("click", e => {
   const sq = e.target.closest(".sq[data-p]");
   if (sq) {
     // the URL names the open file, so a reload or Back from its Atlas link reopens it
-    history.replaceState(null, "", `#p=${encodeURIComponent(sq.dataset.p)}`);
+    setHash({ p: sq.dataset.p, q: hashed().q });
     return showFile(sq.dataset.p);
   }
   if (e.target.closest("[data-close]")) return hideFile();
@@ -233,7 +274,13 @@ document.addEventListener("click", e => {
   if (more) more.classList.toggle("all");
   if (e.target.closest("[data-refresh]")) refreshGh().then(load, () => {});
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") hideFile(); });
+// The same keys as the Flock's filter.
+document.addEventListener("keydown", e => {
+  const box = $("q");
+  if (e.target === box) { if (e.key === "Escape") { if (box.value) find(""); box.blur(); } return; }
+  if (e.key === "/" && !e.target.closest("input, select, textarea")) { e.preventDefault(); box.focus(); }
+  else if (e.key === "Escape") hideFile();
+});
 
 // Only the latest load schedules the next: one polling chain.
 let again, seq = 0;
