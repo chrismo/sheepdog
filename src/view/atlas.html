@@ -287,7 +287,7 @@ function found(q) {
 
 function narrow(hits, open) {
   const shows = st => st === open || !!hits?.stages.has(st);
-  document.querySelectorAll(".stage").forEach(b => { b.classList.toggle("open", b.dataset.s === open); b.hidden = !!hits && !shows(b.dataset.s); });
+  document.querySelectorAll(".stage").forEach(b => { b.classList.toggle("open", shows(b.dataset.s)); b.hidden = !!hits && !shows(b.dataset.s); });
   document.querySelectorAll(".steps").forEach(u => (u.hidden = !shows(u.dataset.s)));
   document.querySelectorAll("#stages [data-k]").forEach(e => e.classList.toggle("miss", !!hits && !hits.keys.has(e.dataset.k)));
   $("nomatch").hidden = !hits || hits.keys.size > 0;
@@ -298,14 +298,15 @@ function route() {
   const { s, k, q = "" } = hashed();
   if ($("q").value !== q) $("q").value = q;
   const hits = found(q.trim().toLowerCase());
-  const step = k || (hits?.keys.size === 1 && !s ? [...hits.keys][0] : null);
-  narrow(hits, step ? stageOf(step) : s);
-  if (step) showStep(step); else hideStep();
+  narrow(hits, k ? stageOf(k) : s);
+  if (k) showStep(k); else hideStep();
   arriving = false;
 }
 
 function find(v) {
-  history.replaceState(null, "", v ? "#" + hashOf({ q: v }) : location.pathname);
+  const hits = found(v.trim().toLowerCase());
+  const one = hits?.keys.size === 1 ? [...hits.keys][0] : null;
+  history.replaceState(null, "", v ? "#" + hashOf({ k: one, q: v }) : location.pathname);
   route();
 }
 $("q").addEventListener("input", e => find(e.target.value));
