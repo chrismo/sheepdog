@@ -16,6 +16,15 @@
     const v = read(k);
     if (v !== null) apply(k, v, options);
   }
+  // sd view restarts itself on a new build (#496): reload for its pages and
+  // its token; the hash keeps the page's place.
+  let build = null;
+  const look = () => fetch("/api/build").then(r => r.json()).then(b => {
+    if (build !== null && b.build !== build) location.reload();
+    build = b.build;
+  }).catch(() => {});
+  look();
+  setInterval(look, 5000);
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById("look");

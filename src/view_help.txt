@@ -7,7 +7,10 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   Starts a local server on 127.0.0.1, prints its URL and opens it in the
   browser, then serves until Ctrl-C. With one already on the port, it opens
   that one instead, unless that one is an older build: then it stops it and
-  starts in its place.
+  starts in its place. A running one restarts itself, on its port and with
+  no browser, once a rebuild of sd has stopped changing for 2s and no step
+  or refresh it started is running; the open pages reload onto it, each
+  where it was.
 
   <branch> opens on that branch's drill-in: . for the current worktree's
   branch, or a branch's exact name, its PR number, or a part of its name

@@ -27,6 +27,12 @@ fn acting() -> MutexGuard<'static, Option<Acting>> {
     ACTING.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+/// The step slot while no step runs; no step starts while it's held.
+pub fn idle() -> Option<impl Sized> {
+    let slot = acting();
+    slot.is_none().then_some(slot)
+}
+
 /// Frees the one slot when the step and its refresh end, even by a panic.
 struct Running;
 
