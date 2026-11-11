@@ -1464,7 +1464,7 @@ mod tests {
             assert_eq!(glyph(&[step(k, "you")]), "❌", "{k}");
         }
         assert!(stuck("failed"));
-        assert!(stuck("verify-red"), "a failed verify is chrismo's until #325's part 2 hands it to the agent");
+        assert!(stuck("verify-red"), "a failed verify notifies like red CI, while its agent fix rounds run and after");
     }
 
     #[test]
