@@ -25,7 +25,8 @@
 .run { background: var(--surface); padding: 12px 14px; cursor: pointer; }
 .run:hover { background: color-mix(in srgb, var(--surface) 88%, var(--ink)); }
 .who { min-width: 0; }
-.who .b { font-family: var(--f-mono); font-weight: 600; font-size: 0.92rem; overflow-wrap: anywhere; }
+.who .b { display: block; text-decoration: none; font-family: var(--f-mono); font-weight: 600; font-size: 0.92rem; overflow-wrap: anywhere; }
+.who .b:hover { text-decoration: underline; }
 .meta { color: var(--muted); font-size: 0.8rem; display: flex; gap: 4px 10px; flex-wrap: wrap; }
 .meta a { color: var(--muted); }
 .fence { position: relative; display: grid; grid-template-columns: repeat(7, 1fr); height: 44px; }
@@ -179,7 +180,7 @@ function fence(b) {
 function row(b) {
   const L = b.lead;
   return `<article class="run" style="--gc:${color(L.who)}" data-id="${esc(b.id)}" tabindex="0" aria-label="${esc(b.branch)}: open">
-    <div class="who"><div class="b">${esc(b.branch)}</div><div class="meta"><span>${esc(b.repo)}</span>${prLink(b)}${usd(b)}${checked(b)}</div></div>
+    <div class="who"><a class="b" href="#b=${encodeURIComponent(b.id)}">${esc(b.branch)}</a><div class="meta"><span>${esc(b.repo)}</span>${prLink(b)}${usd(b)}${checked(b)}</div></div>
     ${fence(b)}
     <div class="next"><span class="say">${esc(L.say)}</span>${L.cmd ? copyBtn(L.cmd) : ""}</div>
   </article>`;
@@ -482,6 +483,7 @@ async function loadDetail(id) {
       throw new Error(r.status);
     } else {
       renderDetail(b);
+      document.title = `${b.branch}, ${b.repo}`;
     }
   } catch (e) {
     if (openId() !== id) return;
@@ -496,6 +498,7 @@ function route() {
   const id = openId();
   document.body.classList.toggle("drill", !!id);
   $("detail").hidden = !id;
+  if (!id) document.title = "sheepdog flock";
   if (id) { $("dmain").innerHTML = ""; shown = ""; $("tl").open = false; $("tlbody").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
