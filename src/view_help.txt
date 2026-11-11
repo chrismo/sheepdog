@@ -23,6 +23,12 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   CI and merge from GitHub (gh). A branch is there from its first pass, and
   stays until the watcher drops its cache: after it's unenrolled, or once
   its merge is notified.
+  A row's branch name links to its drill-in, so it opens in a new tab too;
+  the drill-in's tab is titled by its branch and repo.
+  A group's count shows only that group, and a repo in the top line only
+  that repo; the text box (/ focuses it, Escape clears it) keeps branches
+  whose name, repo or PR number has its letters in order. The filter is in
+  the URL (#who=you&repo=kinsite&q=fact), so it links and reloads.
 
   The Atlas (/atlas, linked from the Flock and the Map) is the workflow
   itself, generated from the code so it can't drift: every NEXT step by the

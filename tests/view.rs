@@ -1784,6 +1784,49 @@ fn the_flock_draws_each_branch_as_a_fence_line() {
     assert!(!body.contains("class=\"card\""), "the Flock still draws cards");
 }
 
+// A row's branch name is a link to its drill-in (#471), the same #b= the
+// row's click opens, so cmd-click, middle-click and the hover URL work; the
+// drill-in's tab is titled by its branch and repo, the list's "sheepdog flock".
+#[test]
+fn a_flock_row_s_branch_links_to_its_drill_in_and_the_tab_names_it() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &[
+        r##"<a class="b" href="#b=${encodeURIComponent(b.id)}">"##,
+        "document.title = `${b.branch}, ${b.repo}`",
+        r#"document.title = "sheepdog flock""#,
+        r#"location.hash = "b=" + encodeURIComponent(el.dataset.id)"#,
+    ]);
+    let r = sd.run(&["--help"]);
+    assert_has(&r.output, &["A row's branch name links to its drill-in"]);
+}
+
+// The Flock filters (#470): a group's count shows only that group, a repo in
+// the top line only that repo, and the text box keeps the branches whose
+// name, repo or PR number has its letters in order. The filter is in the
+// hash beside #b=, so it links, reloads and survives a drill-in and back;
+// render() puts focus back on the row or button it redrew. A check of the
+// page's source only, as for the fence: no test here runs the page's JS.
+#[test]
+fn the_flock_filters_by_who_repo_and_text_in_the_hash() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    assert_has(&body, &[
+        r#"<input id="q" type="search""#,
+        "function fuzzy(q, s)",
+        "function filterHash()",
+        "new URLSearchParams(",
+        "history.replaceState(",
+        r#"data-repo=""#,
+        r#"data-who=""#,
+        "function keepFocus(",
+        r#"e.key === "/""#,
+    ]);
+    assert_eq!(body.matches("minute old").count(), 1, "the foot repeats the header's minute-old line");
+    let r = sd.run(&["--help"]);
+    assert_has(&r.output, &["A group's count shows only that group", "(/ focuses it, Escape clears it)", "#who=you&repo=kinsite&q=fact"]);
+}
+
 #[test]
 fn the_drill_in_s_flow_draws_the_fence_s_stages_and_links_them_to_the_atlas() {
     let sd = sd();
