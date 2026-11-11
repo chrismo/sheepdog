@@ -1532,6 +1532,16 @@ fn the_map_page_draws_the_stages_and_the_trend() {
     assert_has(&s.get("/map").2, &["trend", "<svg"]);
 }
 
+// The trend holds its tiles' place before the sample lands (#478): each
+// series is drawn empty at its loaded size, so the files below don't move.
+#[test]
+fn the_map_s_trend_holds_its_place_before_the_sample_lands() {
+    let sd = sd();
+    let body = serve(&sd).get("/map").2;
+    assert_has(&body, &["SERIES.map(emptySeries)"]);
+    assert!(!body.contains(r#"el.innerHTML = `<p class="none">"#), "the trend still starts as one line");
+}
+
 // A step's settings (#377): the keys its verb reads, each with this repo's
 // value and the layer it comes from (sd config explain) and the sd config
 // set command that changes it.

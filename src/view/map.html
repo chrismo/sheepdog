@@ -164,10 +164,14 @@ function trendSeries(points, [key, what, c]) {
   return `<div class="series" style="--sc:var(${c})"><span class="lbl">${what}</span><b>${fmt(last[key])}</b>${spark(points, key)}<span class="d">${delta}</span></div>`;
 }
 
+// Must match trendSeries' height, so the files below don't move when the sample lands (#478).
+const emptySeries = ([, what]) =>
+  `<div class="series"><span class="lbl">${what}</span><b>&nbsp;</b><svg viewBox="0 0 200 44" preserveAspectRatio="none" aria-hidden="true"><path d="M0 42H200" style="stroke:var(--line)"/></svg><span class="d">&nbsp;</span></div>`;
+
 function renderTrend(t) {
   const el = $("trend");
   if (!t.points.length) {
-    el.innerHTML = `<p class="none">${t.error ? `No trend: ${esc(t.error)}` : "Sampling git history…"}</p>`;
+    el.innerHTML = SERIES.map(emptySeries).join("") + `<p class="tnote">${t.error ? `No trend: ${esc(t.error)}` : "Sampling git history…"}</p>`;
     return;
   }
   const note = [`${t.points.length} days, the last commit of each since ${esc(t.points[0].date)}`, t.fetched && `sampled ${ago(t.fetched)} ago`,
