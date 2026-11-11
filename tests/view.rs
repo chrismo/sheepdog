@@ -1102,6 +1102,30 @@ fn the_atlas_opens_on_the_world_each_stage_its_path_in_order() {
     assert!(!body.contains("where an agent step would be"), "the stand-in layer sits before the stages, in none");
 }
 
+// Each stage row and step counts the branches at it now (#477), from the
+// steps' branches (an_atlas_step_lists_the_branches_whose_first_step_it_is).
+#[test]
+fn the_atlas_counts_the_branches_at_each_stage_and_step() {
+    let sd = sd();
+    let body = serve(&sd).get("/atlas").2;
+    assert_has(&body, &["const atCount = ", "class=\"at\"", "s.branches.length"]);
+    assert_has(&sd.run(&["--help"]).output, &["Each stage row and step counts the branches at it now."]);
+}
+
+// A find box on the Atlas and the Map (#477): / focuses it, Escape clears
+// it, and its text rides in the hash as q= beside #s=, #k= and #p=. The
+// matching is the page's JS, which no test here runs.
+#[test]
+fn the_atlas_and_the_map_have_a_find_box_kept_in_the_hash() {
+    let sd = sd();
+    let s = serve(&sd);
+    for page in ["/atlas", "/map"] {
+        assert_has(&s.get(page).2, &[r#"<input id="q" class="find" type="search""#, "function hashed()", "function narrow(", r#"e.key === "/""#]);
+    }
+    assert_has(&s.get("/atlas").2, &["function found(q)"]);
+    assert_has(&sd.run(&["--help"]).output, &["A find box (/ focuses it, Escape clears it) keeps the", "Its find box dims the files whose path doesn't hold"]);
+}
+
 #[test]
 fn the_three_pages_link_to_each_other() {
     let sd = sd();

@@ -57,6 +57,10 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   settings it reads, each with this repo's value and the layer it comes from
   (sd config explain) and a copy button for the sd config set command that
   changes it. It reads no branch's state: only the repo's config.
+  Each stage row and step counts the branches at it now.
+  A find box (/ focuses it, Escape clears it) keeps the stages and steps
+  whose key, meaning or stage name holds its text, and opens the step when
+  only one does; the text stays in the URL (#q=), beside #s= and #k=.
 
   The Map (/map, linked from the Flock and the Atlas) is sheepdog's own code: each file
   under src/ sized by its lines, the share of it in functions over clippy's
@@ -66,6 +70,8 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   trend strip above them samples the last commit of each day since the
   split (2026-10-13): lines in src/ and tests/, and functions over the cap.
   It reads the checkout sd was built from, whatever repo sd view runs in.
+  Its find box dims the files whose path doesn't hold the text and hides
+  the groups with none that do (#q=, beside #p=).
 
   The three link into each other: a step in a branch's drill-in opens that
   step in the Atlas; an Atlas step lists the branches whose next step it is
