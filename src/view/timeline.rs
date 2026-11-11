@@ -48,17 +48,16 @@ pub(super) fn last_runs(usage: &str) -> HashMap<(String, String), String> {
     out
 }
 
-/// The committer date, so a rebase's, in UTC; kept by SHA, which fixes it.
+/// The committer date, so a rebase's, in UTC; kept by SHA, which fixes it,
+/// a miss too.
 fn committed(repo: &str, sha: &str) -> Option<String> {
-    static SEEN: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
-    let mut guard = SEEN.lock().ok()?;
-    let seen = guard.get_or_insert_with(HashMap::new);
-    if let Some(at) = seen.get(sha) {
-        return Some(at.clone());
+    static SEEN: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
+    if let Some(at) = SEEN.lock().ok()?.get_or_insert_with(HashMap::new).get(sha) {
+        return at.clone();
     }
-    let at = utc(git_out(repo, &["log", "-1", "--format=%ct", sha, "--"])?.parse().ok()?);
-    seen.insert(sha.to_string(), at.clone());
-    Some(at)
+    let at = git_out(repo, &["log", "-1", "--format=%ct", sha, "--"]).and_then(|s| s.parse().ok()).map(utc);
+    SEEN.lock().ok()?.get_or_insert_with(HashMap::new).insert(sha.to_string(), at.clone());
+    at
 }
 
 /// Since when the branch has sat in its step (#473): the later of its last

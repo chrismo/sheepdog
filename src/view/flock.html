@@ -514,7 +514,7 @@ function tlSvg(ev, now) {
   let day = "";
   cl.forEach((c, i) => {
     const d = new Date(c.s), dd = d.toLocaleDateString([], { month: "short", day: "numeric" });
-    s += (c.s < now ? tlTime(c.s, c.y) : "") +
+    if (c.s < now) s += tlTime(c.s, c.y) +
       (dd !== day ? `<text x="0" y="${c.y + 16}" font-size="10" fill="var(--muted)" font-family="var(--f-mono)">${dd}</text>` : "");
     day = dd;
     if (c.h >= 60 && c.e < now) s += tlTime(c.e, c.y + c.h);
