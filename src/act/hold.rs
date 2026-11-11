@@ -15,9 +15,10 @@ const PROTECTED_FILE: &str = ".sheepdog/protected-paths";
 /// .sheepdog/protected-paths in the <base> commit, which the branch's agent
 /// can't rewrite (one per line, # comments); else the defaults. An empty
 /// <base> skips the file, as step_guidance does. Unless the setting is set,
-/// the file is itself protected, and so is the committed config (#456), which
-/// can set the setting and implementAllow: an agent editing either would
-/// change every branch after it merges.
+/// the file is itself protected. The committed config (#456) is protected
+/// unless the list is empty, since it can set the setting itself, and
+/// implementAllow: an agent editing either file would change every branch
+/// after it merges.
 fn protected_paths(b: &str, base: &str) -> Vec<String> {
     let set = match crate::config::get_text("settings.protectedPaths", b, false) {
         Ok(set) => Some(set),
@@ -34,8 +35,13 @@ fn protected_paths(b: &str, base: &str) -> Vec<String> {
 
 /// protected_paths in the repo at <dir>, given the setting's lines if set.
 fn paths_in(dir: &str, set: Option<&str>, base: &str) -> Vec<String> {
+    let committed = crate::config::COMMITTED.to_string();
     if let Some(set) = set {
-        return set.lines().filter(|p| !p.is_empty()).map(str::to_string).collect();
+        let mut paths: Vec<String> = set.lines().filter(|p| !p.is_empty()).map(str::to_string).collect();
+        if !paths.is_empty() && !paths.contains(&committed) {
+            paths.push(committed);
+        }
+        return paths;
     }
     let spec = format!("{base}:{PROTECTED_FILE}");
     let mut paths: Vec<String> = if !base.is_empty() && git_out(dir, &["cat-file", "-t", &spec]).is_some_and(|t| t == "blob") {
@@ -43,7 +49,7 @@ fn paths_in(dir: &str, set: Option<&str>, base: &str) -> Vec<String> {
     } else {
         PROTECTED_DEFAULT.iter().map(|p| p.to_string()).collect()
     };
-    paths.extend([PROTECTED_FILE, crate::config::COMMITTED].map(str::to_string));
+    paths.extend([PROTECTED_FILE.to_string(), committed]);
     paths
 }
 
@@ -228,12 +234,15 @@ mod tests {
     }
 
     // Was lib/sheepdog.bats: "protected_paths: settings.protectedPaths wins, and an empty list protects nothing"
-    // The setting as config::get_text reads a list: one per line.
+    // The setting as config::get_text reads a list: one per line. The
+    // committed config, which can set it, stays protected unless the list is
+    // empty (#456).
     #[test]
     fn protected_paths_settings_protectedpaths_wins_and_an_empty_list_protects_nothing() {
         let r = Repo::new();
         commit(&r, ".sheepdog/protected-paths", ".github/\n");
-        assert_eq!(paths_in(&r.dir, Some("ci/\nMakefile"), "HEAD"), strings(&["ci/", "Makefile"]));
+        assert_eq!(paths_in(&r.dir, Some("ci/\nMakefile"), "HEAD"), strings(&["ci/", "Makefile", ".sheepdog/config.json"]));
+        assert_eq!(paths_in(&r.dir, Some(".sheepdog/config.json"), "HEAD"), strings(&[".sheepdog/config.json"]));
         assert!(paths_in(&r.dir, Some(""), "HEAD").is_empty());
     }
 
