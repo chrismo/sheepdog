@@ -226,7 +226,7 @@ function setFilter(patch) {
 }
 
 function repoLine(bs) {
-  const repos = [...new Set(bs.map(b => b.repo))];
+  const repos = [...new Set([...bs.map(b => b.repo), F.repo].filter(Boolean))];
   const btn = r => `<button class="flt" type="button" data-repo="${esc(r)}" aria-pressed="${F.repo === r}">${esc(r)}</button>`;
   const named = repos.length > 1 ? `${repos.slice(0, -1).map(btn).join(", ")} and ${btn(repos.at(-1))}` : btn(repos[0]);
   return `${bs.length} branch${bs.length === 1 ? "" : "es"} in ${named}.`;
@@ -234,7 +234,7 @@ function repoLine(bs) {
 
 function groupHtml([w, name], bs, head) {
   const all = bs.filter(b => group(b) === w);
-  if (!all.length) return "";
+  if (!all.length && F.who !== w) return "";
   const off = F.who && F.who !== w, list = off ? [] : all.filter(shownBy), hid = all.length - list.length;
   return `<section class="group${off ? " off" : ""}" style="--gc:${color(w)}"><h2><button class="flt" type="button" data-who="${w}" aria-pressed="${F.who === w}"><span class="n">${all.length}</span><span class="nm">${name}</span></button>` +
     `${hid && !off ? `<span class="hid">${hid} hidden</span>` : ""}</h2>${list.length ? `<div class="sheet">${head}${list.map(row).join("")}</div>` : ""}</section>`;
@@ -242,10 +242,12 @@ function groupHtml([w, name], bs, head) {
 
 function keepFocus(draw) {
   const a = document.activeElement, r = a?.closest(".run[data-id]");
-  const sel = r ? `.run[data-id="${CSS.escape(r.dataset.id)}"]${a === r ? "" : " .b"}`
+  const inRow = r && r !== a ? [...r.querySelectorAll("a, button")].indexOf(a) : -1;
+  const sel = r ? `.run[data-id="${CSS.escape(r.dataset.id)}"]`
     : a?.dataset?.who ? `[data-who="${a.dataset.who}"]` : a?.dataset?.repo ? `[data-repo="${CSS.escape(a.dataset.repo)}"]` : "";
   draw();
-  if (sel) document.querySelector(sel)?.focus({ preventScroll: true });
+  const el = sel ? document.querySelector(sel) : null;
+  (inRow >= 0 ? el?.querySelectorAll("a, button")[inRow] : el)?.focus({ preventScroll: true });
 }
 
 function render(f) {
@@ -554,7 +556,8 @@ function route() {
   const id = openId();
   document.body.classList.toggle("drill", !!id);
   $("detail").hidden = !id;
-  if (!id) { document.title = "sheepdog flock"; readFilter(); if (last) render(last); }
+  document.title = "sheepdog flock";
+  if (!id) { readFilter(); if (last) render(last); }
   if (id) { $("dmain").innerHTML = ""; shown = ""; $("tl").open = false; $("tlbody").innerHTML = ""; loadDetail(id); window.scrollTo(0, 0); }
 }
 
