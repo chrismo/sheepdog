@@ -1272,6 +1272,18 @@ mod tests {
     }
 
     #[test]
+    fn a_running_step_is_the_only_step_to_wait_for_on_generated_states_170() {
+        derived_arb::check("running", |d| {
+            let shape: Vec<String> = offer(d, &json!({}), "origin").iter().map(|st| format!("{}/{}", text(&st["key"]), text(&st["who"]))).collect();
+            if d.running && !d.own_base && shape != ["running/wait"] {
+                Err(format!("running offers {shape:?}"))
+            } else {
+                Ok(())
+            }
+        });
+    }
+
+    #[test]
     fn red_ci_with_a_clean_restack_fixes_ci_first_so_the_restacks_push_carries_the_fix_418() {
         assert_eq!(keys(&[behind(), red()].concat())[..2], ["ci-red", "behind"]);
     }
