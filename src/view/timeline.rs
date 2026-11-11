@@ -3,6 +3,8 @@
 
 use super::{branch, cache};
 use crate::gh;
+use crate::git::git_out;
+use crate::time::utc;
 use crate::val::{at, t};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -24,6 +26,26 @@ fn agent(usage: &str, repo_dir: &str, b: &str) -> Vec<Value> {
             json!({"step": f("step"), "end": f("time"), "ms": f("duration_ms"), "status": f("status"), "usd": f("cost_usd")})
         })
         .collect()
+}
+
+fn last_run(usage: &str, repo_dir: &str, b: &str) -> Option<String> {
+    branch::records(usage, repo_dir, b).last().and_then(|r| r.get("time")?.as_str().map(String::from))
+}
+
+/// The committer date, so a rebase's, in UTC.
+fn committed(repo: &str, sha: &str) -> Option<String> {
+    let secs = git_out(repo, &["log", "-1", "--format=%ct", sha, "--"])?.parse().ok()?;
+    Some(utc(secs))
+}
+
+/// Since when the branch has sat in its step (#473): the later of its last
+/// agent run's end and its head's commit; null when neither is known. <repo>
+/// is its registered repo.
+pub(super) fn since(usage: &str, c: &super::flock::Cached, repo: Option<&str>) -> Value {
+    let run = last_run(usage, c.id.split_once('/').map_or("", |(d, _)| d), &c.branch);
+    let head = c.doc.as_ref().map(|d| t(d, "state.head")).filter(|h| !h.is_empty());
+    let commit = repo.zip(head).and_then(|(r, h)| committed(r, &h));
+    run.into_iter().chain(commit).max().map_or(Value::Null, Value::String)
 }
 
 fn check(c: &Value) -> Value {
@@ -99,6 +121,16 @@ mod tests {
         let pr = |total: u64| json!({"commits": {"totalCount": total, "nodes": [{"commit": {"oid": "a"}}]}});
         assert_eq!(history(&pr(140))["total"], 140);
         assert_eq!(history(&pr(1))["total"], Value::Null);
+    }
+
+    #[test]
+    fn a_branch_s_last_run_is_the_last_since_any_reset() {
+        let rec = |at: &str, extra: &str| format!("{{time:{at},repo:\"/src/r\",branch:\"b\",{extra}}}");
+        let dir = crate::watch::repo_key("/src/r");
+        let u = [rec("2026-10-29T04:00:00Z", "step:\"review\""), rec("2026-10-29T05:00:00Z", "step:\"describe\"")].join("\n");
+        assert_eq!(last_run(&u, &dir, "b").as_deref(), Some("2026-10-29T05:00:00Z"));
+        assert_eq!(last_run(&(u + "\n" + &rec("2026-10-30T00:00:00Z", "reset:true")), &dir, "b"), None);
+        assert_eq!(last_run("", &dir, "b"), None);
     }
 
     #[test]
