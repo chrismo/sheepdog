@@ -912,6 +912,18 @@ pub fn global_only(key: &str) -> bool {
     GLOBAL_ONLY.iter().any(|(k, _)| *k == key)
 }
 
+/// The nearest file to a branch that may set settings.<key>: "global",
+/// "repo" or "branch".
+pub fn nearest_file(key: &str) -> &'static str {
+    if global_only(key) {
+        "global"
+    } else if GLOBAL_OR_REPO.iter().any(|(k, _)| *k == key) {
+        "repo"
+    } else {
+        "branch"
+    }
+}
+
 /// Whether settings.<key> holds a list or object, which sd config set takes
 /// only as --json.
 pub fn takes_json(key: &str) -> bool {

@@ -104,7 +104,9 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   stepBudget can be set there: the page runs sd config set --branch
   <branch>, so the value goes through sd config's own checks and lands in
   the branch's file. The rest, interval among them (global file only), it
-  shows.
+  shows; click one for the sd config set that changes it, at the layer its
+  value comes from (a default at --branch <branch>, unless its key lives
+  only in the global or repo file), with a copy button.
 
   The foot of each page picks its look: four palettes (Drystone, Fleece &
   Raddle, Heather Moor, Lamplight), four display faces (Londrina Solid,

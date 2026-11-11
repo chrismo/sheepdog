@@ -73,11 +73,17 @@ body:not(.drill) #detail { display: none; }
 .act:hover { background: color-mix(in srgb, var(--agent) 82%, var(--ink)); }
 .act:disabled { opacity: 0.6; cursor: default; }
 .set { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 0.85rem; }
-.set li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; min-width: 0; }
-.set .k { font-family: var(--f-mono); font-size: 0.82rem; overflow-wrap: anywhere; }
-.set .v { color: var(--muted); font-family: var(--f-mono); font-size: 0.8rem; text-align: right; overflow-wrap: anywhere; max-width: 260px; }
+.set li { display: grid; grid-template-columns: max-content minmax(0, 1fr) auto; gap: 2px 12px; align-items: center; min-width: 0; }
+.set .k { font-family: var(--f-mono); font-size: 0.82rem; white-space: nowrap; }
+.set .v { color: var(--muted); font-family: var(--f-mono); font-size: 0.8rem; text-align: right; overflow-wrap: anywhere; }
+.set li.long .v { grid-row: 2; grid-column: 1 / -1; text-align: left; }
 .set .v:empty::before { content: "unset"; font-style: italic; }
-.set .layer { font-size: 0.76rem; color: var(--muted); font-style: italic; white-space: nowrap; }
+.set .layer { grid-column: 3; font-size: 0.76rem; color: var(--muted); font-style: italic; white-space: nowrap; }
+.set li[tabindex] { cursor: pointer; }
+.set li[tabindex]:hover .k { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+.set .how { grid-column: 1 / -1; display: none; }
+.set li:focus-within .how { display: flex; }
+.set .how code { font-size: 0.74rem; color: var(--muted); }
 .set .layer.branch { color: var(--ink); font-weight: 700; font-style: normal; }
 .set .edit { display: flex; gap: 8px; align-items: center; justify-self: end; }
 .set input[type=number] { font: inherit; font-family: var(--f-mono); font-size: 0.82rem; width: 5.5em; padding: 2px 5px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--ink); }
@@ -330,7 +336,16 @@ function settingRow(k) {
   if (!k.editable) v = `<span class="v">${esc(showVal(k.value))}</span>`;
   else if (typeof k.value === "boolean") v = `<span class="edit"><input type="checkbox" data-set="${esc(k.path)}" aria-label="${esc(name)}"${k.value ? " checked" : ""}></span>`;
   else v = `<span class="edit"><input type="number" min="0" step="${NUM_STEP[k.path] || "any"}" value="${esc(k.value)}" data-path="${esc(k.path)}" aria-label="${esc(name)}"><button class="setbtn" type="button" data-set="${esc(k.path)}">set</button></span>`;
-  return `<li><span class="k">${esc(name)}</span>${v}${layer}</li>`;
+  // A value that won't fit beside its name in the 400px column goes under it.
+  const long = name.length + showVal(k.value).length + k.source.length > 44 ? ` class="long"` : "";
+  const focus = k.set ? ` tabindex="0" data-setting="${esc(k.path)}" title="click for the sd config command that changes it"` : "";
+  const how = k.set ? `<span class="how">${copyBtn(k.set)}</span>` : "";
+  return `<li${long}${focus}><span class="k">${esc(name)}</span>${v}${layer}${how}</li>`;
+}
+// A row's command shows while it has focus, which a redraw would drop.
+const openSetting = () => document.activeElement?.closest?.("#dmain [data-setting]")?.dataset.setting;
+function reopenSetting(path) {
+  if (path) document.querySelector(`#dmain [data-setting="${CSS.escape(path)}"]`)?.focus({ preventScroll: true });
 }
 // The last set's word and whether "all settings" is open, per branch: the
 // drill-in is redrawn whole, so both are drawn from here, not left in the old DOM.
@@ -419,6 +434,7 @@ function renderDetail(b) {
   const more = document.querySelector("#dmain details.more");
   if (more) moreOpen = { id: shownId, open: more.open };
   if (moreOpen.id !== b.id) moreOpen = { id: b.id, open: false };
+  const open = shownId === b.id ? openSetting() : null;
   shownId = b.id;
   const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span class="lead">${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)}, <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>Back to the flock</button>
@@ -428,6 +444,7 @@ function renderDetail(b) {
       <div class="col"><div class="part flow"><h3>Flow</h3>${b.flow ? flowSvg(b.flow, b.stages) : `<p class="none">${esc(b.lead.say)}</p>`}</div>${settingsHtml(b)}</div>
       <div class="col"><div class="part"><h3>Next</h3>${next ? `<ul class="list">${next}</ul>` : `<p class="none">${esc(b.lead.say)}</p>`}${actLine(b)}</div>${b.owed ? owedHtml(b.owed) : ""}</div>
     </div>`;
+  reopenSetting(open);
 }
 
 const LANES = [["agent", "Agent", "--agent"], ["run", "sheepdog", "--run"], ["ci", "CI", "--wait"], ["pr", "PR", "--done"]];

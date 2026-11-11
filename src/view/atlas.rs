@@ -95,7 +95,7 @@ fn set_command(key: &str, value: &Value) -> String {
 }
 
 /// <s> as one shell word: bare when it needs no quoting, else in single quotes.
-fn quoted(s: &str) -> String {
+pub(super) fn quoted(s: &str) -> String {
     if !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"@%+=:,./-_".contains(&c)) {
         return s.to_string();
     }
