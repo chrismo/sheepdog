@@ -149,6 +149,121 @@ pub fn show_ref(dir: &str, r: &str) -> bool {
     git_ok(dir, &["show-ref", "-q", "--verify", r])
 }
 
+/// The refs default_branch, trusted_base and default_tip read for <b> on
+/// <remote>, from one for-each-ref (config reads them on every read, #456):
+/// each ref that exists, with the commit it peels to and where it points if
+/// symbolic.
+struct BaseRefs {
+    remote: String,
+    refs: std::collections::HashMap<String, (String, String)>,
+}
+
+impl BaseRefs {
+    fn read(dir: &str, b: &str, remote: &str) -> BaseRefs {
+        let mut want = vec![format!("refs/remotes/{remote}/HEAD")];
+        for br in ["main", "master"] {
+            want.push(format!("refs/remotes/{remote}/{br}"));
+            want.push(format!("refs/heads/{br}"));
+        }
+        if !b.is_empty() {
+            want.push(format!("refs/sheepdog/{b}/base"));
+            want.push(format!("refs/heads/{b}"));
+        }
+        let mut args = vec!["for-each-ref", "--format=%(refname) %(objectname) %(*objectname) %(symref)"];
+        args.extend(want.iter().map(String::as_str));
+        let out = git_out(dir, &args).unwrap_or_default();
+        let mut refs = std::collections::HashMap::new();
+        for l in out.lines() {
+            let mut f = l.split(' ');
+            let (Some(name), Some(obj), Some(peeled), sym) = (f.next(), f.next(), f.next(), f.next().unwrap_or("")) else {
+                continue;
+            };
+            // Patterns match a ref's prefix too: keep only those asked for.
+            if want.iter().any(|w| w == name) {
+                let commit = if peeled.is_empty() { obj } else { peeled };
+                refs.insert(name.to_string(), (commit.to_string(), sym.to_string()));
+            }
+        }
+        BaseRefs { remote: remote.to_string(), refs }
+    }
+
+    fn sha(&self, r: &str) -> Option<&str> {
+        self.refs.get(r).map(|(c, _)| c.as_str())
+    }
+
+    fn default_branch(&self) -> Option<String> {
+        let remote = &self.remote;
+        if let Some((_, sym)) = self.refs.get(&format!("refs/remotes/{remote}/HEAD")).filter(|(_, s)| !s.is_empty()) {
+            return Some(sym.strip_prefix(&format!("refs/remotes/{remote}/")).unwrap_or(sym).to_string());
+        }
+        ["main", "master"]
+            .into_iter()
+            .find(|br| self.refs.contains_key(&format!("refs/remotes/{remote}/{br}")) || self.refs.contains_key(&format!("refs/heads/{br}")))
+            .map(str::to_string)
+    }
+
+    /// The default branch's tip, the remote's or else the local one.
+    fn default_tip(&self) -> Option<String> {
+        let def = self.default_branch()?;
+        [format!("refs/remotes/{}/{def}", self.remote), format!("refs/heads/{def}")].iter().find_map(|r| self.sha(r)).map(str::to_string)
+    }
+}
+
+/// <remote>'s default branch as fetched: <remote>/HEAD, else main or master,
+/// remote or local.
+pub fn default_branch(dir: &str, remote: &str) -> Option<String> {
+    BaseRefs::read(dir, "", remote).default_branch()
+}
+
+/// The merge-base of two commits, which never changes: kept for the process.
+fn merge_base(dir: &str, a: &str, b: &str) -> Option<String> {
+    type Seen = Vec<((String, String), Option<String>)>;
+    static SEEN: std::sync::Mutex<Seen> = std::sync::Mutex::new(Vec::new());
+    let key = (a.to_string(), b.to_string());
+    if let Some((_, mb)) = SEEN.lock().ok()?.iter().find(|(k, _)| *k == key) {
+        return mb.clone();
+    }
+    let mb = git_out(dir, &["merge-base", a, b]);
+    if let Ok(mut seen) = SEEN.lock() {
+        seen.push((key, mb.clone()));
+    }
+    mb
+}
+
+/// The commit <b>'s repo guidance (.sheepdog/, relative prompt paths, the
+/// committed config) is read from, which the branch's agent can't rewrite:
+/// the base pin, else where the branch forked from the default branch, the
+/// remote's or else the local one, unless the branch is the default branch:
+/// sheepdog pushes it, so neither ref is clear of its commits. None when none
+/// qualifies: the branch's own commits are never trusted for its guidance.
+pub fn trusted_base(dir: &str, b: &str, remote: &str) -> Option<String> {
+    trusted_base_in(dir, b, &BaseRefs::read(dir, b, remote))
+}
+
+fn trusted_base_in(dir: &str, b: &str, refs: &BaseRefs) -> Option<String> {
+    if let Some(base) = refs.sha(&format!("refs/sheepdog/{b}/base")) {
+        return Some(base.to_string());
+    }
+    let def = refs.default_branch().filter(|d| d != b)?;
+    let head = refs.sha(&format!("refs/heads/{b}"))?;
+    [format!("refs/remotes/{}/{def}", refs.remote), format!("refs/heads/{def}")]
+        .iter()
+        .filter_map(|r| refs.sha(r))
+        .find_map(|r| merge_base(dir, head, r))
+}
+
+/// The commit <b>'s committed config is read from: trusted_base, else for
+/// no branch (""), the default branch or a branch not made yet (sd act start
+/// checks its profile pick first: it has no commits of its own), the default
+/// branch's tip, the remote's or else the local one. None when neither
+/// qualifies.
+pub fn config_base(dir: &str, b: &str, remote: &str) -> Option<String> {
+    let refs = BaseRefs::read(dir, b, remote);
+    let base = if b.is_empty() { None } else { trusted_base_in(dir, b, &refs) };
+    let tip = b.is_empty() || refs.sha(&format!("refs/heads/{b}")).is_none() || refs.default_branch().as_deref() == Some(b);
+    base.or_else(|| tip.then(|| refs.default_tip()).flatten())
+}
+
 /// One entry of git worktree list --porcelain. branch is the branch checked
 /// out there; a detached worktree paused mid-rebase has the one being rebased
 /// and rebasing set, which worktrees fills in and parse_worktrees doesn't.

@@ -573,16 +573,24 @@ fn init_a_missing_branch_fails() {
 
 // ── files: where the layers live ────────────────────────────────────────────
 
+impl Sd {
+    /// files' committed line while no commit has .sheepdog/config.json: main's tip.
+    fn no_committed(&self) -> String {
+        format!("committed  {}:.sheepdog/config.json  (missing)", &self.git(&["rev-parse", "main"])[..7])
+    }
+}
+
 #[test]
-fn files_lists_the_global_repo_and_branch_paths_marking_missing_ones() {
+fn files_lists_the_global_committed_repo_and_branch_paths_marking_missing_ones() {
     let sd = Sd::new();
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
     assert_eq!(
         r.output,
         format!(
-            "global  {}  (missing)\nrepo    {}  (missing)\nbranch  {}  (missing)",
+            "global     {}  (missing)\n{}\nrepo       {}  (missing)\nbranch     {}  (missing)",
             sd.cfg_s(),
+            sd.no_committed(),
             sd.rf(),
             sd.bf("feat")
         )
@@ -599,8 +607,9 @@ fn files_existing_files_are_listed_without_a_mark() {
     assert_eq!(
         r.output,
         format!(
-            "global  {}\nrepo    {}\nbranch  {}",
+            "global     {}\n{}\nrepo       {}\nbranch     {}",
             sd.cfg_s(),
+            sd.no_committed(),
             sd.rf(),
             sd.bf("feat")
         )
@@ -612,9 +621,9 @@ fn files_a_named_branch_and_a_slash_in_its_name() {
     let sd = Sd::new();
     let r = sd.run(&["files", "topic/sub"]);
     assert_eq!(
-        r.line(3),
+        r.line(4),
         format!(
-            "branch  {}/repo/.git/sheepdog/topic%2Fsub.json  (missing)",
+            "branch     {}/repo/.git/sheepdog/topic%2Fsub.json  (missing)",
             sd.tmp.display()
         )
     );
@@ -627,8 +636,8 @@ fn files_from_a_linked_worktree_the_repo_and_branch_files_are_in_the_main_repo()
     sd.git(&["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "wt"]);
     sd.cd("wt");
     let r = sd.run(&["files"]);
-    assert_eq!(r.line(2), format!("repo    {}  (missing)", sd.rf()));
-    assert_eq!(r.line(3), format!("branch  {}  (missing)", sd.bf("wt")));
+    assert_eq!(r.line(3), format!("repo       {}  (missing)", sd.rf()));
+    assert_eq!(r.line(4), format!("branch     {}  (missing)", sd.bf("wt")));
 }
 
 #[test]
@@ -637,13 +646,14 @@ fn files_detached_head_or_outside_a_repo_says_why_theres_no_branch_file() {
     sd.git(&["switch", "-q", "--detach"]);
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
-    assert_eq!(r.line(2), format!("repo    {}  (missing)", sd.rf()));
-    assert_eq!(r.line(3), "branch  (none: detached HEAD)");
+    assert_eq!(r.line(2), sd.no_committed());
+    assert_eq!(r.line(3), format!("repo       {}  (missing)", sd.rf()));
+    assert_eq!(r.line(4), "branch     (none: detached HEAD)");
     sd.cd("");
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
-    assert_eq!(r.line(2), "repo    (none: not a git repository)");
-    assert_eq!(r.line(3), "branch  (none: not a git repository)");
+    assert_eq!(r.line(3), "repo       (none: not a git repository)");
+    assert_eq!(r.line(4), "branch     (none: not a git repository)");
 }
 
 #[test]
@@ -653,22 +663,25 @@ fn files_mid_rebase_the_branch_being_rebaseds_file() {
     sd.rebase_stopped();
     let r = sd.run(&["files"]);
     assert_eq!(r.status, 0);
-    assert_eq!(r.line(3), format!("branch  {}  (missing)", sd.bf("feat")));
+    assert_eq!(r.line(4), format!("branch     {}  (missing)", sd.bf("feat")));
 }
 
 #[test]
-fn files_no_branch_the_global_and_repo_files() {
+fn files_no_branch_the_global_committed_and_repo_files() {
     let mut sd = Sd::new();
     let r = sd.run(&["files", "--no-branch"]);
     assert_eq!(
         r.output,
-        format!("global  {}  (missing)\nrepo    {}  (missing)", sd.cfg_s(), sd.rf())
+        format!("global     {}  (missing)\n{}\nrepo       {}  (missing)", sd.cfg_s(), sd.no_committed(), sd.rf())
     );
     sd.cd("");
     let r = sd.run(&["files", "--no-branch"]);
     assert_eq!(
         r.output,
-        format!("global  {}  (missing)\nrepo    (none: not a git repository)", sd.cfg_s())
+        format!(
+            "global     {}  (missing)\ncommitted  (none: not a git repository)\nrepo       (none: not a git repository)",
+            sd.cfg_s()
+        )
     );
 }
 
@@ -3098,4 +3111,216 @@ fn profile_a_pick_names_only_what_a_profile_could_be_named() {
         r.output,
         format!(r#"sd config: {}: profile: expected a name or a list of names, got ["billing",""]"#, sd.bf("feat"))
     );
+}
+
+// ── committed: .sheepdog/config.json in the base commit (#456) ──────────────
+
+impl Sd {
+    /// cwd's .sheepdog/config.json := <s>, committed on the branch checked out.
+    fn commit_config_here(&self, s: &str) -> String {
+        fs::create_dir_all(self.cwd.join(".sheepdog")).unwrap();
+        self.write(".sheepdog/config.json", &format!("{s}\n"));
+        self.git(&["add", ".sheepdog/config.json"]);
+        self.git(&["commit", "-qm", "config"]);
+        self.git(&["rev-parse", "HEAD"])
+    }
+
+    /// <s> committed on main as .sheepdog/config.json, feat rebased onto it:
+    /// main's new SHA.
+    fn commit_config(&self, s: &str) -> String {
+        self.git(&["switch", "-q", "main"]);
+        let sha = self.commit_config_here(s);
+        self.git(&["switch", "-q", "feat"]);
+        self.git(&["rebase", "-q", "main"]);
+        sha
+    }
+}
+
+fn short(sha: &str) -> &str {
+    &sha[..7]
+}
+
+#[test]
+fn committed_a_branch_reads_the_file_from_its_base_commit_never_its_own_edits() {
+    let sd = Sd::new();
+    sd.commit_config(r#"{"settings":{"verify":"make committed"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make committed");
+    sd.commit_config_here(r#"{"settings":{"verify":"make mine"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make committed");
+    sd.write(".sheepdog/config.json", r#"{"settings":{"verify":"make dirty"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make committed");
+}
+
+#[test]
+fn committed_lies_over_global_and_under_the_repo_and_branch_files() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"g","autofix":"g","botTimeout":1}}"#);
+    sd.commit_config(r#"{"settings":{"verify":"c","autofix":"c","localReview":"c","implementAllow":["Bash(rwx logs *)"]}}"#);
+    sd.write_repo(r#"{"settings":{"verify":"r","autofix":"r"}}"#);
+    sd.write_branch("feat", r#"{"settings":{"verify":"b"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "b");
+    assert_eq!(sd.out(&["get", "settings.autofix"]), "r");
+    assert_eq!(sd.out(&["get", "settings.localReview"]), "c");
+    assert_eq!(sd.out(&["get", "settings.botTimeout"]), "1");
+    assert_eq!(sd.out(&["get", "settings.implementAllow"]), "Bash(rwx logs *)");
+    sd.write_repo(r#"{"settings":{"localReview":null}}"#);
+    assert_eq!(sd.out(&["get", "settings.localReview"]), "");
+}
+
+#[test]
+fn committed_the_default_branch_detached_head_and_no_branch_read_the_default_branchs_tip() {
+    let sd = Sd::new();
+    sd.commit_config(r#"{"settings":{"verify":"one"}}"#);
+    sd.git(&["switch", "-q", "main"]);
+    sd.commit_config_here(r#"{"settings":{"verify":"two"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "two");
+    assert_eq!(sd.out(&["get", "settings.verify", "feat"]), "one");
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.verify"]), "two");
+    sd.git(&["switch", "-q", "--detach", "feat"]);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "two");
+}
+
+#[test]
+fn committed_the_remotes_default_branch_over_the_local_one() {
+    let mut sd = Sd::for_verb("config");
+    sd.origin(&["repo"]);
+    sd.cd("repo");
+    sd.git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+    sd.commit_config_here(r#"{"settings":{"verify":"pushed"}}"#);
+    sd.git(&["push", "-q", "origin", "HEAD:main"]);
+    sd.git(&["fetch", "-q"]);
+    sd.git(&["reset", "-q", "--hard", "HEAD~"]);
+    assert_eq!(sd.out(&["get", "--no-branch", "settings.verify"]), "pushed");
+}
+
+#[test]
+fn committed_the_base_pin_is_the_base_commit_when_set() {
+    let sd = Sd::new();
+    let init = sd.git(&["rev-parse", "main"]);
+    sd.commit_config(r#"{"settings":{"verify":"c"}}"#);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &init]);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "");
+}
+
+#[test]
+fn committed_files_names_the_layer_and_the_commit_it_is_read_from() {
+    let sd = Sd::new();
+    let init = sd.git(&["rev-parse", "main"]);
+    let r = sd.run(&["files"]);
+    assert_eq!(r.line(2), format!("committed  {}:.sheepdog/config.json  (missing)", short(&init)));
+    let sha = sd.commit_config("{}");
+    let r = sd.run(&["files"]);
+    assert_eq!(r.line(1), format!("global     {}  (missing)", sd.cfg_s()));
+    assert_eq!(r.line(2), format!("committed  {}:.sheepdog/config.json", short(&sha)));
+    assert_eq!(r.line(3), format!("repo       {}  (missing)", sd.rf()));
+    assert_eq!(r.line(4), format!("branch     {}  (missing)", sd.bf("feat")));
+}
+
+#[test]
+fn committed_files_outside_a_repo_or_with_no_default_branch_says_why_there_is_none() {
+    let mut sd = Sd::new();
+    sd.git(&["branch", "-qm", "main", "trunk"]);
+    assert_eq!(sd.run(&["files"]).line(2), "committed  (none: no base commit)");
+    sd.cd("");
+    assert_eq!(sd.run(&["files"]).line(2), "committed  (none: not a git repository)");
+}
+
+#[test]
+fn committed_explain_names_the_layer_and_its_commit() {
+    let sd = Sd::new();
+    sd.write_global(r#"{"settings":{"verify":"g"}}"#);
+    let sha = sd.commit_config(r#"{"settings":{"verify":"c"}}"#);
+    let out = sd.out(&["explain", "settings.verify"]);
+    assert_eq!(out.lines().next().unwrap(), format!("settings.verify = c  [committed {}; overrides global, defaults]", short(&sha)));
+    let v = json(&sd.out(&["explain", "--json", "settings.verify"]));
+    assert_eq!(raw(&v["keys"][0]["source"]), "committed");
+    assert_eq!(raw(&v["committed"]), sha);
+    sd.write_repo(r#"{"settings":{"verify":"r"}}"#);
+    let out = sd.out(&["explain", "settings.verify"]);
+    assert_eq!(out.lines().next().unwrap(), format!("settings.verify = r  [repo; overrides committed {}, global, defaults]", short(&sha)));
+}
+
+#[test]
+fn committed_a_bad_file_names_the_commit_and_path_and_follows_the_repo_files_rules() {
+    let sd = Sd::new();
+    let sha = sd.commit_config(r#"{"settings":{"verfy":"x","interval":5,"remote":"fork"}}"#);
+    let r = sd.run(&["get", "settings.verify"]);
+    assert_eq!(r.status, 1);
+    let at = format!("{}:.sheepdog/config.json", short(&sha));
+    assert_eq!(
+        r.output,
+        format!(
+            "sd config: {at}: settings.interval: global file only\nsd config: {at}: settings.remote: each clone's own: global or repo file only\nsd config: {at}: settings.verfy: unknown key\nsd config: {}",
+            off_base(&sha)
+        )
+    );
+    let sha = sd.commit_config("[]");
+    let r = sd.run(&["get", "settings.verify"]);
+    let at = format!("{}:.sheepdog/config.json", short(&sha));
+    assert_eq!(r.output, format!("sd config: not a JSON object: {at}\nsd config: {}", off_base(&sha)));
+}
+
+/// The line a bad committed file at feat's base <sha> ends its errors with:
+/// no local file overrides a commit, and sd act restack reads the config
+/// too, so it names the git that moves feat off it.
+fn off_base(sha: &str) -> String {
+    format!(
+        "{}:.sheepdog/config.json is feat's base: fix it on the branch feat is based on (<parent>), then git rebase --onto <parent> {sha} feat && git update-ref refs/sheepdog/feat/base <parent>",
+        short(sha)
+    )
+}
+
+#[test]
+fn committed_a_bad_file_at_a_branchs_base_is_left_by_the_git_its_error_names() {
+    let sd = Sd::new();
+    let bad = sd.commit_config("[]");
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", &bad]);
+    sd.git(&["switch", "-q", "main"]);
+    sd.commit_config_here(r#"{"settings":{"verify":"fixed"}}"#);
+    sd.git(&["switch", "-q", "feat"]);
+    let r = sd.run(&["get", "settings.verify"]);
+    assert_eq!(r.status, 1);
+    assert_eq!(r.output.lines().last().unwrap(), format!("sd config: {}", off_base(&bad)));
+    sd.git(&["rebase", "-q", "--onto", "main", &bad, "feat"]);
+    sd.git(&["update-ref", "refs/sheepdog/feat/base", "main"]);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "fixed");
+}
+
+#[test]
+fn committed_a_bad_file_at_the_default_branchs_tip_says_to_fix_it_there() {
+    let sd = Sd::new();
+    sd.git(&["switch", "-q", "main"]);
+    let bad = sd.commit_config_here("[]");
+    for args in [&["get", "settings.verify"][..], &["get", "--no-branch", "settings.verify"], &["get", "settings.verify", "not-made"]] {
+        let r = sd.run(args);
+        assert_eq!(r.status, 1);
+        assert_eq!(
+            r.output.lines().last().unwrap(),
+            format!("sd config: {}:.sheepdog/config.json is main's tip: commit a fixed one to main", short(&bad))
+        );
+    }
+    sd.commit_config_here(r#"{"settings":{"verify":"fixed"}}"#);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "fixed");
+}
+
+#[test]
+fn committed_profiles_it_defines_may_be_picked_by_a_branch() {
+    let sd = Sd::new();
+    sd.commit_config(r#"{"profiles":{"billing":{"settings":{"verify":"make billing"}}}}"#);
+    sd.ok(&["set", "profile", "billing"]);
+    assert_eq!(sd.out(&["get", "settings.verify"]), "make billing");
+}
+
+#[test]
+fn committed_help_documents_the_layer_between_repo_and_global() {
+    let sd = Sd::new();
+    let help = sd.ok(&["--help"]);
+    let layer = |name: &str| {
+        help.lines()
+            .position(|l| l.starts_with(&format!("  {name} ")))
+            .unwrap_or_else(|| panic!("no {name} layer: {help}"))
+    };
+    assert!(layer("repo") < layer("committed"));
+    assert!(layer("committed") < layer("global"));
+    assert!(help.lines().nth(layer("committed")).unwrap().contains(".sheepdog/config.json"), "{help}");
 }
