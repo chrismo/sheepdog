@@ -434,9 +434,9 @@ function renderDetail(b) {
   const more = document.querySelector("#dmain details.more");
   if (more) moreOpen = { id: shownId, open: more.open };
   if (moreOpen.id !== b.id) moreOpen = { id: b.id, open: false };
+  const open = shownId === b.id ? openSetting() : null;
   shownId = b.id;
-  const open = openSetting();
-  const next =(b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span class="lead">${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)}, <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
+  const next = (b.next || []).map(x => `<li style="--lc:${color(x.who)}"><span class="lead">${esc(x.say)}</span>${x.cmd ? copyBtn(x.cmd) : ""}<span class="where">${esc(x.who)}, <a href="/atlas#k=${encodeURIComponent(x.key)}" title="this step in the Atlas">${esc(x.key)}</a></span></li>`).join("");
   $("dmain").innerHTML = `<button class="back" type="button" data-back>Back to the flock</button>
     <div class="dhead"><h1>${esc(b.branch)}</h1><div class="sub" id="dsub">${esc(b.repo)}</div>
       <div class="meta">${prLink(b)}${usd(b)}${checked(b)}</div>${fence(b)}</div>

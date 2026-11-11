@@ -977,7 +977,7 @@ fn the_drill_in_s_settings_keep_each_name_whole_and_offer_its_command() {
     let rule = |sel: &str| body.lines().find(|l| l.starts_with(sel)).unwrap_or_else(|| panic!("no {sel} rule")).to_string();
     assert_has(&rule(".set .k {"), &["white-space: nowrap"]);
     assert!(!rule(".set .k {").contains("overflow-wrap"), "{}", rule(".set .k {"));
-    assert_has(&body, &[".set li.long .v {", "copyBtn(k.set)", "const open = openSetting();", "reopenSetting(open);"]);
+    assert_has(&body, &[".set li.long .v {", "copyBtn(k.set)", "const open = shownId === b.id ? openSetting() : null;", "reopenSetting(open);"]);
 }
 
 #[test]
