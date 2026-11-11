@@ -65,7 +65,9 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   step in the Atlas; an Atlas step lists the branches whose next step it is
   now, each opening its drill-in, and the files behind it (its verb's under
   src/act/, its gate, the step table), each opening in the Map; a Map file
-  lists the Atlas steps that live in it.
+  lists the Atlas steps that live in it. The drill-in's Flow is the fence's
+  seven stages, with the ci-fix and fix findings loops beside CI and
+  Review; each of its boxes opens in the Atlas too.
 
   GitHub data is cached under <state>/github/ and served at once; the first
   read after it's a minute old fetches it again in the background, so with
