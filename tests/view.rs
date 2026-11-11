@@ -951,6 +951,34 @@ fn the_drill_in_shows_the_branch_s_settings_with_their_layers() {
     assert_eq!(config_log(&sd), [format!("{repo} explain --json --branch feat")]);
 }
 
+// A setting the page doesn't set (#476) comes with the sd config set that
+// changes it at the layer it shows: a default at the branch's file, unless its
+// key lives only higher up, as interval does in the global file.
+#[test]
+fn a_read_only_setting_comes_with_the_command_that_changes_it() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    configuring(&mut sd);
+    let id = with_next(&sd, "feat", json!([]));
+    let b = branch(&serve(&sd), &id).1;
+    let set: Vec<&Value> = b["settings"].as_array().unwrap().iter().map(|k| &k["set"]).collect();
+    assert_eq!(set, [&Value::Null, &Value::Null,
+                     &json!("sd config set --repo settings.verify 'cargo test'"), &json!("sd config set --global settings.interval 300")]);
+}
+
+// The page's side (#476): a setting's name never breaks mid-word, a long
+// value takes its own line under it, and the command is copied as the Flock
+// row's is. A check of the page's source only.
+#[test]
+fn the_drill_in_s_settings_keep_each_name_whole_and_offer_its_command() {
+    let sd = sd();
+    let body = serve(&sd).get("/").2;
+    let rule = |sel: &str| body.lines().find(|l| l.starts_with(sel)).unwrap_or_else(|| panic!("no {sel} rule")).to_string();
+    assert_has(&rule(".set .k {"), &["white-space: nowrap"]);
+    assert!(!rule(".set .k {").contains("overflow-wrap"), "{}", rule(".set .k {"));
+    assert_has(&body, &[".set li.long .v {", "copyBtn(k.set)"]);
+}
+
 #[test]
 fn a_guarded_post_sets_a_setting_with_sd_config() {
     let mut sd = sd();

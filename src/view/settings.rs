@@ -3,9 +3,11 @@
 // explain --json --branch <b>` in the branch's repo, and POST /api/config
 // {id, path, value} runs `sd config set --branch <b> -- <path> <value>`
 // there. Only the few a branch tunes day to day (EDITABLE) are set; the page
-// shows the rest. sd config does the typing: its refusal is the page's, as a 400.
+// shows the rest, each with the sd config set that changes it (#476). sd
+// config does the typing: its refusal is the page's, as a 400.
 
 use super::act::repo_of;
+use super::atlas::quoted;
 use super::branch::find;
 use crate::proc;
 use crate::val::{at, t};
@@ -62,9 +64,37 @@ pub fn list(repo: &str, branch: &str) -> Value {
     let keys = at(&v, "keys").as_array().cloned().unwrap_or_default();
     let rows = keys.iter().filter(|k| t(k, "path").starts_with("settings.")).map(|k| {
         let path = t(k, "path");
-        json!({"path": path, "value": at(k, "value"), "source": at(k, "source"), "editable": EDITABLE.contains(&path.as_str())})
+        let editable = allowed(&path);
+        let mut row = json!({"path": path, "value": at(k, "value"), "source": at(k, "source"), "editable": editable});
+        if !editable {
+            row["set"] = json!(set_command(branch, &path, &t(k, "source"), at(k, "value")));
+        }
+        row
     });
     Value::Array(rows.collect())
+}
+
+/// The sd config set that changes <path> in the layer <source> names: a
+/// profile's in the repo file's definition of it, a default or unset one in
+/// the nearest file that may hold the key.
+fn set_command(branch: &str, path: &str, source: &str, value: &Value) -> String {
+    let key = path.trim_start_matches("settings.");
+    let file = match source {
+        "global" | "repo" => source,
+        _ => crate::config::nearest_file(key),
+    };
+    let (scope, path) = match source.strip_prefix("profile ") {
+        Some(name) => ("--repo".to_string(), format!("profiles.{name}.{path}")),
+        None if file == "branch" => (format!("--branch {}", quoted(branch)), path.to_string()),
+        None => (format!("--{file}"), path.to_string()),
+    };
+    let json = if value.is_array() || value.is_object() || crate::config::takes_json(key) { " --json" } else { "" };
+    let v = match value {
+        Value::Null => "<value>".to_string(),
+        Value::String(s) => quoted(s),
+        v => quoted(&v.to_string()),
+    };
+    format!("sd config set {scope}{json} {path} {v}")
 }
 
 /// POST /api/config's body {id, path, value}: the status line and the body.
@@ -106,5 +136,30 @@ mod tests {
                   "profile", "profiles.x.settings.autoRun", "Settings.autoRun", "settings.autorun"] {
             assert!(!allowed(k), "{k}");
         }
+    }
+
+    #[test]
+    fn a_read_only_setting_s_command_writes_the_layer_it_shows() {
+        let cmd = |path, source, value| set_command("feat", path, source, &value);
+        assert_eq!(cmd("settings.verify", "repo", json!("cargo test")), "sd config set --repo settings.verify 'cargo test'");
+        assert_eq!(cmd("settings.botTimeout", "global", json!(60)), "sd config set --global settings.botTimeout 60");
+        assert_eq!(cmd("settings.stepTimeout", "branch", json!(900)), "sd config set --branch feat settings.stepTimeout 900");
+        assert_eq!(cmd("settings.botTimeout", "profile fast", json!(60)), "sd config set --repo profiles.fast.settings.botTimeout 60");
+    }
+
+    #[test]
+    fn a_default_s_command_writes_the_branch_file_unless_the_key_lives_higher() {
+        let cmd = |path, value| set_command("fix/it", path, "defaults", &value);
+        assert_eq!(cmd("settings.botTimeout", json!(3600)), "sd config set --branch fix/it settings.botTimeout 3600");
+        assert_eq!(cmd("settings.interval", json!(300)), "sd config set --global settings.interval 300");
+        assert_eq!(cmd("settings.remote", json!("origin")), "sd config set --repo settings.remote origin");
+        assert_eq!(set_command("feat", "settings.protectedPaths", "unset", &Value::Null), "sd config set --branch feat --json settings.protectedPaths <value>");
+    }
+
+    #[test]
+    fn a_list_s_command_takes_it_as_json() {
+        assert_eq!(set_command("feat", "settings.flags.skips", "defaults", &json!([r"\.skip\("])),
+                   r#"sd config set --branch feat --json settings.flags.skips '["\\.skip\\("]'"#);
+        assert_eq!(set_command("feat", "settings.botLogin", "global", &json!(["marge"])), r#"sd config set --global --json settings.botLogin '["marge"]'"#);
     }
 }
