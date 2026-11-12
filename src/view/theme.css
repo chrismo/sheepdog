@@ -52,7 +52,8 @@ code { font-family: var(--f-mono); }
 }
 
 .mast { display: grid; grid-template-columns: auto 1fr auto auto; gap: 4px 18px; align-items: end; }
-.mast img { width: 92px; height: 92px; grid-column: 1; grid-row: 1 / span 3; }
+.mast .dog { grid-column: 1; grid-row: 1 / span 3; }
+.mast img { display: block; width: 92px; height: 92px; }
 .brand { grid-column: 2; grid-row: 1; justify-self: start; font-family: var(--f-display); font-weight: var(--w-display); font-size: 1.35rem; line-height: 1; letter-spacing: 0.02em; color: var(--muted); text-decoration: none; }
 .brand:hover { color: var(--ink); }
 .mast h1 { grid-column: 2; grid-row: 2; }
@@ -85,7 +86,7 @@ footer { font-size: 0.8rem; color: var(--muted); }
 .look .menu {
   position: absolute; right: 0; top: calc(100% + 8px); z-index: 6;
   display: grid; grid-template-columns: auto auto; gap: 8px 12px; align-items: baseline;
-  padding: 12px 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 6px 18px rgb(0 0 0 / 0.12);
+  padding: 12px 14px; background: var(--surface); border: 1.5px solid var(--ink);
   font-size: 0.8rem; color: var(--muted); white-space: nowrap;
 }
 .look label { display: contents; }

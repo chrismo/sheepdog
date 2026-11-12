@@ -119,9 +119,10 @@ Usage: sd view [<branch>] [--port <n>] [--no-open]
   The Look menu at each page's top right picks its look: four palettes
   (Drystone, Fleece & Raddle, Heather Moor, Lamplight), four display faces
   (Londrina Solid, Alfa Slab One, Big Shoulders Display, Familjen
-  Grotesk), and light or dark. The picks are this browser's own (localStorage); without them, it's
-  Fleece & Raddle and Londrina Solid, light or dark as the system is. The
-  fonts are compiled into sd (fonts/), so the pages need no network.
+  Grotesk), and light or dark. The picks are this browser's own
+  (localStorage); without them, it's Fleece & Raddle and Londrina Solid,
+  light or dark as the system is. The fonts are compiled into sd (fonts/),
+  so the pages need no network.
 
   --port <n>   the port (default 7377; 0 picks a free one)
   --no-open    print the URL, don't open the browser
