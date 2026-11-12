@@ -40,7 +40,7 @@
     spot.replaceWith(el);
     document.addEventListener("click", e => { if (!el.contains(e.target)) el.open = false; });
     // Capture, so an Escape that closes the menu doesn't reach the page's own
-    // Escape handler (which closes the open sheet).
+    // Escape handler (which closes the sheet or drill-in).
     document.addEventListener("keydown", e => {
       if (e.key !== "Escape" || !el.open) return;
       e.stopPropagation();
