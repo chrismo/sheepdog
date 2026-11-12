@@ -67,7 +67,7 @@
 .atl { margin: 0; font-size: 0.84rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .atl a { font-family: var(--f-mono); font-size: 0.8rem; color: var(--ink); }
 footer { overflow-wrap: anywhere; }
-body.sheet footer, body.sheet #look { margin-bottom: 40vh; }
+body.sheet footer { margin-bottom: 40vh; }
 .find { font: inherit; color: var(--ink); background: none; border: 0; border-bottom: 1.5px solid var(--line); border-radius: 0; padding: 4px 0; width: min(100%, 340px); }
 .find:focus-visible { outline: none; border-bottom-color: var(--ink); }
 .find::placeholder { color: var(--muted); }
@@ -80,9 +80,11 @@ body.sheet footer, body.sheet #look { margin-bottom: 40vh; }
   <header id="top">
     <div class="mast">
       <img src="/img/sheepdog.png" alt="" width="92" height="92">
+      <a class="brand" href="/">sheepdog</a>
       <h1>The code</h1>
       <div class="sub" id="sub">Reading the code</div>
       <nav class="pages"><a href="/">Flock</a><a href="/atlas">Atlas</a><a href="/map" aria-current="page">Map</a></nav>
+      <div id="look"></div>
     </div>
     <div class="tally" id="summary"></div>
     <div id="gh"></div>
@@ -97,7 +99,6 @@ body.sheet footer, body.sheet #look { margin-bottom: 40vh; }
   <p class="none" id="nomatch" hidden>No file's path holds that.</p>
   <div id="groups"></div>
   <footer id="foot"></footer>
-  <div id="look"></div>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script src="/gh.js"></script>
