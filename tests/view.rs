@@ -1866,6 +1866,9 @@ fn the_pages_share_one_look_with_four_palettes_and_four_faces() {
         let body = s.get(page).2;
         assert_has(&body, &[r#"<html lang="en" data-pal="fleece" data-face="londrina">"#, r#"<link rel="stylesheet" href="/theme.css">"#, r#"<script src="/theme.js">"#, r#"<div id="look">"#]);
         assert!(!body.contains("--bg:"), "{page} defines its own colors: they belong in theme.css");
+        let top = &body[..body.find("</header>").expect("a header")];
+        let repo = r#"href="https://github.com/chrismo/sheepdog" target="_blank" rel="noopener""#;
+        assert_has(top, &[&format!(r#"<a class="dog" {repo} tabindex="-1"><img "#), &format!(r#"<a class="brand" {repo}>sheepdog</a>"#), r#"<div id="look"></div>"#]);
     }
     let (code, head, css) = s.get("/theme.css");
     assert_eq!(code, 200, "{head}");
@@ -1879,7 +1882,7 @@ fn the_pages_share_one_look_with_four_palettes_and_four_faces() {
     let (code, head, js) = s.get("/theme.js");
     assert_eq!(code, 200, "{head}");
     assert_has(&head.to_lowercase(), &["content-type: text/javascript"]);
-    assert_has(&js, &["Drystone", "Fleece & Raddle", "Heather Moor", "Lamplight", "Londrina Solid", "Alfa Slab One", "Big Shoulders Display", "Familjen Grotesk", "localStorage"]);
+    assert_has(&js, &["Drystone", "Fleece & Raddle", "Heather Moor", "Lamplight", "Londrina Solid", "Alfa Slab One", "Big Shoulders Display", "Familjen Grotesk", "localStorage", r#"createElement("details")"#, "<summary"]);
 }
 
 // The fonts are compiled in (fonts/, each with its OFL license): the page

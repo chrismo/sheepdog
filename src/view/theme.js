@@ -27,14 +27,26 @@
   setInterval(look, 5000);
   const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   addEventListener("DOMContentLoaded", () => {
-    const el = document.getElementById("look");
-    if (!el) return;
+    const spot = document.getElementById("look");
+    if (!spot) return;
+    const el = document.createElement("details");
+    el.id = "look";
     el.className = "look";
-    el.innerHTML = PICKS.map(([k, name, options]) => {
+    el.innerHTML = `<summary title="colors, face, light or dark">Look</summary><div class="menu">${PICKS.map(([k, name, options]) => {
       const now = root.dataset[k] || "";
       return `<label>${name}<select data-look="${k}">${options.map(([id, label]) =>
         `<option value="${id}"${id === now ? " selected" : ""}>${esc(label)}</option>`).join("")}</select></label>`;
-    }).join("");
+    }).join("")}</div>`;
+    spot.replaceWith(el);
+    document.addEventListener("click", e => { if (!el.contains(e.target)) el.open = false; });
+    // Capture, so an Escape that closes the menu doesn't reach the page's own
+    // Escape handler (which closes the sheet or drill-in).
+    document.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || !el.open) return;
+      e.stopPropagation();
+      el.open = false;
+      el.querySelector("summary").focus();
+    }, true);
     el.addEventListener("change", e => {
       const k = e.target.dataset.look, pick = PICKS.find(p => p[0] === k);
       if (!pick) return;

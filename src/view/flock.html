@@ -48,7 +48,8 @@
 .cmd { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
 .cmd code { font-size: 0.8rem; overflow-wrap: anywhere; }
 .empty { color: var(--muted); }
-body.drill #top, body.drill #groups { display: none; }
+body.drill #top > :not(.mast), body.drill .mast > :is(.dog, h1, .sub), body.drill #groups { display: none; }
+body.drill .brand { grid-column: 1 / 3; }
 body:not(.drill) #detail { display: none; }
 #detail, #dmain { display: grid; gap: 26px; }
 .back { font: inherit; font-size: 0.9rem; background: none; border: 0; padding: 0; color: var(--muted); cursor: pointer; justify-self: start; text-decoration: underline; text-underline-offset: 3px; }
@@ -120,10 +121,12 @@ details.tl[open] > summary { margin-bottom: 10px; }
 <div class="wrap">
   <header id="top">
     <div class="mast">
-      <img src="/img/sheepdog.png" alt="" width="92" height="92">
+      <a class="dog" href="https://github.com/chrismo/sheepdog" target="_blank" rel="noopener" tabindex="-1"><img src="/img/sheepdog.png" alt="" width="92" height="92"></a>
+      <a class="brand" href="https://github.com/chrismo/sheepdog" target="_blank" rel="noopener">sheepdog</a>
       <h1>The flock</h1>
       <div class="sub" id="sub">Loading the flock</div>
       <nav class="pages"><a href="/" aria-current="page">Flock</a><a href="/atlas">Atlas</a><a href="/map">Map</a></nav>
+      <div id="look"></div>
     </div>
     <input id="q" type="search" placeholder="type / to filter by branch, repo or PR" autocomplete="off" spellcheck="false" aria-label="filter the flock">
     <div id="fresh"></div>
@@ -132,7 +135,6 @@ details.tl[open] > summary { margin-bottom: 10px; }
   <div id="groups"></div>
   <section id="detail" hidden><div id="dmain"></div><details class="part tl" id="tl"><summary>Timeline</summary><div id="tlbody"></div></details></section>
   <footer id="foot"></footer>
-  <div id="look"></div>
 </div>
 <script src="/gh.js"></script>
 <script>

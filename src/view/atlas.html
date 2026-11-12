@@ -78,7 +78,7 @@ button.ps { background: var(--surface); border: 1.5px solid var(--run); padding:
 .setting .val { font-family: var(--f-mono); }
 .setting .layer { font-size: 0.76rem; color: var(--muted); font-style: italic; white-space: nowrap; }
 @media (max-width: 600px) { .settings { grid-template-columns: 1fr max-content; } .setting .val { grid-column: 1 / -1; } }
-body.sheet footer, body.sheet #look { margin-bottom: 50vh; }
+body.sheet footer { margin-bottom: 50vh; }
 .find { font: inherit; color: var(--ink); background: none; border: 0; border-bottom: 1.5px solid var(--line); border-radius: 0; padding: 4px 0; width: min(100%, 340px); }
 .find:focus-visible { outline: none; border-bottom-color: var(--ink); }
 .find::placeholder { color: var(--muted); }
@@ -95,10 +95,12 @@ body.sheet footer, body.sheet #look { margin-bottom: 50vh; }
 <div class="wrap">
   <header id="top">
     <div class="mast">
-      <img src="/img/sheepdog.png" alt="" width="92" height="92">
+      <a class="dog" href="https://github.com/chrismo/sheepdog" target="_blank" rel="noopener" tabindex="-1"><img src="/img/sheepdog.png" alt="" width="92" height="92"></a>
+      <a class="brand" href="https://github.com/chrismo/sheepdog" target="_blank" rel="noopener">sheepdog</a>
       <h1>The workflow</h1>
       <div class="sub" id="sub">Loading the workflow</div>
       <nav class="pages"><a href="/">Flock</a><a href="/atlas" aria-current="page">Atlas</a><a href="/map">Map</a></nav>
+      <div id="look"></div>
     </div>
     <div class="legend">
       <span><span class="world"><span class="w">push</span></span>the path: what a stage does when nothing is wrong</span>
@@ -109,7 +111,6 @@ body.sheet footer, body.sheet #look { margin-bottom: 50vh; }
   </header>
   <section><h2>NEXT's list<span class="n" id="nsteps"></span><button class="tog" type="button" id="order" aria-pressed="false" title="list each stage's steps in the order NEXT checks them">check order</button></h2><p class="none" id="nomatch" hidden>No step, meaning or stage holds that.</p><div id="stages"></div></section>
   <footer id="foot">Every step NEXT can offer, from src/next/steps.rs; each verb's gate from src/act/gates.rs. Tap a row for its steps, a step for the branches at it now, what stops its verb, the settings that tune it, with this repo's values (sd config explain), and its files in the Map. The path is in time order; exceptions stay in the order NEXT checks them.</footer>
-  <div id="look"></div>
 </div>
 <aside id="sheet" hidden aria-live="polite"><div class="sbody" id="sbody"></div></aside>
 <script>
