@@ -2252,9 +2252,10 @@ fn push_foreign_authors_leaves_out_their_commits_a_rewrite_keeps_356() {
     assert_eq!(r.field_c(".push.foreign_authors"), "[]", "dropped");
 }
 
-// push.foreign_commits are the ids sd act push --force records in
-// sd-authors-seen: the patch-id, else (no diff) the SHA. A recorded one was
-// looked at and doesn't count (#356).
+// push.foreign_commits are those commits' SHAs (#511); push.foreign_patch_ids
+// the ids sd act push --force records in sd-authors-seen: the patch-id,
+// else (no diff) the SHA. A recorded one was looked at and doesn't count
+// (#356).
 #[test]
 fn push_foreign_authors_leaves_out_what_was_forced_past_356() {
     let sd = sd();
@@ -2263,19 +2264,22 @@ fn push_foreign_authors_leaves_out_what_was_forced_past_356() {
     let sha = sd.git(&["rev-parse", "HEAD"]);
     sd.pushed_then_rewritten(1);
     let r = sd.state(&[]);
-    let id = r.field(".push.foreign_commits[0]");
-    assert_eq!(r.field(".push.foreign_commits | length"), "1");
+    assert_eq!(r.field_c(".push.foreign_commits"), format!(r#"["{sha}"]"#), "SHAs git can find (#511)");
+    let id = r.field(".push.foreign_patch_ids[0]");
+    assert_eq!(r.field(".push.foreign_patch_ids | length"), "1");
     assert_ne!(id, sha, "a patch-id, which a restack keeps");
     sd.git(&["config", "--add", "branch.feat.sd-authors-seen", &id]);
     let r = sd.state(&[]);
     assert_eq!(r.field_c(".push.foreign_authors"), "[]");
     assert_eq!(r.field_c(".push.foreign_commits"), "[]");
+    assert_eq!(r.field_c(".push.foreign_patch_ids"), "[]");
     sd.git(&["-c", "user.email=new@example.com", "commit", "-q", "--allow-empty", "-m", "theirs again"]);
     let sha = sd.git(&["rev-parse", "HEAD"]);
     sd.pushed_then_rewritten(1);
     let r = sd.state(&[]);
     assert_eq!(r.field_c(".push.foreign_authors"), r#"["new@example.com"]"#);
-    assert_eq!(r.field(".push.foreign_commits[0]"), sha, "no diff: its SHA");
+    assert_eq!(r.field(".push.foreign_commits[0]"), sha);
+    assert_eq!(r.field(".push.foreign_patch_ids[0]"), sha, "no diff: its SHA");
 }
 
 // GitHub records chrismo's own web actions (an edit, Update branch, a

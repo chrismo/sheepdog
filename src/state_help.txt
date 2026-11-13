@@ -35,7 +35,8 @@ Reports, for <branch> (default: the current one):
             when an open parent rewrote it (its own restack, a force-push),
             the one restack an open parent gets short of a conflict (#300);
             null with no base
-            sync.foreign_authors, sync.foreign_commits: as push's below,
+            sync.foreign_authors, sync.foreign_commits,
+            sync.foreign_patch_ids: as push's below,
             for the commits a restack would rewrite (old_base..HEAD, past
             the target) while it's behind: sd act restack refuses them
             unless --force, which adds them to branch.<b>.sd-authors-seen
@@ -60,8 +61,9 @@ Reports, for <branch> (default: the current one):
             [] when there are none or the push removes nothing; else null
             when user.email is unset, git can't list them, or the branch
             is a followed PR, which sd act push refuses too (#395)
-            push.foreign_commits: those commits' ids, each its patch-id (or
-            its SHA with no diff); sd act push --force adds them to
+            push.foreign_commits: those commits' SHAs (#511)
+            push.foreign_patch_ids: their ids, each its patch-id (or its
+            SHA with no diff); sd act push --force adds them to
             branch.<b>.sd-authors-seen, the looked-at ones, and a patch-id
             outlives a restack
   ci        checks on the PR head commit. Only each check's latest run counts

@@ -109,9 +109,12 @@ Verbs:
             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
             its stored description, its launched step's outcome and its
             logs (#467), and start its spend over (a reset row in
-            usage.sup, #349). --remove, once its PR merged: also remove its
-            worktree and delete the branch, which ends sd state's merged
-            step (#153). Refuses, changing nothing, unless the PR merged
+            usage.sup, #349); a branch that's gone loses its
+            branch.<branch>.* config too. Refuses a name that's no branch and that
+            sheepdog keeps nothing for, a typo (#506). --remove, once its
+            PR merged: also remove its worktree and delete the branch,
+            which ends sd state's merged step (#153). Refuses, changing
+            nothing, unless the PR merged
             with the branch's tip in it, and when the worktree has
             uncommitted or untracked changes or is attached. The main
             worktree is never removed: it is switched to the default
@@ -204,7 +207,8 @@ Verbs:
             Refuses, unless --force, to remove commits someone else made
             from the remote, or ones it can't tell who made (no
             user.email: sd state's push.foreign_authors, #356, #395).
-            Releases a CI config hold: chrismo pushing is the approval.
+            Releases a CI config hold: chrismo pushing is the approval,
+            by sd act push or a plain git push (#507).
             Refuses the default branch (#159). Every verb that pushes
             (ship, address, ci-fix) asks this gate first, ship and ci-fix
             with their own --force; address's --force doesn't reach it:
@@ -379,8 +383,11 @@ CI config hold (#124): when the commit of an agent step that edits
 (implement and its review-fix rounds, address, ci-fix, restack --resolve)
 touches a protected path, the branch is held: address, ci-fix and ship
 don't push it, --force or not, and sd state's NEXT is chrismo's: review,
-then sd act push, which releases it. A later agent commit there holds it
-again. Protected paths: settings.protectedPaths; else
+then sd act push, which releases it. Any push that puts the held commit
+on the remote releases it too, a plain git push included (#507): sd state
+stops reporting it at once, and branch.<b>.sd-held, left set, is cleared
+by the next verb that checks the hold. A later agent commit there holds
+it again. Protected paths: settings.protectedPaths; else
 .sheepdog/protected-paths in the base commit (one per line, # comments);
 else .github/workflows/ .github/actions/ .rwx/ .captain/ .circleci/
 .gitlab-ci.yml .buildkite/; unless the setting is set,
@@ -501,7 +508,8 @@ replies didn't post), .sd-lock ("<pid>@<host> <time>" while attached,
 .sd-ci-fix ("<sha> fixed|flaky|autofix", the last red ci-fix handled),
 .sd-bot-triggered (when trigger's comment was posted, by GitHub's clock),
 .sd-accepted-after (the .sd-bot-triggered that review --accept followed),
-.sd-held (the CI config hold: the commit, then the paths, one per line),
+.sd-held (the CI config hold: the commit, then the paths, one per line;
+inert once that commit is on the remote),
 .sd-authors-seen (patch-ids of others' commits push --force took past);
 sheepdog.repo (global) lists the enrolled repos.
 

@@ -726,6 +726,9 @@ fn thread_item(t: &Value, first: &Value, kind: &str) -> Value {
     owed_item(at(t, "id"), "thread", field("path"), field("line"), field("isOutdated"), kind, at(last, "author.login").clone(), "!", d)
 }
 
+/// foreign_authors' answer: the emails, the commits' SHAs and their ids.
+type Foreign = (Value, Value, Value);
+
 struct Facts {
     reviewer: bool,
     branch: String,
@@ -751,8 +754,8 @@ struct Facts {
     replays_parent: Value,
     /// Whether old_base is on the default branch, and on the target (#300).
     base_on: (Value, Value),
-    foreign_authors: (Value, Value),
-    restack_authors: (Value, Value),
+    foreign_authors: Foreign,
+    restack_authors: Foreign,
     undone: i64,
     remote_sha: String,
     ahead: i64,
@@ -1010,11 +1013,12 @@ fn assemble(s: &Facts) -> Value {
         "sync": {"target": s.target, "default": s.default_branch, "ahead": s.sync_ahead, "empty_diff": s.empty_diff, "behind": s.behind,
                  "up_to_date": s.up_to_date, "old_base": jn(&s.old_base), "by_tree": s.by_tree, "conflict": s.conflict,
                  "undone": s.undone, "replays_parent": s.replays_parent, "base_on_default": s.base_on.0,
-                 "base_on_target": s.base_on.1, "foreign_authors": s.restack_authors.0, "foreign_commits": s.restack_authors.1},
+                 "base_on_target": s.base_on.1, "foreign_authors": s.restack_authors.0, "foreign_commits": s.restack_authors.1,
+                 "foreign_patch_ids": s.restack_authors.2},
         "push": {"remote_sha": jn(&s.remote_sha), "ahead": s.ahead, "behind": s.push_behind, "diverged": s.diverged, "author_pushed": s.author_pushed,
                  "remote_ours": s.remote_ours, "theirs": s.theirs, "remote_made": s.remote_made, "dirty": s.dirty,
                  "foreign_authors": s.foreign_authors.0, "foreign_commits": s.foreign_authors.1,
-                 "held": s.held},
+                 "foreign_patch_ids": s.foreign_authors.2, "held": s.held},
         "fresh": if s.gh_ok && s.parent_ok { json!(s.stale.is_empty()) } else { Value::Null },
         "stale": s.stale,
         "lag": s.lag,
@@ -1179,20 +1183,21 @@ fn worktree_dirty(dir: &str, branch: &str) -> Value {
 
 /// O4: the author and committer emails that aren't ours (others_on) on the
 /// commits a push would remove from the remote, <removed> past <not>, newest
-/// first (#356), and those commits' ids: each one's patch-id, or its SHA
-/// when it has none (a merge, an empty commit). A commit whose id is in
-/// branch.<b>.sd-authors-seen (sd act push --force records them) was looked
-/// at, and one whose patch-id is on <target> (squash-merged alone) loses
-/// nothing: neither counts. A patch-id outlives a restack. Both [] when the
-/// push removes nothing (<removed> None), whoever we are; else null for a
-/// followed PR (#250), without user.email, or when git fails, which holds
-/// the push or the restack (#395). <viewer> is gh's login, empty when gh
+/// first (#356), those commits' SHAs (#511), and their ids: each one's
+/// patch-id, or its SHA when it has none (a merge, an empty commit). A
+/// commit whose id is in branch.<b>.sd-authors-seen (sd act push --force
+/// records them) was looked at, and one whose patch-id is on <target>
+/// (squash-merged alone) loses nothing: neither counts. A patch-id outlives
+/// a restack. All [] when the push removes nothing (<removed> None),
+/// whoever we are; else null for a followed PR (#250), without user.email,
+/// or when git fails, which holds the push or the restack (#395). <viewer>
+/// is gh's login, empty when gh
 /// failed: a noreply author is then someone else's, so the push holds,
 /// naming who. O3 asks the same of the commits a restack would rewrite:
 /// <removed> is HEAD, past the base and the target.
-fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> (Value, Value) {
-    let unknown = (Value::Null, Value::Null);
-    let Some(removed) = removed else { return (json!([]), json!([])) };
+fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, removed: Option<&str>, target: &str, not: &[&str]) -> Foreign {
+    let unknown = (Value::Null, Value::Null, Value::Null);
+    let Some(removed) = removed else { return (json!([]), json!([]), json!([])) };
     if reviewer {
         return unknown;
     }
@@ -1218,12 +1223,13 @@ fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, remove
     let (Some(ids), Some(landed)) = (ids, landed) else { return unknown };
     let mut skip = config_all(dir, branch, "sd-authors-seen");
     skip.extend(landed.into_values());
-    let (mut out, mut unseen): (Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new());
+    let (mut out, mut shas, mut unseen): (Vec<&str>, Vec<&str>, Vec<&str>) = (Vec::new(), Vec::new(), Vec::new());
     for (sha, others) in &theirs {
         let id = ids.get(*sha).map_or(*sha, String::as_str);
         if skip.iter().any(|s| s == id) {
             continue;
         }
+        shas.push(sha);
         unseen.push(id);
         for p in others {
             if !out.iter().any(|o| o.eq_ignore_ascii_case(p)) {
@@ -1231,7 +1237,7 @@ fn foreign_authors(dir: &str, branch: &str, reviewer: bool, viewer: &str, remove
             }
         }
     }
-    (json!(out), json!(unseen))
+    (json!(out), json!(shas), json!(unseen))
 }
 
 /// A commit's emails other than <me>, case aside. GitHub commits its web
