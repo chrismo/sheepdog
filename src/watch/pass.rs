@@ -1148,6 +1148,19 @@ pub(crate) fn step_secs(repo: &str, step: &str, b: &str, secs: u64) -> u64 {
     }
 }
 
+/// How a launched sd act that failed ended, from its status and output: one
+/// whose agent step its stepTimeout ended (harness::TIMEOUT_STATUS) is the
+/// line that says so, less its "sd <verb>: " (#303); else "failed (exit
+/// <n>): <its last line>".
+pub(crate) fn failed_how(code: i32, out: &str) -> String {
+    let said = || out.lines().rev().map(str::trim).filter(|l| !l.is_empty());
+    let timed_out = (code == harness::TIMEOUT_STATUS).then(|| said().find(|l| l.contains("timed out after "))).flatten();
+    match timed_out {
+        Some(l) => l.strip_prefix("sd ").and_then(|r| r.split_once(": ")).map_or(l, |(_, r)| r).to_string(),
+        None => format!("failed (exit {code}): {}", said().next().unwrap_or("")),
+    }
+}
+
 /// sd watch step <secs> <step> <branch>, what a pass launches, run in the
 /// branch's repo.
 pub fn step(argv: &[String]) -> ExitCode {
@@ -1178,7 +1191,7 @@ pub fn step(argv: &[String]) -> ExitCode {
         } else if o.stopped {
             "stopped by a signal".to_string()
         } else {
-            format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+            failed_how(o.code, &o.stdout)
         };
         let ran = format!("ran sd act {verb}: {how}");
         if let Err(e) = fs::write(&outcome, format!("{ran}\n")) {

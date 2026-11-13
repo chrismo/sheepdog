@@ -151,7 +151,7 @@ pub fn run(argv: &[String]) -> ExitCode {
     };
     eprintln!("sd review-local: {} is reviewing {what}…", step.said());
     let Ok(Ran { results, .. }) = harness::run_step(&step) else {
-        die(format!("the {h} review failed or returned no usable result"))
+        die(format!("the {h} review {}", harness::failed_how()))
     };
     // One list, as the contract says: the last, if the harness gave several.
     let Some(findings) = results.iter().filter_map(|r| r.get("findings")).filter(|f| f.is_array()).next_back() else {

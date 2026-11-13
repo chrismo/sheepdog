@@ -10,7 +10,7 @@ use super::branch::find;
 use super::refresh;
 use crate::proc;
 use crate::val::{at, t};
-use crate::watch::{act_args, dispatch_verb, may_dispatch, registered, repo_key, sd_verb, step_secs, watch_timeout};
+use crate::watch::{act_args, dispatch_verb, failed_how, may_dispatch, registered, repo_key, sd_verb, step_secs, watch_timeout};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -130,7 +130,7 @@ fn launch(state: &Path, id: &str, repo: &str, step: &str, branch: &str) {
         } else if out.stopped {
             "stopped by a signal".to_string()
         } else {
-            format!("failed (exit {}): {}", out.code, out.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+            failed_how(out.code, &out.stdout)
         };
         eprintln!("sd view: sd act {} {branch} in {repo}: {how}", verb.join(" "));
         if !out.stopped {

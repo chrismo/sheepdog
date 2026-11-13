@@ -186,7 +186,9 @@ Its output goes to the steps.log stream, between a header and an end line
 the next pass reports how it ended:
 ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
 <n>s, stopped on a usage limit (exit 75, not counted), or stopped by a
-signal. Each pass first reconciles every branch's
+signal; one whose agent step its stepTimeout ended (exit 124) is the line
+saying so, as the claude implement step timed out after <n>s (session
+<id>), counted by sd act, not again (#303). Each pass first reconciles every branch's
 lease: one past its deadline gets TERM to its process group, KILL 5s later
 if it's still there; one whose process is gone with no outcome crashed.
 Either counts in the failure record (refs/sheepdog/<b>/failed, harness sd),

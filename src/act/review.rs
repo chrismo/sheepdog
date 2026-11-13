@@ -156,9 +156,11 @@ fn reviewed(b: &str, wt: &str, s: &Value, base: &str, head: &str) {
     let o = proc::timeout_passing_stderr(secs, c);
     eprint!("{}", o.stderr);
     if !o.ok {
-        eprintln!("sd act: the reviewer failed ({reviewer}); nothing pinned");
+        let how = if o.code == harness::TIMEOUT_STATUS { "timed out" } else { "failed" };
+        eprintln!("sd act: the reviewer {how} ({reviewer}); nothing pinned");
         if o.code != harness::LIMIT_STATUS {
-            std::process::exit(1);
+            // a timeout's own line, above, says after how long (#303)
+            std::process::exit(if o.code == harness::TIMEOUT_STATUS { o.code } else { 1 });
         }
         if limit::holding().is_none() {
             limit::write("reviewer", &format!("{reviewer} exited 75"), None);

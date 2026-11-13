@@ -33,14 +33,14 @@ cat "$f"
 "#;
 
 /// $PS_FIXTURES/act-sleep: seconds to take; act-status: the status to exit
-/// with; act-fails: the refusal to fail with.
+/// with; act-fails: the refusal to fail with (status 1, or act-status's).
 const SD_ACT: &str = r#"#!/usr/bin/env bash
 echo "$PWD $*" >> "$PS_FIXTURES/acts"
 [[ -f $PS_FIXTURES/act-sleep ]] && sleep "$(cat "$PS_FIXTURES/act-sleep")"
 echo "did $1"
+[[ -f $PS_FIXTURES/act-fails ]] && echo "sd act $1: $(cat "$PS_FIXTURES/act-fails")" >&2
 [[ -f $PS_FIXTURES/act-status ]] && exit "$(cat "$PS_FIXTURES/act-status")"
 [[ -f $PS_FIXTURES/act-fails ]] || exit 0
-echo "sd act $1: $(cat "$PS_FIXTURES/act-fails")" >&2
 exit 1
 "#;
 
@@ -3606,6 +3606,21 @@ fn dispatch_a_failed_step_is_tried_once_a_pass_and_says_why() {
     ]);
     sd.settle("feat");
     assert_eq!(sd.acts().lines().count(), 1);
+    assert_eq!(sd.failure("feat"), "");
+}
+
+// sd act counted it already, harness claude: the pass doesn't again.
+#[test]
+fn dispatch_a_step_whose_agent_step_timed_out_says_so_not_failed_303() {
+    let sd = sd();
+    sd.dispatching();
+    fs::write(sd.ps("act-fails"), "the claude implement step timed out after 30s (session s1)\n").unwrap();
+    fs::write(sd.ps("act-status"), "124\n").unwrap();
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    sd.settle("feat");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: the claude implement step timed out after 30s (session s1)"]);
     assert_eq!(sd.failure("feat"), "");
 }
 

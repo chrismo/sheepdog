@@ -128,7 +128,8 @@ fn total_in(text: &str, session: &str) -> f64 {
 /// What a branch's steps cost by usage.sup (#121): the known costs summed,
 /// and the steps whose cost isn't known, {time, step, session} each. An
 /// unknown cost isn't $0 (#349): cost_usd is null for a step sd stopped on a
-/// signal, and for one killed with no cap. A null cost with a null context
+/// signal, and for one killed with no cap, when its transcript has no
+/// cost-state (record). A null cost with a null context
 /// is a step whose transcript has no billed turn (it failed to start), so
 /// it spent nothing. Only the rows after the branch's last reset count
 /// (reset_record). skipped: the lines that aren't whole records. stray: the
@@ -241,25 +242,37 @@ pub struct Step<'a> {
 }
 
 /// The step's record, a line of SUP. A claude step with no result (killed
-/// by stepTimeout, or crashed) that still ran turns is charged its cap, the
-/// most it could spend, and marked estimated; with no cap its cost is
-/// unknown (null), and still marked. Its session total is unknown, so the
-/// next step's cost counts from the last one known, and may count the
-/// killed step's real spend again. A step stopped by a signal to sd isn't
-/// charged (#177): a Ctrl-C a few seconds in would count the whole cap
-/// against branchBudget. Its cost is unknown (null) and not estimated, which
-/// holds a budgeted branch till chrismo sets it (#349): no later fork's
-/// total counts it (#276).
+/// by stepTimeout or a signal to sd, or crashed) is charged what its
+/// transcript's last cost-state says (#276): that running total, less the
+/// parent's (session_total, else the parent transcript's own last
+/// cost-state), as a result's total_cost_usd would be, and not estimated.
+/// One that hasn't moved past the parent's total is from before the step,
+/// so it counts as none. With no cost-state line (the transcript isn't a supported API: checked on
+/// Claude Code 2.1.309 and 2.1.323), the old rules: one that still ran
+/// turns is charged its cap, the most it could spend, and marked estimated;
+/// with no cap its cost is unknown (null), and still marked. Its session
+/// total is unknown, so the next step's cost counts from the last one known.
+/// One stopped by a signal to sd isn't charged (#177): a Ctrl-C a few
+/// seconds in would count the whole cap against branchBudget. Its cost is
+/// unknown (null) and not estimated, which holds a budgeted branch till
+/// chrismo sets it (#349).
 pub fn record(s: &Step) -> String {
     let claude = s.harness == "claude";
     let (o, a, b) = (s.o, s.a, s.b);
-    let unseen = claude && o.is_null() && !s.stopped && n(a, "entries") > n(b, "entries");
+    // One that hasn't moved past the parent's total is stale, from before
+    // the step, and would hide what it spent.
+    let parent = n(b, "cost_state").max(s.prev);
+    let cost_state = if claude && o.is_null() { at(a, "cost_state").as_f64().filter(|&x| x > parent) } else { None };
+    let unseen = cost_state.is_none() && claude && o.is_null() && !s.stopped && n(a, "entries") > n(b, "entries");
     let gained = |k: &str| at(a, k).as_f64().map(|x| x - n(b, k));
     let u = if claude && !o.is_null() {
         json!({"cost": step_cost(n(o, "total_cost_usd"), s.prev), "total": at(o, "total_cost_usd"),
                "input": n(o, "usage.input_tokens"), "cache_create": n(o, "usage.cache_creation_input_tokens"),
                "cache_read": n(o, "usage.cache_read_input_tokens"), "output": n(o, "usage.output_tokens"),
                "duration_ms": n(o, "duration_ms"), "turns": n(o, "num_turns")})
+    } else if let Some(total) = cost_state {
+        let prev = if s.prev > 0.0 { s.prev } else { n(b, "cost_state") };
+        json!({"cost": step_cost(total, prev), "total": total})
     } else if !claude && !at(a, "turns").is_null() {
         json!({"cost": gained("cost"), "input": gained("input"), "cache_create": gained("cache_create"),
                "cache_read": gained("cache_read"), "output": gained("output"), "duration_ms": s.ms,
@@ -356,6 +369,31 @@ mod tests {
         };
         assert!(step(124, false).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
         assert!(step(143, true).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
+    }
+
+    #[test]
+    fn a_killed_claude_step_is_charged_its_transcripts_last_cost_state_less_its_parents_total_276() {
+        let step = |status, stopped, prev, a: &Value, b: &Value| {
+            record(&Step { time: "2026-11-13T00:00:00Z", repo: "/r", branch: "feat", step: "implement", harness: "claude", session: "s",
+                           mode: "fork", status, ms: 20000, cap: 5.0, prev, stopped, o: &Value::Null, a, b, stray: Stray::default() })
+        };
+        let a = json!({"entries": 3, "context": 900, "cost_state": 0.2219});
+        let b = json!({"entries": 1, "context": 100, "cost_state": 0.05});
+        // the parent's total from usage.sup, else its transcript's own last cost-state
+        assert!(step(124, false, 0.02, &a, &b).contains("status:124,cost_usd:0.2019,total_cost_usd:0.2219,estimated:false,"));
+        assert!(step(124, false, 0.0, &a, &b).contains("status:124,cost_usd:0.1719,total_cost_usd:0.2219,estimated:false,"));
+        assert!(step(143, true, 0.0, &a, &b).contains("status:143,cost_usd:0.1719,total_cost_usd:0.2219,estimated:false,"));
+        // no cost-state: the cap for a timeout, unknown for a signal stop, as before
+        let a = json!({"entries": 3, "context": 900, "cost_state": null});
+        assert!(step(124, false, 0.0, &a, &b).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(143, true, 0.0, &a, &b).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
+        // a cost-state that hasn't moved past the parent's is stale, from before the step: the old rules
+        let a = json!({"entries": 3, "context": 900, "cost_state": 0.05});
+        assert!(step(124, false, 0.0, &a, &b).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(124, false, 0.05, &a, &b).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(124, false, 0.3, &json!({"entries": 3, "context": 900, "cost_state": 0.2219}), &b)
+            .contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(143, true, 0.0, &a, &b).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
     }
 
     #[test]
