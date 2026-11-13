@@ -375,6 +375,11 @@ in SHEEPDOG_STATE_DIR, so sd watch starts no agent step before the reset.
 sd act review passes its reviewer's 75 through: a custom one's pauses
 them for an hour, unless a limit already holds.
 
+Step timeouts (#303): a verb whose agent step settings.stepTimeout ended
+says the step timed out after <n>s and exits 124, as timeout(1) does, so
+sd watch's pass line says so too; sd act review passes its reviewer's 124
+through. The step is counted in the failure record, as any failed step is.
+
 CI config hold (#124): when the commit of an agent step that edits
 (implement and its review-fix rounds, address, ci-fix, restack --resolve)
 touches a protected path, the branch is held: address, ci-fix and ship

@@ -56,7 +56,9 @@
 // restack's behind and conflict) give way to one dirty step, as the empty
 // branch's nothing-dirty does for implement; once commits were reset away,
 // reset-dirty is that step. While it stands the edits are the asker's, so
-// those steps wait behind the question instead.
+// those steps wait behind the question instead. When the failure record is
+// a step its timeout ended, dirty and nothing-dirty name it as where the
+// edits may have come from (#303).
 //
 // Behind the default branch alone is no step: it moves too often to chase.
 // A conflict with it is, and so is a restack after the parent merged.
@@ -621,10 +623,30 @@ fn dirty(cx: &Cx) -> Option<Value> {
     if !cx.d.dirty || cx.d.dropping {
         return None;
     }
+    let whose = match left_by(cx) {
+        l if l.is_empty() => ": they're yours".to_string(),
+        l => l,
+    };
     step(def!("dirty"), "you",
-        "the worktree has uncommitted changes, which the agent steps refuse: they're yours: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)",
+        format!("the worktree has uncommitted changes, which the agent steps refuse{whose}: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)"),
         cmd("git status"),
     )
+}
+
+/// Where uncommitted edits may have come from, when the failure record is
+/// a step its timeout ended (#303): "; the <harness> <step> step that timed
+/// out after <n>s at <at> may have left them". "" otherwise: no record
+/// says whose they are.
+fn left_by(cx: &Cx) -> String {
+    let how = cx.t("failed.error");
+    if !how.starts_with("timed out after ") {
+        return String::new();
+    }
+    let who = match cx.t("failed.harness").as_str() {
+        "" | "sd" => cx.t("failed.step"),
+        h => format!("{h} {}", cx.t("failed.step")),
+    };
+    format!("; the {who} step that {how} at {} may have left them", cx.t("failed.at"))
 }
 
 /// A conflict offers no behind step, so it stays ahead of ci-fix (#418).
@@ -736,7 +758,8 @@ fn nothing(cx: &Cx) -> Option<Value> {
     } else if yes(d.push_dirty) {
         step(def!("nothing-dirty"), "you",
             format!(
-                "nothing to ship, and the worktree has uncommitted changes: commit them{}",
+                "nothing to ship, and the worktree has uncommitted changes{}: commit them{}",
+                left_by(cx),
                 if d.tasked { ", or remove them and sd act implement" } else { "" }
             ),
             None,

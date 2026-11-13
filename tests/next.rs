@@ -1381,6 +1381,27 @@ fn nothing_ahead_uncommitted_changes_chrismo_commits_them_implement_would_refuse
     assert_eq!(step("nothing-dirty", "say", &e![FRESH, ".push.dirty = true"]), "nothing to ship, and the worktree has uncommitted changes: commit them");
 }
 
+// @test "uncommitted edits after a step timed out: NEXT names that step as where they may have come from (#303)"
+#[test]
+fn uncommitted_edits_after_a_step_timed_out_next_names_that_step_as_where_they_may_have_come_from_303() {
+    let timed_out = |h: &str| format!(r#".failed = {{"step": "implement", "harness": "{h}", "count": 1, "since": "T0", "at": "T1", "error": "timed out after 30s"}}"#);
+    let left = "; the claude implement step that timed out after 30s at T1 may have left them";
+    assert_eq!(
+        step("nothing-dirty", "say", &e![FRESH, r#".task = "add c""#, ".push.dirty = true", &timed_out("claude")]),
+        format!("nothing to ship, and the worktree has uncommitted changes{left}: commit them, or remove them and sd act implement")
+    );
+    let red = e![r#".ci.verdict = "red""#, r#".ci.failing = ["test"]"#, ".push.dirty = true"];
+    assert_eq!(
+        step("dirty", "say", &e![&red, &timed_out("claude")]),
+        format!("the worktree has uncommitted changes, which the agent steps refuse{left}: commit and push them (sd act push), or discard them (git reset --hard; git clean for untracked files)")
+    );
+    // sd watch's own timeout of the whole sd act: harness sd, no agent named
+    assert!(step("dirty", "say", &e![&red, &timed_out("sd")]).contains("; the implement step that timed out after 30s at T1 may have left them:"));
+    // a failure that wasn't a timeout says nothing of where they came from
+    let boom = r#".failed = {"step": "implement", "harness": "claude", "count": 1, "since": "T0", "at": "T1", "error": "boom"}"#;
+    assert!(!step("dirty", "say", &e![&red, boom]).contains("implement"));
+}
+
 // @test "nothing ahead, but the remote has commits reset away here: the #86 steps, not implement or nothing (#143)"
 #[test]
 fn nothing_ahead_but_the_remote_has_commits_reset_away_here_the_86_steps_not_implement_or_nothing_143() {

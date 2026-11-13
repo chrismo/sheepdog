@@ -104,7 +104,7 @@ pub(super) fn describe_run(b: &str, s: &Value, remote: &str, a: &Args) -> Value 
     };
     eprintln!("sd act: {} is describing {b}…", step.said());
     let Some((result, ran)) = harness::run_step(&step).ok().and_then(Ran::last) else {
-        die(format!("the {h} describe step failed or returned no usable result (session {sid})"))
+        die(format!("the {h} describe step {} (session {sid})", harness::failed_how()))
     };
     let rec = record(&head, &t(s, "sync.target"), &result).unwrap_or_else(|| die(format!("the {h} describe step returned no title")));
     step_store(b, &ss, &ran);
