@@ -843,20 +843,28 @@ fn review(cx: &Cx) -> Option<Value> {
         let say = format!("fix {} (round {}/{})", findings(), cx.t("review.findings.round"), cx.t("review.findings.cap"));
         agent(&cx.hold, def!("review-fix"), say, "sd act implement")
     } else if d.open && d.fixing {
-        let what = if yes(d.findings_declined) {
-            format!("the agent declined {}", findings())
-        } else {
-            format!("{} after {} rounds", findings(), cx.t("review.findings.round"))
-        };
-        step(def!("review-decide"), "you",
-            format!("{what}: fix {}, or accept HEAD as reviewed (sd state --long lists them)", cx.one("review.findings.n", "it", "them")),
-            cmd("sd act review --accept"),
-        )
+        step(def!("review-decide"), "you", review_decide(cx, &findings()), cmd("sd act review --accept"))
     } else if d.need_review {
         review_step(d, &cx.hold, &cx.last_review)
     } else {
         None
     }
+}
+
+/// review-decide's words about <findings>: chrismo's own declines of them
+/// all (sd act decision --finding, #501) leave him only the accept.
+fn review_decide(cx: &Cx, findings: &str) -> String {
+    let fix = format!("fix {}, or ", cx.one("review.findings.n", "it", "them"));
+    let accept = "accept HEAD as reviewed (sd state --long lists them)";
+    if !yes(cx.d.findings_declined) {
+        return format!("{findings} after {} rounds: {fix}{accept}", cx.t("review.findings.round"));
+    }
+    let items = cx.g("review.findings.items").as_array().map_or(&[][..], Vec::as_slice);
+    let declined: Vec<&Value> = items.iter().filter(|f| at(f, "action").as_str() == Some("declined")).collect();
+    if !declined.is_empty() && declined.iter().all(|f| at(f, "by").as_str() == Some("chrismo")) {
+        return format!("you declined {findings}: {accept}");
+    }
+    format!("the agent declined {findings}: {fix}{accept}")
 }
 
 fn bot_trigger(cx: &Cx) -> Option<Value> {

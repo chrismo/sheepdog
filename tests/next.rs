@@ -1470,6 +1470,24 @@ fn review_findings_at_the_cap_or_declined_by_the_agent_chrismo_fixes_or_accepts(
     assert_eq!(step("review-decide", "say", &e![&st, ".review.findings.round = 1", ".review.findings.declined = true"]), "the agent declined 1 review finding: fix it, or accept HEAD as reviewed (sd state --long lists them)");
 }
 
+// @test "review findings chrismo declined (sd act decision --finding): he accepts"
+// #501: his own declines of every finding leave him only the accept; one of
+// them the agent's still asks him to fix it or accept.
+#[test]
+fn review_findings_chrismo_declined_leave_him_the_accept_501() {
+    let st = e![
+        r#".review.local = {sha: "x", status: "uncovered", uncovered: 2}"#,
+        r#".review.findings = {sha: "h1", round: 1, n: 2, at_head: true, declined: true, cap: 3, items: [
+            {severity: "error", action: "declined", reply: "no", by: "chrismo"},
+            {severity: "nit"},
+            {severity: "warning", action: "declined", reply: "no", by: "chrismo"}]}"#
+    ];
+    assert_eq!(keys(&e![&st]), "review-decide");
+    assert_eq!(step("review-decide", "say", &e![&st]), "you declined 2 review findings: accept HEAD as reviewed (sd state --long lists them)");
+    let agents = e![&st, "del(.review.findings.items[2].by)"];
+    assert_eq!(step("review-decide", "say", &agents), "the agent declined 2 review findings: fix them, or accept HEAD as reviewed (sd state --long lists them)");
+}
+
 // @test "review findings on an older head, before any PR or pin: the next review is due"
 #[test]
 fn review_findings_on_an_older_head_before_any_pr_or_pin_the_next_review_is_due() {
