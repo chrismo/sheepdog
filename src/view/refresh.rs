@@ -5,7 +5,9 @@
 // fails, for any reason, waits until the watcher rewrites the file it left as
 // it was. None starts while the rate limit the freshest file saw is under
 // settings.rateLimitFloor, as the pass stops then; a pass that finds the quota
-// back writes a file that lifts it.
+// back writes a file that lifts it. A branch whose step (its running marker)
+// ended since the last read has a file from before the step, unless one was
+// written since: it's checked first, a minute old or not (#503).
 
 use super::cache::{forced, now_ms, stale};
 use super::flock::Cached;
@@ -14,7 +16,7 @@ use crate::proc;
 use crate::time::utc;
 use crate::val::{on, t};
 use crate::watch::{registered, repo_key, sd_verb};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -27,9 +29,30 @@ struct Branches {
     tried: BTreeMap<String, u64>,
     /// Each failed refresh's file, by when it was written.
     failed: BTreeMap<String, Option<u64>>,
+    /// The branches a live step held at the last read.
+    stepping: BTreeSet<String>,
+    /// When each branch's step was seen to end, in ms.
+    ended: BTreeMap<String, u64>,
 }
-static BRANCHES: Mutex<Branches> =
-    Mutex::new(Branches { running: None, tried: BTreeMap::new(), failed: BTreeMap::new() });
+static BRANCHES: Mutex<Branches> = Mutex::new(Branches {
+    running: None,
+    tried: BTreeMap::new(),
+    failed: BTreeMap::new(),
+    stepping: BTreeSet::new(),
+    ended: BTreeMap::new(),
+});
+
+/// The ids of the branches a live step holds now: one held at the last
+/// read and not now has ended its step, unless it's in <own>, the page's
+/// own step (act.rs), whose refresh::now checks it after.
+pub fn stepping(now: BTreeSet<String>, own: &BTreeSet<String>) {
+    let mut b = branches();
+    let at = now_ms();
+    for id in b.stepping.difference(&now).filter(|id| !own.contains(*id)).cloned().collect::<Vec<_>>() {
+        b.ended.insert(id, at);
+    }
+    b.stepping = now;
+}
 
 fn branches() -> MutexGuard<'static, Branches> {
     BRANCHES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -103,12 +126,14 @@ pub fn refreshing(state: &Path, cached: &[Cached]) -> bool {
             }
             // A file written ahead of the clock would be stale on every read.
             let tried = w.filter(|&w| w <= now).unwrap_or(0).max(b.tried.get(&c.id).copied().unwrap_or(0));
-            stale(tried, now, forced).then_some((tried, c, repo, w))
+            let before_end = b.ended.get(&c.id).is_some_and(|&end| tried < end);
+            (before_end || stale(tried, now, forced)).then_some(((!before_end, tried), c, repo, w))
         })
-        .min_by_key(|(tried, ..)| *tried);
+        .min_by_key(|(order, ..)| *order);
     let Some((_, c, repo, w)) = stalest else { return false };
     b.running = Some(c.id.clone());
     b.tried.insert(c.id.clone(), now);
+    b.ended.remove(&c.id);
     let (id, repo, branch) = (c.id.clone(), repo.clone(), c.branch.clone());
     std::thread::spawn(move || run(&id, &repo, &branch, w));
     true
@@ -138,10 +163,28 @@ pub fn now(state: &Path, id: &str, repo: &str, branch: &str) {
         if b.running.is_none() {
             b.running = Some(id.to_string());
             b.tried.insert(id.to_string(), now_ms());
+            // This is the check after the step: no second one for its end.
+            b.stepping.remove(id);
+            b.ended.remove(id);
             break;
         }
         drop(b);
         std::thread::sleep(Duration::from_millis(100));
     }
     run(id, repo, branch, written(state, id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_step_s_end_is_noted_unless_it_was_the_page_s_own_503() {
+        let set = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+        stepping(set(&["r/loop-503", "r/own-503"]), &set(&[]));
+        stepping(set(&[]), &set(&["r/own-503"]));
+        let b = branches();
+        assert!(b.ended.contains_key("r/loop-503"));
+        assert!(!b.ended.contains_key("r/own-503"));
+    }
 }
