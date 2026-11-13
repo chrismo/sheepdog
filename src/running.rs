@@ -562,6 +562,7 @@ mod tests {
 
     #[test]
     fn renew_takes_no_marker_this_process_doesnt_hold_or_one_another_step_rewrote_299() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
         let f = marker("not-renewed");
         assert!(!renew_at(path(&f), "push", 30));
         assert!(!f.exists());

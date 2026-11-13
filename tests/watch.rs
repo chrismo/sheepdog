@@ -3322,6 +3322,21 @@ fn reconcile_a_launched_step_whose_process_is_gone_with_no_outcome_crashed_268()
     assert_lacks(&sd.last_pass(), "crashed");
 }
 
+// A follow-up (#299) that dies after the step before it, under the same
+// lease, wrote its outcome: that earlier line isn't the follow-up's.
+#[test]
+fn reconcile_a_follow_up_whose_process_is_gone_crashed_though_an_earlier_step_wrote_its_outcome_299() {
+    let sd = sd();
+    sd.quiet("feat");
+    let mut dead = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+    dead.wait().unwrap();
+    sd.lease("feat", dead.id(), 60);
+    fs::write(sd.path("repo/.git/sheepdog/feat.outcome"), "ran sd act review: ok\n").unwrap();
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: ok", "repo\tfeat\t-\tsd act push crashed: its process is gone"]);
+    assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"crashed""#]);
+}
+
 /// <sh> in the background of a shell that's gone, so this test isn't its
 /// parent, as the pass isn't a launched step's. Its pid.
 fn orphan(sh: &str) -> u32 {

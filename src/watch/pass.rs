@@ -1031,11 +1031,13 @@ impl Watch {
         // wrote any outcome it was going to by the second.
         let lease = running::lease(repo, b);
         let mut out = String::new();
+        let mut last = String::new();
         if let Some(f) = running::outcome_file(repo, b) {
             if let Ok(text) = fs::read_to_string(&f) {
                 let _ = fs::remove_file(&f);
                 for l in text.lines().filter(|l| !l.trim().is_empty()) {
                     out.push_str(&line(l));
+                    last = l.to_string();
                 }
             }
         }
@@ -1043,7 +1045,10 @@ impl Watch {
         let Some(deadline) = l.deadline else { return out };
         let why = if !l.live {
             running::release(&l);
-            out.is_empty().then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
+            // The lease names the step it ran last (#299): an outcome from a
+            // step before it under the same lease isn't this one's.
+            let ended = last.starts_with(&format!("ran sd act {}: ", act_args(&l.step).join(" ")));
+            (!ended).then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
         } else if time::now_utc().1 > deadline {
             stop(repo, b, &l);
             Some(("past its deadline", format!("sd act {}: past its deadline, ended", l.step)))
@@ -1306,7 +1311,12 @@ pub fn step(argv: &[String]) -> ExitCode {
         let mut ok = act_step(&repo, b, step, first, &outcome, started);
         let mut last = step.as_str();
         for _ in 0..FOLLOW_UPS {
-            let Some(next) = ok.then(|| follow_up(b, last, secs)).flatten() else { break };
+            // sd state runs under a lease of its own length, not what's
+            // left of the step's before it.
+            if !ok || !running::renew(b, last, secs + GRACE) {
+                break;
+            }
+            let Some(next) = follow_up(b, last, secs) else { break };
             if !running::renew(b, next, secs + GRACE) {
                 break;
             }
