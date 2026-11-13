@@ -69,8 +69,11 @@ Verbs:
             verify-fix round (#325) reruns verify and autofix, at zero tokens,
             and only if HEAD is still red hands what they printed to the
             agent (settings.verifyFixPrompt guidance). A fix verify still
-            rejects counts a round on the new HEAD's red (verify.tries);
-            after 2, the red is chrismo's, unless --force. Refuses, at zero
+            rejects counts a round on the new HEAD's red (verify.tries), and
+            so does a round that asks or gives up (#505), an answer's too;
+            after 2, the red is chrismo's, unless --force, though an answer
+            still goes on from the round that asked. sd's restack carries a
+            verify-fix question with the red. Refuses, at zero
             tokens, a branch already ahead of its target with nothing to
             fix: NEXT offers implement only before the branch's first commit
             (#241); and unless --force, the task when sd state can't read the

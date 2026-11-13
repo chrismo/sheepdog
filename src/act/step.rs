@@ -219,6 +219,22 @@ fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str, onto: 
     recorded
 }
 
+/// sd's restack moved <b> from <from> to <to>: a verify-fix question on
+/// <from> moves with the red it asks about, which verify_red::carry moves
+/// (#505), so the round isn't run again to ask the same thing. Another
+/// step's stays on the commit it asked at. A failure only warns.
+pub fn carry_question(b: &str, from: &str, to: &str) {
+    let was = pins::oid(".", b, Pin::Question);
+    let Some(mut q) = pins::read(".", b, Pin::Question).and_then(|s| config::one_value(&s)) else { return };
+    if t(&q, "step") != "verify-fix" || t(&q, "head") != from {
+        return;
+    }
+    q["head"] = json!(to);
+    if !pins::store(".", b, Pin::Question, &(json::to_string(&q) + "\n"), Some(&was)).ok {
+        eprintln!("sd: warning: couldn't move the verify-fix question on {b} with its red, so the round may run again");
+    }
+}
+
 pub fn question_say(b: &str) -> String {
     format!("NEXT shows the question until {b}'s HEAD or worktree changes, or sd act ack --question")
 }
