@@ -9,6 +9,7 @@
 use crate::val::t;
 use crate::{git, proc, time};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, MutexGuard, Once, PoisonError};
@@ -108,6 +109,20 @@ pub fn leases(dir: &str) -> Vec<Lease> {
     files
         .filter(|e| e.file_name().to_string_lossy().ends_with(".running"))
         .filter_map(|e| lease_at(&e.path().to_string_lossy()))
+        .collect()
+}
+
+/// {step, since} of each live marker in the repo at <dir>, by branch: what
+/// sd state says is running, read without removing a dead one (sd view,
+/// #503). A marker under a pre-#467 name isn't listed.
+pub fn live(dir: &str) -> BTreeMap<String, Value> {
+    leases(dir)
+        .into_iter()
+        .filter(|l| l.live)
+        .filter_map(|l| {
+            let name = l.file.rsplit('/').next()?.strip_suffix(".running")?;
+            Some((crate::config::decode_branch(name), json!({"step": l.step, "since": l.since})))
+        })
         .collect()
 }
 
@@ -311,6 +326,21 @@ mod tests {
         assert_eq!(outcome_file(&r.dir, "x/y").unwrap(), format!("{dir}/x__y.outcome"));
         fs::remove_file(format!("{dir}/x__y.outcome")).unwrap();
         assert_eq!(outcome_file(&r.dir, "x/y").unwrap(), format!("{dir}/x%2Fy.outcome"));
+    }
+
+    #[test]
+    fn live_lists_each_branch_s_live_step_and_leaves_a_dead_marker_where_it_is_503() {
+        let r = crate::test_support::Repo::new();
+        let dir = format!("{}/.git/sheepdog", r.dir);
+        fs::create_dir_all(&dir).unwrap();
+        let me = std::process::id().to_string();
+        fs::write(format!("{dir}/x%2Fy.running"), format!("{me} review 2026-11-13T01:41:00Z {}\n", proc_start(&me))).unwrap();
+        fs::write(format!("{dir}/dead.running"), "1 implement 2026-11-13T01:41:00Z Thu Jan 1 00:00:00 1970\n").unwrap();
+        assert_eq!(
+            live(&r.dir),
+            [("x/y".to_string(), json!({"step": "review", "since": "2026-11-13T01:41:00Z"}))].into()
+        );
+        assert!(Path::new(&format!("{dir}/dead.running")).exists());
     }
 
     #[test]

@@ -5,6 +5,7 @@
 use crate::next::steps::{self, Stage};
 use crate::val::{at, n, on, t};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::fs;
 use crate::watch::json_files;
 use std::path::Path;
@@ -86,6 +87,8 @@ fn base(s: &Value, stage: &str) -> (&'static str, String) {
         // as NEXT's ahead_target: commits that add nothing aren't built (#301)
         "build" if n(s, "sync.ahead") > 0.0 && !on(s, "sync.empty_diff") =>("done", count(n(s, "sync.ahead"), "commit")),
         "push" if !pr => ("todo", "no PR".into()),
+        // --delete-branch leaves the merged commits "unpushed" (#503).
+        "push" if t(s, "pr.state") == "MERGED" => ("done", String::new()),
         "push" if n(s, "push.ahead") > 0.0 => ("todo", format!("{} unpushed", n(s, "push.ahead"))),
         "push" if on(s, "sync.conflict") => ("red", "conflict".into()),
         "push" if n(s, "sync.behind") > 0.0 => ("done", format!("{} behind", n(s, "sync.behind"))),
@@ -126,6 +129,30 @@ pub fn stages(s: &Value) -> Vec<Value> {
             }
         })
         .collect()
+}
+
+/// <card> while the step <run> ({step, since}, running::live) holds the
+/// branch's marker, as sd state shows it: the cache was written before the
+/// loop launched the step (#503). It leads as sd state's running step; the
+/// stage of the cached lead it ran says running; acting is the step, unless
+/// the page's own (view/act.rs) already names it. Null <run> changes nothing.
+pub fn live(card: &mut Value, run: &Value) {
+    let step = t(run, "step");
+    if step.is_empty() {
+        return;
+    }
+    let lead = card["lead"].clone();
+    if crate::watch::dispatch_verb(&lead) == Some(step.as_str()) {
+        let lit = key_stage(&t(&lead, "key"));
+        for st in card["stages"].as_array_mut().into_iter().flatten().filter(|x| lit.is_some_and(|l| x["stage"] == l)) {
+            *st = json!({"stage": st["stage"], "status": "cur", "text": "running", "who": lead["who"]});
+        }
+    }
+    card["lead"] = json!({"key": "running", "who": "wait", "cmd": null,
+                          "say": format!("{step} running since {}", t(run, "since"))});
+    if card["acting"].is_null() {
+        card["acting"] = json!(step);
+    }
 }
 
 /// A branch's file in the watcher's cache. id is its path under
@@ -181,25 +208,33 @@ pub fn card(c: &Cached) -> Value {
 
 /// GET /api/flock: {at: the last pass's time or null, branches: [card with
 /// checked, since (timeline::since), and acting: the key of the step the
-/// page is running on it, or null], refreshing, held: why no branch is
-/// checked, or null}.
+/// page is running on it, else the step holding its running marker (live),
+/// or null], refreshing, held: why no branch is checked, or null}.
 pub fn flock(state: &Path) -> Value {
     let at = fs::read_to_string(state.join("last-pass"))
         .ok()
         .and_then(|s| s.lines().next().and_then(|l| l.strip_prefix("last pass: ")).map(str::to_string));
     let cached = cached(state);
     let (runs, repos) = (super::timeline::last_runs(&super::branch::usage(state)), crate::watch::registered());
+    let steps: Vec<_> = repos.iter().map(|r| crate::running::live(r)).collect();
+    let mut stepping = BTreeSet::new();
     let cards: Vec<Value> = cached
         .iter()
         .map(|c| {
             let mut card = card(c);
             card["checked"] = json!(super::refresh::checked(state, c));
-            let repo = repos.iter().find(|r| c.id.split_once('/').is_some_and(|(d, _)| crate::watch::repo_key(r) == d));
-            card["since"] = super::timeline::since(&runs, c, repo.map(String::as_str));
+            let i = repos.iter().position(|r| c.id.split_once('/').is_some_and(|(d, _)| crate::watch::repo_key(r) == d));
+            card["since"] = super::timeline::since(&runs, c, i.map(|i| repos[i].as_str()));
             card["acting"] = super::act::running(&c.id);
+            let run = i.and_then(|i| steps[i].get(&c.branch));
+            if run.is_some() {
+                stepping.insert(c.id.clone());
+            }
+            live(&mut card, run.unwrap_or(&Value::Null));
             card
         })
         .collect();
+    super::refresh::stepping(stepping);
     let held = super::refresh::held(state, &cached);
     let refreshing = if held.is_none() { super::refresh::refreshing(state, &cached) } else { super::refresh::running() };
     json!({"at": at, "branches": cards, "refreshing": refreshing, "held": held})
@@ -312,6 +347,50 @@ mod tests {
         assert_eq!(one(with(open(), "sync.conflict", json!(true)), "push"), "red:conflict");
         assert_eq!(one(with(open(), "push.ahead", json!(2)), "push"), "todo:2 unpushed");
         assert_eq!(one(with(open(), "pr", Value::Null), "push"), "todo:no PR");
+    }
+
+    #[test]
+    fn a_merged_pr_s_push_stage_is_done_though_its_remote_branch_is_gone_503() {
+        let s = with(with(open(), "pr.state", json!("MERGED")), "push", json!({"ahead": 1, "remote_sha": null}));
+        assert_eq!(one(s, "push"), "done:");
+    }
+
+    fn reviewing() -> Value {
+        card(&cached(json!({"state": with(open(), "next", json!([
+            {"key": "review", "who": "agent", "say": "review the branch's change", "cmd": "sd act review"},
+            {"key": "ci-wait", "who": "wait", "say": "CI running", "cmd": null},
+        ]))})))
+    }
+
+    fn stage<'a>(c: &'a Value, name: &str) -> &'a Value {
+        c["stages"].as_array().unwrap().iter().find(|x| x["stage"] == name).unwrap()
+    }
+
+    #[test]
+    fn a_step_the_loop_launched_leads_the_card_as_sd_state_says_it_and_its_stage_runs_503() {
+        let mut c = reviewing();
+        c["acting"] = Value::Null;
+        live(&mut c, &json!({"step": "review", "since": "2026-11-13T01:41:00Z"}));
+        assert_eq!(c["lead"], json!({"key": "running", "who": "wait", "say": "review running since 2026-11-13T01:41:00Z", "cmd": null}));
+        assert_eq!(stage(&c, "review"), &json!({"stage": "review", "status": "cur", "text": "running", "who": "agent"}));
+        assert_eq!(c["acting"], "review");
+    }
+
+    #[test]
+    fn a_step_the_cache_s_next_didn_t_name_lights_no_stage_and_the_page_s_own_step_keeps_its_key_503() {
+        let mut c = reviewing();
+        c["acting"] = json!("review");
+        live(&mut c, &json!({"step": "resolve", "since": "2026-11-13T01:41:00Z"}));
+        assert_eq!(t(&c, "lead.say"), "resolve running since 2026-11-13T01:41:00Z");
+        assert_eq!(stage(&c, "review")["text"], "queued");
+        assert_eq!(c["acting"], "review");
+    }
+
+    #[test]
+    fn no_live_step_leaves_the_card_as_the_cache_has_it_503() {
+        let (mut c, was) = (reviewing(), reviewing());
+        live(&mut c, &Value::Null);
+        assert_eq!(c, was);
     }
 
     #[test]
