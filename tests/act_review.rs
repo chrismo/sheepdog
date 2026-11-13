@@ -283,9 +283,9 @@ sleep 5
 "#,
     );
     let r = sd.run_sep(&["review"]);
-    assert_ne!(r.status, 0);
+    assert_eq!(r.status, 124, "{}", r.stderr);
     assert_has(&r.stderr, &["claude: still thinking"]);
-    assert_has(&r.stderr, &["timed out after 1s"]);
+    assert_has(&r.stderr, &["the claude review timed out after 1s", "the reviewer timed out (sd review-local)"]);
     assert_eq!(sd.pin("local"), "");
 }
 

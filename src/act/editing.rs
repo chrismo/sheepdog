@@ -133,7 +133,7 @@ pub fn run_editing_step(mut spec: Spec<'_>) -> Returned<'_> {
     let Some((result, ran)) = spec.agent() else {
         hold_since(spec.b, spec.base, &before);
         let s = spec.session;
-        die(format!("the {} {} step failed or returned no usable result (session {})", s.harness, spec.step, s.id))
+        die(format!("the {} {} step {} (session {})", s.harness, spec.step, harness::failed_how(), s.id))
     };
     step_store(spec.b, spec.session, &ran);
     question_answered(spec.b, spec.answer);

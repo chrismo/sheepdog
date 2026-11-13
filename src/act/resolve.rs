@@ -9,6 +9,7 @@ use super::attached_during;
 use super::editing::{unknown, Outcome, Spec};
 use super::step::{step_session, step_store};
 use crate::git::{git, git_out, rebase_head, strip_nl, Git};
+use crate::harness;
 use crate::proc;
 use crate::val::t;
 use serde_json::Value;
@@ -209,7 +210,7 @@ pub fn resolve_conflicts(r: &Rebase, harness: &str) -> Result<Vec<String>, Halt>
             return Err(Halt { why, gave_up: None, keep: true });
         }
         let Some((result, ran)) = done else {
-            let why = format!("the {} step failed or returned no usable result (session {}); {}", s.harness, s.id, r.back());
+            let why = format!("the {} step {} (session {}); {}", s.harness, harness::failed_how(), s.id, r.back());
             return Err(why.into());
         };
         step_store(b, &s, &ran);
