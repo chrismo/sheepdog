@@ -43,8 +43,13 @@ pub fn state(dir: &str, b: &str) -> Option<Value> {
 
 /// state, of the marker at <f>. A dead holder's lease is left for the
 /// watcher's reconcile to report; unreconciled, the next step overwrites it.
+/// A marker held by RUNNING_HELD_BY's pid is the caller's own: the sd state
+/// a launched step runs between its steps sees past its lease (#299).
 fn state_at(f: &str) -> Value {
     let Some(l) = lease_at(f) else { return Value::Null };
+    if l.live && std::env::var("RUNNING_HELD_BY").is_ok_and(|p| p == l.pid) {
+        return Value::Null;
+    }
     if l.live {
         let pid: Value = serde_json::from_str(&l.pid).unwrap_or(Value::Null);
         json!({"step": l.step, "pid": pid, "since": l.since})
@@ -223,8 +228,38 @@ pub fn leasing<T>(b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Opti
 }
 
 fn leasing_at<T>(marker: &str, b: &str, step: &str, secs: u64, f: impl FnOnce() -> T) -> Option<T> {
+    marked(marker, b, step, &deadline(secs), || with_held(b, f))
+}
+
+fn deadline(secs: u64) -> String {
     let end = time::utc((time::now_utc().1 / 1_000_000_000) as i64 + secs as i64);
-    marked(marker, b, step, &format!("deadline {end}\n"), || with_held(b, f))
+    format!("deadline {end}\n")
+}
+
+fn marker_text(step: &str, rest: &str) -> String {
+    let pid = std::process::id().to_string();
+    format!("{pid} {step} {} {}\n{rest}", time::now_utc().0, proc_start(&pid))
+}
+
+/// Within leasing <b>: the lease now names <step> and ends <secs> from now,
+/// for a step run next under it (#299). False, and nothing written, when
+/// this process doesn't hold <b>'s marker as it wrote it.
+pub fn renew(b: &str, step: &str, secs: u64) -> bool {
+    file(".", b).is_some_and(|m| renew_at(&m, step, secs))
+}
+
+fn renew_at(marker: &str, step: &str, secs: u64) -> bool {
+    let mut held = held();
+    let Some(entry) = held.iter_mut().rev().find(|(m, _)| m == marker) else { return false };
+    if !fs::read_to_string(marker).is_ok_and(|now| now == entry.1) {
+        return false;
+    }
+    let text = marker_text(step, &deadline(secs));
+    if fs::write(marker, &text).is_err() {
+        return false;
+    }
+    entry.1 = text;
+    true
 }
 
 /// during, with <b>'s marker at <marker>.
@@ -240,8 +275,7 @@ fn marked<T>(marker: &str, b: &str, step: &str, rest: &str, f: impl FnOnce() -> 
     if !free(marker, b) {
         return None;
     }
-    let pid = std::process::id().to_string();
-    let line = format!("{pid} {step} {} {}\n{rest}", time::now_utc().0, proc_start(&pid));
+    let line = marker_text(step, rest);
     static AT_EXIT: Once = Once::new();
     AT_EXIT.call_once(|| unsafe {
         atexit(at_exit);
@@ -253,21 +287,24 @@ fn marked<T>(marker: &str, b: &str, step: &str, rest: &str, f: impl FnOnce() -> 
             return None;
         }
         held().push((marker.to_string(), line.clone()));
-        let _hold = Hold { marker: marker.to_string(), line };
+        let _hold = Hold { marker: marker.to_string() };
         Some(f())
     })
 }
 
-/// Released on drop, so a step that panics lets go of its marker too.
+/// Released on drop, so a step that panics lets go of its marker too, as
+/// renew last wrote it.
 struct Hold {
     marker: String,
-    line: String,
 }
 
 impl Drop for Hold {
     fn drop(&mut self) {
-        held().retain(|(m, l)| !(*m == self.marker && *l == self.line));
-        release_at(&self.marker, &self.line);
+        let mut held = held();
+        let Some(i) = held.iter().rposition(|(m, _)| *m == self.marker) else { return };
+        let (_, line) = held.remove(i);
+        drop(held);
+        release_at(&self.marker, &line);
     }
 }
 
@@ -506,6 +543,54 @@ mod tests {
         assert_eq!(after.as_deref(), Some("b-outer"));
         assert_eq!(with_held("b-new", || std::env::var("RUNNING_HELD").ok()).as_deref(), Some("b-new"));
         assert!(std::env::var("RUNNING_HELD").is_err());
+    }
+
+    #[test]
+    fn renew_names_the_next_step_and_its_deadline_in_the_lease_this_process_holds_and_the_leases_end_releases_it_299() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
+        let f = marker("renewed");
+        let (renewed, text) = leasing_at(path(&f), "b-renewed", "review", 600, || (renew_at(path(&f), "trigger", 30), fs::read_to_string(&f).unwrap())).unwrap();
+        assert!(renewed);
+        let me = std::process::id().to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with(&format!("{me} trigger ")), "{text}");
+        let left = (time::epoch_ns(lines[1].strip_prefix("deadline ").unwrap()).unwrap() - time::now_utc().1) / 1_000_000_000;
+        assert!((28..=30).contains(&left), "{left}");
+        assert!(!f.exists(), "released at the lease's end");
+        assert!(!held().iter().any(|(m, _)| m == path(&f)));
+    }
+
+    #[test]
+    fn renew_takes_no_marker_this_process_doesnt_hold_or_one_another_step_rewrote_299() {
+        let f = marker("not-renewed");
+        assert!(!renew_at(path(&f), "push", 30));
+        assert!(!f.exists());
+        let ran = during_at(path(&f), "b-not-renewed", "review", || {
+            fs::write(&f, "1 other x y\n").unwrap();
+            renew_at(path(&f), "push", 30)
+        });
+        assert_eq!(ran, Some(false));
+        assert_eq!(fs::read_to_string(&f).unwrap(), "1 other x y\n");
+    }
+
+    #[test]
+    fn state_sees_past_the_marker_of_the_process_running_held_by_names_299() {
+        let _env = ENV.lock().unwrap_or_else(PoisonError::into_inner);
+        let f = marker("held-by");
+        // Not this process's pid: the tests beside this one read its markers.
+        let mut holder = Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = holder.id().to_string();
+        fs::write(&f, format!("{pid} trigger 2026-11-13T00:00:00Z {}\ndeadline 2026-11-13T00:03:00Z\n", proc_start(&pid))).unwrap();
+        std::env::set_var("RUNNING_HELD_BY", &pid);
+        let seen = state_at(path(&f));
+        std::env::set_var("RUNNING_HELD_BY", "1");
+        let anothers = state_at(path(&f));
+        std::env::remove_var("RUNNING_HELD_BY");
+        holder.kill().unwrap();
+        holder.wait().unwrap();
+        assert!(seen.is_null());
+        assert!(f.exists(), "left for its holder");
+        assert_eq!(anothers["step"], "trigger");
     }
 
     #[test]

@@ -20,6 +20,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -895,7 +896,6 @@ impl Watch {
         let quiet = Dispatched { taken, slot: Slot::Clear, ..Default::default() };
         let (msg, taken) = match plan {
             Plan::Leave | Plan::Wait => return quiet,
-            // An agent step waits for the pass's end, and a slot (#298).
             Plan::Hold(step, _) => return Dispatched { slot: Slot::Want(step), ..quiet },
             Plan::Launch(step) if AGENT_STEPS.contains(&step) => return Dispatched { slot: Slot::Want(step), ..quiet },
             Plan::Off(step) => (format!("not launching sd act {}: settings.agentSteps 0", verb(step)), false),
@@ -1034,7 +1034,9 @@ impl Watch {
         if let Some(f) = running::outcome_file(repo, b) {
             if let Ok(text) = fs::read_to_string(&f) {
                 let _ = fs::remove_file(&f);
-                out.push_str(&line(text.trim_end()));
+                for l in text.lines().filter(|l| !l.trim().is_empty()) {
+                    out.push_str(&line(l));
+                }
             }
         }
         let Some(l) = lease else { return out };
@@ -1283,48 +1285,93 @@ pub(crate) fn step_secs(repo: &str, step: &str, b: &str, secs: u64) -> u64 {
     }
 }
 
+/// How many mechanical steps a launched step runs after itself (#299):
+/// enough for restack, retarget, push and trigger.
+const FOLLOW_UPS: usize = 4;
+
 /// sd watch step <secs> <step> <branch>, what a pass launches, run in the
-/// branch's repo.
+/// branch's repo. Once <step> ends ok, the branch's next mechanical steps
+/// run under the same lease, renewed for each, rather than a pass apart
+/// (#299); an agent step stays the pass's, for a slot.
 pub fn step(argv: &[String]) -> ExitCode {
     let [secs, step, b] = argv else { die("usage: sd watch step <secs> <step> <branch>") };
     let Ok(secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
     let Some(outcome) = running::outcome_file(".", b) else { die("not in a git repository") };
-    let secs = step_secs(".", step, b, secs);
-    let args = act_args(step);
-    let verb = args.join(" ");
-    // steps.log is one stream: a header and an end line mark this step's part (#364).
+    let first = step_secs(".", step, b, secs);
+    // steps.log is one stream: a header and an end line mark each step's part (#364).
     let repo = std::env::current_dir().map_or(String::new(), |d| basename(&d.to_string_lossy()).to_string());
     let started = Instant::now();
-    eprintln!("{}", log::step_header(&log::now(), &repo, b, &verb));
-    let ran = running::leasing(b, step, secs + GRACE, || {
-        let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
-        let mut c = Command::new(prog);
-        c.args(pre).args(&args).arg(b);
-        let o = proc::timeout(secs, c, true);
-        eprint!("{}", o.stdout);
-        let how = if o.ok {
-            "ok".to_string()
-        } else if o.timed_out {
-            let how = format!("timed out after {secs}s");
-            failed::record(b, step, "sd", &how);
-            how
-        } else if o.code == harness::LIMIT_STATUS {
-            limit::holding().map_or("stopped on a usage limit".into(), |l| format!("stopped on a usage limit: {l}"))
-        } else if o.stopped {
-            "stopped by a signal".to_string()
-        } else {
-            format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
-        };
-        let ran = format!("ran sd act {verb}: {how}");
-        if let Err(e) = fs::write(&outcome, format!("{ran}\n")) {
-            eprintln!("sd watch: can't write {outcome}: {e}");
+    eprintln!("{}", log::step_header(&log::now(), &repo, b, &act_args(step).join(" ")));
+    let ran = running::leasing(b, step, first + GRACE, || {
+        let mut ok = act_step(&repo, b, step, first, &outcome, started);
+        let mut last = step.as_str();
+        for _ in 0..FOLLOW_UPS {
+            let Some(next) = ok.then(|| follow_up(b, last, secs)).flatten() else { break };
+            if !running::renew(b, next, secs + GRACE) {
+                break;
+            }
+            eprintln!("{}", log::step_header(&log::now(), &repo, b, &act_args(next).join(" ")));
+            ok = act_step(&repo, b, next, secs, &outcome, Instant::now());
+            last = next;
         }
-        ran
     });
-    let ok = ran.is_some();
-    let ended = ran.unwrap_or_else(|| format!("sd act {verb} didn't run: {b}'s marker is held"));
+    if ran.is_some() {
+        return ExitCode::SUCCESS;
+    }
+    let ended = format!("sd act {} didn't run: {b}'s marker is held", act_args(step).join(" "));
     eprintln!("{}", log::step_end(&log::now(), &repo, b, &ended, started.elapsed().as_secs()));
-    if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    ExitCode::FAILURE
+}
+
+/// sd act <step> <b> under <secs>: how it ended, added to <outcome> for the
+/// next pass and closing the step's part of steps.log. Whether it ended ok.
+fn act_step(repo: &str, b: &str, step: &str, secs: u64, outcome: &str, started: Instant) -> bool {
+    let args = act_args(step);
+    let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
+    let mut c = Command::new(prog);
+    c.args(pre).args(&args).arg(b);
+    let o = proc::timeout(secs, c, true);
+    eprint!("{}", o.stdout);
+    let how = if o.ok {
+        "ok".to_string()
+    } else if o.timed_out {
+        let how = format!("timed out after {secs}s");
+        failed::record(b, step, "sd", &how);
+        how
+    } else if o.code == harness::LIMIT_STATUS {
+        limit::holding().map_or("stopped on a usage limit".into(), |l| format!("stopped on a usage limit: {l}"))
+    } else if o.stopped {
+        "stopped by a signal".to_string()
+    } else {
+        format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+    };
+    let ran = format!("ran sd act {}: {how}", args.join(" "));
+    let added = fs::OpenOptions::new().create(true).append(true).open(outcome).and_then(|mut f| f.write_all(format!("{ran}\n").as_bytes()));
+    if let Err(e) = added {
+        eprintln!("sd watch: can't write {outcome}: {e}");
+    }
+    eprintln!("{}", log::step_end(&log::now(), repo, b, &ran, started.elapsed().as_secs()));
+    o.ok
+}
+
+/// What a launched step that ended ok runs next on <b> (#299): NEXT's first
+/// step when a pass would launch it at once, a mechanical one, and not
+/// <last> again, which didn't take. sd state, given <secs>, sees past this
+/// process's lease (RUNNING_HELD_BY), as the pass after it would.
+fn follow_up(b: &str, last: &str, secs: u64) -> Option<&'static str> {
+    let (prog, verb) = sd_verb("state", "SHEEPDOG_STATE_PROGRAM");
+    let mut c = Command::new(prog);
+    c.args(verb).args(["--json", b]).env("RUNNING_HELD_BY", std::process::id().to_string());
+    let o = proc::timeout(secs, c, false);
+    let s = config::one_value(&o.stdout).filter(|_| o.ok)?;
+    let errors = at(&s, "errors").as_array().is_some_and(|e| !e.is_empty());
+    if errors || carries(&s) {
+        return None;
+    }
+    match plan(&s, auto_run(".", b), on(&s, "session.locked"), false, || None) {
+        Plan::Launch(step) if step != last => Some(step),
+        _ => None,
+    }
 }
 
 pub fn refresh(argv: &[String]) -> ExitCode {

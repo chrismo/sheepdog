@@ -33,10 +33,14 @@ cat "$f"
 "#;
 
 /// $PS_FIXTURES/act-sleep: seconds to take; act-status: the status to exit
-/// with; act-fails: the refusal to fail with.
+/// with; act-fails: the refusal to fail with; <branch>.after-<verb>.json:
+/// sd state's fixture once <verb> has run (Sd::after).
 const SD_ACT: &str = r#"#!/usr/bin/env bash
 echo "$PWD $*" >> "$PS_FIXTURES/acts"
 [[ -f $PS_FIXTURES/act-sleep ]] && sleep "$(cat "$PS_FIXTURES/act-sleep")"
+b=${@: -1}
+after="$PS_FIXTURES/${b//\//__}.after-$1.json"
+[[ -f $after ]] && mv "$after" "$PS_FIXTURES/${b//\//__}.json"
 echo "did $1"
 [[ -f $PS_FIXTURES/act-status ]] && exit "$(cat "$PS_FIXTURES/act-status")"
 [[ -f $PS_FIXTURES/act-fails ]] || exit 0
@@ -3876,6 +3880,61 @@ fn dispatch_a_branch_waiting_for_a_slot_says_how_long_and_its_launch_starts_the_
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act review, after waiting 10m"]);
     sd.settle("feat");
     assert_eq!(jq(&[".queued"], &cat(&sd.state_file("feat"))), "null", "launched, it waits no more");
+}
+
+impl Sd {
+    /// sd state's fixture for <b> once sd act <verb> has run: the one
+    /// <write> makes, set aside till then.
+    fn after(&self, b: &str, verb: &str, write: impl FnOnce()) {
+        write();
+        fs::rename(self.fixture(b), self.ps(&format!("{b}.after-{verb}.json"))).unwrap();
+    }
+}
+
+// Soak 7 and 8 (#299): a pass ran one step per branch, so a 2-second
+// trigger after a review, or restack, retarget and push in a row, each
+// waited a whole pass. A launched step that ends ok now runs the branch's
+// next mechanical step itself, under its lease, sd state between them.
+#[test]
+fn dispatch_a_launched_steps_mechanical_follow_ups_run_at_once_under_its_lease_299() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    sd.after("feat", "push", || sd.quiet("feat"));
+    sd.after("feat", "trigger", || sd.first_step("feat", "push", &[]));
+    sd.after("feat", "review", || sd.first_step("feat", "bot-trigger", &[]));
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} review feat\n{repo} trigger feat\n{repo} push feat"));
+    assert_has(&sd.steps_log(), &["sd act review", "did review", "ran sd act review: ok", "sd act trigger", "did trigger", "ran sd act trigger: ok", "sd act push"]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: ok\nrepo\tfeat\t-\tran sd act trigger: ok\nrepo\tfeat\t-\tran sd act push: ok\n"]);
+}
+
+#[test]
+fn dispatch_follow_ups_stop_at_an_agent_step_a_failure_or_the_same_step_again_299() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    sd.after("feat", "push", || sd.first_agent_step("feat", "review"));
+    sd.after("feat", "restack", || sd.first_step("feat", "push", &[]));
+    sd.first_step("feat", "behind", &[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} restack feat\n{repo} push feat"), "the review is the pass's, for a slot");
+
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} push feat"), "push again: it didn't take");
+
+    sd.after("feat", "push", || sd.first_step("feat", "bot-trigger", &[]));
+    sd.first_step("feat", "push", &[]);
+    fs::write(sd.ps("act-status"), "1\n").unwrap();
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} push feat"), "push failed");
 }
 
 // ── the loop: a step the loop has isn't notified (#302) ─────────────────────
