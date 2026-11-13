@@ -2008,6 +2008,25 @@ fn parent_a_parent_only_here_is_reported_as_such_with_no_error_and_next_ships_it
     assert_ne!(r.field(".next[0].key"), "ship-parent");
 }
 
+// A parent only here is the target until it's pushed: how far the branch is
+// ahead of it is known, so implement's gate can run the task (#502).
+#[test]
+fn parent_a_parent_only_here_measures_ahead_against_the_local_parent_502() {
+    let sd = sd();
+    sd.git(&["switch", "-qc", "parent"]);
+    sd.commit("p.txt", "p");
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.git(&["config", "branch.feat.sd-parent", "parent"]);
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.ahead"), "0");
+    assert_eq!(r.field(".errors | length"), "0");
+    assert_eq!(r.field(".next[0].key"), "ship-parent");
+    sd.commit("c.txt", "c");
+    let r = sd.state(&[]);
+    assert_eq!(r.field(".sync.ahead"), "1");
+    assert_eq!(r.field(".next[0].key"), "ship-parent");
+}
+
 // @test "parent: a parent closed without merging, its remote branch deleted, still errors (#105)"
 #[test]
 fn parent_a_parent_closed_without_merging_its_remote_branch_deleted_still_errors_105() {
