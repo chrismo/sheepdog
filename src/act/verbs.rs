@@ -2,7 +2,7 @@
 // interlocks, and the registry gates::parity checks NEXT against; an agent
 // verb's prompt files, which its code reads through prompt() and the Atlas
 // shows (#377).
-// Not here: attach and forget --remove ask running::idle mid-verb, and
+// Not here: attach, hold and forget --remove ask running::idle mid-verb, and
 // harness::run_step marks every agent run, describe's included.
 
 use super::gates::{self, Gated};
