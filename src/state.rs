@@ -428,31 +428,31 @@ fn shares_a_word(a: &str, b: &str) -> bool {
     words(b).iter().any(|w| wa.contains(w))
 }
 
-/// A hunk's added lines, trimmed and blank ones dropped: a line, or a block,
-/// one ending in an open bracket (its head, the text before the bracket), the
-/// entries after it (a trailing comma or semicolon dropped) and the line of
-/// only closing brackets that ends it.
-enum Added {
-    Line(String),
-    Block(String, Vec<String>),
-}
-
-fn added_units(came: &[String]) -> Vec<Added> {
-    let mut out = Vec::new();
+/// A hunk's added lines as import blocks, blank lines dropped: a block's head
+/// (the text before the open bracket that ends its first line), its entries
+/// (trimmed, a trailing comma or semicolon dropped) and the line of only
+/// closing brackets that ends it. None when any added line is outside an
+/// import block.
+fn import_blocks(came: &[String]) -> Option<Vec<(String, Vec<String>)>> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
     let mut open = false;
     for t in came.iter().map(|c| c.trim()).filter(|t| !t.is_empty()) {
         if let Some(head) = t.strip_suffix(['(', '[', '{']) {
-            out.push(Added::Block(head.trim_end().to_string(), Vec::new()));
+            let head = head.trim_end();
+            if !imports(head) {
+                return None;
+            }
+            out.push((head.to_string(), Vec::new()));
             open = true;
         } else if open && t.chars().all(|c| ")]},;".contains(c)) {
             open = false;
-        } else if let (true, Some(Added::Block(_, items))) = (open, out.last_mut()) {
+        } else if let (true, Some((_, items))) = (open, out.last_mut()) {
             items.push(t.strip_suffix([',', ';']).unwrap_or(t).trim_end().to_string());
         } else {
-            out.push(Added::Line(t.to_string()));
+            return None;
         }
     }
-    out
+    Some(out)
 }
 
 /// Whether a block's head opens an import list: `import (` or `from x
@@ -462,33 +462,26 @@ fn imports(head: &str) -> bool {
     head == "import" || (head.starts_with("from ") && head.ends_with(" import"))
 }
 
-/// Whether a hunk only reshaped its removed lines: each one, in order, is an
-/// added line reindented, or an import block's head and one of its entries
-/// joined by a space, and every added line is one of those. `import
-/// "testing"` made an import block is still there, whatever else the block
-/// imports (#510); a line commented out, changed, or wrapped in a new block
-/// isn't, nor is one with a line added beside it. No added line stands for
-/// two removed ones.
+/// Whether a hunk only folded import lines into import blocks: its added
+/// lines are all import blocks, each removed line, in order, is a block's
+/// head and one of its entries joined by a space, and every block holds one.
+/// `import "testing"` made an import block is still there, whatever else the
+/// block imports (#510). Nothing else counts: a line commented out, changed,
+/// wrapped in a new block or beside an added one, and a line reindented too,
+/// since in Python that moves it in or out of a block. No entry stands for
+/// two removed lines.
 fn reshaped(gone: &[String], came: &[String]) -> bool {
-    let units = added_units(came);
-    let mut used: Vec<Vec<bool>> = units.iter().map(|u| vec![false; if let Added::Block(_, i) = u { i.len() } else { 1 }]).collect();
+    let Some(blocks) = import_blocks(came) else { return false };
+    let mut used: Vec<Vec<bool>> = blocks.iter().map(|(_, items)| vec![false; items.len()]).collect();
     let mut at = 0;
     for g in gone.iter().map(|g| g.trim()) {
-        if g.chars().all(|c| "()[]{},;".contains(c)) {
-            return false;
-        }
-        let hit = (at..units.len()).find_map(|u| {
-            let i = match &units[u] {
-                Added::Line(t) => (t == g).then_some(0),
-                Added::Block(head, items) => imports(head)
-                    .then(|| (0..items.len()).find(|&i| !used[u][i] && format!("{head} {}", items[i]) == g))
-                    .flatten(),
-            };
-            i.filter(|&i| !used[u][i]).map(|i| (u, i))
+        let hit = (at..blocks.len()).find_map(|b| {
+            let (head, items) = &blocks[b];
+            (0..items.len()).find(|&i| !used[b][i] && format!("{head} {}", items[i]) == g).map(|i| (b, i))
         });
-        let Some((u, i)) = hit else { return false };
-        used[u][i] = true;
-        at = if matches!(units[u], Added::Block(..)) { u } else { u + 1 };
+        let Some((b, i)) = hit else { return false };
+        used[b][i] = true;
+        at = b;
     }
     used.iter().all(|u| u.iter().any(|&b| b))
 }
@@ -2153,12 +2146,11 @@ mod tests {
         assert!(one("import \"testing\"", &["import (", "\t\"testing\"", "\t\"fmt\"", ")"]));
         assert!(!one("import \"testing\"", &["\t\"testing\"", "import ("]), "out of order");
         assert!(one("from x import a", &["from x import (", "    a,", "    b,", ")"]));
-        assert!(one("  check(t)", &["\tcheck(t)"]), "reindented");
+        assert!(!one("    assert x", &["assert x"]), "reindented: in Python, out of its block");
         assert!(!one("\tcheck(t)", &["\t// check(t)"]));
         assert!(!one("\tassert(1)", &["\tassert(2)"]));
         assert!(!one("}", &["}"]), "a line of only brackets says nothing");
-        assert!(reshaped(&v(&["  check(t)", "  done(t)"]), &v(&["\tcheck(t)", "\tdone(t)"])), "each reindented");
-        assert!(!reshaped(&v(&["  check(t)", "  check(t)"]), &v(&["\tcheck(t)"])), "one added line can't stand for two removed");
+        assert!(!reshaped(&v(&["import \"a\"", "import \"a\""]), &v(&["import (", "\t\"a\"", ")"])), "one added line can't stand for two removed");
         assert!(!one("\tcheck(t)", &["\tif false {", "\t\tcheck(t)", "\t}"]), "wrapped in a new block");
         assert!(!one("\tcheck(t)", &["\treturn", "\tcheck(t)"]), "an added line beside it");
         assert!(!one("\tcheck(t)", &["\tcheck(t,", "\t\tskipSlow)"]), "a call that gained an argument");
