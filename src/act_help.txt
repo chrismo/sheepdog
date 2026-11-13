@@ -154,7 +154,8 @@ Verbs:
             <text> its why, recorded as a review-fix round's decline is, on
             the findings record too, so no review-fix round gets it again
             (with them all declined, NEXT leaves chrismo the accept); an
-            n the record doesn't have is refused. Not the task (sd-task,
+            n the record doesn't have, or one fixed or declined by chrismo
+            already, is refused. Not the task (sd-task,
             what the branch is for), not an answer (that goes to a standing
             question, and the step that asked runs), not an accept (review
             --accept passes the whole review): it runs no agent, changes no

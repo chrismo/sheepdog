@@ -66,10 +66,23 @@ fn declined(b: &str, id: &str, head: &str, why: &str) -> (Value, String, Settle)
     }
     let n = id.parse::<usize>().ok().filter(|n| (1..=fs.len()).contains(n));
     let n = n.unwrap_or_else(|| die(format!("no finding {id} on {b}: its findings are 1 to {}", fs.len())));
-    let e = decisions::of_finding("declined", head, &fs[n - 1], why);
+    if let Some(was) = settled_already(&fs[n - 1]) {
+        die(format!("finding {id} on {b} is {was} already: nothing to decline"));
+    }
+    let e =decisions::of_finding("declined", head, &fs[n - 1], why);
     let what = format!("declined finding {id} ({})", t(&e, "about"));
     let settle = settled(&mut rec["findings"][n - 1], why).then(|| (old, json::to_string(&rec) + "\n"));
     (e, what, settle)
+}
+
+/// How finding <f> was settled, if a decline would undo or repeat it: fixed,
+/// or declined by chrismo. One the agent declined, his decline takes over.
+fn settled_already(f: &Value) -> Option<&'static str> {
+    match (at(f, "action").as_str(), at(f, "by").as_str()) {
+        (Some("fixed"), _) => Some("fixed"),
+        (Some("declined"), Some("chrismo")) => Some("declined by you"),
+        _ => None,
+    }
 }
 
 /// Finding <f> declined by chrismo for <why>; false for one that isn't an
