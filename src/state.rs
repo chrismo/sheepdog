@@ -1151,6 +1151,18 @@ fn empty_diff(dir: &str, head: &str, base: &str) -> Value {
     }
 }
 
+/// O3 with no <remote>/<target> ref: why, as an error; or, for a parent only
+/// here (`parent` is (landed, unpushed) when the target is the parent), how
+/// far HEAD is ahead of the local parent, which a stack started in one go
+/// needs to implement before the parent ships (#502).
+fn no_target_ref(dir: &str, head: &str, remote: &str, target: &str, default_branch: &str, parent: Option<(bool, bool)>) -> Result<Value, String> {
+    match parent {
+        Some((true, _)) => Err(format!("{target} has no commits beyond {remote}/{default_branch} and isn't on {remote}: if it landed, point sd-parent at {default_branch}; else commit to it and ship it first")),
+        Some((_, true)) => Ok(json!(count(dir, &[&format!("refs/heads/{target}..{head}")]))),
+        _ => Err(format!("no {remote}/{target} ref (not fetched?)")),
+    }
+}
+
 /// O3: whether old_base is in <remote>/<branch>'s history (#300): on the
 /// default branch, HEAD holds no merged parent's commits to drop; on the
 /// target, the parent hasn't rewritten them. Null with no base or no ref.
@@ -1391,10 +1403,10 @@ pub fn observe(dir: &str, branch: &str, remote: &str) -> Result<Value, String> {
     let (mut sync_ahead, mut behind, mut up_to_date, mut old_base, mut conflict, mut by_tree) =
         (Value::Null, Value::Null, Value::Null, String::new(), Value::Null, false);
     if target_ref.is_empty() {
-        if target == parent && parent_landed {
-            errors.push(format!("{parent} has no commits beyond {remote}/{default_branch} and isn't on {remote}: if it landed, point sd-parent at {default_branch}; else commit to it and ship it first"));
-        } else if target != parent || !parent_unpushed {
-            errors.push(format!("no {remote}/{target} ref (not fetched?)"));
+        let only_here = (target == parent).then_some((parent_landed, parent_unpushed));
+        match no_target_ref(dir, &head, remote, &target, &default_branch, only_here) {
+            Ok(n) => sync_ahead = n,
+            Err(e) => errors.push(e),
         }
     } else {
         sync_ahead = json!(count(dir, &[&format!("{target_ref}..{head}")]));
