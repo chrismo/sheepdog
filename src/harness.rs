@@ -643,7 +643,14 @@ fn tally_of(h: &str, text: &str) -> Value {
                 .map(|k| int(n(v, &format!("message.usage.{k}"))))
                 .sum::<i64>()
         });
-        return json!({"entries": turns.len(), "context": context});
+        // The running total Claude Code writes as it goes, so a step killed
+        // before its result still says what it spent (#276; 2.1.323).
+        let cost_state = lines(r#""type":"cost-state""#)
+            .iter()
+            .rev()
+            .find(|v| t(v, "type") == "cost-state")
+            .and_then(|v| at(v, "totalCostUSD").as_f64());
+        return json!({"entries": turns.len(), "context": context, "cost_state": cost_state});
     }
     let turns: Vec<Value> = lines(r#""role":"assistant""#)
         .into_iter()
@@ -770,8 +777,21 @@ mod tests {
 {"isSidechain":true,"message":{"role":"assistant","usage":{"input_tokens":7}},"type":"assistant"}
 {"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":
 "#;
-        assert_eq!(json::to_string(&tally_of("claude", text)), r#"{"entries":2,"context":121002}"#);
-        assert_eq!(json::to_string(&tally_of("claude", "")), r#"{"entries":0,"context":null}"#);
+        assert_eq!(json::to_string(&tally_of("claude", text)), r#"{"entries":2,"context":121002,"cost_state":null}"#);
+        assert_eq!(json::to_string(&tally_of("claude", "")), r#"{"entries":0,"context":null,"cost_state":null}"#);
+    }
+
+    // Claude Code 2.1.323's cost-state line (#276): the session's running
+    // total, a fork's including its parent's.
+    #[test]
+    fn tally_claudes_cost_state_is_the_last_cost_state_lines_total_276() {
+        let text = r#"{"type":"cost-state","sessionId":"s","totalCostUSD":0.05,"modelUsage":{}}
+{"isSidechain":false,"message":{"role":"assistant","usage":{"input_tokens":5,"output_tokens":50}},"type":"assistant"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"{\"type\":\"cost-state\",\"totalCostUSD\":99}"}]}}
+{"type":"cost-state","sessionId":"s","totalCostUSD":0.2219,"modelUsage":{"claude-opus-5-5":{"costUSD":0.2219}}}
+{"type":"cost-state","totalCostUSD":
+"#;
+        assert_eq!(json::to_string(&tally_of("claude", text)), r#"{"entries":1,"context":55,"cost_state":0.2219}"#);
     }
 
     // Was lib/sheepdog.bats: "harness_tally: claude's synthetic entries (an API error, e.g. prompt too long) are neither the context nor a turn"
@@ -780,7 +800,7 @@ mod tests {
         let text = r#"{"message":{"role":"assistant","model":"claude-opus","usage":{"input_tokens":2,"cache_read_input_tokens":190000,"output_tokens":8}},"type":"assistant"}
 {"message":{"role":"assistant","model":"<synthetic>","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0}},"type":"assistant"}
 "#;
-        assert_eq!(json::to_string(&tally_of("claude", text)), r#"{"entries":1,"context":190010}"#);
+        assert_eq!(json::to_string(&tally_of("claude", text)), r#"{"entries":1,"context":190010,"cost_state":null}"#);
     }
 
     // Was lib/sheepdog.bats: "harness_tally: pi's cost and tokens summed over its transcript, its context the last turn's"
