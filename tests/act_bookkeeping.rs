@@ -478,6 +478,20 @@ fn forget_a_deleted_branch_with_only_its_spend_left_starts_it_over_506() {
     assert_ne!(sd.run(&["forget", "gone"]).status, 0);
 }
 
+// A deleted branch's leftover config (sd-held, sd-pr: the ref went some way
+// other than git branch -D) goes with it, so a second forget refuses (#506).
+#[test]
+fn forget_a_deleted_branch_drops_its_leftover_config_506() {
+    let mut sd = sd();
+    sd.env.push(("SHEEPDOG_STATE_DIR".into(), sd.path("state")));
+    sd.git(&["config", "branch.gone.sd-pr", "12"]);
+    sd.git(&["config", "branch.gone.sd-held", "abc"]);
+    let r = sd.run(&["forget", "gone"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git_try(&["config", "--get-regexp", r"^branch\.gone\."]), None);
+    assert_ne!(sd.run(&["forget", "gone"]).status, 0);
+}
+
 // @test "forget --remove: a worktree git won't remove changes nothing"
 #[test]
 fn forget_remove_a_worktree_git_wont_remove_changes_nothing() {

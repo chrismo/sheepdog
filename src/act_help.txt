@@ -109,7 +109,8 @@ Verbs:
             its refs/sheepdog/<branch>/* pins, which outlive a branch -D,
             its stored description, its launched step's outcome and its
             logs (#467), and start its spend over (a reset row in
-            usage.sup, #349). Refuses a name that's no branch and that
+            usage.sup, #349); a branch that's gone loses its
+            branch.<branch>.* config too. Refuses a name that's no branch and that
             sheepdog keeps nothing for, a typo (#506). --remove, once its
             PR merged: also remove its worktree and delete the branch,
             which ends sd state's merged step (#153). Refuses, changing
