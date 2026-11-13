@@ -3918,6 +3918,22 @@ fn dispatch_a_branch_waiting_for_a_slot_says_how_long_and_its_launch_starts_the_
     assert_eq!(jq(&[".queued"], &cat(&sd.state_file("feat"))), "null", "launched, it waits no more");
 }
 
+// A branch later in the pass that finds the quota spent stops the queue's
+// launches too: they'd call GitHub. The queued wait on, clocks running.
+#[test]
+fn dispatch_a_pass_the_rate_limit_stopped_launches_no_queued_agent_step_and_its_clock_runs_on_298() {
+    let sd = sd();
+    sd.dispatching();
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.first_agent_step("feat", "review");
+    sd.low("other", 100);
+    sd.pass();
+    assert_eq!(sd.acts(), "", "the quota is spent");
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: GitHub rate limit"]);
+    assert_eq!(jq(&[".queued.step"], &cat(&sd.state_file("feat"))), r#""review""#);
+}
+
 impl Sd {
     /// sd state's fixture for <b> once sd act <verb> has run: the one
     /// <write> makes, set aside till then.

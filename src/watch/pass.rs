@@ -920,15 +920,17 @@ impl Watch {
 
     /// The pass's end (#298): launch the queued agent steps, the one that
     /// has waited longest first, while a slot is free; say how long the
-    /// rest have waited. Their pass lines.
-    fn launch_queued(&mut self) -> String {
+    /// rest have waited. None once the pass <stopped> for the rate limit:
+    /// they'd call GitHub. Their pass lines.
+    fn launch_queued(&mut self, stopped: bool) -> String {
         let mut queue = std::mem::take(&mut self.queue);
         queue.sort_by_key(|q| (q.since, q.fresh));
         let now = now();
         let mut out = String::new();
         for q in queue {
             let verb = act_args(q.step).join(" ");
-            let msg = match self.held() {
+            let held = if stopped { Some("GitHub rate limit".to_string()) } else { self.held() };
+            let msg = match held {
                 Some(why) => format!("not launching sd act {verb}: {why}{}", waited(&q, now, "; waiting ")),
                 None => match self.launch(&q.repo, q.step, &q.b) {
                     Ok(()) => {
@@ -1216,7 +1218,7 @@ impl Watch {
                 }
             }
         }
-        lines.push_str(&self.launch_queued());
+        lines.push_str(&self.launch_queued(stopped));
 
         // The branches not checked keep their glyphs, files and index rows both.
         let index = format!("{}/glyphs", self.state);
