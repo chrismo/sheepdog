@@ -15,6 +15,7 @@ pub mod gates;
 mod github;
 mod hold;
 mod implement;
+mod mark_ready;
 mod push;
 mod resolve;
 mod restack;
@@ -356,6 +357,7 @@ fn act(verb: &str, v: &verbs::Verb, b: &str, remote: &str, a: &Args) -> ExitCode
         "decision" => decision::decision(b, a),
         "restack" => restack::restack(b, remote, a),
         "retarget" => restack::retarget(b, a.force),
+        "mark-ready" => mark_ready::mark_ready(b, a.force),
         "review" => review::review(b, remote, a.accept, a.force),
         "attach" => attach::attach(b, &a.harness, a.force),
         "hold" => attach::hold(b, a.force),
