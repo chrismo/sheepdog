@@ -3488,20 +3488,23 @@ fn dispatch_leaves_the_run_steps_outside_this_slice_to_chrismo() {
 }
 
 #[test]
-fn dispatch_gate_only_a_pr_the_viewer_authored_with_no_one_elses_commits_on_the_remote() {
+fn dispatch_gate_only_the_viewer_s_pr_or_no_pr_with_no_one_elses_commits_on_the_remote_307() {
     let sd = sd();
     sd.dispatching();
-    for (why, more) in [
-        ("someone else's PR", r#".pr.author = "alice""#),
-        ("no viewer", ".viewer = null"),
-        ("no author", ".pr.author = null"),
-        ("no PR", ".pr = null"),
-        ("commits this copy never had", ".push.remote_ours = false | .push.theirs = 2"),
-        ("theirs unknown", ".push.remote_ours = false | .push.theirs = null"),
-        ("taken from someone and reset away", ".push.remote_ours = true | .push.remote_made = false"),
+    let elses = "the remote has commits from someone else";
+    for (why, more, line) in [
+        ("someone else's PR", r#".pr.author = "alice""#, "the PR is alice's"),
+        ("no viewer", ".viewer = null", "sd state doesn't know who's viewing"),
+        ("no viewer, no PR", ".viewer = null | .pr = null", "sd state doesn't know who's viewing"),
+        ("no author", ".pr.author = null", "the PR's author is unknown"),
+        ("commits this copy never had", ".push.remote_ours = false | .push.theirs = 2", elses),
+        ("no PR, commits this copy never had", ".pr = null | .push.remote_ours = false | .push.theirs = 2", elses),
+        ("theirs unknown", ".push.remote_ours = false | .push.theirs = null", elses),
+        ("taken from someone and reset away", ".push.remote_ours = true | .push.remote_made = false", elses),
     ] {
         sd.first_step("feat", "push", &[more]);
         sd.pass();
+        assert_has(&sd.last_pass(), &[&format!("repo\tfeat\t-\tnot launching sd act push: {line}")]);
         assert_eq!(sd.acts(), "", "{why}");
     }
     let repo = sd.path("repo");
@@ -3510,6 +3513,8 @@ fn dispatch_gate_only_a_pr_the_viewer_authored_with_no_one_elses_commits_on_the_
         ("ours, made here", ".push.remote_ours = true | .push.remote_made = true"),
         ("not ours by reflog, but no commits it never had", ".push.remote_ours = false | .push.theirs = 0"),
         ("not pushed", ".push.remote_sha = null | .push.remote_ours = null"),
+        ("no PR yet, not pushed", ".pr = null | .push.remote_sha = null | .push.remote_ours = null"),
+        ("no PR yet, pushed from here", ".pr = null | .push.remote_ours = true | .push.remote_made = null"),
     ] {
         sd.first_step("feat", "push", &[more]);
         sd.pass();
@@ -3852,11 +3857,11 @@ fn notify_under_autorun_a_step_queued_behind_the_cap_waits_quietly_till_the_loop
     assert_eq!(sd.acts(), "");
 
     // The gate refuses someone else's PR: the loop can't run the step, so
-    // it's ❌ and notified once, as any step chrismo must deal with.
+    // it's ❌ and notified once, as any step chrismo must deal with, and the
+    // pass line says the gate is why (#307).
     sd.jq_file(&sd.fixture("feat"), &[r#".pr.author = "them""#]);
     sd.pass();
-    assert_has(&sd.last_pass(), &["repo\tfeat\t❌\tsay conflict"]);
-    assert_lacks(&sd.last_pass(), "sd act");
+    assert_has(&sd.last_pass(), &["repo\tfeat\t❌\tsay conflict\t\nrepo\tfeat\t-\tnot launching sd act restack --resolve: the PR is them's"]);
     assert_eq!(sd.notified(), "repo feat|say conflict");
     sd.pass();
     assert_eq!(sd.notified_lines().len(), 1);

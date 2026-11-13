@@ -107,7 +107,7 @@ not ❌, and isn't notified (#302): one the pass launches, or holds for
 settings.agentSteps, a lease on the branch or a usage limit, runs with
 nobody asked. A refresh, a vacuum, or a pass the rate limit stops launches
 nothing but is as quiet about a step the job's next pass will launch. It
-notifies once the loop can't run it: the gate refuses the PR, three agent
+notifies once the loop can't run it: the gate refuses the branch, three agent
 steps failed in a row (failed), settings.agentSteps is 0 (an agent step), a
 launch fails, or NEXT gives it to chrismo. With autoRun off nothing changes.
 Not notified:
@@ -160,9 +160,11 @@ review-fix (implement), review, bot (address), ci-red (ci-fix), conflict
 (restack --resolve). One attempt per branch per pass, under
 SHEEPDOG_WATCH_TIMEOUT, an agent step under three times the branch's
 settings.stepTimeout (verify, the agent, verify again) plus that; the next
-pass sees what it did. Only on a PR the viewer (gh's login) authored with no
-one else's commits on the remote: none this copy never had, none taken and
-reset away.
+pass sees what it did. Only on a PR the viewer (gh's login) authored, or a
+branch with no PR yet (#307), with no one else's commits on the remote: none
+this copy never had, none taken and reset away. When that gate is why a
+step isn't launched, the pass line says so (not launching sd act <verb>:
+the PR is <author>'s).
 fetch, a followed PR's, runs whoever wrote the PR: it refuses when the
 branch has commits of chrismo's. Not while sd state reports errors or is
 unsure, an agent step runs or the session is attached, or after the rate
