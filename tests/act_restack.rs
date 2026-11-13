@@ -469,6 +469,44 @@ fn a_red_verify_moves_with_a_clean_restack_and_next_offers_no_push_325() {
     red_at_head(&sd, "feat");
 }
 
+/// <step>'s question at <b>'s HEAD and the worktree as it is (cwd), as an
+/// agent step records it. git::worktree_mark's git runs with this process's
+/// environment, so git's config is cleared here as Sd's is.
+fn asked_at_head(sd: &Sd, b: &str, step: &str) {
+    static ENV: std::sync::Once = std::sync::Once::new();
+    ENV.call_once(|| {
+        std::env::set_var("GIT_CONFIG_GLOBAL", "/dev/null");
+        std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+    });
+    let mark = sheepdog::git::worktree_mark(&sd.cwd.to_string_lossy()).expect("a worktree mark");
+    let rec = format!(r#"{{"head": "{}", "step": "{step}", "mark": "{mark}", "text": "drop the test, or fix it?"}}"#, sd.rev(b));
+    let blob = sd.git_with(&[], Some(&format!("{rec}\n")), &["hash-object", "-w", "--stdin"]);
+    sd.git(&["update-ref", &format!("refs/sheepdog/{b}/question"), &blob]);
+}
+
+/// sd state's question on <b>: [step, at_head, sha].
+fn question(sd: &Sd, b: &str) -> String {
+    jq(&["-c", "[.question.step, .question.at_head, .question.sha]"], &sd.exec(&sd.link("state"), &[], &["--json", b]).output)
+}
+
+// #505: the verify-fix agent's question is about the red, so it moves with
+// the red, and the loop doesn't run the round again to ask the same thing.
+// Another step's question stays on the commit it asked at.
+#[test]
+fn a_verify_fix_question_moves_with_the_red_on_a_clean_restack_505() {
+    for (step, moves) in [("verify-fix", true), ("ci-fix", false)] {
+        let sd = sd();
+        verify_red(&sd, "feat");
+        asked_at_head(&sd, "feat", step);
+        assert_eq!(question(&sd, "feat"), format!(r#"["{step}",true,"{}"]"#, sd.rev("feat")));
+        sd.upstream("main", "b", "B", "upstream");
+        let before = sd.rev("feat");
+        assert_eq!(sd.run(&["restack"]).status, 0);
+        let sha = if moves { sd.rev("feat") } else { before };
+        assert_eq!(question(&sd, "feat"), format!(r#"["{step}",{moves},"{sha}"]"#), "{step}");
+    }
+}
+
 // The same for a restack by tree, which no agent resolves and so no verify
 // follows (#325).
 #[test]
