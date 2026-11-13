@@ -193,11 +193,30 @@ fn remove_gate(b: &str) -> String {
     default
 }
 
+/// Whether sheepdog keeps anything for <b>, a branch that's gone: config,
+/// pins, logs, branch files or spend since its last reset.
+fn kept_for(b: &str) -> bool {
+    let config = git_out(".", &["config", "--get-regexp", &format!("^branch\\.{}\\.", ere_escape(b))]);
+    let pins = git_out(".", &["for-each-ref", &format!("refs/sheepdog/{b}/")]);
+    let files = [crate::config::branch_config_file(".", b), crate::config::describe_file(".", b), running::outcome_file(".", b)];
+    config.is_some_and(|c| !c.is_empty())
+        || pins.is_some_and(|p| !p.is_empty())
+        || crate::logs::kept(".", b)
+        || files.into_iter().flatten().any(|f| Path::new(&f).exists())
+        || usage::owes_reset(&main_worktree("."), b)
+}
+
 /// Unenroll <b> and drop what sheepdog stores for it; with --remove, first
 /// its worktree and the branch itself, so a removal git refuses (a locked
-/// worktree) changes nothing. A branch already deleted is just forgotten.
+/// worktree) changes nothing. A branch already deleted is just forgotten; a
+/// name that's no branch and that sheepdog keeps nothing for, a typo, is
+/// refused before anything is written (#506).
 pub fn forget(b: &str, remove: bool) {
-    if remove && git::branch_exists(b) {
+    let exists = git::branch_exists(b);
+    if !exists && !kept_for(b) {
+        die(format!("no such branch: {b}, and sheepdog keeps nothing for it"));
+    }
+    if remove && exists {
         let default = remove_gate(b);
         let (main, wt, tip) = (main_worktree("."), worktree_for(".", b), rev(".", &format!("refs/heads/{b}")));
         // The worktree we're in may be the one removed.

@@ -184,6 +184,20 @@ pub fn reset_record(time: &str, repo: &str, b: &str) -> String {
     format!("{{time:{time},repo:{},branch:{},reset:true}}", sup_string(repo), sup_string(b))
 }
 
+/// Whether usage.sup has a row for <repo>'s <b> since its last reset: spend
+/// sd act forget would start over (#506).
+pub fn owes_reset(repo: &str, b: &str) -> bool {
+    let Ok(t) = fs::read(file()) else { return false };
+    let mut owes = false;
+    for r in String::from_utf8_lossy(&t).lines().filter(|l| shaped(l)).filter_map(sup_record) {
+        let field = |k: &str| r.get(k).and_then(Value::as_str);
+        if field("repo") == Some(repo) && field("branch") == Some(b) {
+            owes = r.get("reset") != Some(&json!(true));
+        }
+    }
+    owes
+}
+
 /// spend_in over usage.sup; no file is no spend.
 pub fn spend(repo: &str, b: &str) -> Option<Spend> {
     match fs::read(file()) {
