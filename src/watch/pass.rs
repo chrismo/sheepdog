@@ -234,12 +234,60 @@ fn plan(s: &Value, enabled: bool, busy: bool, agents: bool, held: impl FnOnce() 
     }
 }
 
-/// What dispatch did: its pass line, if any, and whether the loop has the
-/// step (#302). After a launch that failed it doesn't.
+/// What dispatch did: its pass line, if any, whether the loop has the step
+/// (#302), after a launch that failed it doesn't, and the branch's place in
+/// the queue for a slot.
 #[derive(Default)]
 struct Dispatched {
     line: String,
     taken: bool,
+    slot: Slot,
+}
+
+/// A branch's place in the queue for an agent step's slot (#298), kept in
+/// its state file as queued: {step, since}.
+#[derive(Default, Debug, PartialEq)]
+enum Slot {
+    /// As the last pass left it: sd state unsure, or not the job's pass.
+    #[default]
+    Keep,
+    /// Out of the queue: no agent step to run.
+    Clear,
+    /// Wants a slot for <step>, from the pass's end.
+    Want(&'static str),
+}
+
+/// An agent step a pass would launch, held till the pass's end, when the
+/// queue goes oldest first (#298). fresh: it joined the queue this pass.
+struct Queued {
+    repo: String,
+    name: String,
+    b: String,
+    step: &'static str,
+    since: i64,
+    fresh: bool,
+}
+
+/// <prev>, the queued a branch's last state file holds, as <slot> leaves it:
+/// the step's clock runs on from <prev> while it wants the same step.
+fn queued(slot: &Slot, prev: &Value, now: i64) -> Value {
+    match slot {
+        Slot::Keep => prev.clone(),
+        Slot::Clear => Value::Null,
+        Slot::Want(step) => {
+            let since = at(prev, "since").as_i64().filter(|_| at(prev, "step") == *step).unwrap_or(now);
+            json!({"step": step, "since": since})
+        }
+    }
+}
+
+/// The suffix saying how long a queued step waited: none on joining.
+fn waited(q: &Queued, now: i64, how: &str) -> String {
+    if q.fresh {
+        String::new()
+    } else {
+        format!("{how}{}", dur(now - q.since))
+    }
 }
 
 fn reason(step: &Value) -> Value {
@@ -312,6 +360,24 @@ impl Class {
             m.insert("note".into(), n.into());
         }
         m
+    }
+}
+
+/// The stale clock: merged, closed or checked out nowhere, and since when,
+/// from <c> and the last state file <prev>. Unsure, it carries over.
+fn stale_clock(c: &Class, wt: &str, prev: &Value, now: i64) -> (String, Option<i64>) {
+    let prev_since = at(prev, "stale.since").as_f64().map(|f| f as i64);
+    let prev_reason = t(prev, "stale.reason");
+    let why = match c.glyph {
+        "🏁" => "merged",
+        "🚫" => "closed",
+        _ if wt.is_empty() => "checked out nowhere",
+        _ => "",
+    };
+    if c.carry || (!why.is_empty() && why == prev_reason && prev_since.is_some()) {
+        (prev_reason, prev_since)
+    } else {
+        (why.to_string(), (!why.is_empty()).then_some(now))
     }
 }
 
@@ -540,6 +606,8 @@ struct Watch {
     branches: usize,
     overrides: usize,
     launched: usize,
+    /// The agent steps this pass would launch, for its end (#298).
+    queue: Vec<Queued>,
 }
 
 impl Watch {
@@ -560,6 +628,7 @@ impl Watch {
             branches: 0,
             overrides: 0,
             launched: 0,
+            queue: vec![],
         }
     }
 
@@ -686,11 +755,6 @@ impl Watch {
         };
         let title = format!("{name} {b}");
         let ended = self.end_on_a_dead_pr(repo, name, b, &s);
-        // Dispatch before notify (#302): a step the loop has isn't notified.
-        let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
-        let d = self.dispatch(repo, name, b, &s, stop.is_none());
-        let c = classify(&s, d.taken);
-
         let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
         if let Some(d) = Path::new(&file).parent() {
             let _ = fs::create_dir_all(d);
@@ -698,29 +762,18 @@ impl Watch {
         // An unreadable previous state re-notifies rather than silently
         // dropping reasons.
         let prev_doc = read_json(&file).unwrap_or(Value::Null);
+        // Dispatch before notify (#302): a step the loop has isn't notified.
+        let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
+        let d = self.dispatch(repo, name, b, &s, stop.is_none());
+        let queued = self.queue_up(repo, name, b, &d, &prev_doc);
+        let c = classify(&s, d.taken);
+
         let prev = notified_of(&prev_doc);
         let prev_failed = list(&prev_doc, "failed");
         let (sent, failed) = self.notify_reasons(&title, &c.reasons, &prev, &prev_failed);
 
-        // The stale clock: merged, closed or checked out nowhere, since when.
-        let prev_since = at(&prev_doc, "stale.since").as_f64().map(|f| f as i64);
-        let prev_reason = t(&prev_doc, "stale.reason");
         let now = now();
-        let mut why = match c.glyph {
-            "🏁" => "merged",
-            "🚫" => "closed",
-            _ if wt.is_empty() => "checked out nowhere",
-            _ => "",
-        }
-        .to_string();
-        let since = if c.carry {
-            why = prev_reason;
-            prev_since
-        } else if !why.is_empty() && why == prev_reason && prev_since.is_some() {
-            prev_since
-        } else {
-            (!why.is_empty()).then_some(now)
-        };
+        let (why, since) = stale_clock(&c, wt, &prev_doc, now);
         let (mut stale, mut unenrolled) = (Value::Null, None);
         if let Some(since) = since {
             stale = json!({"reason": why, "since": since});
@@ -755,6 +808,9 @@ impl Watch {
         rec.insert("stale".into(), stale);
         rec.insert("failed".into(), failed.into());
         rec.insert("notified".into(), notified.into());
+        if !queued.is_null() {
+            rec.insert("queued".into(), queued);
+        }
         if !save(&file, &Value::Object(rec)) {
             log::say(&format!("sd watch: couldn't save {file}: its reasons will notify again"));
         }
@@ -833,14 +889,17 @@ impl Watch {
         let plan = plan(s, auto_run(repo, b), busy, self.agent_steps > 0, || self.held());
         let taken = plan.taken();
         if !launch || !self.dispatch {
-            return Dispatched { line: String::new(), taken };
+            return Dispatched { taken, ..Default::default() };
         }
         let verb = |step| act_args(step).join(" ");
+        let quiet = Dispatched { taken, slot: Slot::Clear, ..Default::default() };
         let (msg, taken) = match plan {
-            Plan::Leave | Plan::Wait => return Dispatched { line: String::new(), taken },
+            Plan::Leave | Plan::Wait => return quiet,
+            // An agent step waits for the pass's end, and a slot (#298).
+            Plan::Hold(step, _) => return Dispatched { slot: Slot::Want(step), ..quiet },
+            Plan::Launch(step) if AGENT_STEPS.contains(&step) => return Dispatched { slot: Slot::Want(step), ..quiet },
             Plan::Off(step) => (format!("not launching sd act {}: settings.agentSteps 0", verb(step)), false),
             Plan::Gate(step, why) => (format!("not launching sd act {}: {why}", verb(step)), false),
-            Plan::Hold(step, why) => (format!("not launching sd act {}: {why}", verb(step)), true),
             Plan::Launch(step) => match self.launch(repo, step, b) {
                 Ok(()) => {
                     self.launched += 1;
@@ -851,7 +910,57 @@ impl Watch {
         };
         let line = format!("{name}\t{b}\t-\t{msg}\n");
         log::say(&show(&line));
-        Dispatched { line, taken }
+        Dispatched { line, taken, slot: Slot::Clear }
+    }
+
+    /// Put <b> in the queue for a slot, or take it out, as <d> says: its
+    /// state file's queued. <prev> is the last state file's.
+    fn queue_up(&mut self, repo: &str, name: &str, b: &str, d: &Dispatched, prev: &Value) -> Value {
+        let q = queued(&d.slot, at(prev, "queued"), now());
+        if let Slot::Want(step) = d.slot {
+            let since = at(&q, "since").as_i64().unwrap_or_else(now);
+            let fresh = at(prev, "queued") != &q;
+            self.queue.push(Queued { repo: repo.into(), name: name.into(), b: b.into(), step, since, fresh });
+        }
+        q
+    }
+
+    /// The pass's end (#298): launch the queued agent steps, the one that
+    /// has waited longest first, while a slot is free; say how long the
+    /// rest have waited. Their pass lines.
+    fn launch_queued(&mut self) -> String {
+        let mut queue = std::mem::take(&mut self.queue);
+        queue.sort_by_key(|q| (q.since, q.fresh));
+        let now = now();
+        let mut out = String::new();
+        for q in queue {
+            let verb = act_args(q.step).join(" ");
+            let msg = match self.held() {
+                Some(why) => format!("not launching sd act {verb}: {why}{}", waited(&q, now, "; waiting ")),
+                None => match self.launch(&q.repo, q.step, &q.b) {
+                    Ok(()) => {
+                        self.launched += 1;
+                        self.unqueue(&q.repo, &q.b);
+                        format!("launched sd act {verb}{}", waited(&q, now, ", after waiting "))
+                    }
+                    Err(e) => format!("couldn't launch sd act {verb}: {e}"),
+                },
+            };
+            let line = format!("{}\t{}\t-\t{msg}\n", q.name, q.b);
+            log::say(&show(&line));
+            out.push_str(&line);
+        }
+        out
+    }
+
+    /// <b>, launched, out of the queue: its next wait starts a clock of its own.
+    fn unqueue(&self, repo: &str, b: &str) {
+        let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
+        let Some(mut doc) = read_json(&file) else { return };
+        if let Some(m) = doc.as_object_mut() {
+            m.remove("queued");
+        }
+        save(&file, &doc);
     }
 
     /// Why an agent step isn't launched now: settings.agentSteps of them
@@ -1102,6 +1211,7 @@ impl Watch {
                 }
             }
         }
+        lines.push_str(&self.launch_queued());
 
         // The branches not checked keep their glyphs, files and index rows both.
         let index = format!("{}/glyphs", self.state);
@@ -1469,6 +1579,16 @@ mod tests {
         nobody["viewer"] = Value::Null;
         assert_eq!(gate(&nobody, "push"), Err("sd state doesn't know who's viewing".into()), "gh failed: no PR may only mean unseen");
         assert_eq!(gate(&s(json!({"author": "alice"}), theirs), "fetch"), Ok(()), "fetch, whoever wrote it");
+    }
+
+    #[test]
+    fn queued_runs_a_steps_clock_on_while_it_waits_for_the_same_step_298() {
+        let prev = json!({"step": "review", "since": 100});
+        assert_eq!(queued(&Slot::Want("review"), &prev, 500), prev);
+        assert_eq!(queued(&Slot::Want("implement"), &prev, 500), json!({"step": "implement", "since": 500}), "another step");
+        assert_eq!(queued(&Slot::Want("review"), &Value::Null, 500), json!({"step": "review", "since": 500}));
+        assert_eq!(queued(&Slot::Keep, &prev, 500), prev, "sd state unsure, or a refresh");
+        assert_eq!(queued(&Slot::Clear, &prev, 500), Value::Null);
     }
 
     fn glyph(steps: &[Value]) -> &'static str {

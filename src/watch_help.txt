@@ -174,7 +174,13 @@ launched, and the pass line says why, while settings.agentSteps (default 2;
 or while a usage limit holds: an agent step that stops on its harness's
 limit, launched or run by hand, writes limit in SHEEPDOG_STATE_DIR, and no
 agent step starts before its reset (an hour, when the harness gave none).
-Mechanical steps run either way. A step launched or held isn't notified or
+Agent steps queue for a slot (#298): a pass launches them once it has
+checked every branch, the one that has waited longest first, so a slot that
+frees goes to it, not to whichever branch comes first in the pass. The
+branch's state file holds queued: {step, since} while it waits, and its pass
+line says for how long (not launching sd act review: 2 agent steps running,
+settings.agentSteps 2; waiting 12m; launched sd act review, after waiting
+12m). Mechanical steps run either way, and at once. A step launched or held isn't notified or
 ❌ (Notified, above).
 The other run steps (stale: the pass just fetched; merged, draft,
 ship-parent, open-pr) stay chrismo's.

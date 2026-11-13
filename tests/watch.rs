@@ -3817,6 +3817,67 @@ fn dispatch_an_agent_step_launched_earlier_in_the_pass_counts_toward_the_cap_269
     sd.settle(launched);
 }
 
+impl Sd {
+    /// An agent step running on the unenrolled branch busy, by hand-made
+    /// lease, holding a slot till slot_freed(<the pid returned>).
+    fn slot_taken(&self) -> u32 {
+        self.git(&["branch", "busy"]);
+        let held = orphan("sleep 30");
+        self.lease_for("busy", "implement", held, 600);
+        held
+    }
+
+    fn slot_freed(&self, held: u32) {
+        end_orphan(held);
+        assert!(ends(held));
+        let _ = fs::remove_file(self.marker("busy"));
+    }
+}
+
+// Soak 7 and 8 (#298): a slot that freed went to whichever branch the pass
+// reached first, in git config's order, so the branches late in it waited
+// 8-13 passes. The agent steps a pass would launch now queue till its end,
+// and the one that has waited longest goes first.
+#[test]
+fn dispatch_a_freed_slot_goes_to_the_branch_that_has_waited_longest_not_the_first_in_the_pass_298() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    let held = sd.slot_taken();
+    sd.quiet("feat");
+    sd.first_agent_step("other", "review");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tother\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1"]);
+    assert_lacks(&sd.last_pass(), "waiting");
+
+    sd.slot_freed(held);
+    fs::write(sd.ps("act-sleep"), "3\n").unwrap();
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    let pass = sd.last_pass();
+    assert_has(&pass, &["repo\tother\t-\tlaunched sd act review", "repo\tfeat\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1"]);
+    sd.settle("other");
+}
+
+#[test]
+fn dispatch_a_branch_waiting_for_a_slot_says_how_long_and_its_launch_starts_the_clock_over_298() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
+    let held = sd.slot_taken();
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    sd.jq_file(&sd.state_file("feat"), &[".queued.since -= 600"]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1; waiting 10m"]);
+
+    sd.slot_freed(held);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act review, after waiting 10m"]);
+    sd.settle("feat");
+    assert_eq!(jq(&[".queued"], &cat(&sd.state_file("feat"))), "null", "launched, it waits no more");
+}
+
 // ── the loop: a step the loop has isn't notified (#302) ─────────────────────
 
 // Soak 7 saw a conflict ❌ sent the second the pass launched restack
