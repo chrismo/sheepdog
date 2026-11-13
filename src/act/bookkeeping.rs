@@ -196,14 +196,18 @@ fn remove_gate(b: &str) -> String {
 /// Whether sheepdog keeps anything for <b>, a branch that's gone: config,
 /// pins, logs, branch files or spend since its last reset.
 fn kept_for(b: &str) -> bool {
-    let config = git_out(".", &["config", "--get-regexp", &format!("^branch\\.{}\\.", ere_escape(b))]);
     let pins = git_out(".", &["for-each-ref", &format!("refs/sheepdog/{b}/")]);
     let files = [crate::config::branch_config_file(".", b), crate::config::describe_file(".", b), running::outcome_file(".", b)];
-    config.is_some_and(|c| !c.is_empty())
+    has_config(b)
         || pins.is_some_and(|p| !p.is_empty())
         || crate::logs::kept(".", b)
         || files.into_iter().flatten().any(|f| Path::new(&f).exists())
         || usage::owes_reset(&main_worktree("."), b)
+}
+
+/// Whether git config has any branch.<b>.* key.
+fn has_config(b: &str) -> bool {
+    git_out(".", &["config", "--get-regexp", &format!("^branch\\.{}\\.", ere_escape(b))]).is_some_and(|c| !c.is_empty())
 }
 
 /// Unenroll <b> and drop what sheepdog stores for it; with --remove, first
@@ -237,6 +241,11 @@ pub fn forget(b: &str, remove: bool) {
         println!("deleted {b} (was {})", short(&tip));
     }
     unenroll(b);
+    // A gone branch's leftovers (sd-held, sd-pr: the ref went some way
+    // other than git branch -D) go too, or kept_for would keep it known.
+    if !git::branch_exists(b) && has_config(b) {
+        must(git(".", &["config", "--remove-section", &format!("branch.{b}")]));
+    }
     usage::append(&usage::reset_record(&time::now_utc().0, &main_worktree("."), b));
     must(pins::delete_all(".", b));
     crate::logs::forget(".", b);
