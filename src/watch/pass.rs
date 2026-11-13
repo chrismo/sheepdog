@@ -721,14 +721,7 @@ impl Watch {
     /// carries no reset time; GitHub's rate_limit endpoint, which costs
     /// nothing, has it.
     fn rate_stop(&self, s: &Value) -> Option<String> {
-        let left = t(s, "rate_limit.remaining");
-        let why = if on(s, "rate_limit.limited") {
-            "GitHub refused a call for the rate limit".to_string()
-        } else if !left.is_empty() && left.bytes().all(|c| c.is_ascii_digit()) && left.parse::<f64>().ok()? < self.rate_floor {
-            format!("GitHub rate limit: {left} points left, under settings.rateLimitFloor ({})", self.rate_floor)
-        } else {
-            return None;
-        };
+        let why = rate_limited(s, self.rate_floor)?;
         let mut reset = t(s, "rate_limit.reset_at");
         if reset.is_empty() {
             let o = gh::call(&["api", "rate_limit", "--jq", ".resources.graphql.reset | todate"], self.timeout);
@@ -1030,6 +1023,11 @@ impl Watch {
         // The lease before the outcome: a holder gone by the first read
         // wrote any outcome it was going to by the second.
         let lease = running::lease(repo, b);
+        // A live launched step's outcomes wait for its lease's end (#299):
+        // it may run a follow-up yet, and its crash check needs them.
+        if lease.as_ref().is_some_and(|l| l.live && l.deadline.is_some_and(|d| time::now_utc().1 <= d)) {
+            return String::new();
+        }
         let mut out = String::new();
         let mut last = String::new();
         if let Some(f) = running::outcome_file(repo, b) {
@@ -1290,6 +1288,19 @@ pub(crate) fn step_secs(repo: &str, step: &str, b: &str, secs: u64) -> u64 {
     }
 }
 
+/// Why sd state <s> says GitHub's GraphQL quota is spent: refused, or under
+/// <floor> points left.
+fn rate_limited(s: &Value, floor: f64) -> Option<String> {
+    let left = t(s, "rate_limit.remaining");
+    if on(s, "rate_limit.limited") {
+        Some("GitHub refused a call for the rate limit".to_string())
+    } else if !left.is_empty() && left.bytes().all(|c| c.is_ascii_digit()) && left.parse::<f64>().ok()? < floor {
+        Some(format!("GitHub rate limit: {left} points left, under settings.rateLimitFloor ({floor})"))
+    } else {
+        None
+    }
+}
+
 /// How many mechanical steps a launched step runs after itself (#299):
 /// enough for restack, retarget, push and trigger.
 const FOLLOW_UPS: usize = 4;
@@ -1375,7 +1386,8 @@ fn follow_up(b: &str, last: &str, secs: u64) -> Option<&'static str> {
     let o = proc::timeout(secs, c, false);
     let s = config::one_value(&o.stdout).filter(|_| o.ok)?;
     let errors = at(&s, "errors").as_array().is_some_and(|e| !e.is_empty());
-    if errors || carries(&s) {
+    // The pass would stop dispatching here, and so do follow-ups.
+    if errors || carries(&s) || rate_limited(&s, global_num("settings.rateLimitFloor")).is_some() {
         return None;
     }
     match plan(&s, auto_run(".", b), on(&s, "session.locked"), false, || None) {

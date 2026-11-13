@@ -196,11 +196,12 @@ ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
 <n>s, stopped on a usage limit (exit 75, not counted), or stopped by a
 signal. Follow-ups (#299): a launched step that ends ok asks sd state again,
 seeing past its own lease, and runs the branch's next step itself when the
-pass would launch it at once (a mechanical one, not the same step again),
-up to 4 in a row, each under SHEEPDOG_WATCH_TIMEOUT with the lease renewed
-for it; restack, retarget, push and trigger take one pass, not four. An
-agent step is left to the pass's queue. The next pass reports each: a ran
-sd act <verb> line per step. Each pass first reconciles every branch's
+pass would launch it at once (a mechanical one, not the same step again,
+nor while the rate limit would stop the pass), up to 4 in a row, each under
+SHEEPDOG_WATCH_TIMEOUT with the lease renewed for it; restack, retarget,
+push and trigger take one pass, not four. An agent step is left to the
+pass's queue. The first pass after the lease ends reports each: a ran sd
+act <verb> line per step. Each pass first reconciles every branch's
 lease: one past its deadline gets TERM to its process group, KILL 5s later
 if it's still there; one whose process is gone with no outcome crashed.
 Either counts in the failure record (refs/sheepdog/<b>/failed, harness sd),

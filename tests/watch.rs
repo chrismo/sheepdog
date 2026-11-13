@@ -3337,6 +3337,27 @@ fn reconcile_a_follow_up_whose_process_is_gone_crashed_though_an_earlier_step_wr
     assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"crashed""#]);
 }
 
+// A live lease's outcome waits for its end (#299): its holder may go on to a
+// follow-up, and a pass between them mustn't take the line that says the
+// step it names ended.
+#[test]
+fn reconcile_leaves_the_outcome_of_a_live_lease_till_it_ends_and_its_step_ended_so_didnt_crash_299() {
+    let sd = sd();
+    sd.quiet("feat");
+    let held = orphan("sleep 30");
+    sd.lease("feat", held, 60);
+    let outcome = sd.path("repo/.git/sheepdog/feat.outcome");
+    fs::write(&outcome, "ran sd act push: ok\n").unwrap();
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "ran sd act push");
+    assert!(Path::new(&outcome).exists());
+    end_orphan(held);
+    assert!(ends(held));
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: ok"]);
+    assert_lacks(&sd.last_pass(), "crashed");
+}
+
 /// <sh> in the background of a shell that's gone, so this test isn't its
 /// parent, as the pass isn't a launched step's. Its pid.
 fn orphan(sh: &str) -> u32 {
@@ -3925,6 +3946,20 @@ fn dispatch_a_launched_steps_mechanical_follow_ups_run_at_once_under_its_lease_2
     assert_has(&sd.steps_log(), &["sd act review", "did review", "ran sd act review: ok", "sd act trigger", "did trigger", "ran sd act trigger: ok", "sd act push"]);
     sd.pass();
     assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: ok\nrepo\tfeat\t-\tran sd act trigger: ok\nrepo\tfeat\t-\tran sd act push: ok\n"]);
+}
+
+#[test]
+fn dispatch_follow_ups_stop_where_the_rate_limit_would_stop_the_pass_299() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    sd.after("feat", "restack", || {
+        sd.first_step("feat", "push", &[r#".rate_limit = {cost: 2, remaining: 100, reset_at: "2026-10-16T13:00:00Z", limited: false}"#])
+    });
+    sd.first_step("feat", "behind", &[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} restack feat"));
 }
 
 #[test]
