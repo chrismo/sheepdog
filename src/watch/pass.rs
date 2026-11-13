@@ -136,25 +136,44 @@ pub(crate) fn sd_verb(verb: &'static str, seam: &str) -> (String, Vec<&'static s
 }
 
 /// The dispatch gate, the one place it's decided: a PR the viewer authored,
-/// with no one else's commits on the remote. A stand-in for #266's facts (the
-/// PR's author isn't the viewer; the remote has commits from someone else),
-/// which replace it; not keyed on sd-mode, which #266 deletes. fetch passes
-/// whoever wrote the PR: only a followed PR's NEXT has it, sd act fetch
-/// refuses any other branch, and it takes only the author's pushes, refusing
-/// when the branch has commits of its own (#250). The Flock's drill-in
-/// holds to it too (view/act.rs).
-pub(crate) fn may_dispatch(s: &Value, key: &str) -> bool {
+/// or no PR yet (#307), with no one else's commits on the remote; else why
+/// not, for the pass line. A stand-in for #266's facts (the PR's author isn't
+/// the viewer; the remote has commits from someone else), which replace it;
+/// not keyed on sd-mode, which #266 deletes. No PR counts only once sd state
+/// has seen GitHub, which a viewer shows: gh failing leaves no PR too. fetch
+/// passes whoever wrote the PR: only a followed PR's NEXT has it, sd act
+/// fetch refuses any other branch, and it takes only the author's pushes,
+/// refusing when the branch has commits of its own (#250). The Flock's
+/// drill-in holds to it too (view/act.rs).
+pub(crate) fn gate(s: &Value, key: &str) -> Result<(), String> {
     if key == "fetch" {
-        return true;
+        return Ok(());
     }
     let viewer = t(s, "viewer");
-    let mine = !viewer.is_empty() && t(s, "pr.author") == viewer;
+    if viewer.is_empty() {
+        return Err("sd state doesn't know who's viewing".into());
+    }
+    if !at(s, "pr").is_null() {
+        match t(s, "pr.author") {
+            a if a == viewer => {}
+            a if a.is_empty() => return Err("the PR's author is unknown".into()),
+            a => return Err(format!("the PR is {a}'s")),
+        }
+    }
     let no_one_elses = match at(s, "push.remote_ours") {
         Value::Bool(true) => at(s, "push.remote_made") != &Value::Bool(false),
         Value::Bool(false) => at(s, "push.theirs").as_f64() == Some(0.0),
         _ => at(s, "push.remote_sha").is_null(),
     };
-    mine && no_one_elses
+    if no_one_elses {
+        Ok(())
+    } else {
+        Err("the remote has commits from someone else".into())
+    }
+}
+
+pub(crate) fn may_dispatch(s: &Value, key: &str) -> bool {
+    gate(s, key).is_ok()
 }
 
 /// The branch's first NEXT step when it's one a pass runs, given as the
@@ -167,14 +186,16 @@ fn runnable(s: &Value) -> Option<(&str, &'static str)> {
 
 /// What a pass does about the branch's first NEXT step (#302). Launch,
 /// Wait and Hold are the loop's: it runs the step with nobody asked, so the
-/// pass neither notifies nor ❌s it. Leave and Off are the policy's: the
-/// step is chrismo's, or waits for them.
+/// pass neither notifies nor ❌s it. Leave, Off and Gate are the policy's:
+/// the step is chrismo's, or waits for them.
 #[derive(Debug, PartialEq)]
 enum Plan {
-    /// Nothing: no step a pass runs, autoRun off, or the gate refused.
+    /// Nothing: no step a pass runs, or autoRun off.
     Leave,
     /// Never agent step <step>: settings.agentSteps 0.
     Off(&'static str),
+    /// Not <step> on this branch, for <why>: the gate refused (#307).
+    Gate(&'static str, String),
     /// Launch sd act <step> now.
     Launch(&'static str),
     /// A step runs on the branch already, or its session is attached.
@@ -195,8 +216,11 @@ impl Plan {
 /// 0; <held>: why an agent step can't start now, if it can't.
 fn plan(s: &Value, enabled: bool, busy: bool, agents: bool, held: impl FnOnce() -> Option<String>) -> Plan {
     let Some((key, step)) = runnable(s) else { return Plan::Leave };
-    if !enabled || !may_dispatch(s, key) {
+    if !enabled {
         return Plan::Leave;
+    }
+    if let Err(why) = gate(s, key) {
+        return Plan::Gate(step, why);
     }
     if !agents && AGENT_STEPS.contains(&step) {
         return Plan::Off(step);
@@ -815,6 +839,7 @@ impl Watch {
         let (msg, taken) = match plan {
             Plan::Leave | Plan::Wait => return Dispatched { line: String::new(), taken },
             Plan::Off(step) => (format!("not launching sd act {}: settings.agentSteps 0", verb(step)), false),
+            Plan::Gate(step, why) => (format!("not launching sd act {}: {why}", verb(step)), false),
             Plan::Hold(step, why) => (format!("not launching sd act {}: {why}", verb(step)), true),
             Plan::Launch(step) => match self.launch(repo, step, b) {
                 Ok(()) => {
@@ -1409,14 +1434,41 @@ mod tests {
         assert_eq!(plan(&mine("push", "run"), true, false, false, free), Plan::Launch("push"), "settings.agentSteps 0 leaves mechanical steps");
         let mut theirs = mine("conflict", "agent");
         theirs["pr"]["author"] = json!("them");
-        assert_eq!(plan(&theirs, true, false, true, free), Plan::Leave, "the gate refused");
+        assert_eq!(plan(&theirs, true, false, true, free), Plan::Gate("resolve", "the PR is them's".into()), "the gate refused");
+        assert_eq!(plan(&theirs, false, false, true, free), Plan::Leave, "autoRun off asks no gate");
         assert_eq!(plan(&mine("conflict", "you"), true, false, true, free), Plan::Leave, "chrismo's");
         assert_eq!(plan(&mine("failed", "you"), true, false, true, free), Plan::Leave, "failed out");
         assert_eq!(plan(&mine("push", "agent"), true, false, true, free), Plan::Leave, "as the one it is");
         assert_eq!(plan(&mine("conflict", "agent"), false, false, true, free), Plan::Leave, "autoRun off");
         assert_eq!(plan(&json!({}), true, false, true, free), Plan::Leave);
-        let taken: Vec<bool> = [Plan::Leave, Plan::Off("ci-fix"), Plan::Launch("ci-fix"), Plan::Wait, Plan::Hold("ci-fix", String::new())].iter().map(Plan::taken).collect();
-        assert_eq!(taken, [false, false, true, true, true]);
+        let taken: Vec<bool> =
+            [Plan::Leave, Plan::Off("ci-fix"), Plan::Gate("ci-fix", String::new()), Plan::Launch("ci-fix"), Plan::Wait, Plan::Hold("ci-fix", String::new())]
+                .iter()
+                .map(Plan::taken)
+                .collect();
+        assert_eq!(taken, [false, false, false, true, true, true]);
+    }
+
+    /// The gate (#307): a branch with no PR yet is the viewer's to run while
+    /// no one else's commits are on the remote; a refusal says why.
+    #[test]
+    fn gate_lets_a_branch_with_no_pr_through_and_says_why_it_refuses_307() {
+        let s = |pr: Value, push: Value| json!({"viewer": "me", "pr": pr, "push": push});
+        let unpushed = json!({"remote_sha": null});
+        let theirs = json!({"remote_sha": "abc", "remote_ours": false, "theirs": 2});
+        assert_eq!(gate(&s(Value::Null, unpushed.clone()), "implement"), Ok(()), "no PR, not pushed");
+        assert_eq!(gate(&s(Value::Null, json!({"remote_sha": "abc", "remote_ours": true})), "push"), Ok(()), "no PR, pushed from here");
+        assert_eq!(gate(&s(json!({"author": "me"}), unpushed.clone()), "push"), Ok(()), "the viewer's PR");
+        let why = |pr: Value, push: Value| gate(&s(pr, push), "push").unwrap_err();
+        assert_eq!(why(Value::Null, theirs.clone()), "the remote has commits from someone else");
+        let reset_away = json!({"remote_sha": "abc", "remote_ours": true, "remote_made": false});
+        assert_eq!(why(json!({"author": "me"}), reset_away), "the remote has commits from someone else");
+        assert_eq!(why(json!({"author": "alice"}), unpushed.clone()), "the PR is alice's");
+        assert_eq!(why(json!({"author": null}), unpushed.clone()), "the PR's author is unknown");
+        let mut nobody = s(Value::Null, unpushed);
+        nobody["viewer"] = Value::Null;
+        assert_eq!(gate(&nobody, "push"), Err("sd state doesn't know who's viewing".into()), "gh failed: no PR may only mean unseen");
+        assert_eq!(gate(&s(json!({"author": "alice"}), theirs), "fetch"), Ok(()), "fetch, whoever wrote it");
     }
 
     fn glyph(steps: &[Value]) -> &'static str {
