@@ -4296,6 +4296,21 @@ fn flags_lines_changed_or_deleted_in_a_test_file_the_base_had_added_lines_arent(
     assert_eq!(r.field(r#".flags[] | select(.file == "gone.bats") | .commits | join(" ")"#), dropped);
 }
 
+// @test "flags: a test file's line made a block, as import \"testing\" an import block, isn't a test-edit; one commented out still is (#510)"
+#[test]
+fn flags_a_test_files_line_made_a_block_isnt_a_test_edit_one_commented_out_still_is_510() {
+    let sd = sd();
+    sd.commit("leap_test.go", "package leap\n\nimport \"testing\"\n\nfunc TestLeap(t *testing.T) {\n\tcheck(t)\n}");
+    sd.git(&["push", "-q", "origin", "main"]);
+    sd.git(&["switch", "-qc", "feat"]);
+    sd.commit(
+        "leap_test.go",
+        "package leap\n\nimport (\n\t\"fmt\"\n\t\"testing\"\n)\n\nfunc TestLeap(t *testing.T) {\n\t// check(t)\n\tfmt.Println()\n}",
+    );
+    let r = sd.state(&[]);
+    assert_eq!(r.field(r#"[.flags[] | "\(.kind) \(.file):\(.line) -\(.n) \(.text)"] | join(", ")"#), "test-edit leap_test.go:6 -1 check(t)");
+}
+
 // @test "flags: a line added and removed again on the branch isn't one"
 #[test]
 fn flags_a_line_added_and_removed_again_on_the_branch_isnt_one() {

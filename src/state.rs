@@ -428,6 +428,36 @@ fn shares_a_word(a: &str, b: &str) -> bool {
     words(b).iter().any(|w| wa.contains(w))
 }
 
+/// Whether a removed line is still among a hunk's added lines, reshaped: the
+/// same text as some of them, whole and in order, joined by a space, once
+/// each is trimmed of space and of the brackets, commas and semicolons at its
+/// ends. `import "testing"` made an import block is still there, whatever
+/// else the block imports (#510); a line commented out or changed isn't.
+fn reshaped(gone: &str, came: &[String]) -> bool {
+    // the rest of want from some added line on; failed tries remembered, so
+    // a hunk of many alike lines can't make it exponential
+    fn built(want: &str, came: &[String], from: usize, failed: &mut HashSet<(usize, usize)>) -> bool {
+        if want.is_empty() {
+            return true;
+        }
+        if failed.contains(&(want.len(), from)) {
+            return false;
+        }
+        for (i, c) in came.iter().enumerate().skip(from) {
+            let rest = want.strip_prefix(c.as_str()).and_then(|r| if r.is_empty() { Some(r) } else { r.strip_prefix(' ') });
+            if rest.is_some_and(|r| built(r, came, i + 1, failed)) {
+                return true;
+            }
+        }
+        failed.insert((want.len(), from));
+        false
+    }
+    let norm = |s: &str| s.trim_matches(|c: char| c.is_whitespace() || "()[]{},;".contains(c)).to_string();
+    let want = norm(gone);
+    let came: Vec<String> = came.iter().map(|c| norm(c)).filter(|c| !c.is_empty()).collect();
+    !want.is_empty() && built(&want, &came, 0, &mut HashSet::new())
+}
+
 /// The net diff's lines, tab-separated: +, line, 1, test (1|0), file, file,
 /// text: an added line; -, first line, lines removed, 1, old file, new file,
 /// first removed line: a hunk of a test file. -U0, so a hunk is only changed
@@ -443,6 +473,10 @@ fn git_diff_lines(dir: &str, base: &str, hd: &str, tests: &HashSet<String>) -> O
     let (mut old, mut new) = (String::new(), String::new());
     let (mut ol, mut nl, mut ro, mut rn, mut cnt, mut first) = (0i64, 0i64, 0i64, 0i64, 0i64, false);
     let mut out = Vec::new();
+    // A test file's hunk: its record and where it goes, its lines removed and
+    // added. The record waits for the hunk's end, to see the added lines.
+    let mut hunk: Option<(usize, String)> = None;
+    let (mut gone, mut came) = (Vec::new(), Vec::new());
     let num = |s: &str| -> i64 {
         let t: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
         t.parse().unwrap_or(0)
@@ -452,14 +486,29 @@ fn git_diff_lines(dir: &str, base: &str, hd: &str, tests: &HashSet<String>) -> O
             let rest = l.get(1..).unwrap_or("");
             if l.starts_with('-') && ro > 0 {
                 if first && tests.contains(&old) {
-                    out.push(format!("-\t{ol}\t{cnt}\t1\t{old}\t{new}\t{rest}"));
+                    hunk = Some((out.len(), format!("-\t{ol}\t{cnt}\t1\t{old}\t{new}\t{rest}")));
+                }
+                if hunk.is_some() {
+                    gone.push(rest.to_string());
                 }
                 first = false;
                 ro -= 1;
             } else if l.starts_with('+') && rn > 0 {
                 out.push(format!("+\t{nl}\t1\t{}\t{new}\t{new}\t{rest}", i32::from(tests.contains(&new))));
+                if hunk.is_some() {
+                    came.push(rest.to_string());
+                }
                 nl += 1;
                 rn -= 1;
+            }
+            if ro == 0 && rn == 0 {
+                if let Some((i, rec)) = hunk.take() {
+                    if !gone.iter().all(|g| reshaped(g, &came)) {
+                        out.insert(i, rec);
+                    }
+                }
+                gone.clear();
+                came.clear();
             }
             continue;
         }
@@ -2060,6 +2109,19 @@ pub fn run(argv: &[String]) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reshaped_finds_a_line_split_across_added_lines_but_not_one_commented_out_510() {
+        let v = |ls: &[&str]| ls.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert!(reshaped("import \"testing\"", &v(&["import (", "\t\"fmt\"", "\t\"testing\"", ")"])));
+        assert!(reshaped("import \"testing\"", &v(&["import (", "\t\"testing\"", "\t\"fmt\"", ")"])));
+        assert!(!reshaped("import \"testing\"", &v(&["\t\"testing\"", "import ("])), "out of order");
+        assert!(reshaped("from x import a", &v(&["from x import (", "    a,", "    b,", ")"])));
+        assert!(reshaped("  check(t)", &v(&["\tcheck(t)"])), "reindented");
+        assert!(!reshaped("\tcheck(t)", &v(&["\t// check(t)"])));
+        assert!(!reshaped("\tassert(1)", &v(&["\tassert(2)"])));
+        assert!(!reshaped("}", &v(&["}"])), "a line of only brackets says nothing");
+    }
 
     #[test]
     fn ci_item_puts_a_glyph_before_the_words_green_red_pending_and_none_for_the_rest_75() {
