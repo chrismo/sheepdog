@@ -1299,7 +1299,8 @@ fn no_pr_because_gh_failed_don_t_suggest_opening_one() {
 fn draft_ready_for_review_once_ci_is_green_and_the_review_covers_head_and_only_then() {
     assert_eq!(keys(&e![".pr.draft = true", r#".pr.merge_state = "DRAFT""#]), "draft");
     assert_eq!(step("draft", "who", &e![".pr.draft = true"]), "run");
-    assert_eq!(step("draft", "cmd", &e![".pr.draft = true"]), "gh pr ready");
+    // a verb, so the loop runs it (#500)
+    assert_eq!(step("draft", "cmd", &e![".pr.draft = true"]), "sd act mark-ready");
     assert_eq!(step("draft", "say", &e![".pr.draft = true"]), "CI green and reviewed: mark the PR ready for review");
     assert_eq!(keys(&e![".pr.draft = true", r#".ci.verdict = "none""#]), "draft");
     assert_eq!(keys(&e![".pr.draft = true", r#".ci.verdict = "none""#, ".ci.required = null"]), "");
