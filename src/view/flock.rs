@@ -134,8 +134,9 @@ pub fn stages(s: &Value) -> Vec<Value> {
 /// <card> while the step <run> ({step, since}, running::live) holds the
 /// branch's marker, as sd state shows it: the cache was written before the
 /// loop launched the step (#503). It leads as sd state's running step; the
-/// stage of the cached lead it ran says running; acting is the step, unless
-/// the page's own (view/act.rs) already names it. Null <run> changes nothing.
+/// stage of the cached lead it ran says running; acting is the step, and
+/// act's verb its sd act verb, unless the page's own (view/act.rs) already
+/// names it. Null <run> changes nothing.
 pub fn live(card: &mut Value, run: &Value) {
     let step = t(run, "step");
     if step.is_empty() {
@@ -151,6 +152,8 @@ pub fn live(card: &mut Value, run: &Value) {
     card["lead"] = json!({"key": "running", "who": "wait", "cmd": null,
                           "say": format!("{step} running since {}", t(run, "since"))});
     if card["acting"].is_null() {
+        // The drill-in names act's verb as the one running: the step's own.
+        card["act"] = json!({"key": lead["key"], "verb": crate::watch::act_args(&step).join(" ")});
         card["acting"] = json!(step);
     }
 }
@@ -387,6 +390,16 @@ mod tests {
         assert_eq!(t(&c, "lead.say"), "resolve running since 2026-11-13T01:41:00Z");
         assert_eq!(stage(&c, "review")["text"], "queued");
         assert_eq!(c["acting"], "review");
+    }
+
+    #[test]
+    fn a_hand_run_step_the_cache_didn_t_name_is_the_drill_in_s_running_verb_503() {
+        let mut c = reviewing();
+        c["acting"] = Value::Null;
+        c["act"] = json!({"key": "review", "verb": "review"});
+        live(&mut c, &json!({"step": "resolve", "since": "2026-11-13T01:41:00Z"}));
+        assert_eq!(c["acting"], "resolve");
+        assert_eq!(t(&c, "act.verb"), "restack --resolve");
     }
 
     #[test]
