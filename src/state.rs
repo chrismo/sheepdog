@@ -428,6 +428,64 @@ fn shares_a_word(a: &str, b: &str) -> bool {
     words(b).iter().any(|w| wa.contains(w))
 }
 
+/// A hunk's added lines as import blocks, blank lines dropped: a block's head
+/// (the text before the open bracket that ends its first line), its entries
+/// (trimmed, a trailing comma or semicolon dropped) and the line of only
+/// closing brackets that ends it. None when any added line is outside an
+/// import block.
+fn import_blocks(came: &[String]) -> Option<Vec<(String, Vec<String>)>> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut open = false;
+    for t in came.iter().map(|c| c.trim()).filter(|t| !t.is_empty()) {
+        if let Some(head) = t.strip_suffix(['(', '[', '{']) {
+            let head = head.trim_end();
+            if !imports(head) {
+                return None;
+            }
+            out.push((head.to_string(), Vec::new()));
+            open = true;
+        } else if open && t.chars().all(|c| ")]},;".contains(c)) {
+            open = false;
+        } else if let (true, Some((_, items))) = (open, out.last_mut()) {
+            items.push(t.strip_suffix([',', ';']).unwrap_or(t).trim_end().to_string());
+        } else {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// Whether a block's head opens an import list: `import (` or `from x
+/// import (`. Only there does a line made a block, beside other entries, keep
+/// its meaning; `expected = 1` made `expected = [1, 2]` changed the value.
+fn imports(head: &str) -> bool {
+    head == "import" || (head.starts_with("from ") && head.ends_with(" import"))
+}
+
+/// Whether a hunk only folded import lines into import blocks: its added
+/// lines are all import blocks, each removed line, in order, is a block's
+/// head and one of its entries joined by a space, and every block holds one.
+/// `import "testing"` made an import block is still there, whatever else the
+/// block imports (#510). Nothing else counts: a line commented out, changed,
+/// wrapped in a new block or beside an added one, and a line reindented too,
+/// since in Python that moves it in or out of a block. No entry stands for
+/// two removed lines.
+fn reshaped(gone: &[String], came: &[String]) -> bool {
+    let Some(blocks) = import_blocks(came) else { return false };
+    let mut used: Vec<Vec<bool>> = blocks.iter().map(|(_, items)| vec![false; items.len()]).collect();
+    let mut at = 0;
+    for g in gone.iter().map(|g| g.trim()) {
+        let hit = (at..blocks.len()).find_map(|b| {
+            let (head, items) = &blocks[b];
+            (0..items.len()).find(|&i| !used[b][i] && format!("{head} {}", items[i]) == g).map(|i| (b, i))
+        });
+        let Some((b, i)) = hit else { return false };
+        used[b][i] = true;
+        at = b;
+    }
+    used.iter().all(|u| u.iter().any(|&b| b))
+}
+
 /// The net diff's lines, tab-separated: +, line, 1, test (1|0), file, file,
 /// text: an added line; -, first line, lines removed, 1, old file, new file,
 /// first removed line: a hunk of a test file. -U0, so a hunk is only changed
@@ -443,6 +501,10 @@ fn git_diff_lines(dir: &str, base: &str, hd: &str, tests: &HashSet<String>) -> O
     let (mut old, mut new) = (String::new(), String::new());
     let (mut ol, mut nl, mut ro, mut rn, mut cnt, mut first) = (0i64, 0i64, 0i64, 0i64, 0i64, false);
     let mut out = Vec::new();
+    // A test file's hunk: its record and where it goes, its lines removed and
+    // added. The record waits for the hunk's end, to see the added lines.
+    let mut hunk: Option<(usize, String)> = None;
+    let (mut gone, mut came) = (Vec::new(), Vec::new());
     let num = |s: &str| -> i64 {
         let t: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
         t.parse().unwrap_or(0)
@@ -452,14 +514,29 @@ fn git_diff_lines(dir: &str, base: &str, hd: &str, tests: &HashSet<String>) -> O
             let rest = l.get(1..).unwrap_or("");
             if l.starts_with('-') && ro > 0 {
                 if first && tests.contains(&old) {
-                    out.push(format!("-\t{ol}\t{cnt}\t1\t{old}\t{new}\t{rest}"));
+                    hunk = Some((out.len(), format!("-\t{ol}\t{cnt}\t1\t{old}\t{new}\t{rest}")));
+                }
+                if hunk.is_some() {
+                    gone.push(rest.to_string());
                 }
                 first = false;
                 ro -= 1;
             } else if l.starts_with('+') && rn > 0 {
                 out.push(format!("+\t{nl}\t1\t{}\t{new}\t{new}\t{rest}", i32::from(tests.contains(&new))));
+                if hunk.is_some() {
+                    came.push(rest.to_string());
+                }
                 nl += 1;
                 rn -= 1;
+            }
+            if ro == 0 && rn == 0 {
+                if let Some((i, rec)) = hunk.take() {
+                    if !reshaped(&gone, &came) {
+                        out.insert(i, rec);
+                    }
+                }
+                gone.clear();
+                came.clear();
             }
             continue;
         }
@@ -2060,6 +2137,27 @@ pub fn run(argv: &[String]) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reshaped_finds_a_line_split_across_added_lines_but_not_one_commented_out_510() {
+        let v = |ls: &[&str]| ls.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let one = |g: &str, c: &[&str]| reshaped(&v(&[g]), &v(c));
+        assert!(one("import \"testing\"", &["import (", "\t\"fmt\"", "\t\"testing\"", ")"]));
+        assert!(one("import \"testing\"", &["import (", "\t\"testing\"", "\t\"fmt\"", ")"]));
+        assert!(!one("import \"testing\"", &["\t\"testing\"", "import ("]), "out of order");
+        assert!(one("from x import a", &["from x import (", "    a,", "    b,", ")"]));
+        assert!(!one("    assert x", &["assert x"]), "reindented: in Python, out of its block");
+        assert!(!one("\tcheck(t)", &["\t// check(t)"]));
+        assert!(!one("\tassert(1)", &["\tassert(2)"]));
+        assert!(!one("}", &["}"]), "a line of only brackets says nothing");
+        assert!(!reshaped(&v(&["import \"a\"", "import \"a\""]), &v(&["import (", "\t\"a\"", ")"])), "one added line can't stand for two removed");
+        assert!(!one("\tcheck(t)", &["\tif false {", "\t\tcheck(t)", "\t}"]), "wrapped in a new block");
+        assert!(!one("\tcheck(t)", &["\treturn", "\tcheck(t)"]), "an added line beside it");
+        assert!(!one("\tcheck(t)", &["\tcheck(t,", "\t\tskipSlow)"]), "a call that gained an argument");
+        assert!(reshaped(&v(&["import \"a\"", "import \"b\""]), &v(&["import (", "\t\"a\"", "\t\"b\"", ")"])), "two imports, one block");
+        assert!(!one("\texpected = 1", &["\texpected = [", "\t\t1,", "\t\t2,", "\t]"]), "a value made a list");
+        assert!(!one("\texpected = 1", &["\texpected = [", "\t\t1,", "\t]"]), "a value made a list of itself");
+    }
 
     #[test]
     fn ci_item_puts_a_glyph_before_the_words_green_red_pending_and_none_for_the_rest_75() {
