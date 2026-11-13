@@ -100,6 +100,23 @@ fn finding_declines_that_finding_with_the_text_as_why_462() {
     );
 }
 
+// #501: the decline also settles the finding on the findings record, which
+// NEXT reads, as a review-fix round's decline does: declined, chrismo's text
+// its reply, by chrismo. The other findings, and the record's head and
+// round, stay as they were.
+#[test]
+fn finding_settles_that_finding_on_the_findings_record_501() {
+    let sd = sd();
+    sd.write_findings_ref(FINDINGS);
+    sd.ok(&["decision", "--finding", "2", "a is lowercase on purpose"]);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/findings"]);
+    assert_eq!(jq(&["-c", "[.head, .round]"], &rec), "[\"h0\",1]");
+    assert_eq!(
+        jq(&["-c", ".findings[] | [.body, .action, .reply, .by]"], &rec),
+        "[\"c?\",null,null,null]\n[\"a should be A\",\"declined\",\"a is lowercase on purpose\",\"chrismo\"]"
+    );
+}
+
 #[test]
 fn an_unknown_finding_is_refused_and_nothing_recorded_462() {
     let sd = sd();
@@ -152,4 +169,21 @@ fn no_text_is_refused_with_the_usage_454() {
     }
     let r = sd.run(&["push", "--finding", "1"]);
     assert_has(&r.output, &["--finding is for sd act decision only"]);
+}
+
+// #501's acceptance: with chrismo's decline of the only finding at HEAD,
+// NEXT hands it to no review-fix round: it's chrismo's to accept.
+#[test]
+fn next_offers_no_review_fix_for_a_finding_chrismo_declined_501() {
+    let sd = sd();
+    let (head, base) = (sd.git(&["rev-parse", "HEAD"]), sd.git(&["rev-parse", "main"]));
+    sd.write_findings_ref(&format!(
+        r#"{{"head": "{head}", "base": "{base}", "round": 1, "findings": [{{"file": "file.txt", "line": 3, "severity": "error", "body": "c?"}}]}}"#
+    ));
+    let next = || jq(&["-r", r#".next[] | "\(.key): \(.say)""#], &sd.verb_ok("state", &["--json"]));
+    assert_has(&next(), &["review-fix: fix 1 review finding (round 1/3)"]);
+    sd.ok(&["decision", "--finding", "1", "c stays"]);
+    let after = next();
+    assert_has(&after, &["review-decide: you declined 1 review finding: accept HEAD as reviewed"]);
+    assert!(!after.contains("review-fix"), "{after}");
 }
