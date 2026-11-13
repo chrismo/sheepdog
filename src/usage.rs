@@ -246,7 +246,8 @@ pub struct Step<'a> {
 /// transcript's last cost-state says (#276): that running total, less the
 /// parent's (session_total, else the parent transcript's own last
 /// cost-state), as a result's total_cost_usd would be, and not estimated.
-/// With no cost-state line (the transcript isn't a supported API: checked on
+/// One that hasn't moved past the parent's total is from before the step,
+/// so it counts as none. With no cost-state line (the transcript isn't a supported API: checked on
 /// Claude Code 2.1.309 and 2.1.323), the old rules: one that still ran
 /// turns is charged its cap, the most it could spend, and marked estimated;
 /// with no cap its cost is unknown (null), and still marked. Its session
@@ -258,7 +259,10 @@ pub struct Step<'a> {
 pub fn record(s: &Step) -> String {
     let claude = s.harness == "claude";
     let (o, a, b) = (s.o, s.a, s.b);
-    let cost_state = if claude && o.is_null() { at(a, "cost_state").as_f64() } else { None };
+    // One that hasn't moved past the parent's total is stale, from before
+    // the step, and would hide what it spent.
+    let parent = n(b, "cost_state").max(s.prev);
+    let cost_state = if claude && o.is_null() { at(a, "cost_state").as_f64().filter(|&x| x > parent) } else { None };
     let unseen = cost_state.is_none() && claude && o.is_null() && !s.stopped && n(a, "entries") > n(b, "entries");
     let gained = |k: &str| at(a, k).as_f64().map(|x| x - n(b, k));
     let u = if claude && !o.is_null() {
@@ -382,6 +386,13 @@ mod tests {
         // no cost-state: the cap for a timeout, unknown for a signal stop, as before
         let a = json!({"entries": 3, "context": 900, "cost_state": null});
         assert!(step(124, false, 0.0, &a, &b).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(143, true, 0.0, &a, &b).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
+        // a cost-state that hasn't moved past the parent's is stale, from before the step: the old rules
+        let a = json!({"entries": 3, "context": 900, "cost_state": 0.05});
+        assert!(step(124, false, 0.0, &a, &b).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(124, false, 0.05, &a, &b).contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
+        assert!(step(124, false, 0.3, &json!({"entries": 3, "context": 900, "cost_state": 0.2219}), &b)
+            .contains("status:124,cost_usd:5.,total_cost_usd:null,estimated:true,"));
         assert!(step(143, true, 0.0, &a, &b).contains("status:143,cost_usd:null,total_cost_usd:null,estimated:false,"));
     }
 
