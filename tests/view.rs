@@ -768,6 +768,41 @@ fn the_drill_in_runs_next_s_step_as_the_watcher_would() {
     assert_eq!(watch_log(&sd), [format!("start {repo} refresh feat"), "end feat".into()]);
 }
 
+// A step the loop launched (#503): the pass wrote the cache before it
+// launched the step, so the card reads the branch's running marker, as sd
+// state does, and goes back to the cache once the step's process is gone.
+#[test]
+fn a_step_the_loop_launched_shows_as_running_from_the_branch_s_marker_503() {
+    let mut sd = sd();
+    watched(&mut sd, "repos/r", "feat", 5);
+    sd.git(&["init", "-q", &sd.path("repos/r")]);
+    let id = with_next(&sd, "feat", json!([
+        { "key": "review", "who": "agent", "say": "review it", "cmd": "sd act review" },
+        { "key": "ci-wait", "who": "wait", "say": "CI running", "cmd": null },
+    ]));
+    let mut step = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+    let pid = step.id().to_string();
+    fs::create_dir_all(sd.path("repos/r/.git/sheepdog")).unwrap();
+    fs::write(sd.path("repos/r/.git/sheepdog/feat.running"),
+              format!("{pid} review 2026-11-13T01:41:00Z {}\n", sheepdog::running::proc_start(&pid))).unwrap();
+    let s = serve(&sd);
+    for b in [s.flock()["branches"][0].clone(), branch(&s, &id).1] {
+        assert_eq!(b["lead"]["say"], "review running since 2026-11-13T01:41:00Z", "{b}");
+        assert_eq!(b["acting"], "review", "{b}");
+        let review = b["stages"].as_array().unwrap().iter().find(|x| x["stage"] == "review").unwrap().clone();
+        assert_eq!((review["status"].clone(), review["text"].clone()), (json!("cur"), json!("running")));
+    }
+    assert!(watch_log(&sd).is_empty(), "a fresh branch isn't refreshed while its step runs");
+    step.kill().unwrap();
+    step.wait().unwrap();
+    // The cache is from before the step: the branch is checked again at once.
+    let b = s.flock()["branches"][0].clone();
+    assert_eq!((b["lead"]["key"].clone(), b["acting"].clone()), (json!("review"), Value::Null));
+    flock_settled(&s);
+    let repo = fs::canonicalize(sd.path("repos/r")).unwrap().display().to_string();
+    assert_eq!(watch_log(&sd), [format!("start {repo} refresh feat"), "end feat".into()]);
+}
+
 #[test]
 fn a_conflict_s_step_runs_as_restack_resolve() {
     let mut sd = sd();
