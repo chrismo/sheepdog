@@ -174,8 +174,14 @@ launched, and the pass line says why, while settings.agentSteps (default 2;
 or while a usage limit holds: an agent step that stops on its harness's
 limit, launched or run by hand, writes limit in SHEEPDOG_STATE_DIR, and no
 agent step starts before its reset (an hour, when the harness gave none).
-Mechanical steps run either way. A step launched or held isn't notified or
-❌ (Notified, above).
+Agent steps queue for a slot (#298): a pass launches them once it has
+checked every branch, the one that has waited longest first, so a slot that
+frees goes to it, not to whichever branch comes first in the pass. The
+branch's state file holds queued: {step, since} while it waits, and its pass
+line says for how long (not launching sd act review: 2 agent steps running,
+settings.agentSteps 2; waiting 12m; launched sd act review, after waiting
+12m). Mechanical steps run either way, and at once. A step launched or held
+isn't notified or ❌ (Notified, above).
 The other run steps (stale: the pass just fetched; merged, draft,
 ship-parent, open-pr) stay chrismo's.
 
@@ -188,7 +194,14 @@ Its output goes to the steps.log stream, between a header and an end line
 the next pass reports how it ended:
 ran sd act <verb>: ok, failed (exit <n>): <its last line>, timed out after
 <n>s, stopped on a usage limit (exit 75, not counted), or stopped by a
-signal. Each pass first reconciles every branch's
+signal. Follow-ups (#299): a launched step that ends ok asks sd state again,
+seeing past its own lease, and runs the branch's next step itself when the
+pass would launch it at once (a mechanical one, not the same step again,
+nor while the rate limit would stop the pass), up to 4 in a row, each under
+SHEEPDOG_WATCH_TIMEOUT with the lease renewed for it; restack, retarget,
+push and trigger take one pass, not four. An agent step is left to the
+pass's queue. The first pass after the lease ends reports each: a ran sd
+act <verb> line per step. Each pass first reconciles every branch's
 lease: one past its deadline gets TERM to its process group, KILL 5s later
 if it's still there; one whose process is gone with no outcome crashed.
 Either counts in the failure record (refs/sheepdog/<b>/failed, harness sd),

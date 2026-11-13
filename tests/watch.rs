@@ -33,10 +33,14 @@ cat "$f"
 "#;
 
 /// $PS_FIXTURES/act-sleep: seconds to take; act-status: the status to exit
-/// with; act-fails: the refusal to fail with.
+/// with; act-fails: the refusal to fail with; <branch>.after-<verb>.json:
+/// sd state's fixture once <verb> has run (Sd::after).
 const SD_ACT: &str = r#"#!/usr/bin/env bash
 echo "$PWD $*" >> "$PS_FIXTURES/acts"
 [[ -f $PS_FIXTURES/act-sleep ]] && sleep "$(cat "$PS_FIXTURES/act-sleep")"
+b=${@: -1}
+after="$PS_FIXTURES/${b//\//__}.after-$1.json"
+[[ -f $after ]] && mv "$after" "$PS_FIXTURES/${b//\//__}.json"
 echo "did $1"
 [[ -f $PS_FIXTURES/act-status ]] && exit "$(cat "$PS_FIXTURES/act-status")"
 [[ -f $PS_FIXTURES/act-fails ]] || exit 0
@@ -3318,6 +3322,42 @@ fn reconcile_a_launched_step_whose_process_is_gone_with_no_outcome_crashed_268()
     assert_lacks(&sd.last_pass(), "crashed");
 }
 
+// A follow-up (#299) that dies after the step before it, under the same
+// lease, wrote its outcome: that earlier line isn't the follow-up's.
+#[test]
+fn reconcile_a_follow_up_whose_process_is_gone_crashed_though_an_earlier_step_wrote_its_outcome_299() {
+    let sd = sd();
+    sd.quiet("feat");
+    let mut dead = Command::new("sh").args(["-c", "exit 0"]).spawn().unwrap();
+    dead.wait().unwrap();
+    sd.lease("feat", dead.id(), 60);
+    fs::write(sd.path("repo/.git/sheepdog/feat.outcome"), "ran sd act review: ok\n").unwrap();
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: ok", "repo\tfeat\t-\tsd act push crashed: its process is gone"]);
+    assert_has(&sd.failure("feat"), &[r#""step":"push","harness":"sd","count":1"#, r#""error":"crashed""#]);
+}
+
+// A live lease's outcome waits for its end (#299): its holder may go on to a
+// follow-up, and a pass between them mustn't take the line that says the
+// step it names ended.
+#[test]
+fn reconcile_leaves_the_outcome_of_a_live_lease_till_it_ends_and_its_step_ended_so_didnt_crash_299() {
+    let sd = sd();
+    sd.quiet("feat");
+    let held = orphan("sleep 30");
+    sd.lease("feat", held, 60);
+    let outcome = sd.path("repo/.git/sheepdog/feat.outcome");
+    fs::write(&outcome, "ran sd act push: ok\n").unwrap();
+    sd.pass();
+    assert_lacks(&sd.last_pass(), "ran sd act push");
+    assert!(Path::new(&outcome).exists());
+    end_orphan(held);
+    assert!(ends(held));
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act push: ok"]);
+    assert_lacks(&sd.last_pass(), "crashed");
+}
+
 /// <sh> in the background of a shell that's gone, so this test isn't its
 /// parent, as the pass isn't a launched step's. Its pid.
 fn orphan(sh: &str) -> u32 {
@@ -3815,6 +3855,152 @@ fn dispatch_an_agent_step_launched_earlier_in_the_pass_counts_toward_the_cap_269
     assert_eq!(pass.matches("\tnot launching sd act review: 1 agent step running, settings.agentSteps 1").count(), 1, "{pass}");
     let launched = if pass.contains("feat\t-\tlaunched") { "feat" } else { "other" };
     sd.settle(launched);
+}
+
+impl Sd {
+    /// An agent step running on the unenrolled branch busy, by hand-made
+    /// lease, holding a slot till slot_freed(<the pid returned>).
+    fn slot_taken(&self) -> u32 {
+        self.git(&["branch", "busy"]);
+        let held = orphan("sleep 30");
+        self.lease_for("busy", "implement", held, 600);
+        held
+    }
+
+    fn slot_freed(&self, held: u32) {
+        end_orphan(held);
+        assert!(ends(held));
+        let _ = fs::remove_file(self.marker("busy"));
+    }
+}
+
+// Soak 7 and 8 (#298): a slot that freed went to whichever branch the pass
+// reached first, in git config's order, so the branches late in it waited
+// 8-13 passes. The agent steps a pass would launch now queue till its end,
+// and the one that has waited longest goes first.
+#[test]
+fn dispatch_a_freed_slot_goes_to_the_branch_that_has_waited_longest_not_the_first_in_the_pass_298() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    let held = sd.slot_taken();
+    sd.quiet("feat");
+    sd.first_agent_step("other", "review");
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tother\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1"]);
+    assert_lacks(&sd.last_pass(), "waiting");
+
+    sd.slot_freed(held);
+    fs::write(sd.ps("act-sleep"), "3\n").unwrap();
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    let pass = sd.last_pass();
+    assert_has(&pass, &["repo\tother\t-\tlaunched sd act review", "repo\tfeat\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1"]);
+    sd.settle("other");
+}
+
+#[test]
+fn dispatch_a_branch_waiting_for_a_slot_says_how_long_and_its_launch_starts_the_clock_over_298() {
+    let sd = sd();
+    sd.write_cfg(r#"{"settings":{"autoRun":true,"agentSteps":1}}"#);
+    let held = sd.slot_taken();
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    sd.jq_file(&sd.state_file("feat"), &[".queued.since -= 600"]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: 1 agent step running, settings.agentSteps 1; waiting 10m"]);
+
+    sd.slot_freed(held);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tlaunched sd act review, after waiting 10m"]);
+    sd.settle("feat");
+    assert_eq!(jq(&[".queued"], &cat(&sd.state_file("feat"))), "null", "launched, it waits no more");
+}
+
+// A branch later in the pass that finds the quota spent stops the queue's
+// launches too: they'd call GitHub. The queued wait on, clocks running.
+#[test]
+fn dispatch_a_pass_the_rate_limit_stopped_launches_no_queued_agent_step_and_its_clock_runs_on_298() {
+    let sd = sd();
+    sd.dispatching();
+    sd.git(&["branch", "other"]);
+    sd.enroll("other");
+    sd.first_agent_step("feat", "review");
+    sd.low("other", 100);
+    sd.pass();
+    assert_eq!(sd.acts(), "", "the quota is spent");
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tnot launching sd act review: GitHub rate limit"]);
+    assert_eq!(jq(&[".queued.step"], &cat(&sd.state_file("feat"))), r#""review""#);
+}
+
+impl Sd {
+    /// sd state's fixture for <b> once sd act <verb> has run: the one
+    /// <write> makes, set aside till then.
+    fn after(&self, b: &str, verb: &str, write: impl FnOnce()) {
+        write();
+        fs::rename(self.fixture(b), self.ps(&format!("{b}.after-{verb}.json"))).unwrap();
+    }
+}
+
+// Soak 7 and 8 (#299): a pass ran one step per branch, so a 2-second
+// trigger after a review, or restack, retarget and push in a row, each
+// waited a whole pass. A launched step that ends ok now runs the branch's
+// next mechanical step itself, under its lease, sd state between them.
+#[test]
+fn dispatch_a_launched_steps_mechanical_follow_ups_run_at_once_under_its_lease_299() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    sd.after("feat", "push", || sd.quiet("feat"));
+    sd.after("feat", "trigger", || sd.first_step("feat", "push", &[]));
+    sd.after("feat", "review", || sd.first_step("feat", "bot-trigger", &[]));
+    sd.first_agent_step("feat", "review");
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} review feat\n{repo} trigger feat\n{repo} push feat"));
+    assert_has(&sd.steps_log(), &["sd act review", "did review", "ran sd act review: ok", "sd act trigger", "did trigger", "ran sd act trigger: ok", "sd act push"]);
+    sd.pass();
+    assert_has(&sd.last_pass(), &["repo\tfeat\t-\tran sd act review: ok\nrepo\tfeat\t-\tran sd act trigger: ok\nrepo\tfeat\t-\tran sd act push: ok\n"]);
+}
+
+#[test]
+fn dispatch_follow_ups_stop_where_the_rate_limit_would_stop_the_pass_299() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    sd.after("feat", "restack", || {
+        sd.first_step("feat", "push", &[r#".rate_limit = {cost: 2, remaining: 100, reset_at: "2026-10-16T13:00:00Z", limited: false}"#])
+    });
+    sd.first_step("feat", "behind", &[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} restack feat"));
+}
+
+#[test]
+fn dispatch_follow_ups_stop_at_an_agent_step_a_failure_or_the_same_step_again_299() {
+    let sd = sd();
+    sd.dispatching();
+    let repo = sd.path("repo");
+    sd.after("feat", "push", || sd.first_agent_step("feat", "review"));
+    sd.after("feat", "restack", || sd.first_step("feat", "push", &[]));
+    sd.first_step("feat", "behind", &[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} restack feat\n{repo} push feat"), "the review is the pass's, for a slot");
+
+    sd.first_step("feat", "push", &[]);
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} push feat"), "push again: it didn't take");
+
+    sd.after("feat", "push", || sd.first_step("feat", "bot-trigger", &[]));
+    sd.first_step("feat", "push", &[]);
+    fs::write(sd.ps("act-status"), "1\n").unwrap();
+    sd.pass();
+    sd.settle("feat");
+    assert_eq!(sd.acts(), format!("{repo} push feat"), "push failed");
 }
 
 // ── the loop: a step the loop has isn't notified (#302) ─────────────────────

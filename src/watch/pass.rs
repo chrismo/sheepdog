@@ -20,6 +20,7 @@ use regex::Regex;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -234,12 +235,60 @@ fn plan(s: &Value, enabled: bool, busy: bool, agents: bool, held: impl FnOnce() 
     }
 }
 
-/// What dispatch did: its pass line, if any, and whether the loop has the
-/// step (#302). After a launch that failed it doesn't.
+/// What dispatch did: its pass line, if any, whether the loop has the step
+/// (#302), after a launch that failed it doesn't, and the branch's place in
+/// the queue for a slot.
 #[derive(Default)]
 struct Dispatched {
     line: String,
     taken: bool,
+    slot: Slot,
+}
+
+/// A branch's place in the queue for an agent step's slot (#298), kept in
+/// its state file as queued: {step, since}.
+#[derive(Default, Debug, PartialEq)]
+enum Slot {
+    /// As the last pass left it: sd state unsure, or not the job's pass.
+    #[default]
+    Keep,
+    /// Out of the queue: no agent step to run.
+    Clear,
+    /// Wants a slot for <step>, from the pass's end.
+    Want(&'static str),
+}
+
+/// An agent step a pass would launch, held till the pass's end, when the
+/// queue goes oldest first (#298). fresh: it joined the queue this pass.
+struct Queued {
+    repo: String,
+    name: String,
+    b: String,
+    step: &'static str,
+    since: i64,
+    fresh: bool,
+}
+
+/// <prev>, the queued a branch's last state file holds, as <slot> leaves it:
+/// the step's clock runs on from <prev> while it wants the same step.
+fn queued(slot: &Slot, prev: &Value, now: i64) -> Value {
+    match slot {
+        Slot::Keep => prev.clone(),
+        Slot::Clear => Value::Null,
+        Slot::Want(step) => {
+            let since = at(prev, "since").as_i64().filter(|_| at(prev, "step") == *step).unwrap_or(now);
+            json!({"step": step, "since": since})
+        }
+    }
+}
+
+/// The suffix saying how long a queued step waited: none on joining.
+fn waited(q: &Queued, now: i64, how: &str) -> String {
+    if q.fresh {
+        String::new()
+    } else {
+        format!("{how}{}", dur(now - q.since))
+    }
 }
 
 fn reason(step: &Value) -> Value {
@@ -312,6 +361,24 @@ impl Class {
             m.insert("note".into(), n.into());
         }
         m
+    }
+}
+
+/// The stale clock: merged, closed or checked out nowhere, and since when,
+/// from <c> and the last state file <prev>. Unsure, it carries over.
+fn stale_clock(c: &Class, wt: &str, prev: &Value, now: i64) -> (String, Option<i64>) {
+    let prev_since = at(prev, "stale.since").as_f64().map(|f| f as i64);
+    let prev_reason = t(prev, "stale.reason");
+    let why = match c.glyph {
+        "🏁" => "merged",
+        "🚫" => "closed",
+        _ if wt.is_empty() => "checked out nowhere",
+        _ => "",
+    };
+    if c.carry || (!why.is_empty() && why == prev_reason && prev_since.is_some()) {
+        (prev_reason, prev_since)
+    } else {
+        (why.to_string(), (!why.is_empty()).then_some(now))
     }
 }
 
@@ -540,6 +607,8 @@ struct Watch {
     branches: usize,
     overrides: usize,
     launched: usize,
+    /// The agent steps this pass would launch, for its end (#298).
+    queue: Vec<Queued>,
 }
 
 impl Watch {
@@ -560,6 +629,7 @@ impl Watch {
             branches: 0,
             overrides: 0,
             launched: 0,
+            queue: vec![],
         }
     }
 
@@ -651,14 +721,7 @@ impl Watch {
     /// carries no reset time; GitHub's rate_limit endpoint, which costs
     /// nothing, has it.
     fn rate_stop(&self, s: &Value) -> Option<String> {
-        let left = t(s, "rate_limit.remaining");
-        let why = if on(s, "rate_limit.limited") {
-            "GitHub refused a call for the rate limit".to_string()
-        } else if !left.is_empty() && left.bytes().all(|c| c.is_ascii_digit()) && left.parse::<f64>().ok()? < self.rate_floor {
-            format!("GitHub rate limit: {left} points left, under settings.rateLimitFloor ({})", self.rate_floor)
-        } else {
-            return None;
-        };
+        let why = rate_limited(s, self.rate_floor)?;
         let mut reset = t(s, "rate_limit.reset_at");
         if reset.is_empty() {
             let o = gh::call(&["api", "rate_limit", "--jq", ".resources.graphql.reset | todate"], self.timeout);
@@ -686,11 +749,6 @@ impl Watch {
         };
         let title = format!("{name} {b}");
         let ended = self.end_on_a_dead_pr(repo, name, b, &s);
-        // Dispatch before notify (#302): a step the loop has isn't notified.
-        let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
-        let d = self.dispatch(repo, name, b, &s, stop.is_none());
-        let c = classify(&s, d.taken);
-
         let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
         if let Some(d) = Path::new(&file).parent() {
             let _ = fs::create_dir_all(d);
@@ -698,29 +756,18 @@ impl Watch {
         // An unreadable previous state re-notifies rather than silently
         // dropping reasons.
         let prev_doc = read_json(&file).unwrap_or(Value::Null);
+        // Dispatch before notify (#302): a step the loop has isn't notified.
+        let stop = if self.rate_stop { self.rate_stop(&s) } else { None };
+        let d = self.dispatch(repo, name, b, &s, stop.is_none());
+        let queued = self.queue_up(repo, name, b, &d, &prev_doc);
+        let c = classify(&s, d.taken);
+
         let prev = notified_of(&prev_doc);
         let prev_failed = list(&prev_doc, "failed");
         let (sent, failed) = self.notify_reasons(&title, &c.reasons, &prev, &prev_failed);
 
-        // The stale clock: merged, closed or checked out nowhere, since when.
-        let prev_since = at(&prev_doc, "stale.since").as_f64().map(|f| f as i64);
-        let prev_reason = t(&prev_doc, "stale.reason");
         let now = now();
-        let mut why = match c.glyph {
-            "🏁" => "merged",
-            "🚫" => "closed",
-            _ if wt.is_empty() => "checked out nowhere",
-            _ => "",
-        }
-        .to_string();
-        let since = if c.carry {
-            why = prev_reason;
-            prev_since
-        } else if !why.is_empty() && why == prev_reason && prev_since.is_some() {
-            prev_since
-        } else {
-            (!why.is_empty()).then_some(now)
-        };
+        let (why, since) = stale_clock(&c, wt, &prev_doc, now);
         let (mut stale, mut unenrolled) = (Value::Null, None);
         if let Some(since) = since {
             stale = json!({"reason": why, "since": since});
@@ -755,6 +802,9 @@ impl Watch {
         rec.insert("stale".into(), stale);
         rec.insert("failed".into(), failed.into());
         rec.insert("notified".into(), notified.into());
+        if !queued.is_null() {
+            rec.insert("queued".into(), queued);
+        }
         if !save(&file, &Value::Object(rec)) {
             log::say(&format!("sd watch: couldn't save {file}: its reasons will notify again"));
         }
@@ -833,14 +883,16 @@ impl Watch {
         let plan = plan(s, auto_run(repo, b), busy, self.agent_steps > 0, || self.held());
         let taken = plan.taken();
         if !launch || !self.dispatch {
-            return Dispatched { line: String::new(), taken };
+            return Dispatched { taken, ..Default::default() };
         }
         let verb = |step| act_args(step).join(" ");
+        let quiet = Dispatched { taken, slot: Slot::Clear, ..Default::default() };
         let (msg, taken) = match plan {
-            Plan::Leave | Plan::Wait => return Dispatched { line: String::new(), taken },
+            Plan::Leave | Plan::Wait => return quiet,
+            Plan::Hold(step, _) => return Dispatched { slot: Slot::Want(step), ..quiet },
+            Plan::Launch(step) if AGENT_STEPS.contains(&step) => return Dispatched { slot: Slot::Want(step), ..quiet },
             Plan::Off(step) => (format!("not launching sd act {}: settings.agentSteps 0", verb(step)), false),
             Plan::Gate(step, why) => (format!("not launching sd act {}: {why}", verb(step)), false),
-            Plan::Hold(step, why) => (format!("not launching sd act {}: {why}", verb(step)), true),
             Plan::Launch(step) => match self.launch(repo, step, b) {
                 Ok(()) => {
                     self.launched += 1;
@@ -851,7 +903,59 @@ impl Watch {
         };
         let line = format!("{name}\t{b}\t-\t{msg}\n");
         log::say(&show(&line));
-        Dispatched { line, taken }
+        Dispatched { line, taken, slot: Slot::Clear }
+    }
+
+    /// Put <b> in the queue for a slot, or take it out, as <d> says: its
+    /// state file's queued. <prev> is the last state file's.
+    fn queue_up(&mut self, repo: &str, name: &str, b: &str, d: &Dispatched, prev: &Value) -> Value {
+        let q = queued(&d.slot, at(prev, "queued"), now());
+        if let Slot::Want(step) = d.slot {
+            let since = at(&q, "since").as_i64().unwrap_or_else(now);
+            let fresh = at(prev, "queued") != &q;
+            self.queue.push(Queued { repo: repo.into(), name: name.into(), b: b.into(), step, since, fresh });
+        }
+        q
+    }
+
+    /// The pass's end (#298): launch the queued agent steps, the one that
+    /// has waited longest first, while a slot is free; say how long the
+    /// rest have waited. None once the pass <stopped> for the rate limit:
+    /// they'd call GitHub. Their pass lines.
+    fn launch_queued(&mut self, stopped: bool) -> String {
+        let mut queue = std::mem::take(&mut self.queue);
+        queue.sort_by_key(|q| (q.since, q.fresh));
+        let now = now();
+        let mut out = String::new();
+        for q in queue {
+            let verb = act_args(q.step).join(" ");
+            let held = if stopped { Some("GitHub rate limit".to_string()) } else { self.held() };
+            let msg = match held {
+                Some(why) => format!("not launching sd act {verb}: {why}{}", waited(&q, now, "; waiting ")),
+                None => match self.launch(&q.repo, q.step, &q.b) {
+                    Ok(()) => {
+                        self.launched += 1;
+                        self.unqueue(&q.repo, &q.b);
+                        format!("launched sd act {verb}{}", waited(&q, now, ", after waiting "))
+                    }
+                    Err(e) => format!("couldn't launch sd act {verb}: {e}"),
+                },
+            };
+            let line = format!("{}\t{}\t-\t{msg}\n", q.name, q.b);
+            log::say(&show(&line));
+            out.push_str(&line);
+        }
+        out
+    }
+
+    /// <b>, launched, out of the queue: its next wait starts a clock of its own.
+    fn unqueue(&self, repo: &str, b: &str) {
+        let file = format!("{}/{b}.json", repo_state_dir(&self.state, repo));
+        let Some(mut doc) = read_json(&file) else { return };
+        if let Some(m) = doc.as_object_mut() {
+            m.remove("queued");
+        }
+        save(&file, &doc);
     }
 
     /// Why an agent step isn't launched now: settings.agentSteps of them
@@ -921,18 +1025,30 @@ impl Watch {
         // The lease before the outcome: a holder gone by the first read
         // wrote any outcome it was going to by the second.
         let lease = running::lease(repo, b);
+        // A live launched step's outcomes wait for its lease's end (#299):
+        // it may run a follow-up yet, and its crash check needs them.
+        if lease.as_ref().is_some_and(|l| l.live && l.deadline.is_some_and(|d| time::now_utc().1 <= d)) {
+            return String::new();
+        }
         let mut out = String::new();
+        let mut last = String::new();
         if let Some(f) = running::outcome_file(repo, b) {
             if let Ok(text) = fs::read_to_string(&f) {
                 let _ = fs::remove_file(&f);
-                out.push_str(&line(text.trim_end()));
+                for l in text.lines().filter(|l| !l.trim().is_empty()) {
+                    out.push_str(&line(l));
+                    last = l.to_string();
+                }
             }
         }
         let Some(l) = lease else { return out };
         let Some(deadline) = l.deadline else { return out };
         let why = if !l.live {
             running::release(&l);
-            out.is_empty().then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
+            // The lease names the step it ran last (#299): an outcome from a
+            // step before it under the same lease isn't this one's.
+            let ended = last.starts_with(&format!("ran sd act {}: ", act_args(&l.step).join(" ")));
+            (!ended).then(|| ("crashed", format!("sd act {} crashed: its process is gone", l.step)))
         } else if time::now_utc().1 > deadline {
             stop(repo, b, &l);
             Some(("past its deadline", format!("sd act {}: past its deadline, ended", l.step)))
@@ -1102,6 +1218,7 @@ impl Watch {
                 }
             }
         }
+        lines.push_str(&self.launch_queued(stopped));
 
         // The branches not checked keep their glyphs, files and index rows both.
         let index = format!("{}/glyphs", self.state);
@@ -1173,48 +1290,112 @@ pub(crate) fn step_secs(repo: &str, step: &str, b: &str, secs: u64) -> u64 {
     }
 }
 
+/// Why sd state <s> says GitHub's GraphQL quota is spent: refused, or under
+/// <floor> points left.
+fn rate_limited(s: &Value, floor: f64) -> Option<String> {
+    let left = t(s, "rate_limit.remaining");
+    if on(s, "rate_limit.limited") {
+        Some("GitHub refused a call for the rate limit".to_string())
+    } else if !left.is_empty() && left.bytes().all(|c| c.is_ascii_digit()) && left.parse::<f64>().ok()? < floor {
+        Some(format!("GitHub rate limit: {left} points left, under settings.rateLimitFloor ({floor})"))
+    } else {
+        None
+    }
+}
+
+/// How many mechanical steps a launched step runs after itself (#299):
+/// enough for restack, retarget, push and trigger.
+const FOLLOW_UPS: usize = 4;
+
 /// sd watch step <secs> <step> <branch>, what a pass launches, run in the
-/// branch's repo.
+/// branch's repo. Once <step> ends ok, the branch's next mechanical steps
+/// run under the same lease, renewed for each, rather than a pass apart
+/// (#299); an agent step stays the pass's, for a slot.
 pub fn step(argv: &[String]) -> ExitCode {
     let [secs, step, b] = argv else { die("usage: sd watch step <secs> <step> <branch>") };
     let Ok(secs) = secs.parse::<u64>() else { die(format!("not whole seconds: {secs}")) };
     let Some(outcome) = running::outcome_file(".", b) else { die("not in a git repository") };
-    let secs = step_secs(".", step, b, secs);
-    let args = act_args(step);
-    let verb = args.join(" ");
-    // steps.log is one stream: a header and an end line mark this step's part (#364).
+    let first = step_secs(".", step, b, secs);
+    // steps.log is one stream: a header and an end line mark each step's part (#364).
     let repo = std::env::current_dir().map_or(String::new(), |d| basename(&d.to_string_lossy()).to_string());
     let started = Instant::now();
-    eprintln!("{}", log::step_header(&log::now(), &repo, b, &verb));
-    let ran = running::leasing(b, step, secs + GRACE, || {
-        let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
-        let mut c = Command::new(prog);
-        c.args(pre).args(&args).arg(b);
-        let o = proc::timeout(secs, c, true);
-        eprint!("{}", o.stdout);
-        let how = if o.ok {
-            "ok".to_string()
-        } else if o.timed_out {
-            let how = format!("timed out after {secs}s");
-            failed::record(b, step, "sd", &how);
-            how
-        } else if o.code == harness::LIMIT_STATUS {
-            limit::holding().map_or("stopped on a usage limit".into(), |l| format!("stopped on a usage limit: {l}"))
-        } else if o.stopped {
-            "stopped by a signal".to_string()
-        } else {
-            format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
-        };
-        let ran = format!("ran sd act {verb}: {how}");
-        if let Err(e) = fs::write(&outcome, format!("{ran}\n")) {
-            eprintln!("sd watch: can't write {outcome}: {e}");
+    eprintln!("{}", log::step_header(&log::now(), &repo, b, &act_args(step).join(" ")));
+    let ran = running::leasing(b, step, first + GRACE, || {
+        let mut ok = act_step(&repo, b, step, first, &outcome, started);
+        let mut last = step.as_str();
+        for _ in 0..FOLLOW_UPS {
+            // sd state runs under a lease of its own length, not what's
+            // left of the step's before it.
+            if !ok || !running::renew(b, last, secs + GRACE) {
+                break;
+            }
+            let Some(next) = follow_up(b, last, secs) else { break };
+            if !running::renew(b, next, secs + GRACE) {
+                break;
+            }
+            eprintln!("{}", log::step_header(&log::now(), &repo, b, &act_args(next).join(" ")));
+            ok = act_step(&repo, b, next, secs, &outcome, Instant::now());
+            last = next;
         }
-        ran
     });
-    let ok = ran.is_some();
-    let ended = ran.unwrap_or_else(|| format!("sd act {verb} didn't run: {b}'s marker is held"));
+    if ran.is_some() {
+        return ExitCode::SUCCESS;
+    }
+    let ended = format!("sd act {} didn't run: {b}'s marker is held", act_args(step).join(" "));
     eprintln!("{}", log::step_end(&log::now(), &repo, b, &ended, started.elapsed().as_secs()));
-    if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    ExitCode::FAILURE
+}
+
+/// sd act <step> <b> under <secs>: how it ended, added to <outcome> for the
+/// next pass and closing the step's part of steps.log. Whether it ended ok.
+fn act_step(repo: &str, b: &str, step: &str, secs: u64, outcome: &str, started: Instant) -> bool {
+    let args = act_args(step);
+    let (prog, pre) = sd_verb("act", "SHEEPDOG_ACT_PROGRAM");
+    let mut c = Command::new(prog);
+    c.args(pre).args(&args).arg(b);
+    let o = proc::timeout(secs, c, true);
+    eprint!("{}", o.stdout);
+    let how = if o.ok {
+        "ok".to_string()
+    } else if o.timed_out {
+        let how = format!("timed out after {secs}s");
+        failed::record(b, step, "sd", &how);
+        how
+    } else if o.code == harness::LIMIT_STATUS {
+        limit::holding().map_or("stopped on a usage limit".into(), |l| format!("stopped on a usage limit: {l}"))
+    } else if o.stopped {
+        "stopped by a signal".to_string()
+    } else {
+        format!("failed (exit {}): {}", o.code, o.stdout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or(""))
+    };
+    let ran = format!("ran sd act {}: {how}", args.join(" "));
+    let added = fs::OpenOptions::new().create(true).append(true).open(outcome).and_then(|mut f| f.write_all(format!("{ran}\n").as_bytes()));
+    if let Err(e) = added {
+        eprintln!("sd watch: can't write {outcome}: {e}");
+    }
+    eprintln!("{}", log::step_end(&log::now(), repo, b, &ran, started.elapsed().as_secs()));
+    o.ok
+}
+
+/// What a launched step that ended ok runs next on <b> (#299): NEXT's first
+/// step when a pass would launch it at once, a mechanical one, and not
+/// <last> again, which didn't take. sd state, given <secs>, sees past this
+/// process's lease (RUNNING_HELD_BY), as the pass after it would.
+fn follow_up(b: &str, last: &str, secs: u64) -> Option<&'static str> {
+    let (prog, verb) = sd_verb("state", "SHEEPDOG_STATE_PROGRAM");
+    let mut c = Command::new(prog);
+    c.args(verb).args(["--json", b]).env("RUNNING_HELD_BY", std::process::id().to_string());
+    let o = proc::timeout(secs, c, false);
+    let s = config::one_value(&o.stdout).filter(|_| o.ok)?;
+    let errors = at(&s, "errors").as_array().is_some_and(|e| !e.is_empty());
+    // The pass would stop dispatching here, and so do follow-ups.
+    if errors || carries(&s) || rate_limited(&s, global_num("settings.rateLimitFloor")).is_some() {
+        return None;
+    }
+    match plan(&s, auto_run(".", b), on(&s, "session.locked"), false, || None) {
+        Plan::Launch(step) if step != last => Some(step),
+        _ => None,
+    }
 }
 
 pub fn refresh(argv: &[String]) -> ExitCode {
@@ -1469,6 +1650,16 @@ mod tests {
         nobody["viewer"] = Value::Null;
         assert_eq!(gate(&nobody, "push"), Err("sd state doesn't know who's viewing".into()), "gh failed: no PR may only mean unseen");
         assert_eq!(gate(&s(json!({"author": "alice"}), theirs), "fetch"), Ok(()), "fetch, whoever wrote it");
+    }
+
+    #[test]
+    fn queued_runs_a_steps_clock_on_while_it_waits_for_the_same_step_298() {
+        let prev = json!({"step": "review", "since": 100});
+        assert_eq!(queued(&Slot::Want("review"), &prev, 500), prev);
+        assert_eq!(queued(&Slot::Want("implement"), &prev, 500), json!({"step": "implement", "since": 500}), "another step");
+        assert_eq!(queued(&Slot::Want("review"), &Value::Null, 500), json!({"step": "review", "since": 500}));
+        assert_eq!(queued(&Slot::Keep, &prev, 500), prev, "sd state unsure, or a refresh");
+        assert_eq!(queued(&Slot::Clear, &prev, 500), Value::Null);
     }
 
     fn glyph(steps: &[Value]) -> &'static str {
