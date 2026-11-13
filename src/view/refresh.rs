@@ -43,11 +43,12 @@ static BRANCHES: Mutex<Branches> = Mutex::new(Branches {
 });
 
 /// The ids of the branches a live step holds now: one held at the last
-/// read and not now has ended its step.
-pub fn stepping(now: BTreeSet<String>) {
+/// read and not now has ended its step, unless it's in <own>, the page's
+/// own step (act.rs), whose refresh::now checks it after.
+pub fn stepping(now: BTreeSet<String>, own: &BTreeSet<String>) {
     let mut b = branches();
     let at = now_ms();
-    for id in b.stepping.difference(&now).cloned().collect::<Vec<_>>() {
+    for id in b.stepping.difference(&now).filter(|id| !own.contains(*id)).cloned().collect::<Vec<_>>() {
         b.ended.insert(id, at);
     }
     b.stepping = now;
@@ -171,4 +172,19 @@ pub fn now(state: &Path, id: &str, repo: &str, branch: &str) {
         std::thread::sleep(Duration::from_millis(100));
     }
     run(id, repo, branch, written(state, id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_step_s_end_is_noted_unless_it_was_the_page_s_own_503() {
+        let set = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+        stepping(set(&["r/loop-503", "r/own-503"]), &set(&[]));
+        stepping(set(&[]), &set(&["r/own-503"]));
+        let b = branches();
+        assert!(b.ended.contains_key("r/loop-503"));
+        assert!(!b.ended.contains_key("r/own-503"));
+    }
 }

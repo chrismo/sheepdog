@@ -217,7 +217,7 @@ pub fn flock(state: &Path) -> Value {
     let cached = cached(state);
     let (runs, repos) = (super::timeline::last_runs(&super::branch::usage(state)), crate::watch::registered());
     let steps: Vec<_> = repos.iter().map(|r| crate::running::live(r)).collect();
-    let mut stepping = BTreeSet::new();
+    let (mut stepping, mut own) = (BTreeSet::new(), BTreeSet::new());
     let cards: Vec<Value> = cached
         .iter()
         .map(|c| {
@@ -226,6 +226,9 @@ pub fn flock(state: &Path) -> Value {
             let i = repos.iter().position(|r| c.id.split_once('/').is_some_and(|(d, _)| crate::watch::repo_key(r) == d));
             card["since"] = super::timeline::since(&runs, c, i.map(|i| repos[i].as_str()));
             card["acting"] = super::act::running(&c.id);
+            if !card["acting"].is_null() {
+                own.insert(c.id.clone());
+            }
             let run = i.and_then(|i| steps[i].get(&c.branch));
             if run.is_some() {
                 stepping.insert(c.id.clone());
@@ -234,7 +237,7 @@ pub fn flock(state: &Path) -> Value {
             card
         })
         .collect();
-    super::refresh::stepping(stepping);
+    super::refresh::stepping(stepping, &own);
     let held = super::refresh::held(state, &cached);
     let refreshing = if held.is_none() { super::refresh::refreshing(state, &cached) } else { super::refresh::running() };
     json!({"at": at, "branches": cards, "refreshing": refreshing, "held": held})
