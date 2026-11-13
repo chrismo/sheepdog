@@ -1013,6 +1013,37 @@ fn hold_refuses_a_branch_that_doesnt_exist_427() {
     assert_eq!(sd.config("branch.typo.sd-lock"), None);
 }
 
+// A hold just after the loop launched a step would make that step refuse at
+// its own gate and lose its slot: hold refuses, as attach does (#504).
+#[test]
+fn hold_refuses_while_a_live_step_holds_the_running_marker_504() {
+    let sd = sd();
+    let holder = Sleeper(spawn(Command::new("sleep").arg("30")));
+    let pid = holder.0.id();
+    let (marker, line) = marker(&sd, pid);
+    for args in [&["hold"][..], &["hold", "--force"][..]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}");
+        assert_has(&r.output, &[&format!("implement is running on feat (pid {pid}"), "not holding", "sd state"]);
+        assert_eq!(sd.lock(), None, "{args:?}");
+    }
+    assert_eq!(fs::read_to_string(&marker).unwrap(), line);
+}
+
+// A hold over a lock someone already has is put back as it was when a step runs.
+#[test]
+fn hold_force_over_a_session_lock_mid_step_leaves_the_lock_as_it_was_504() {
+    let sd = sd();
+    let attached = sd.live_lock();
+    let holder = Sleeper(spawn(Command::new("sleep").arg("30")));
+    marker(&sd, holder.0.id());
+    let r = sd.run(&["hold", "--force"]);
+    assert_ne!(r.status, 0);
+    assert_has(&r.output, &["implement is running on feat"]);
+    assert_lacks(&r.output, "taking over");
+    assert_eq!(sd.lock(), Some(attached.lock()));
+}
+
 // sd watch status lists only enrolled branches' locks, so this one won't turn up there.
 #[test]
 fn hold_on_a_branch_not_enrolled_holds_it_and_warns_427() {
