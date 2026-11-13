@@ -354,9 +354,10 @@ Running steps (#270): while another process's step holds the branch's
 running marker (sd state shows it), the verbs that write the worktree or
 the remote refuse before they write anything, --force or not: restack
 (--resolve too), push, ship, autofix, verify and fetch, and the agent
-steps implement, address, ci-fix, answer and review; so do attach and
-forget --remove, and describe before its agent runs. Wait for it to end,
-or kill it. Each verb's declaration (src/act/verbs.rs, #341) says which.
+steps implement, address, ci-fix, answer and review; so do attach, hold
+(#504: a step launched just before the hold would refuse at its own gate)
+and forget --remove, and describe before its agent runs. Wait for it to
+end, or kill it. Each verb's declaration (src/act/verbs.rs, #341) says which.
 
 Branch budget (#121, #349): implement, address, ci-fix, describe (ship and
 start's too), answer, review and restack --resolve refuse to run their

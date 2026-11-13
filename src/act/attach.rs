@@ -16,7 +16,8 @@
 // made the edits, and says so. On exit it's stored, as any resumed session
 // is; a rerun of the step still forks the stored session (#69).
 //
-// hold and release (#427) take and drop the same lock with no session.
+// hold and release (#427) take and drop the same lock with no session; hold
+// refuses mid-step as attach does (#504).
 
 use super::commands::status;
 use super::{cfg, die, hostname};
@@ -115,7 +116,27 @@ fn config(args: &[&str]) {
     }
 }
 
-/// hold: the attached lock with no session; one already held stays as it was.
+/// Set <b>'s lock to <mine>, then check no agent step holds its running
+/// marker: after the lock, so a step that starts from here refuses
+/// (attached_check). One running is <doing>'s refusal, --force or not, and
+/// the lock goes back to <before> (#270, #504).
+fn lock_when_idle(b: &str, before: &str, mine: &str, doing: &str) {
+    let key = format!("branch.{b}.sd-lock");
+    config(&[&key, mine]);
+    if let Err(e) = running::idle(".", b, doing) {
+        if get(&key) == mine {
+            match before {
+                "" => git(".", &["config", "--unset", &key]),
+                _ => git(".", &["config", &key, before]),
+            };
+        }
+        die(e);
+    }
+}
+
+/// hold: the attached lock with no session; one already held stays as it
+/// was. Not while an agent step runs: launched before the hold, it would
+/// refuse at its own gate and lose its slot (#504).
 pub fn hold(b: &str, force: bool) {
     if !git(".", &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{b}")]).ok {
         die(format!("no branch named {b}"));
@@ -129,10 +150,11 @@ pub fn hold(b: &str, force: bool) {
         eprintln!("sd act: {b} is already held, since {since}");
         return;
     }
-    if let Some(note) = take(b, &lock, force).unwrap_or_else(|e| die(e)) {
+    let note = take(b, &lock, force).unwrap_or_else(|e| die(e));
+    lock_when_idle(b, &lock, &crate::lock::hold(&hostname(), &time::now_utc().0), "holding");
+    if let Some(note) = note {
         eprintln!("sd act: {note}");
     }
-    config(&[&key, &crate::lock::hold(&hostname(), &time::now_utc().0)]);
     eprintln!("sd act: holding {b}: sd watch and agent steps start nothing on it until sd act release");
 }
 
@@ -180,22 +202,7 @@ pub fn attach(b: &str, harness_opt: &str, force: bool) -> ! {
     c.current_dir(&wt);
 
     let mine = format!("{}@{} {}", std::process::id(), hostname(), time::now_utc().0);
-    let set = git(".", &["config", &key("lock"), &mine]);
-    if !set.ok {
-        eprint!("{}", set.stderr);
-        std::process::exit(set.code);
-    }
-    // After the lock, so a step that starts from here refuses (attached_check);
-    // --force or not, the lock goes back to what it was.
-    if let Err(e) = running::idle(".", b, "attaching") {
-        if get(&key("lock")) == mine {
-            match before.as_str() {
-                "" => git(".", &["config", "--unset", &key("lock")]),
-                _ => git(".", &["config", &key("lock"), &before]),
-            };
-        }
-        die(e);
-    }
+    lock_when_idle(b, &before, &mine, "attaching");
     for note in [note, left.map(|(said, _)| said)].into_iter().flatten() {
         eprintln!("sd act: {note}");
     }
