@@ -5,7 +5,7 @@ mod log;
 mod pass;
 mod status;
 
-pub(crate) use pass::{act_args, dispatch_verb, json_files, may_dispatch, registered, sd_verb, step_secs, watch_timeout};
+pub(crate) use pass::{act_args, dispatch_verb, forget_record, json_files, may_dispatch, registered, sd_verb, step_secs, watch_timeout};
 pub use pass::repo_key;
 
 use crate::config::{self, state_dir};

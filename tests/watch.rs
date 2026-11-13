@@ -1012,6 +1012,24 @@ fn gone_an_enrolled_branch_deleted_after_its_pr_merged_is_notified_merged_once_a
     assert_eq!(cat(&sd.ps("gh-calls")), "api repos/{owner}/{repo}/pulls/7");
 }
 
+// A branch chrismo merged and forgot before the next pass: sd act forget
+// drops the pass's record with the rest, so its merge isn't news (#508).
+#[test]
+fn gone_a_branch_forgotten_before_the_next_pass_isnt_notified_508() {
+    let sd = sd();
+    sd.ps_fixture("feat", &[r#".ci.verdict = "pending""#]);
+    sd.pass();
+    sd.git(&["switch", "-q", "main"]);
+    sd.verb_ok("act", &["forget", "feat"]);
+    sd.git(&["branch", "-qD", "feat"]);
+    sd.gh_pull(r#"{"state": "closed", "merged": true}"#);
+    sd.pass();
+    assert_eq!(sd.notified(), "");
+    assert_lacks(&sd.last_pass(), "already gone");
+    assert!(!sd.ps("gh-calls").exists());
+    assert!(sd.state_files().is_empty());
+}
+
 // @test "gone: a branch with a slash in its name is found"
 #[test]
 fn gone_a_branch_with_a_slash_in_its_name_is_found() {
