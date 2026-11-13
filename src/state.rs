@@ -428,34 +428,41 @@ fn shares_a_word(a: &str, b: &str) -> bool {
     words(b).iter().any(|w| wa.contains(w))
 }
 
-/// Whether a removed line is still among a hunk's added lines, reshaped: the
-/// same text as some of them, whole and in order, joined by a space, once
-/// each is trimmed of space and of the brackets, commas and semicolons at its
-/// ends. `import "testing"` made an import block is still there, whatever
-/// else the block imports (#510); a line commented out or changed isn't.
-fn reshaped(gone: &str, came: &[String]) -> bool {
-    // the rest of want from some added line on; failed tries remembered, so
-    // a hunk of many alike lines can't make it exponential
-    fn built(want: &str, came: &[String], from: usize, failed: &mut HashSet<(usize, usize)>) -> bool {
+/// Whether every removed line of a hunk is still among its added lines,
+/// reshaped: the same text as some of them, whole and in order, joined by a
+/// space, once each is trimmed of space and of the brackets, commas and
+/// semicolons at its ends. `import "testing"` made an import block is still
+/// there, whatever else the block imports (#510); a line commented out or
+/// changed isn't. The removed lines match in order, each after the added lines
+/// the one before it used, so one added line can't stand for two removed.
+fn reshaped(gone: &[String], came: &[String]) -> bool {
+    // the rest of want from some added line on, to the index past the last
+    // one it used; failed tries remembered, so a hunk of many alike lines
+    // can't make it exponential
+    fn built(want: &str, came: &[String], from: usize, failed: &mut HashSet<(usize, usize)>) -> Option<usize> {
         if want.is_empty() {
-            return true;
+            return Some(from);
         }
         if failed.contains(&(want.len(), from)) {
-            return false;
+            return None;
         }
         for (i, c) in came.iter().enumerate().skip(from) {
             let rest = want.strip_prefix(c.as_str()).and_then(|r| if r.is_empty() { Some(r) } else { r.strip_prefix(' ') });
-            if rest.is_some_and(|r| built(r, came, i + 1, failed)) {
-                return true;
+            if let Some(end) = rest.and_then(|r| built(r, came, i + 1, failed)) {
+                return Some(end);
             }
         }
         failed.insert((want.len(), from));
-        false
+        None
     }
     let norm = |s: &str| s.trim_matches(|c: char| c.is_whitespace() || "()[]{},;".contains(c)).to_string();
-    let want = norm(gone);
     let came: Vec<String> = came.iter().map(|c| norm(c)).filter(|c| !c.is_empty()).collect();
-    !want.is_empty() && built(&want, &came, 0, &mut HashSet::new())
+    let mut from = 0;
+    gone.iter().all(|g| {
+        let want = norm(g);
+        let end = (!want.is_empty()).then(|| built(&want, &came, from, &mut HashSet::new())).flatten();
+        end.inspect(|e| from = *e).is_some()
+    })
 }
 
 /// The net diff's lines, tab-separated: +, line, 1, test (1|0), file, file,
@@ -503,7 +510,7 @@ fn git_diff_lines(dir: &str, base: &str, hd: &str, tests: &HashSet<String>) -> O
             }
             if ro == 0 && rn == 0 {
                 if let Some((i, rec)) = hunk.take() {
-                    if !gone.iter().all(|g| reshaped(g, &came)) {
+                    if !reshaped(&gone, &came) {
                         out.insert(i, rec);
                     }
                 }
@@ -2113,14 +2120,17 @@ mod tests {
     #[test]
     fn reshaped_finds_a_line_split_across_added_lines_but_not_one_commented_out_510() {
         let v = |ls: &[&str]| ls.iter().map(ToString::to_string).collect::<Vec<_>>();
-        assert!(reshaped("import \"testing\"", &v(&["import (", "\t\"fmt\"", "\t\"testing\"", ")"])));
-        assert!(reshaped("import \"testing\"", &v(&["import (", "\t\"testing\"", "\t\"fmt\"", ")"])));
-        assert!(!reshaped("import \"testing\"", &v(&["\t\"testing\"", "import ("])), "out of order");
-        assert!(reshaped("from x import a", &v(&["from x import (", "    a,", "    b,", ")"])));
-        assert!(reshaped("  check(t)", &v(&["\tcheck(t)"])), "reindented");
-        assert!(!reshaped("\tcheck(t)", &v(&["\t// check(t)"])));
-        assert!(!reshaped("\tassert(1)", &v(&["\tassert(2)"])));
-        assert!(!reshaped("}", &v(&["}"])), "a line of only brackets says nothing");
+        let one = |g: &str, c: &[&str]| reshaped(&v(&[g]), &v(c));
+        assert!(one("import \"testing\"", &["import (", "\t\"fmt\"", "\t\"testing\"", ")"]));
+        assert!(one("import \"testing\"", &["import (", "\t\"testing\"", "\t\"fmt\"", ")"]));
+        assert!(!one("import \"testing\"", &["\t\"testing\"", "import ("]), "out of order");
+        assert!(one("from x import a", &["from x import (", "    a,", "    b,", ")"]));
+        assert!(one("  check(t)", &["\tcheck(t)"]), "reindented");
+        assert!(!one("\tcheck(t)", &["\t// check(t)"]));
+        assert!(!one("\tassert(1)", &["\tassert(2)"]));
+        assert!(!one("}", &["}"]), "a line of only brackets says nothing");
+        assert!(reshaped(&v(&["  check(t)", "  done(t)"]), &v(&["\tcheck(t)", "\tdone(t)"])), "each reindented");
+        assert!(!reshaped(&v(&["  check(t)", "  check(t)"]), &v(&["\tcheck(t)"])), "one added line can't stand for two removed");
     }
 
     #[test]
