@@ -117,6 +117,32 @@ fn finding_settles_that_finding_on_the_findings_record_501() {
     );
 }
 
+// A finding already settled can't be declined: one the agent fixed, or one
+// chrismo declined already, is refused with nothing recorded. One the agent
+// declined, chrismo's decline takes over.
+#[test]
+fn a_finding_fixed_or_declined_by_chrismo_is_refused_501() {
+    let sd = sd();
+    sd.write_findings_ref(
+        r#"{"head": "h0", "round": 1, "findings": [
+          {"file": "file.txt", "line": 3, "body": "c?", "action": "fixed"},
+          {"file": "file.txt", "line": 1, "body": "a?", "action": "declined", "by": "chrismo"},
+          {"file": "file.txt", "line": 2, "body": "b?", "action": "declined", "reply": "no"}]}"#,
+    );
+    for (id, was) in [("1", "fixed"), ("2", "declined by you")] {
+        let r = sd.run(&["decision", "--finding", id, "why"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &[&format!("finding {id} on feat is {was} already")]);
+    }
+    assert!(!sd.has_decisions());
+    sd.ok(&["decision", "--finding", "3", "b stays"]);
+    let rec = sd.git(&["cat-file", "blob", "refs/sheepdog/feat/findings"]);
+    assert_eq!(
+        jq(&["-c", ".findings[] | [.action, .by]"], &rec),
+        "[\"fixed\",null]\n[\"declined\",\"chrismo\"]\n[\"declined\",\"chrismo\"]"
+    );
+}
+
 #[test]
 fn an_unknown_finding_is_refused_and_nothing_recorded_462() {
     let sd = sd();
