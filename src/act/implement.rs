@@ -292,6 +292,16 @@ fn findings(b: &str, findings_ref: &str) -> (Vec<Map<String, Value>>, Option<Val
     }
 }
 
+/// <d> as implement's gate judges it: an answer goes on from the verify-fix
+/// round that asked, which counted already, so VERIFY_ROUNDS doesn't refuse
+/// it (#505). NEXT still offers no new round past them.
+fn judged(mut d: Derived, answering: bool) -> Derived {
+    if answering && d.asking == "verify-fix" {
+        d.verify_fix_due = true;
+    }
+    d
+}
+
 fn implement_run(b: &str, wt: &str, a: &Args) {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {
@@ -302,7 +312,7 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         eprint!("{e}");
         die("sd state failed")
     });
-    let d = Derived::new(&s);
+    let d = judged(Derived::new(&s), answering);
     let gate = spend_worded(gates::implement(&d).worded(|w| worded(w, &s)), &s, "implement", b);
     let Some(_go) = enforce(gate, a.force, &format!("implementing {b}")) else { return };
     let round = Round::of(&d);
@@ -356,13 +366,19 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
         answer: &a.answer,
         items: "",
     });
+    let changed = r.dirty() || r.moved();
+    // A verify-fix round that ends with no fix, an ask or a give-up, counts
+    // as one whose fix verify rejects does (#505); an answer's run too.
+    let tries = at(&s, "verify.tries").as_u64().unwrap_or(0) + 1;
+    if round == Round::VerifyFix && (r.outcome != Outcome::Done || !changed) {
+        crate::verify_red::tried(wt, b, tries);
+    }
     let mut question = match &r.outcome {
         Outcome::Done => None,
         Outcome::NeedsInput(q) => Some(q.clone()),
         Outcome::GaveUp(why) => r.give_up(why),
         Outcome::Other(w) => r.unknown(w),
     };
-    let changed = r.dirty() || r.moved();
     // A fix round's answers: any ask goes to chrismo, as needs-input does.
     let answers = answered(&fs, &r.result, changed);
     let asked = asks(&answers);
@@ -392,12 +408,17 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     }
     r.print_log();
     let Err(cmd) = r.verify() else { return };
+    rejected(round, b, wt, &cmd, tries);
+}
+
+/// verify rejected the round's commit in <wt>: for a verify-fix round, its
+/// <n>th try, counted on the new HEAD's red.
+fn rejected(round: Round, b: &str, wt: &str, cmd: &str, n: u64) -> ! {
     if round != Round::VerifyFix {
         die(format!("verify failed ({cmd}); the commit is kept in {wt}"));
     }
-    let n = at(&s, "verify.tries").as_u64().unwrap_or(0) + 1;
     crate::verify_red::tried(wt, b, n);
-    die(format!("verify failed ({cmd}) after fix round {n} of {VERIFY_ROUNDS}; the commit is kept in {wt}"));
+    die(format!("verify failed ({cmd}) after fix round {n} of {VERIFY_ROUNDS}; the commit is kept in {wt}"))
 }
 
 /// The agent needs input on <b>: <q>, recorded as <qstep>'s question.

@@ -962,4 +962,30 @@ jq -n --argjson r "$(cat "$FX/result.json")" '{type: "result", is_error: false, 
         assert_has(&r.output, &["verify failed"]);
         assert_eq!(sd.verify_red().unwrap()["tries"], 3);
     }
+
+    // #505: a verify-fix round that asks, or gives up, counts toward
+    // VERIFY_ROUNDS as one whose fix verify rejects does. An answer goes on
+    // from the round that asked, so the cap doesn't refuse it, and how that
+    // ends counts too.
+    #[test]
+    fn implement_a_verify_fix_ask_or_give_up_counts_a_round_and_an_answer_isnt_capped_505() {
+        let sd = red_setup();
+        sd.agent("#!/usr/bin/env bash\ntrue\n");
+        sd.result(r#"{"outcome": "needs-input", "summary": "drop d, or trim it?", "commit_message": null}"#);
+        let r = sd.run(&["implement"]);
+        assert_has(&r.output, &["drop d, or trim it?"]);
+        assert_eq!(sd.verify_red().unwrap()["tries"], 1);
+        sd.result(r#"{"outcome": "gave-up", "summary": "can't tell", "commit_message": null}"#);
+        let r = sd.run(&["answer", "trim it"]);
+        assert_has(&r.output, &["gave up", "can't tell"]);
+        assert_eq!(sd.verify_red().unwrap()["tries"], 2);
+        let r = sd.run(&["answer", "trim the spaces after d"]);
+        assert_has(&r.output, &["gave up", "can't tell"]);
+        assert_lacks(&r.output, "had its 2 fix rounds");
+        assert_eq!(sd.verify_red().unwrap()["tries"], 3);
+        sd.ok(&["ack", "--question"]);
+        let r = sd.run(&["implement"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["had its 2 fix rounds"]);
+    }
 }

@@ -11,7 +11,7 @@ use super::hold::hold_after;
 use super::push::seen_authors;
 use super::resolve::{resolve_conflicts, Halt, Rebase};
 use super::bookkeeping::parent_write;
-use super::step::{question_gate, resolve_gave_up, spend_worded};
+use super::step::{carry_question, question_gate, resolve_gave_up, spend_worded};
 use super::gate::enforce_leaving;
 use super::{die, enforce, no_base_why, plural, state_json, Args, Gate, Go};
 use crate::git::{count, git, git_input, git_out, is_ancestor, patch_id, patch_ids, rev, show_ref, worktree_for, Git};
@@ -237,7 +237,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     // applies to a clean rebase; a resolved one goes through verify and review.
     let dropped = if resolved { vec![] } else { came_through(&r, &new_base, &new_head, &before, a.force) };
     must(pins::set(".", b, Pin::Base, &new_base));
-    crate::verify_red::carry(".", b, &old_head, &new_head);
+    carry(b, &old_head, &new_head);
     // only --force gets here past them: chrismo has looked (#356)
     if yes(Derived::new(&s).restack_foreign) {
         seen_authors(b, &s, "/sync/foreign_commits");
@@ -269,6 +269,13 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
             ));
         }
     }
+}
+
+/// A restack is no fix: <b>'s red verify on <from>, and the verify-fix
+/// question about it, move to <to> (#325, #505).
+fn carry(b: &str, from: &str, to: &str) {
+    crate::verify_red::carry(".", b, from, to);
+    carry_question(b, from, to);
 }
 
 /// A git log -p whose patch-ids ignore context, as patch_id's do.
