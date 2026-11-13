@@ -448,6 +448,36 @@ fn forget_remove_a_branch_already_deleted_is_just_forgotten() {
     assert_eq!(sd.pins("gone"), "");
 }
 
+// A name that's no branch and that sheepdog keeps nothing for is a typo:
+// forget refuses and writes nothing, no usage.sup reset row (#506).
+#[test]
+fn forget_refuses_a_branch_sheepdog_knows_nothing_of_and_writes_nothing_506() {
+    let mut sd = sd();
+    sd.env.push(("SHEEPDOG_STATE_DIR".into(), sd.path("state")));
+    for args in [&["forget", "nosuch"][..], &["forget", "--remove", "12/s8-5-grains 107"]] {
+        let r = sd.run(args);
+        assert_ne!(r.status, 0, "{args:?}");
+        assert_has(&r.output, &["no such branch", "sheepdog keeps nothing for it"]);
+        assert_lacks(&r.output, "forgot");
+    }
+    assert!(!sd.tmp.join("state/usage.sup").exists());
+}
+
+// A branch already deleted whose only trace is its spend is still
+// forgotten: its spend starts over (#349, #506).
+#[test]
+fn forget_a_deleted_branch_with_only_its_spend_left_starts_it_over_506() {
+    let mut sd = sd();
+    sd.env.push(("SHEEPDOG_STATE_DIR".into(), sd.path("state")));
+    sd.spent("gone", "implement", "3.");
+    let r = sd.run(&["forget", "gone"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    let usage = fs::read_to_string(sd.tmp.join("state/usage.sup")).unwrap();
+    assert_has(usage.lines().last().unwrap(), &[r#",branch:"gone",reset:true}"#]);
+    // Forgotten once, it's unknown: a second forget refuses.
+    assert_ne!(sd.run(&["forget", "gone"]).status, 0);
+}
+
 // @test "forget --remove: a worktree git won't remove changes nothing"
 #[test]
 fn forget_remove_a_worktree_git_wont_remove_changes_nothing() {
@@ -607,11 +637,11 @@ fn forget_remove_a_merged_head_this_clone_doesnt_have_says_fetch_not_extra_commi
 }
 
 // @test "forget: a branch with nothing stored, even one already deleted, is fine"
+// A deleted one with nothing stored is now refused as a typo (#506).
 #[test]
-fn forget_a_branch_with_nothing_stored_even_one_already_deleted_is_fine() {
+fn forget_a_branch_with_nothing_stored_is_fine() {
     let sd = sd();
     assert_eq!(sd.run(&["forget"]).status, 0);
-    assert_eq!(sd.run(&["forget", "gone"]).status, 0);
 }
 
 // @test "unregister: removes this repo from the watcher's list"
