@@ -55,7 +55,7 @@ pub(super) fn gated_hinted(b: &str, s: &Value, force: bool, doing: &str, left: &
     let d = Derived::new(s);
     let go = enforce_hinted(named(gates::push(&d), s), force, doing, left, hint)?;
     if yes(d.foreign_authors) {
-        seen_authors(b, s, "/push/foreign_commits");
+        seen_authors(b, s, "/push/foreign_patch_ids");
     }
     Some(Cleared(go))
 }
@@ -68,7 +68,7 @@ fn named(g: Gate, s: &Value) -> Gate {
 
 /// Forced past commits someone else made: chrismo has looked at them, so
 /// sd state stops counting them, restacked or not (the patch-ids at
-/// <ids>, push.foreign_commits or sync's, #356).
+/// <ids>, push.foreign_patch_ids or sync's, #356).
 pub(super) fn seen_authors(b: &str, s: &serde_json::Value, ids: &str) {
     let key = format!("branch.{b}.sd-authors-seen");
     for id in s.pointer(ids).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str()) {
