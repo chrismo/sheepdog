@@ -151,7 +151,9 @@ Verbs:
             review-fix rounds after it, and the receipt names the branch,
             HEAD and what was recorded. --finding <n> declines instead the
             nth finding of the review findings record (review-fix's [n]),
-            <text> its why, recorded as a review-fix round's decline is; an
+            <text> its why, recorded as a review-fix round's decline is, on
+            the findings record too, so no review-fix round gets it again
+            (with them all declined, NEXT leaves chrismo the accept); an
             n the record doesn't have is refused. Not the task (sd-task,
             what the branch is for), not an answer (that goes to a standing
             question, and the step that asked runs), not an accept (review
