@@ -107,7 +107,9 @@ Reports, for <branch> (default: the current one):
             settings.flags.suppressions, added skips (settings.flags.skips)
             in test files, and each hunk of changed or deleted lines in a
             test file the base had, or a test file renamed out of the test
-            files (test-edit); with the commit that added
+            files (test-edit; not a hunk whose every removed line is
+            still among its added ones, reshaped, as an import made an
+            import block, #510); with the commit that added
             the line (blame), or for a test-edit the commits that touched
             the file. Test files: settings.flags.testFiles, globs on the
             file's name, a whole path when one has a /, or a directory
