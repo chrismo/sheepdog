@@ -455,12 +455,20 @@ fn added_units(came: &[String]) -> Vec<Added> {
     out
 }
 
+/// Whether a block's head opens an import list: `import (` or `from x
+/// import (`. Only there does a line made a block, beside other entries, keep
+/// its meaning; `expected = 1` made `expected = [1, 2]` changed the value.
+fn imports(head: &str) -> bool {
+    head == "import" || (head.starts_with("from ") && head.ends_with(" import"))
+}
+
 /// Whether a hunk only reshaped its removed lines: each one, in order, is an
-/// added line reindented, or a block's head and one of its entries joined by
-/// a space, and every added line is one of those. `import "testing"` made an
-/// import block is still there, whatever else the block imports (#510); a
-/// line commented out, changed, or wrapped in a new block isn't, nor is one
-/// with a line added beside it. No added line stands for two removed ones.
+/// added line reindented, or an import block's head and one of its entries
+/// joined by a space, and every added line is one of those. `import
+/// "testing"` made an import block is still there, whatever else the block
+/// imports (#510); a line commented out, changed, or wrapped in a new block
+/// isn't, nor is one with a line added beside it. No added line stands for
+/// two removed ones.
 fn reshaped(gone: &[String], came: &[String]) -> bool {
     let units = added_units(came);
     let mut used: Vec<Vec<bool>> = units.iter().map(|u| vec![false; if let Added::Block(_, i) = u { i.len() } else { 1 }]).collect();
@@ -472,7 +480,7 @@ fn reshaped(gone: &[String], came: &[String]) -> bool {
         let hit = (at..units.len()).find_map(|u| {
             let i = match &units[u] {
                 Added::Line(t) => (t == g).then_some(0),
-                Added::Block(head, items) => (!head.is_empty())
+                Added::Block(head, items) => imports(head)
                     .then(|| (0..items.len()).find(|&i| !used[u][i] && format!("{head} {}", items[i]) == g))
                     .flatten(),
             };
@@ -2155,6 +2163,8 @@ mod tests {
         assert!(!one("\tcheck(t)", &["\treturn", "\tcheck(t)"]), "an added line beside it");
         assert!(!one("\tcheck(t)", &["\tcheck(t,", "\t\tskipSlow)"]), "a call that gained an argument");
         assert!(reshaped(&v(&["import \"a\"", "import \"b\""]), &v(&["import (", "\t\"a\"", "\t\"b\"", ")"])), "two imports, one block");
+        assert!(!one("\texpected = 1", &["\texpected = [", "\t\t1,", "\t\t2,", "\t]"]), "a value made a list");
+        assert!(!one("\texpected = 1", &["\texpected = [", "\t\t1,", "\t]"]), "a value made a list of itself");
     }
 
     #[test]
