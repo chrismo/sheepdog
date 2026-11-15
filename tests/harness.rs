@@ -877,6 +877,20 @@ fn harness_run_a_claude_step_that_ran_turns_but_printed_no_result_timed_out_is_c
     assert_eq!(sd.usage_last(&["cost_usd", "estimated"]), "null|true");
 }
 
+// @test "harness_run: a claude step killed with no result is charged its transcript's last cost-state, less the session's total before it (#276)"
+#[test]
+fn harness_run_a_claude_step_killed_with_no_result_is_charged_its_transcripts_last_cost_state_276() {
+    let sd = sd();
+    let cost_state = |usd: f64| format!(r#"{{"type":"cost-state","sessionId":"sid1","totalCostUSD":{usd},"modelUsage":{{}}}}"#);
+    sd.claude_stub_appends("sid1", &format!("{TURN}\n{}", cost_state(0.2219)));
+    let t = sd.tmp.join("claude/projects/-repo/sid1.jsonl");
+    let had = fs::read_to_string(&t).unwrap();
+    fs::write(&t, format!("{had}{}\n", cost_state(0.05))).unwrap();
+    let r = sd.step(&[], &["claude", "sid1", "resume", "30", "do it", "{}"]);
+    assert_ne!(r.status, 0);
+    assert_eq!(sd.usage_last(&["cost_usd", "total_cost_usd", "estimated"]), "0.1719|0.2219|false");
+}
+
 // @test "harness_run: a timed-out claude step whose cap came from harnesses.claude.args is charged that cap"
 #[test]
 fn harness_run_a_timed_out_claude_step_whose_cap_came_from_harnesses_claude_args_is_charged_that_cap() {

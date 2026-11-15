@@ -1362,7 +1362,7 @@ fn unparseable_agent_output_nothing_pushed_or_posted() {
     assert_eq!(sd.gh_ops(), "nodes");
 }
 
-// @test "a hung agent is killed at settings.stepTimeout"
+// @test "a hung agent is killed at settings.stepTimeout, and sd act says it timed out, exit 124 (#303)"
 #[test]
 fn a_hung_agent_is_killed_at_settings_steptimeout() {
     let sd = sd();
@@ -1370,9 +1370,11 @@ fn a_hung_agent_is_killed_at_settings_steptimeout() {
     sd.agent(AGENT_HANGS);
     let t = Instant::now();
     let r = sd.run(&["address"]);
-    assert_ne!(r.status, 0);
+    assert_eq!(r.status, 124, "{}", r.output);
     assert!(t.elapsed().as_secs() < 10);
     assert_eq!(sd.gh_ops(), "nodes");
+    let last = r.output.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default();
+    assert_match(last, r"^sd act: the claude address step timed out after 1s \(session [0-9a-f-]+\)$");
 }
 
 // @test "a failed fetch stops before anything runs"
