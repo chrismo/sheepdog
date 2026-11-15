@@ -302,6 +302,14 @@ fn judged(mut d: Derived, answering: bool) -> Derived {
     d
 }
 
+/// Which verify-fix round on HEAD's red (sd state <s>) this run is: the next
+/// one, or for an answer the round that asked, which counted at its ask. Ask
+/// and answer are one round, and a fix verify rejects is that round's (#505).
+fn fix_round(s: &Value, answering: bool) -> u64 {
+    let n = at(s, "verify.tries").as_u64().unwrap_or(0);
+    if answering { n.max(1) } else { n + 1 }
+}
+
 fn implement_run(b: &str, wt: &str, a: &Args) {
     let answering = !a.answer.is_empty();
     if !answering && !status(wt).is_empty() {
@@ -368,9 +376,9 @@ fn implement_run(b: &str, wt: &str, a: &Args) {
     });
     let changed = r.dirty() || r.moved();
     // A verify-fix round that ends with no fix, an ask or a give-up, counts
-    // as one whose fix verify rejects does (#505); an answer's run too.
-    let tries = at(&s, "verify.tries").as_u64().unwrap_or(0) + 1;
-    if round == Round::VerifyFix && (r.outcome != Outcome::Done || !changed) {
+    // as one whose fix verify rejects does (#505); an answer's run adds none.
+    let tries = fix_round(&s, answering);
+    if round == Round::VerifyFix && !answering && (r.outcome != Outcome::Done || !changed) {
         crate::verify_red::tried(wt, b, tries);
     }
     let mut question = match &r.outcome {

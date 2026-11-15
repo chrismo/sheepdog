@@ -11,8 +11,9 @@
 // rebase or reset done by hand leaves it on the commit it was on, and so
 // does a --resolve that halts mid-rebase (an attached session), as that
 // rebase is finished by hand. tries: implement's verify-fix rounds that
-// failed (tried): a fix verify rejected, or an ask or a give-up (#505); a
-// rerun on the same commit keeps it, any other new red starts at none.
+// failed (tried): a fix verify rejected, or an ask or a give-up (#505), an
+// answer's run being the asking round's; a rerun on the same commit keeps
+// it, any other new red starts at none.
 
 use crate::git::git_out;
 use crate::pins::{self, Pin};
