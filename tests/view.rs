@@ -782,12 +782,14 @@ fn a_step_the_loop_launched_shows_as_running_from_the_branch_s_marker_503() {
     ]));
     let mut step = std::process::Command::new("sleep").arg("30").spawn().unwrap();
     let pid = step.id().to_string();
+    // The step starts after the pass wrote the cache.
+    let since = sheepdog::time::now_utc().0;
     fs::create_dir_all(sd.path("repos/r/.git/sheepdog")).unwrap();
     fs::write(sd.path("repos/r/.git/sheepdog/feat.running"),
-              format!("{pid} review 2026-11-13T01:41:00Z {}\n", sheepdog::running::proc_start(&pid))).unwrap();
+              format!("{pid} review {since} {}\n", sheepdog::running::proc_start(&pid))).unwrap();
     let s = serve(&sd);
     for b in [s.flock()["branches"][0].clone(), branch(&s, &id).1] {
-        assert_eq!(b["lead"]["say"], "review running since 2026-11-13T01:41:00Z", "{b}");
+        assert_eq!(b["lead"]["say"], format!("review running since {since}"), "{b}");
         // The Flock keeps it in the agent's group, though sd state says wait.
         assert_eq!(b["lead"]["who"], "agent", "{b}");
         assert_eq!(b["acting"], "review", "{b}");

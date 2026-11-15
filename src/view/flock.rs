@@ -5,7 +5,7 @@
 use crate::next::steps::{self, Stage};
 use crate::val::{at, n, on, t};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use crate::watch::json_files;
 use std::path::Path;
@@ -232,7 +232,7 @@ pub fn flock(state: &Path) -> Value {
     let cached = cached(state);
     let (runs, repos) = (super::timeline::last_runs(&super::branch::usage(state)), crate::watch::registered());
     let steps: Vec<_> = repos.iter().map(|r| crate::running::live(r)).collect();
-    let (mut stepping, mut own) = (BTreeSet::new(), BTreeSet::new());
+    let (mut stepping, mut own) = (BTreeMap::new(), BTreeSet::new());
     let cards: Vec<Value> = cached
         .iter()
         .map(|c| {
@@ -245,8 +245,9 @@ pub fn flock(state: &Path) -> Value {
                 own.insert(c.id.clone());
             }
             let run = i.and_then(|i| steps[i].get(&c.branch));
-            if run.is_some() {
-                stepping.insert(c.id.clone());
+            if let Some(r) = run {
+                let started = crate::time::epoch_ns(&t(r, "since")).map_or(0, |ns| (ns / 1_000_000) as u64);
+                stepping.insert(c.id.clone(), started);
             }
             live(&mut card, run.unwrap_or(&Value::Null));
             card
