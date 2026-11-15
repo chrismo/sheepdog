@@ -336,6 +336,27 @@ fn repo_state_dir(state: &str, repo: &str) -> String {
     format!("{state}/branches/{}", repo_key(repo))
 }
 
+/// Remove <path>, a branch's record under <dir>, then each dir a slash in
+/// the branch's name made, once empty.
+fn drop_record(dir: &str, path: &Path) {
+    let _ = fs::remove_file(path);
+    let mut d = path.parent();
+    while let Some(p) = d.filter(|p| *p != Path::new(dir)) {
+        if fs::remove_dir(p).is_err() {
+            break;
+        }
+        d = p.parent();
+    }
+}
+
+/// sd act forget's (#508): <b>'s record, what the last pass saw of it, goes
+/// with the rest of what sheepdog stores for it, so the next pass has no
+/// gone branch to report a merge for: chrismo's own act isn't news.
+pub fn forget_record(repo: &str, b: &str) {
+    let dir = repo_state_dir(&state_dir(), repo);
+    drop_record(&dir, Path::new(&format!("{dir}/{b}.json")));
+}
+
 fn show(lines: &str) -> String {
     lines.replace('\t', "  ")
 }
@@ -994,14 +1015,7 @@ impl Watch {
                     continue;
                 }
             }
-            let _ = fs::remove_file(&path);
-            let mut d = path.parent();
-            while let Some(p) = d.filter(|p| *p != Path::new(&dir)) {
-                if fs::remove_dir(p).is_err() {
-                    break;
-                }
-                d = p.parent();
-            }
+            drop_record(&dir, &path);
         }
         out
     }
