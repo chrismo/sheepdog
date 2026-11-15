@@ -6,8 +6,9 @@
 // on, a pass removes it. Keyed on the commit, so sd state calls it at_head
 // only while HEAD is still that commit: a new commit leaves it standing on
 // an old one, which NEXT and ship ignore. A restack is no fix, so sd's
-// restack moves the record to the commit it lands on (carry), and a
-// verify-fix question with it (step::carry_question, #505). Only sd's: a
+// restack moves the record to the commit it lands on (carry), and, when no
+// agent resolved it, a verify-fix question with it (step::carry_question,
+// #505). Only sd's: a
 // rebase or reset done by hand leaves it on the commit it was on, and so
 // does a --resolve that halts mid-rebase (an attached session), as that
 // rebase is finished by hand. tries: implement's verify-fix rounds that

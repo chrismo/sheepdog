@@ -74,7 +74,7 @@ Verbs:
             so does a round that asks or gives up (#505); an answer goes on
             in the round that asked and adds none, however it ends. After 2,
             the red is chrismo's, unless --force, though an answer still goes
-            on. sd's restack carries a verify-fix question with the red.
+            on. sd's clean restack carries a verify-fix question with the red.
             Refuses, at zero
             tokens, a branch already ahead of its target with nothing to
             fix: NEXT offers implement only before the branch's first commit

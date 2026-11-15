@@ -1634,6 +1634,25 @@ fn resolve_a_red_verify_is_on_the_resolution_when_verify_runs_on_it_325() {
     assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/verify-red"]), None);
 }
 
+// #505: a resolution changes the code and verify judges it, so a verify-fix
+// question isn't carried to it: here verify passes and clears the red, and
+// a question moved there would ask about a red that's gone.
+#[test]
+fn resolve_a_verify_fix_question_stays_on_the_commit_it_asked_at_505() {
+    let sd = agent_sd();
+    let on_head = r#"git cat-file blob refs/sheepdog/feat/verify-red | grep -q "\"head\":\"$(git rev-parse HEAD)\"""#;
+    sd.verb_ok("config", &["set", "--global", "settings.verify", on_head]);
+    assert_ne!(sd.run(&["verify"]).status, 0);
+    asked_at_head(&sd, "feat", "verify-fix");
+    let before = sd.rev("feat");
+    sd.upstream("main", "g", "X", "upstream");
+    sd.resolver("GX");
+    let r = sd.run(&["restack", "--resolve"]);
+    assert_eq!(r.status, 0, "{}", r.output);
+    assert_eq!(sd.git_try(&["rev-parse", "-q", "--verify", "refs/sheepdog/feat/verify-red"]), None);
+    assert_eq!(question(&sd, "feat"), format!(r#"["verify-fix",false,"{before}"]"#));
+}
+
 // @test "--resolve: more than 3 stops gives up and rolls back"
 #[test]
 fn resolve_more_than_3_stops_gives_up_and_rolls_back() {

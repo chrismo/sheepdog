@@ -219,7 +219,7 @@ fn record_question(b: &str, wt: &str, step: &str, text: &str, kind: &str, onto: 
     recorded
 }
 
-/// sd's restack moved <b> from <from> to <to>: a verify-fix question on
+/// sd's clean restack moved <b> from <from> to <to>: a verify-fix question on
 /// <from> moves with the red it asks about, which verify_red::carry moves
 /// (#505), so the round isn't run again to ask the same thing. Another
 /// step's stays on the commit it asked at. A failure only warns.

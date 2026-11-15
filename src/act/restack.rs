@@ -237,7 +237,7 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
     // applies to a clean rebase; a resolved one goes through verify and review.
     let dropped = if resolved { vec![] } else { came_through(&r, &new_base, &new_head, &before, a.force) };
     must(pins::set(".", b, Pin::Base, &new_base));
-    carry(b, &old_head, &new_head);
+    carry(b, &old_head, &new_head, resolved);
     // only --force gets here past them: chrismo has looked (#356)
     if yes(Derived::new(&s).restack_foreign) {
         seen_authors(b, &s, "/sync/foreign_commits");
@@ -272,10 +272,13 @@ pub fn restack(b: &str, remote: &str, a: &Args) {
 }
 
 /// A restack is no fix: <b>'s red verify on <from>, and the verify-fix
-/// question about it, move to <to> (#325, #505).
-fn carry(b: &str, from: &str, to: &str) {
+/// question about it, move to <to> (#325, #505). A <resolved> one changed
+/// the code, and verify judges it next, so the question stays behind.
+fn carry(b: &str, from: &str, to: &str, resolved: bool) {
     crate::verify_red::carry(".", b, from, to);
-    carry_question(b, from, to);
+    if !resolved {
+        carry_question(b, from, to);
+    }
 }
 
 /// A git log -p whose patch-ids ignore context, as patch_id's do.
