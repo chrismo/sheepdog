@@ -10,7 +10,7 @@ use super::branch::find;
 use super::refresh;
 use crate::proc;
 use crate::val::{at, t};
-use crate::watch::{act_args, dispatch_verb, may_dispatch, registered, repo_key, sd_verb, step_secs, watch_timeout};
+use crate::watch::{act_args, dispatch_verb, gate, may_dispatch, registered, repo_key, sd_verb, step_secs, watch_timeout};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -76,11 +76,7 @@ fn step_for(s: &Value, key: &str) -> Result<&'static str, String> {
         "wait" => format!("{key} is a wait: nothing to run\n"),
         _ => format!("{key} has no sd act verb\n"),
     })?;
-    if !may_dispatch(s, key) {
-        return Err(format!(
-            "{key}: autoRun doesn't run steps on this PR (someone else wrote it, or pushed to it): run sd act by hand if you mean to\n"
-        ));
-    }
+    gate(s, key).map_err(|why| format!("{key}: autoRun doesn't run it, {why}: run sd act by hand if you mean to\n"))?;
     Ok(step)
 }
 
@@ -152,10 +148,16 @@ mod tests {
         let mut s = next("push", "run");
         s["pr"]["author"] = json!("them");
         assert_eq!(offered(&s), Value::Null);
-        assert_eq!(
-            step_for(&s, "push"),
-            Err("push: autoRun doesn't run steps on this PR (someone else wrote it, or pushed to it): run sd act by hand if you mean to\n".into())
-        );
+        assert_eq!(step_for(&s, "push"), Err("push: autoRun doesn't run it, the PR is them's: run sd act by hand if you mean to\n".into()));
+    }
+
+    /// A branch with no PR yet runs its steps (#307).
+    #[test]
+    fn a_branch_with_no_pr_yet_gets_the_button_307() {
+        let mut s = next("implement", "agent");
+        s["pr"] = Value::Null;
+        assert_eq!(offered(&s), json!({"key": "implement", "verb": "implement"}));
+        assert_eq!(step_for(&s, "implement"), Ok("implement"));
     }
 
     #[test]
