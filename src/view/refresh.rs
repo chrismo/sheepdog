@@ -5,7 +5,9 @@
 // fails, for any reason, waits until the watcher rewrites the file it left as
 // it was. None starts while the rate limit the freshest file saw is under
 // settings.rateLimitFloor, as the pass stops then; a pass that finds the quota
-// back writes a file that lifts it.
+// back writes a file that lifts it. A branch whose step (its running marker)
+// was seen to end, and whose file is from before the step or says it runs,
+// is checked first, a minute old or not (#503).
 
 use super::cache::{forced, now_ms, stale};
 use super::flock::Cached;
@@ -14,7 +16,8 @@ use crate::proc;
 use crate::time::utc;
 use crate::val::{on, t};
 use crate::watch::{registered, repo_key, sd_verb};
-use std::collections::BTreeMap;
+use serde_json::Value;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -27,9 +30,41 @@ struct Branches {
     tried: BTreeMap<String, u64>,
     /// Each failed refresh's file, by when it was written.
     failed: BTreeMap<String, Option<u64>>,
+    /// The branches a live step held at the last read, with when it started, in ms.
+    stepping: BTreeMap<String, u64>,
+    /// When each branch's step that was seen to end had started, in ms.
+    ended: BTreeMap<String, u64>,
 }
-static BRANCHES: Mutex<Branches> =
-    Mutex::new(Branches { running: None, tried: BTreeMap::new(), failed: BTreeMap::new() });
+static BRANCHES: Mutex<Branches> = Mutex::new(Branches {
+    running: None,
+    tried: BTreeMap::new(),
+    failed: BTreeMap::new(),
+    stepping: BTreeMap::new(),
+    ended: BTreeMap::new(),
+});
+
+/// The branches a live step holds now, with when it started (its marker's
+/// since, in ms): one held at the last read and not now has ended its step,
+/// unless it's in <own>, the page's own step (act.rs), whose refresh::now
+/// checks it after.
+pub fn stepping(now: BTreeMap<String, u64>, own: &BTreeSet<String>) {
+    let mut b = branches();
+    let gone: Vec<_> = b.stepping.iter().filter(|(id, _)| !now.contains_key(*id) && !own.contains(*id)).map(|(id, &at)| (id.clone(), at)).collect();
+    b.ended.extend(gone);
+    // A step running again: its file is the new step's, not the last one's end.
+    b.ended.retain(|id, _| !now.contains_key(id));
+    b.stepping = now;
+}
+
+/// Whether a branch's file, tried at <tried> ms, is from before the end of
+/// the step that started at <started> ms and has ended: the pass's from
+/// before the launch (the marker's since is to the second), or one written
+/// while the step ran, whose NEXT says running. When the page saw the step
+/// end doesn't say: it may have been closed then.
+fn before_end(started: Option<u64>, tried: u64, doc: Option<&Value>) -> bool {
+    let Some(started) = started else { return false };
+    tried < started + 1000 || doc.is_some_and(|d| d["state"]["next"][0]["key"] == "running")
+}
 
 fn branches() -> MutexGuard<'static, Branches> {
     BRANCHES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -103,12 +138,14 @@ pub fn refreshing(state: &Path, cached: &[Cached]) -> bool {
             }
             // A file written ahead of the clock would be stale on every read.
             let tried = w.filter(|&w| w <= now).unwrap_or(0).max(b.tried.get(&c.id).copied().unwrap_or(0));
-            stale(tried, now, forced).then_some((tried, c, repo, w))
+            let before_end = before_end(b.ended.get(&c.id).copied(), tried, c.doc.as_ref());
+            (before_end || stale(tried, now, forced)).then_some(((!before_end, tried), c, repo, w))
         })
-        .min_by_key(|(tried, ..)| *tried);
+        .min_by_key(|(order, ..)| *order);
     let Some((_, c, repo, w)) = stalest else { return false };
     b.running = Some(c.id.clone());
     b.tried.insert(c.id.clone(), now);
+    b.ended.remove(&c.id);
     let (id, repo, branch) = (c.id.clone(), repo.clone(), c.branch.clone());
     std::thread::spawn(move || run(&id, &repo, &branch, w));
     true
@@ -138,10 +175,40 @@ pub fn now(state: &Path, id: &str, repo: &str, branch: &str) {
         if b.running.is_none() {
             b.running = Some(id.to_string());
             b.tried.insert(id.to_string(), now_ms());
+            // This is the check after the step: no second one for its end.
+            b.stepping.remove(id);
+            b.ended.remove(id);
             break;
         }
         drop(b);
         std::thread::sleep(Duration::from_millis(100));
     }
     run(id, repo, branch, written(state, id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_step_s_end_is_noted_with_its_start_unless_it_was_the_page_s_own_503() {
+        let set = |ids: &[&str]| ids.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>();
+        let started = |ids: &[&str]| ids.iter().map(|s| (s.to_string(), 5_000)).collect::<BTreeMap<_, _>>();
+        stepping(started(&["r/loop-503", "r/own-503"]), &set(&[]));
+        stepping(started(&[]), &set(&["r/own-503"]));
+        let b = branches();
+        assert_eq!(b.ended.get("r/loop-503"), Some(&5_000));
+        assert!(!b.ended.contains_key("r/own-503"));
+    }
+
+    #[test]
+    fn a_file_from_before_the_step_or_during_it_is_from_before_its_end_503() {
+        let (lead, running) = (json!({"state": {"next": [{"key": "review"}]}}), json!({"state": {"next": [{"key": "running"}]}}));
+        // The marker's start is to the second: a file in that second may be the pass's before it.
+        assert!(before_end(Some(5_000), 5_999, Some(&lead)), "the pass's file before the launch");
+        assert!(before_end(Some(5_000), 60_000, Some(&running)), "a pass's file while the step ran");
+        assert!(!before_end(Some(5_000), 60_000, Some(&lead)), "a file from after the step");
+        assert!(!before_end(None, 0, Some(&running)), "no step seen to end");
+    }
 }
