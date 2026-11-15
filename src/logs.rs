@@ -331,6 +331,11 @@ pub fn forget(wt: &str, b: &str) {
     remove_empty(&repo_dir(&root, &repo));
 }
 
+/// Whether <wt>'s repo keeps any of <b>'s logs.
+pub fn kept(wt: &str, b: &str) -> bool {
+    !logs_in(&branch_dir(&root(), &git::main_worktree(wt), b)).is_empty()
+}
+
 /// The pass: the logs of branches <repo> no longer has go, as pins::sweep
 /// does their refs.
 pub fn sweep(repo: &str) {
