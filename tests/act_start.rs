@@ -722,6 +722,19 @@ fn start_runs_implement_in_the_new_worktree_stdout_is_still_only_the_path() {
     assert_has(&r.stderr, &["Added the third line."]);
 }
 
+// A stack started in one go: the parent implemented and not yet pushed, the
+// child started on it at once implements too (#502).
+#[test]
+fn start_parent_an_unpushed_parent_still_implements_the_child_502() {
+    let sd = sd();
+    let r = sd.run_sep(&["start", "A", "add a third line"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    let r = sd.run_sep(&["start", "--parent", "A", "feat-x", "add a fourth line"]);
+    assert_eq!(r.status, 0, "{}", r.stderr);
+    assert_lacks(&r.stderr, "is unknown");
+    assert_eq!(sd.git(&["rev-list", "--count", "A..feat-x"]), "1");
+}
+
 // @test "start: a failed implement still prints the path, nonzero"
 #[test]
 fn start_a_failed_implement_still_prints_the_path_nonzero() {
