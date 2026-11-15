@@ -544,6 +544,54 @@ pub fn retarget_rules(d: &Derived) -> Vec<Rule> {
     vec![Rule { name: RETARGET_OWED, level: Level::Soft, refuses: *chase && !yes(*up_to_date), clears: "restack first (sd act restack)", yours: true }]
 }
 
+pub const MR_UNPUSHED: &str = "HEAD isn't on the remote: GitHub would mark an older commit ready";
+pub const MR_FOREIGN: &str = "the remote has commits this machine never made";
+pub const MR_CI: &str = "CI isn't green at HEAD";
+pub const MR_UNREAD: &str = "CI's verdict or the target's required checks didn't read";
+pub const MR_VERIFY: &str = "verify is red at HEAD";
+pub const MR_REVIEW: &str = "no review covers HEAD";
+pub const MR_BOT: &str = "the review bot hasn't answered on HEAD";
+
+/// sd act mark-ready's rules over Derived (#500): what NEXT's draft step
+/// waits for, every one Soft, since marking ready early does no harm
+/// --force can't undo. The PR lookup, its state and whether it's a draft,
+/// Hard or Done, are mark_ready::gate's, over the record.
+pub fn mark_ready(d: &Derived) -> Gate {
+    judge(&mark_ready_rules(d))
+}
+
+pub fn mark_ready_rules(d: &Derived) -> Vec<Rule> {
+    let Derived {
+        draft_ready, unpushed, reset_away, foreign, ci_verdict, verify_red, need_review, bot_due, bot_waiting,
+        own_base: _, running: _, reviewer: _, pr_null: _, has_pr: _, open: _, merged: _, closed: _, errors: _, stale: _,
+        lagging: _, locked: _, owed_human: _, owed_bot: _, bot_blocking: _, info: _, unposted: _, draft: _, review_required: _,
+        merge_state: _, tasked: _, verify_fix_due: _, foreign_authors: _, behind_remote: _, dropping: _,
+        taken: _, held: _, to_push: _, ci_held: _, push_dirty: _, parent_unpushed: _, empty: _,
+        undone: _, behind_target: _, sync_conflict: _, conflict: _, chase: _, chase_behind: _, up_to_date: _, gh_behind: _,
+        gh_restack: _, by_tree: _, old_base_null: _, no_base: _, ahead_target: _, restack_due: _, stacked: _,
+        parent_closed: _, parent_merged: _, parent_abandoned: _, merge_unknown: _, replays: _, restack_foreign: _,
+        ci_blocked: _, ci_pending: _, ci_for_head: _, any_cover: _,
+        reviewed: _, fixing: _, findings_declined: _, fix_due: _, bot_late: _,
+        failed_out: _, asking: _, stored: _, addr_moot: _, ci_moot: _, resume: _, resume_ci: _, answer_pending: _,
+        dirty: _, refused: _, bot: _, rv_yours: _, rv_dirty: _, rv_fetch: _, rv_current: _, rv_pending: _,
+        rv_submitted: _, rv_local: _, budget_unread: _, over_budget: _,
+    } = d;
+    let soft = |name, refuses, clears, yours| Rule { name, level: Level::Soft, refuses, clears, yours };
+    let unpushed = *unpushed || *reset_away;
+    let ci_off = !["green", "none"].contains(&ci_verdict.as_str());
+    // draft_ready is the rest: a draft, all of the above, and the required checks read
+    let unread = !draft_ready && !unpushed && !foreign && !ci_off;
+    vec![
+        soft(MR_UNPUSHED, unpushed, "sd act push", false),
+        soft(MR_FOREIGN, *foreign, "look at them first", true),
+        soft(MR_CI, ci_off, "CI passing at HEAD (sd act ci-fix when it's red)", false),
+        soft(MR_UNREAD, unread, "sd state's errors say why", true),
+        soft(MR_VERIFY, *verify_red, "sd act implement fixes it", false),
+        soft(MR_REVIEW, *need_review, "sd act review", false),
+        soft(MR_BOT, *bot_due || *bot_waiting, "sd act trigger, then the bot's reply", false),
+    ]
+}
+
 /// What parity finds wrong with NEXT's <steps> for <d>: a gated verb NEXT
 /// offers while its gate refuses (runs() false), an sd act verb with no
 /// declaration, and an agent step whose verb has no gate (#341).
@@ -586,6 +634,47 @@ mod tests {
         assert_eq!(retarget(&Derived { chase: true, up_to_date: None, ..Derived::default() }), owed);
         assert_eq!(retarget(&Derived { chase: true, up_to_date: Some(true), ..Derived::default() }), Gate::Go);
         assert_eq!(retarget(&Derived { chase: false, up_to_date: None, ..Derived::default() }), Gate::Go);
+    }
+
+    /// A draft, pushed and green, reviewed, with no bot owed.
+    fn markable() -> Derived {
+        Derived { has_pr: true, draft: Some(true), draft_ready: true, ci_verdict: "green".into(), ..Derived::default() }
+    }
+
+    #[test]
+    fn mark_ready_goes_on_a_pushed_green_reviewed_draft_500() {
+        assert_eq!(mark_ready(&markable()), Gate::Go);
+        assert_eq!(mark_ready(&Derived { ci_verdict: "none".into(), ..markable() }), Gate::Go);
+    }
+
+    #[test]
+    fn mark_ready_refuses_what_the_draft_step_waits_for_unless_forced_500() {
+        let not_ready = Derived { draft_ready: false, ..markable() };
+        assert_eq!(mark_ready(&Derived { unpushed: true, ..not_ready.clone() }), Gate::Soft(vec![MR_UNPUSHED.into()]));
+        assert_eq!(mark_ready(&Derived { reset_away: true, ..not_ready.clone() }), Gate::Soft(vec![MR_UNPUSHED.into()]));
+        assert_eq!(mark_ready(&Derived { foreign: true, ..not_ready.clone() }), Gate::Soft(vec![MR_FOREIGN.into()]));
+        assert_eq!(mark_ready(&Derived { ci_verdict: "pending".into(), ..not_ready.clone() }), Gate::Soft(vec![MR_CI.into()]));
+        // green, but the target's required checks didn't read
+        assert_eq!(mark_ready(&not_ready), Gate::Soft(vec![MR_UNREAD.into()]));
+        assert_eq!(mark_ready(&Derived { verify_red: true, ..markable() }), Gate::Soft(vec![MR_VERIFY.into()]));
+        assert_eq!(mark_ready(&Derived { need_review: true, ..markable() }), Gate::Soft(vec![MR_REVIEW.into()]));
+        assert_eq!(mark_ready(&Derived { bot_due: true, ..markable() }), Gate::Soft(vec![MR_BOT.into()]));
+        assert_eq!(mark_ready(&Derived { bot_waiting: true, ..markable() }), Gate::Soft(vec![MR_BOT.into()]));
+    }
+
+    /// On a draft, the gate runs exactly when the draft step's old
+    /// conditions held (draft_ready and nothing to review, verify or ask
+    /// the bot), so NEXT's draft step can ask it alone.
+    #[test]
+    fn mark_ready_runs_on_a_draft_exactly_when_draft_ready_and_nothing_owed_on_states_sd_state_makes_500() {
+        check("mark-ready vs the draft step's conditions", |d| {
+            let draft_ready = d.draft_ready
+                && !(d.unpushed || d.reset_away || d.foreign)
+                && ["green", "none"].contains(&d.ci_verdict.as_str());
+            let old = draft_ready && !d.verify_red && !d.need_review && !d.bot_due && !d.bot_waiting;
+            let d = Derived { draft: Some(true), draft_ready, ..d.clone() };
+            if mark_ready(&d).runs() == old { Ok(()) } else { Err(format!("runs {} vs {old}", mark_ready(&d).runs())) }
+        });
     }
 
     #[test]

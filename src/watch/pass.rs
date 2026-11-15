@@ -1358,7 +1358,7 @@ mod tests {
         let runs = [
             ("fetch", "fetch"), ("behind", "restack"), ("push", "push"), ("retarget", "retarget"), ("bot-trigger", "trigger"),
             ("implement", "implement"), ("review-fix", "implement"), ("review", "review"), ("bot", "address"),
-            ("ci-red", "ci-fix"), ("conflict", "resolve"), ("verify-red", "implement"),
+            ("ci-red", "ci-fix"), ("conflict", "resolve"), ("verify-red", "implement"), ("draft", "mark-ready"),
         ];
         for k in KEYS {
             assert_eq!(stuck(k), stuck_keys.contains(&k), "stuck {k}");

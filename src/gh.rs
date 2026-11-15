@@ -135,6 +135,11 @@ pub fn retarget_pr(number: &str, base: &str) -> Call {
     call(&["pr", "edit", number, "--base", base], WRITE)
 }
 
+/// Take PR <number> out of draft.
+pub fn mark_pr_ready(number: &str) -> Call {
+    call(&["pr", "ready", number], WRITE)
+}
+
 /// stdout is the new PR's URL.
 pub fn create_draft_pr(base: &str, head: &str, title: &str, body: &str) -> Call {
     call(&["pr", "create", "--draft", "--base", base, "--head", head, "--title", title, "--body", body], WRITE)

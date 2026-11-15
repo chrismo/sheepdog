@@ -1,7 +1,7 @@
-// Black-box tests of sd act ack and trigger (A5) (#202): the built binary,
-// run as sd-act through a link (tests/common). Moved from
-// libexec/sd-act-ack.bats and sd-act-trigger.bats; each test keeps the bats
-// test's title above it.
+// Black-box tests of sd act ack, trigger (A5) and mark-ready (#500) (#202):
+// the built binary, run as sd-act through a link (tests/common). ack's and
+// trigger's moved from libexec/sd-act-ack.bats and sd-act-trigger.bats; each
+// of those keeps the bats test's title above it.
 
 mod common;
 
@@ -518,5 +518,104 @@ esac
         let r = sd.run(&["ack"]);
         assert_eq!(r.status, 0);
         assert_has(&r.output, &["warning: 1 line(s) of", "aren't usage records"]);
+    }
+}
+
+// mark-ready (#500): sd state answers from $FX/states/feat.json, and the fake
+// gh records its args.
+mod mark_ready {
+    use super::*;
+
+    /// A draft PR #7, pushed, CI green and the local review covering HEAD.
+    const DRAFT: &str = r#"{"branch": "feat", "head": "h1",
+    "pr": {"number": 7, "url": "https://github.com/o/r/pull/7", "state": "OPEN", "draft": true, "base": "main", "head_sha": "h1",
+           "mergeable": "MERGEABLE", "merge_state": "DRAFT", "review_decision": null, "review_requests": []},
+    "parent": {"name": "main", "source": "pr", "merged": false, "pr": null},
+    "sync": {"target": "main", "default": "main", "ahead": 1, "behind": 0, "up_to_date": true, "old_base": "b0b0b0b0", "conflict": false,
+             "replays_parent": [], "foreign_authors": []},
+    "push": {"remote_sha": "h1", "ahead": 0, "behind": 0, "diverged": false, "remote_ours": true, "dirty": false, "foreign_authors": []},
+    "fresh": true, "stale": [],
+    "ci": {"sha": "h1", "for_head": true, "verdict": "green", "failing": [], "pending": [], "required": []},
+    "review": {"local": {"sha": "h1", "status": "covered"}, "bot": {"sha": null, "status": "none"}, "accepted": {"sha": null, "status": "none"}},
+    "threads": {"owed_bot": 0, "owed_human": 0, "outdated": 0, "blocking": 0, "info": 0, "items": []},
+    "session": {"enrolled": true, "harness": null, "id": null, "locked": false},
+    "errors": []}"#;
+
+    const GH: &str = "#!/usr/bin/env bash\necho \"$*\" >> \"$GH/calls\"\n[[ -e $GH/fail ]] && { echo 'gh: boom' >&2; exit 1; }\nexit 0\n";
+
+    fn sd() -> Sd {
+        let mut sd = Sd::for_verb("act");
+        sd.env = vec![("GH".to_string(), sd.path("gh")), ("SHEEPDOG_STATE_FIXTURES".to_string(), sd.path("fx"))];
+        fs::create_dir_all(sd.tmp.join("fx")).unwrap();
+        fs::create_dir_all(sd.tmp.join("gh")).unwrap();
+        sd.fake("gh", GH);
+        sd.git(&["init", "-q", &sd.path("repo")]);
+        sd.cd("repo");
+        sd.git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+        sd.git(&["switch", "-qc", "feat"]);
+        sd
+    }
+
+    /// feat's state: DRAFT with the jq <edits>.
+    fn state(sd: &Sd, edits: &[&str]) {
+        let s = edits.iter().fold(DRAFT.to_string(), |s, e| jq(&[e], &s));
+        fs::write(sd.tmp.join("fx/feat.json"), s).unwrap();
+    }
+
+    #[test]
+    fn mark_ready_runs_gh_pr_ready_on_a_pushed_green_reviewed_draft() {
+        let sd = sd();
+        state(&sd, &[]);
+        let r = sd.run(&["mark-ready"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_eq!(cat(&sd, "gh/calls"), "pr ready 7");
+        assert_has(&r.output, &["PR #7 is ready for review"]);
+    }
+
+    #[test]
+    fn mark_ready_refuses_what_the_draft_step_waits_for_unless_forced() {
+        let sd = sd();
+        state(&sd, &[r#".ci.verdict = "pending""#, r#".review.local = {sha: "x", status: "uncovered"}"#]);
+        let r = sd.run(&["mark-ready"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["not marking feat's PR ready", "CI isn't green at HEAD", "no review covers HEAD", "--force"]);
+        assert_eq!(cat(&sd, "gh/calls"), "");
+        let r = sd.run(&["mark-ready", "--force"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_eq!(cat(&sd, "gh/calls"), "pr ready 7");
+    }
+
+    #[test]
+    fn mark_ready_a_pr_no_longer_a_draft_is_done() {
+        let sd = sd();
+        state(&sd, &[".pr.draft = false"]);
+        let r = sd.run(&["mark-ready", "--force"]);
+        assert_eq!(r.status, 0, "{}", r.output);
+        assert_has(&r.output, &["PR #7 is already ready for review"]);
+        assert_eq!(cat(&sd, "gh/calls"), "");
+    }
+
+    #[test]
+    fn mark_ready_no_pr_or_a_closed_one_is_refused_even_forced() {
+        let sd = sd();
+        state(&sd, &[".pr = null", r#".errors = ["gh: boom"]"#]);
+        let r = sd.run(&["mark-ready", "--force"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["no PR for feat: gh: boom"]);
+        state(&sd, &[r#".pr.state = "CLOSED""#]);
+        let r = sd.run(&["mark-ready", "--force"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["PR #7 is closed"]);
+        assert_eq!(cat(&sd, "gh/calls"), "");
+    }
+
+    #[test]
+    fn mark_ready_gh_failing_is_an_error() {
+        let sd = sd();
+        state(&sd, &[]);
+        fs::write(sd.tmp.join("gh/fail"), "").unwrap();
+        let r = sd.run(&["mark-ready"]);
+        assert_ne!(r.status, 0);
+        assert_has(&r.output, &["gh: boom", "gh pr ready failed for PR #7"]);
     }
 }

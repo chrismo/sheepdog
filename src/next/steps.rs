@@ -71,7 +71,7 @@ pub const STEPS: &[StepDef] = &[
     s("answer", &["wait", "you"], Turn, None, None)
         .at(Threads, "answer", "chrismo's stored answer waits for the asking step to run again"),
     s("open-pr", RUN, Turn, None, None).at(Push, "open PR", "open the PR (sd act ship)").path(3),
-    s("draft", RUN, Turn, None, None).at(Merge, "mark ready", "the PR is a draft: mark it ready for review").path_if(1, "the PR started as a draft"),
+    s("draft", RUN, Turn, None, Some("mark-ready")).at(Merge, "mark ready", "the PR is a draft: mark it ready for review (sd act mark-ready)").path_if(1, "the PR started as a draft"),
     s("review-fix", AGENT, Turn, None, Some("implement"))
         .at(Review, "fix", "review findings stand at HEAD: an agent fixes them (implement), under settings.reviewRounds").path_if(2, "the review found something"),
     s("review-decide", YOU, Stuck, None, None)

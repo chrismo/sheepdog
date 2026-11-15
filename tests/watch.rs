@@ -3237,7 +3237,7 @@ fn dispatch_launches_the_first_run_step_and_the_next_pass_reports_how_it_ended_2
     let sd = sd();
     sd.dispatching();
     let repo = sd.path("repo");
-    for (key, verb) in [("push", "push"), ("behind", "restack"), ("retarget", "retarget"), ("bot-trigger", "trigger")] {
+    for (key, verb) in [("push", "push"), ("behind", "restack"), ("retarget", "retarget"), ("bot-trigger", "trigger"), ("draft", "mark-ready")] {
         sd.first_step("feat", key, &[]);
         let r = sd.pass_run(&[]);
         assert_eq!(r.status, 0, "{key}: {}", r.stderr);
@@ -3480,7 +3480,7 @@ fn dispatch_runs_only_the_first_step_and_only_as_the_one_it_is() {
 fn dispatch_leaves_the_run_steps_outside_this_slice_to_chrismo() {
     let sd = sd();
     sd.dispatching();
-    for key in ["merged", "stale", "ship-parent", "open-pr", "draft", "made-up"] {
+    for key in ["merged", "stale", "ship-parent", "open-pr", "made-up"] {
         sd.first_step("feat", key, &[]);
         sd.pass();
         assert_eq!(sd.acts(), "", "{key}");

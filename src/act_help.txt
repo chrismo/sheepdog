@@ -15,6 +15,7 @@ Usage:
   sd act decision [--force] [--finding <n>] <text> [<branch>]
   sd act restack  [--force] [--resolve] [<branch>]
   sd act retarget [--force] [<branch>]
+  sd act mark-ready [--force] [<branch>]
   sd act push     [--force] [<branch>]
   sd act verify   [<branch>]
   sd act autofix  [<branch>]
@@ -193,7 +194,16 @@ Verbs:
             closed, unmerged or not known to have merged. Refuses, unless
             --force, while the one restack after the merge is owed, or
             sync is unknown: the PR would get the parent's commits (#300)
-  push     publish: a plain push for new commits; rewritten history, or a
+  mark-ready  take the draft PR out of draft (gh pr ready): NEXT's draft
+            step, which the watcher runs under autoRun (#500). Refuses,
+            --force or not, with no PR or a PR not open; nothing to do when
+            it isn't a draft. Refuses, unless --force, what the draft step
+            waits for: HEAD not on the remote, the remote's commits this
+            machine never made, CI not green (or none) at HEAD, its
+            verdict or the target's required checks unread, verify red,
+            no review covering HEAD, or the review bot owed a trigger or
+            a reply
+  push    publish: a plain push for new commits; rewritten history, or a
             pushed commit reset away, is force-pushed with a lease, only
             over a remote head of our own.
             Never over commits this copy has never had, --force or not.
@@ -446,6 +456,7 @@ flags, so an --effort among them wins), and its session: "claude (model opus, ef
                   conflict, a stored answer, or someone else's commits;
                   and keep a change that came out different
   retarget        even while the one restack after the merged parent is owed
+  mark-ready      even before CI, the review or the bot is done with HEAD
   ship            push past push's own refusals (verify red at HEAD,
                   someone else's commits), with a warning for each
   implement, review, describe   the same

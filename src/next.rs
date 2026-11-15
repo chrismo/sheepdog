@@ -824,13 +824,15 @@ fn open_pr(cx: &Cx) -> Option<Value> {
     spends(&cx.hold, step(def!("open-pr"), "run", "ship: push, open a draft PR", cmd("sd act ship")))
 }
 
+/// Only while gates::mark_ready lets it run (#500), whose rules are this
+/// step's conditions.
 fn draft(cx: &Cx) -> Option<Value> {
     let d = cx.d;
-    if !(d.has_pr && d.draft_ready && !d.verify_red && !d.need_review && !d.bot_due && !d.bot_waiting) {
+    if !(d.has_pr && d.draft_ready && crate::act::gates::mark_ready(d).runs()) {
         return None;
     }
     let why = if cx.g("ci.verdict").as_str() == Some("none") { "reviewed, no CI checks" } else { "CI green and reviewed" };
-    step(def!("draft"), "run", format!("{why}: mark the PR ready for review"), cmd("gh pr ready"))
+    step(def!("draft"), "run", format!("{why}: mark the PR ready for review"), cmd("sd act mark-ready"))
 }
 
 /// Review findings to fix, or the branch's own review.

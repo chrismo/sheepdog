@@ -92,6 +92,8 @@ pub const VERBS: &[Verb] = &[
     gated(v("restack", Worktree, false, false, "restacking"), |steps| steps.iter().any(|s| s["key"] == "behind" && s["who"] == "run"), |d| gates::restack_rules(d, false)),
     gated(v("restack --resolve", Worktree, true, true, "restacking").reads(&[p("resolve", "resolvePrompt", "resolve.md")]), |steps| steps.iter().any(|s| s["key"] == "conflict" && s["who"] == "agent"), |d| gates::restack_rules(d, true)),
     gated(v("retarget", Nothing, false, false, ""), |steps| steps.iter().any(|s| s["key"] == "retarget"), gates::retarget_rules),
+    // gh pr ready: writes only GitHub (#500)
+    gated(v("mark-ready", Nothing, false, false, ""), |steps| steps.iter().any(|s| s["key"] == "draft"), gates::mark_ready_rules),
     gated(v("push", Remote, false, false, "pushing"), |steps| steps.iter().any(|s| s["key"] == "push"), gates::push_rules),
     v("verify", Worktree, false, false, "running verify"),
     v("autofix", Worktree, false, false, "running autofix"),
@@ -162,6 +164,18 @@ mod tests {
         assert_eq!(of_cmd("restack --resolve").map(|v| v.name), Some("restack --resolve"));
         assert_eq!(of_cmd("answer \"<your answer>\" feat").map(|v| v.name), Some("answer"));
         assert_eq!(of_cmd("ship feat").map(|v| v.name), Some("ship"));
+    }
+
+    /// mark-ready (#500): gh pr ready behind the draft step's gate, which
+    /// writes only GitHub and spends nothing.
+    #[test]
+    fn mark_ready_is_a_gated_zero_token_verb_that_writes_only_github_500() {
+        let v = find("mark-ready").expect("mark-ready is declared");
+        assert!(!v.spends && !v.agent);
+        assert_eq!(v.scope, Scope::None);
+        let g = v.gate.as_ref().expect("mark-ready is gated");
+        assert!((g.offered)(&[serde_json::json!({"key": "draft", "who": "run"})]));
+        assert!(!(g.offered)(&[serde_json::json!({"key": "ready", "who": "you"})]));
     }
 
     #[test]
