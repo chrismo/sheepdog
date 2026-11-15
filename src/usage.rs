@@ -258,8 +258,9 @@ pub struct Step<'a> {
 /// The step's record, a line of SUP. A claude step with no result (killed
 /// by stepTimeout or a signal to sd, or crashed) is charged what its
 /// transcript's last cost-state says (#276): that running total, less the
-/// parent's (session_total, else the parent transcript's own last
-/// cost-state), as a result's total_cost_usd would be, and not estimated.
+/// parent's (the higher of session_total and the parent transcript's own
+/// last cost-state: session_total lags behind a step charged its cap with
+/// no total), as a result's total_cost_usd would be, and not estimated.
 /// One that hasn't moved past the parent's total is from before the step,
 /// so it counts as none. With no cost-state line (the transcript isn't a supported API: checked on
 /// Claude Code 2.1.309 and 2.1.323), the old rules: one that still ran
@@ -285,8 +286,7 @@ pub fn record(s: &Step) -> String {
                "cache_read": n(o, "usage.cache_read_input_tokens"), "output": n(o, "usage.output_tokens"),
                "duration_ms": n(o, "duration_ms"), "turns": n(o, "num_turns")})
     } else if let Some(total) = cost_state {
-        let prev = if s.prev > 0.0 { s.prev } else { n(b, "cost_state") };
-        json!({"cost": step_cost(total, prev), "total": total})
+        json!({"cost": step_cost(total, parent), "total": total})
     } else if !claude && !at(a, "turns").is_null() {
         json!({"cost": gained("cost"), "input": gained("input"), "cache_create": gained("cache_create"),
                "cache_read": gained("cache_read"), "output": gained("output"), "duration_ms": s.ms,
@@ -393,8 +393,10 @@ mod tests {
         };
         let a = json!({"entries": 3, "context": 900, "cost_state": 0.2219});
         let b = json!({"entries": 1, "context": 100, "cost_state": 0.05});
-        // the parent's total from usage.sup, else its transcript's own last cost-state
-        assert!(step(124, false, 0.02, &a, &b).contains("status:124,cost_usd:0.2019,total_cost_usd:0.2219,estimated:false,"));
+        // less the higher of the parent's total in usage.sup and its transcript's own last cost-state:
+        // usage.sup's lags when an earlier killed step was charged its cap with no total
+        assert!(step(124, false, 0.08, &a, &b).contains("status:124,cost_usd:0.1419,total_cost_usd:0.2219,estimated:false,"));
+        assert!(step(124, false, 0.02, &a, &b).contains("status:124,cost_usd:0.1719,total_cost_usd:0.2219,estimated:false,"));
         assert!(step(124, false, 0.0, &a, &b).contains("status:124,cost_usd:0.1719,total_cost_usd:0.2219,estimated:false,"));
         assert!(step(143, true, 0.0, &a, &b).contains("status:143,cost_usd:0.1719,total_cost_usd:0.2219,estimated:false,"));
         // no cost-state: the cap for a timeout, unknown for a signal stop, as before
