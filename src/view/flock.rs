@@ -131,9 +131,21 @@ pub fn stages(s: &Value) -> Vec<Value> {
         .collect()
 }
 
+/// Who moves while the marker's <step> runs, for the Flock's group: agent
+/// for an agent verb's step or a bare harness step's (its label), run for a
+/// mechanical verb's. sd state says wait for every running step; the Flock
+/// keeps the card with whoever is moving (#503, chrismo 2026-11-15).
+fn running_who(step: &str) -> &'static str {
+    match crate::act::verbs::VERBS.iter().find(|v| v.step() == step) {
+        Some(v) if !v.agent => "run",
+        _ => "agent",
+    }
+}
+
 /// <card> while the step <run> ({step, since}, running::live) holds the
 /// branch's marker, as sd state shows it: the cache was written before the
-/// loop launched the step (#503). It leads as sd state's running step; the
+/// loop launched the step (#503). It leads as sd state's running step, in
+/// running_who's group, not sd state's wait; the
 /// stage of the cached lead it ran says running; acting is the step, and
 /// act's verb its sd act verb, unless the page's own (view/act.rs) already
 /// names it. Null <run> changes nothing.
@@ -149,7 +161,7 @@ pub fn live(card: &mut Value, run: &Value) {
             *st = json!({"stage": st["stage"], "status": "cur", "text": "running", "who": lead["who"]});
         }
     }
-    card["lead"] = json!({"key": "running", "who": "wait", "cmd": null,
+    card["lead"] = json!({"key": "running", "who": running_who(&step), "cmd": null,
                           "say": format!("{step} running since {}", t(run, "since"))});
     if card["acting"].is_null() {
         // The drill-in names act's verb as the one running: the step's own.
@@ -377,7 +389,7 @@ mod tests {
         let mut c = reviewing();
         c["acting"] = Value::Null;
         live(&mut c, &json!({"step": "review", "since": "2026-11-13T01:41:00Z"}));
-        assert_eq!(c["lead"], json!({"key": "running", "who": "wait", "say": "review running since 2026-11-13T01:41:00Z", "cmd": null}));
+        assert_eq!(c["lead"], json!({"key": "running", "who": "agent", "say": "review running since 2026-11-13T01:41:00Z", "cmd": null}));
         assert_eq!(stage(&c, "review"), &json!({"stage": "review", "status": "cur", "text": "running", "who": "agent"}));
         assert_eq!(c["acting"], "review");
     }
@@ -400,6 +412,16 @@ mod tests {
         live(&mut c, &json!({"step": "resolve", "since": "2026-11-13T01:41:00Z"}));
         assert_eq!(c["acting"], "resolve");
         assert_eq!(t(&c, "act.verb"), "restack --resolve");
+    }
+
+    #[test]
+    fn a_running_agent_step_keeps_its_card_in_the_agent_group_and_a_run_step_in_sheepdog_s_503() {
+        for (step, who) in [("review", "agent"), ("resolve", "agent"), ("implement", "agent"), ("push", "run"), ("restack", "run")] {
+            let mut c = reviewing();
+            c["acting"] = Value::Null;
+            live(&mut c, &json!({"step": step, "since": "2026-11-13T01:41:00Z"}));
+            assert_eq!(t(&c, "lead.who"), who, "{step}");
+        }
     }
 
     #[test]

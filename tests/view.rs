@@ -788,6 +788,8 @@ fn a_step_the_loop_launched_shows_as_running_from_the_branch_s_marker_503() {
     let s = serve(&sd);
     for b in [s.flock()["branches"][0].clone(), branch(&s, &id).1] {
         assert_eq!(b["lead"]["say"], "review running since 2026-11-13T01:41:00Z", "{b}");
+        // The Flock keeps it in the agent's group, though sd state says wait.
+        assert_eq!(b["lead"]["who"], "agent", "{b}");
         assert_eq!(b["acting"], "review", "{b}");
         let review = b["stages"].as_array().unwrap().iter().find(|x| x["stage"] == "review").unwrap().clone();
         assert_eq!((review["status"].clone(), review["text"].clone()), (json!("cur"), json!("running")));
